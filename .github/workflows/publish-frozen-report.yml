@@ -1,0 +1,50 @@
+name: Publish frozen Kronika report
+
+on:
+  push:
+    branches: [gh-pages]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages-deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Prepare frozen report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify immutable report
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' f59600034d3b72763a52bcfa785248d952a49584970ebeaaaee4498af104d834 reports/kronika-demo-hour-5bbe2dd.html | sha256sum --check --strict
+          install -d "$RUNNER_TEMP/site/reports"
+          install -m 0644 index.html LICENSE THIRD_PARTY_LICENSES.html "$RUNNER_TEMP/site/"
+          install -m 0644 reports/kronika-demo-hour-5bbe2dd.html "$RUNNER_TEMP/site/reports/"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+          retention-days: 1
+
+  deploy:
+    name: Deploy frozen report
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
