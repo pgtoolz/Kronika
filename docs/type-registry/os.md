@@ -26,7 +26,7 @@ The filesystem roots are overridable with `KRONIKA_PROC_ROOT` (default
 
 | `type_id` | Source | Semantics | Sort key |
 |-----------|--------|-----------|----------|
-| `1_100_001` | `/proc/PID/{stat,status,io,cmdline}`, hot set | `snapshot_full` | `(pid, ts)` |
+| `1_100_001` | `/proc/PID/{stat,status,io,cmdline}`, frequently collected fields | `snapshot_full` | `(pid, ts)` |
 | `1_101_001` | `/proc/PID/status`, extended set | `snapshot_full` | `(pid, ts)` |
 | `1_102_001` | `/proc/stat`: CPU lines | `snapshot_full` | `(cpu_id, ts)` |
 | `1_103_001` | `/proc/stat` singletons and `/proc/uptime` | `snapshot_full` | `(ts)` |
@@ -143,7 +143,7 @@ registry linter rejects one that does not. The set in use:
 | `pages` | memory pages, of `instance_metadata.page_size_bytes` each |
 | `sectors` | the 512-byte sectors of `/proc/diskstats` |
 | `seconds`, `milliseconds`, `microseconds`, `nanoseconds` | time |
-| `jiffies` | scheduler ticks, of `instance_metadata.clock_ticks_per_sec` per second |
+| `jiffies` | CPU accounting ticks, of `instance_metadata.clock_ticks_per_sec` per second |
 | `hertz` | clock frequency |
 | `megabits_per_second` | negotiated link speed |
 | `percent`, `celsius` | declared and unused by OS sections |
@@ -270,7 +270,7 @@ under those devices. `1_112_002` never records mount points inside `/proc` or
 | Data, stack, library, locked, page-table, peak, high-water footprint | `1_101` |
 | File descriptor table size | `1_101` |
 | cgroup of a process | `1_200` |
-| Per-thread rows, `wchan`, proportional set size | — (not collected) |
+| Per-thread rows, `wchan`, proportional set size (resident memory with shared pages divided among processes) | — (not collected) |
 
 `os_user` records at most one mapping for each observed `(scope, uid)` in an
 open segment. Only real and effective UIDs from successfully decoded

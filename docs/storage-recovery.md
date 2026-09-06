@@ -151,7 +151,8 @@ themselves open an error panel.
 
 ## Inspecting a failure
 
-For the units in the [service guide](services.md), read both service logs:
+For the units in the [service guide](services.md), inspect the service logs
+and recordings:
 
 ```sh
 sudo journalctl -u kronika-collector -u kronika-web --since '10 minutes ago'
@@ -167,12 +168,12 @@ only a warning code. The catalog warning identifies a segment or the active
 journal; not every message includes a full path. A finished segment's ID maps
 to `YYYY/MM/DD/<segment-id>.zms` in the data directory.
 
-`kronika-dump` checks structure and section checksums before printing admitted
-segments. Warnings appear on stderr, or as records on stdout with `--json`.
+`kronika-dump` checks structure and section checksums before printing segments
+that pass these checks. Warnings appear on stderr, or as records on stdout with `--json`.
 **Warnings can accompany exit status 0:** inspect them as well as the output.
 `--section` additionally decodes the chosen type and needed dictionaries; the
 example prints at most 10 rows per segment. A returned decoding error exits
-nonzero. Neither inspection command changes the input files. The diagnostic
+nonzero. These inspection commands leave the input files unchanged. The diagnostic
 phrase `set aside` means excluded from that scan, not moved on disk.
 
 After an OOM kill, normal startup handles a valid journal automatically. If it

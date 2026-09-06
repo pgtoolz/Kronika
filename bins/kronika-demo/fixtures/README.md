@@ -6,7 +6,8 @@
 report. It contains one full hour of synthetic Linux, PostgreSQL, and PgBouncer
 data under the public hostname `kronika-demo`: short concurrent commerce
 transactions, lock waits, query plans, and bounded CPU, memory, disk, and
-network activity. The production slicer created the standalone ZMS:
+network activity. `kronika-dump slice` created the standalone ZMS with the
+command below, where `CAPTURE` is the collector's data directory:
 
 ```sh
 KRONIKA_STORAGE_DIR=CAPTURE kronika-dump slice \

@@ -23,7 +23,7 @@
 <a id="1-знаменатели-ресурсов-container-и-host"></a>
 ## 1. Ресурсы контейнера и машины: от чего считается процент
 
-[Host, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=host)
+[Host, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=host)
 
 ![Показатели контейнера, сетевого пространства имён и машины](images/host-scopes.png)
 
@@ -34,7 +34,7 @@
 | Показание | Расчёт и область измерения |
 | --- | --- |
 | Container CPU **66.8%** | `100 × used cgroup cores / effective cgroup CPU capacity`: занятые ядра группы процессов контейнера с общими ограничениями ресурсов (cgroup), делённые на доступное ей число CPU. |
-| Host CPU **17.5%** | `100 × R(user+nice+system+irq+softirq+steal)/(H×N)`. `R` — прирост тиков счётчика в секунду, `H` — записанное число тиков в секунде, `N` — число активных логических CPU. |
+| Host CPU **17.5%** | `100 × R(user+nice+system+irq+softirq+steal)/(H×N)`. `R` — прирост тиков счётчика в секунду, `H` — записанное число учётных тактов в секунду, `N` — число различных неотрицательных номеров CPU, записанных за весь исходный сегмент. |
 | Container memory **53.8%** | `100 × memory.current / effective memory limit`: занятая память контрольной группы, делённая на действующий лимит. |
 | Host memory **12.9%** | Доля использованной памяти машины; состав в [справочнике Linux](metrics-linux.ru.md). |
 | Throttled **34.9%** | Время ограничения CPU контрольной группы, делённое на наблюдаемый интервал реального времени, × 100. |
@@ -45,7 +45,7 @@
 
 ## 2. Вклад команды и отдельный PID
 
-[Processes CPU, 19:03:39 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788635019201666&lens=cpu)
+[Processes CPU, 19:03:39 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788635019201666&lens=cpu)
 
 ![Вклад команд за час и таблица CPU процессов](images/processes.png)
 
@@ -55,10 +55,10 @@
 
 | Показание | Расчёт и набор процессов |
 | --- | --- |
-| `postgres`: **517 PIDs**, **9.44 min** | Число различных PID этой команды за час; сумма изменений CPU-счётчиков процессов, делённая на записанную частоту тиков. |
+| `postgres`: **517 PIDs**, **9.44 min** | Число различных PID этой команды за час; сумма изменений CPU-счётчиков процессов, делённая на записанное число учётных тактов в секунду. |
 | `kronika-demo`: **4.75 min**; Total **14.6 min** | Суммарное время CPU команды; Total включает все команды. |
 | Ячейка `postgres` **953 ms/s**, `kronika-demo` **79.8 ms/s** | Время CPU на секунду наблюдаемого интервала. Это примерно **0.953** и **0.0798** занятого ядра. |
-| PID 64 user **0.12 cores**, system **0.006 cores** | `Δutime/(HZ×Δt)` и `Δstime/(HZ×Δt)` по соседним снимкам с теми же PID и временем старта. `HZ` — частота тиков, `Δt` — секунды между снимками. Сумма ≈ **0.126 cores**. |
+| PID 64 user **0.12 cores**, system **0.006 cores** | `Δutime/(HZ×Δt)` и `Δstime/(HZ×Δt)` по соседним снимкам с теми же PID и временем старта. `HZ` — число учётных тактов в секунду, `Δt` — секунды между снимками. Сумма ≈ **0.126 cores**. |
 | RSS **Average** | Средняя память команды: сумма её записанных значений RSS, делённая на общее число меток времени с пригодными значениями RSS процессов. |
 
 Сводка команды охватывает час; строка PID использует соседнюю пару наблюдений. Точный набор меток и правила суммирования определены в [описании тепловой карты и RSS](metrics-time.ru.md).
@@ -66,7 +66,7 @@
 <a id="3-интервал-statement-и-записанный-plan"></a>
 ## 3. Интервальные показатели запроса и записанный план
 
-[Statements, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.statements)
+[Statements, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.statements)
 
 1. Откройте **Activity → Execution time**. Примените `query_id:-665077864269413128` и выберите запрос заказов клиента.
 
@@ -94,7 +94,7 @@ where customer_id = $1 order by placed_at desc limit $2
 <a id="4-цепочка-blockers-и-состояние-backend"></a>
 ## 4. Цепочка блокировок и состояние сеанса
 
-[Locks, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.locks)
+[Locks, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.locks)
 
 ![Исходный блокирующий процесс и два ожидающих](images/locks.png)
 

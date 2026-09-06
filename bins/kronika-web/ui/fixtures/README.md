@@ -12,7 +12,8 @@ its source and content hashes. `npm run fixture:check` validates structure,
 record counts, reproducible compression and patterns for credentials, connection
 strings, authorization headers and keys without printing command lines or SQL text.
 
-To reproduce the fixture from the preserved HTML:
+Run the following commands from `bins/kronika-web/ui`. To reproduce the fixture
+from the preserved HTML:
 
 ```sh
 node scripts/real-fixture.mjs --recover /path/to/index.html

@@ -11,11 +11,15 @@ created by `kronika-dump slice`. Sources: [command and argument validation](src/
 kronika-report incident.zms incident.html
 ```
 
+Run as a user who can read the input file and write to the output directory.
+The [slice example](../kronika-dump/README.md#slice) prepares such an input from
+the private recording directory used in the install guide.
+
 ## Parameters
 
 | Parameter | Default | Contract |
 | --- | --- | --- |
-| `INPUT.zms` | Required | Valid finished standalone ZMS, with any basename. |
+| `INPUT.zms` | Required | Valid finished standalone ZMS, with any basename. A recording directory or `active.wal` is not an input file. |
 | `OUTPUT.html` | Required | Exact `.html` path; existing output is atomically replaced. Parent directory must exist and be writable. |
 | `--from MICROSECONDS` | First recorded microsecond | Inclusive beginning of visible navigation window. |
 | `--to-exclusive MICROSECONDS` | Last recorded microsecond + 1 | Exclusive end of visible navigation window. |

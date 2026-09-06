@@ -10,28 +10,52 @@ Kronika сохраняет метрики Linux, статистику PostgreSQL
 ![Использование CPU и значения показателей процессов за записанный час](docs/images/processes.png)
 
 [Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/) ·
-[Скачать HTML-пример v1.0.0](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-v1.0.0.html).
+[Скачать HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-v1.0.1.html).
 
 Запись за 5 сентября 2026 года, 19:00–20:00 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=host).
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=host).
 
 ## Установка и запуск
 
-Скачайте Kronika v1.0.0 для [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz)
-или [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz).
+Скачайте Kronika для [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz)
+или [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz).
 Проверьте и установите архив по [инструкции](INSTALL.ru.md)
 или [соберите из исходников](docs/build.ru.md). Архив содержит `kronika-collector`,
 `kronika-web`, `kronika-dump` и `kronika-report`.
 
-После установки запустите сбор на наблюдаемой машине:
+Выберите одну команду запуска сборщика: только Linux или Linux вместе с
+PostgreSQL. Примеры сохраняют записи в `/var/lib/kronika`; сборщик создаёт
+каталог, если его ещё нет.
+
+### Только Linux
 
 ```sh
-sudo install -d -m 0700 /var/lib/kronika
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-Во втором терминале запустите веб-сервер с тем же каталогом данных:
+<a id="linux-и-postgresql"></a>
+### PostgreSQL на машине сборщика
+
+Для сбора данных PostgreSQL укажите строку подключения в `KRONIKA_PG_DSNS`
+при запуске сборщика. Используйте учётную запись PostgreSQL с
+[правами для сбора данных](INSTALL.ru.md#5-postgresql).
+
+```sh
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
+  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
+  /usr/local/bin/kronika-collector
+```
+
+Если PostgreSQL на другой машине, SQL-метрики поступают с того сервера,
+а данные Linux по-прежнему относятся к машине сборщика. См.
+[настройку удалённого PostgreSQL](bins/kronika-collector/README.ru.md#remote-postgresql).
+
+### Открыть веб-интерфейс
+
+Оставив выбранный сборщик работать, запустите веб-сервер во втором терминале
+с тем же каталогом данных. Для Linux укажите `KRONIKA_WEB_SOURCES=1`, для
+Linux и PostgreSQL замените значение на `3`:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -42,39 +66,10 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-web
 ```
 
-Откройте <http://127.0.0.1:8080/> и войдите. Веб-сервер читает данные и во время
-сбора. `Ctrl+C` останавливает любой из процессов; записанные данные остаются
-на диске.
-[Службы systemd](docs/services.ru.md) запускают обе программы как сервисы.
-
-### Локальный и удалённый PostgreSQL
-
-После [создания роли для сбора данных](INSTALL.ru.md#5-postgresql) остановите
-сборщик и задайте строку подключения (DSN). Если локальный PostgreSQL использует те же
-ограничения CPU, что и сборщик, не задавайте
-`KRONIKA_POSTGRES_EFFECTIVE_CPUS`: доступное число CPU определяется по записанным
-данным. Cgroup — группа процессов Linux с общими ограничениями ресурсов;
-учитываются квота процессорного времени и разрешённый набор CPU.
-
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  /usr/local/bin/kronika-collector
-```
-
-Для удалённого PostgreSQL или PostgreSQL в другой cgroup задайте число CPU,
-доступных именно ему. Пример для PostgreSQL с 4 CPU:
-
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
-  /usr/local/bin/kronika-collector
-```
-
-Адрес подключения сам по себе не показывает, общие ли у программ ограничения
-ресурсов. Если сборщик настроен на Linux и PostgreSQL, укажите
-`KRONIKA_WEB_SOURCES=3` при запуске веб-сервера.
+Откройте <http://127.0.0.1:8080/> и войдите. Веб-сервер читает новые данные,
+пока работает сборщик. `Ctrl+C` останавливает любой из процессов; записи
+остаются на диске. [Настройка systemd](docs/services.ru.md) описывает запуск
+обеих программ как служб и изменение настроек уже работающей службы.
 
 ### Место на диске
 

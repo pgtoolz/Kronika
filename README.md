@@ -10,28 +10,52 @@ hour: resource use, individual processes and queries, locks and changes over tim
 ![Process CPU activity and the process snapshot for a recorded hour](docs/images/processes.png)
 
 [Open the interactive preview](https://pgtoolz.github.io/Kronika/) ·
-[Download the v1.0.0 HTML example](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-v1.0.0.html).
+[Download the HTML example](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-v1.0.1.html).
 
 A recorded hour, 5 September 2026, 19:00–20:00 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=host).
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=host).
 
 ## Install and run
 
-Download Kronika v1.0.0 for [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz)
-or [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz).
+Download Kronika for [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz)
+or [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz).
 Follow the [installation guide](INSTALL.md) to verify and install the archive,
 or [build from source](docs/build.md). The archive contains `kronika-collector`,
 `kronika-web`, `kronika-dump`, and `kronika-report`.
 
-After installation, start collection on the monitored host:
+Choose one collector command below: Linux only, or Linux with PostgreSQL.
+The examples save recordings in `/var/lib/kronika`; collector creates the
+directory if needed.
+
+### Linux only
 
 ```sh
-sudo install -d -m 0700 /var/lib/kronika
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-In a second terminal, start the web server over that data directory:
+<a id="linux-and-postgresql"></a>
+### PostgreSQL on the collector machine
+
+To collect PostgreSQL data, supply its connection string in `KRONIKA_PG_DSNS`
+when starting collector. Use a PostgreSQL account with the
+[monitoring privileges](INSTALL.md#5-postgresql).
+
+```sh
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
+  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
+  /usr/local/bin/kronika-collector
+```
+
+For PostgreSQL on another machine, SQL data comes from that server, while
+Linux data still describes the collector machine. See [remote PostgreSQL
+configuration](bins/kronika-collector/README.md#remote-postgresql).
+
+### Open the web interface
+
+With your chosen collector running, start web in a second terminal over the
+same data directory. Use `KRONIKA_WEB_SOURCES=1` for Linux only, or change it
+to `3` for Linux and PostgreSQL:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -42,38 +66,10 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-web
 ```
 
-Open <http://127.0.0.1:8080/> and sign in. The web server reads new data while
-collection runs. `Ctrl+C` stops either process and retains the recording.
-[Systemd units](docs/services.md) run both programs as services.
-
-### Local and remote PostgreSQL
-
-After [creating a monitoring role](INSTALL.md#5-postgresql), stop the collector
-and set its connection string (DSN). When local PostgreSQL shares the collector’s CPU limits,
-leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset:
-the available CPU count is calculated from recorded data. A cgroup is a Linux
-group of processes with shared resource limits; its CPU-time quota and allowed
-set of CPUs are taken into account.
-
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  /usr/local/bin/kronika-collector
-```
-
-For remote PostgreSQL or PostgreSQL in a different cgroup, set the CPU capacity
-available to that PostgreSQL server. Example for PostgreSQL with 4 CPUs:
-
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
-  /usr/local/bin/kronika-collector
-```
-
-The connection address alone does not show whether the programs share resource
-limits. When the collector is configured for Linux and PostgreSQL, set
-`KRONIKA_WEB_SOURCES=3` when starting the web server.
+Open <http://127.0.0.1:8080/> and sign in. Web reads new data while collector
+runs. `Ctrl+C` stops either process; the recordings stay on disk.
+[Systemd setup](docs/services.md) covers running both programs as services and
+changing an existing service's configuration.
 
 ### Storage
 

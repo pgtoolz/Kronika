@@ -2,11 +2,11 @@
 
 [Русская версия](README.ru.md)
 
-`kronika-writer` turns one or more bounded collection windows into a durable
-ZMS segment. It maintains in-memory section buffers, per-segment string
-interning (replacing repeated strings with dictionary references), the version-1 `active.wal` journal, recovery, and finished-segment
-publication. Other crates handle source queries, format bytes, and the
-data-directory grammar.
+`kronika-writer` combines batches of collected rows into a ZMS segment and
+saves it to disk. It maintains section buffers in memory, replaces repeated
+strings with dictionary references, appends batches to version-1 `active.wal`,
+and writes finished segments. Other crates handle source queries, byte layouts,
+and data-directory paths.
 
 ## Collection window
 
@@ -67,8 +67,9 @@ synchronization does it truncate the file to 36 bytes and call `sync_data` a
 second time. If the process exits after committing the marker, the next
 `Journal::open` validates that marker and completes the reset. A failed rollback
 or a failure after marker commit poisons the open journal: every further
-operation fails, the daemon exits, and the next open completes the reset from
-the committed marker.
+I/O operation through that handle fails, and the collector exits. Reopening
+validates the bytes on disk. It completes a reset only if a valid committed
+reset marker is present; other damaged journals are rejected as described above.
 
 ## Writing
 

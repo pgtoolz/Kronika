@@ -18,11 +18,20 @@
 <a id="native-binaries-для-linux"></a>
 ## Программы для Linux
 
-На машине Linux x86-64 с установленными rustup и системными инструментами:
+Установив rustup и системные инструменты сборки, склонируйте репозиторий
+и перейдите в него:
 
 ```sh
 git clone https://github.com/pgtoolz/Kronika.git
 cd Kronika
+```
+
+Для конкретной версии исходного кода выполните `git checkout FULL_COMMIT`
+перед `cargo build`; для исходников опубликованного релиза — `git checkout v1.0.1`.
+
+Выберите команду сборки для своей машины. Для Linux x86-64:
+
+```sh
 rustup target add x86_64-unknown-linux-musl
 cargo build --release --locked --target x86_64-unknown-linux-musl \
   -p kronika-collector -p kronika-web -p kronika-dump \
@@ -32,8 +41,7 @@ cargo build --release --locked --target x86_64-unknown-linux-musl \
 Программы появятся в `target/x86_64-unknown-linux-musl/release/` под именами
 `kronika-collector`, `kronika-web`, `kronika-dump` и `kronika-report`.
 По умолчанию Cargo собирает для `x86_64-unknown-linux-musl`, как указано в
-[.cargo/config.toml](../.cargo/config.toml). Для конкретной версии исходного
-кода выполните `git checkout FULL_COMMIT` перед `cargo build`.
+[.cargo/config.toml](../.cargo/config.toml).
 
 На машине Linux ARM64:
 
@@ -49,7 +57,18 @@ cargo build --release --locked --target aarch64-unknown-linux-musl \
 
 Результат находится в `target/aarch64-unknown-linux-musl/release/`. Флаг
 компилятора C встраивает атомарные операции ARMv8 непосредственно в программу.
-Дальше выполните [команды установки](../INSTALL.ru.md#2-установка).
+Установите четыре программы, находясь в каталоге репозитория. Для ARM64
+замените значение первой строки на `target/aarch64-unknown-linux-musl/release`:
+
+```sh
+binary_dir=target/x86_64-unknown-linux-musl/release
+sudo install -d -m 0755 /usr/local/bin
+sudo install -m 0755 "$binary_dir/kronika-collector" "$binary_dir/kronika-web" \
+  "$binary_dir/kronika-dump" "$binary_dir/kronika-report" /usr/local/bin/
+```
+
+Затем [запустите сбор](../INSTALL.ru.md#3-запуск-сборщика). Проверки и пересборка
+веб-интерфейса ниже нужны для разработки и не требуются при обычной установке.
 
 Чтобы собрать все программы репозитория, включая инструменты разработки,
 на машине Linux x86-64 с инструментами GNU:

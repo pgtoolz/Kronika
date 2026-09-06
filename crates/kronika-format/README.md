@@ -2,8 +2,8 @@
 
 [Русская версия](README.ru.md)
 
-`kronika-format` defines the binary contract for writing and reading Kronika
-segments. It is not a standalone converter or a generic analytics format.
+`kronika-format` defines the byte layout, checksums, and size limits for
+Kronika segments and journal frames.
 
 Data moves through these components:
 
@@ -65,13 +65,12 @@ handle:
 - collection intervals, rotation, and source limits: those belong to
   [`kronika-collector`](../../bins/kronika-collector/README.md);
 - data-directory paths, strict discovery, and ownership:
-  [`kronika-layout`](../kronika-layout/);
-- typed queries, HTTP, retention, encryption, or remote storage.
+  [`kronika-layout`](../kronika-layout/).
 
 ## From collection windows to a segment
 
 The collector keeps one string dictionary (interner) for the open segment and creates fresh
-row buffers for each non-empty collection cycle. The registry sorts each
+row buffers for each batch it writes. The registry sorts each
 snapshot section by its contract key and encodes it. The writer adds the
 current window's dictionary records, builds a ZMS part, wraps it in a `ZMSP`
 frame, appends it to `active.wal`, and calls `sync_data`. After a successful
@@ -101,8 +100,9 @@ re-encodes journal bodies instead of copying them into the finished ZMS.
 
 The format uses four levels:
 
-- a **collection window** is one non-empty collector cycle;
-- a **ZMS part** is one framed window record with its own `ZMS1`, bodies,
+- a **collection window** here is a batch of rows flushed together; one
+  collector cycle can produce several such batches;
+- a **ZMS part** is one encoded batch with its own `ZMS1`, bodies,
   catalog, and tail index;
 - a **section** is one catalog entry: `type_id`, offset, length, row count, and
   CRC32C;
@@ -209,7 +209,7 @@ windows are coalesced inside the one body for their type.
 | 16 | `entry_count` | `u32` | Number of 32-byte entries before this block. |
 | 20 | `format_version` | `u32` | Container layout version; writers store `1`. |
 | 24 | `crc32c` | `u32` | CRC32C of entries and metadata with this field zeroed. |
-| 28 | `window_count` | `u32` | Collection windows coalesced into this container. `build_part` stores `1`; `write_segment` stores the exact number of journal parts; zero means unknown. |
+| 28 | `window_count` | `u32` | Journal parts combined into this container. `build_part` stores `1`; `write_segment` stores the exact part count, which need not equal the number of collector cycles; zero means unknown. |
 
 ### Tail index: 8 bytes
 
@@ -299,11 +299,18 @@ body against the version-1 envelope. Its conservative bound accounts for all
 data pages and their framing:
 
 ```text
-body_bound = 64 KiB + sum(zstd_bound(page_inputs_i) + page_count_i * 4 KiB)
+body_bound = 64 KiB + sum(n_i + floor(n_i / 256) + 64*P + P * 4 KiB)
 body_bound <= 1 GiB
 ```
 
-For the pinned Zstandard contract:
+The sum covers physical Parquet columns. For column `i`, `n_i` is the
+estimated total bytes of PLAIN values and definition/repetition levels before
+compression. `P` is the positive upper bound on pages per column supplied by
+the section codec. All size terms are in bytes. The implementation is
+[`final_single_batch_plain_body_bound`](../kronika-registry/src/codec/bounds.rs).
+
+The `64*P` allowance bounds the small-input overhead across those pages. For
+one input of `n` bytes, the pinned Zstandard contract is:
 
 ```text
 zstd_bound(n) = n + floor(n / 256)
@@ -336,9 +343,8 @@ found under the same id in separate dictionary Parquet bodies.
 | `3_001_001` | `dict.strings` | `str_id`, complete `bytes` |
 | `3_002_001` | `dict.blobs` | `str_id`, `stored_bytes`, `full_len`, `truncated`, optional `full_sha256` |
 
-Both sections are **inside the ZMS**, alongside snapshot sections.
-`dict.blobs` is not a separate file, PostgreSQL TOAST, or external object
-storage.
+Both sections are **inside the ZMS**, alongside snapshot sections. Large
+values in `dict.blobs` use the same container and catalog as other sections.
 
 ### The short string `postgres`
 

@@ -16,11 +16,19 @@ from source using the instructions below.
 
 ## Native Linux binaries
 
-On an x86-64 Linux machine with rustup and the build tools installed:
+With rustup and the build tools installed, clone the repository and enter it:
 
 ```sh
 git clone https://github.com/pgtoolz/Kronika.git
 cd Kronika
+```
+
+To build an exact revision, run `git checkout FULL_COMMIT` before `cargo build`;
+use `git checkout v1.0.1` for the published release source.
+
+Choose the build command for your machine. On x86-64 Linux:
+
+```sh
 rustup target add x86_64-unknown-linux-musl
 cargo build --release --locked --target x86_64-unknown-linux-musl \
   -p kronika-collector -p kronika-web -p kronika-dump \
@@ -29,8 +37,7 @@ cargo build --release --locked --target x86_64-unknown-linux-musl \
 
 Outputs: `target/x86_64-unknown-linux-musl/release/kronika-{collector,web,dump,report}`.
 The default Cargo target in [.cargo/config.toml](../.cargo/config.toml) is
-`x86_64-unknown-linux-musl`. To build an exact revision, run
-`git checkout FULL_COMMIT` before `cargo build`.
+`x86_64-unknown-linux-musl`.
 
 On an ARM64 Linux machine:
 
@@ -45,8 +52,20 @@ cargo build --release --locked --target aarch64-unknown-linux-musl \
 ```
 
 Outputs: `target/aarch64-unknown-linux-musl/release/`. The C flag emits inline
-ARMv8 atomic operations. [Install](../INSTALL.md#2-install) provides the binary
-installation commands.
+ARMv8 atomic operations.
+
+Install the four programs from the repository directory. For ARM64, set
+`binary_dir=target/aarch64-unknown-linux-musl/release` instead:
+
+```sh
+binary_dir=target/x86_64-unknown-linux-musl/release
+sudo install -d -m 0755 /usr/local/bin
+sudo install -m 0755 "$binary_dir/kronika-collector" "$binary_dir/kronika-web" \
+  "$binary_dir/kronika-dump" "$binary_dir/kronika-report" /usr/local/bin/
+```
+
+Then [start collection](../INSTALL.md#3-start-collector). The checks and browser
+asset rebuild below are for development; they are not steps in a normal installation.
 
 To build all programs, including the development demo, for an x86-64 Linux
 machine using the GNU tools:

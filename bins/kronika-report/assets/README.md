@@ -7,9 +7,11 @@ The interface shell is built from the main React sources in
 built from `crates/kronika-report-wasm` with the repository-pinned Rust and
 wasm-bindgen versions. Repository checks reproduce these files byte-for-byte.
 
-Run `scripts/report-assets.sh build` with `WASM_BINDGEN` set to a
-`wasm-bindgen 0.2.127` executable. Passing `--download-bindgen` explicitly
-downloads the pinned static x86_64 Linux musl release and verifies its SHA-256 before use.
+From the repository root, run `scripts/report-assets.sh build` with
+`wasm-bindgen 0.2.127` on `PATH`, or set `WASM_BINDGEN` to its executable path.
+`scripts/report-assets.sh build --download-bindgen` downloads the pinned static
+x86_64 Linux musl release if no local executable is found, and verifies its
+SHA-256 before use.
 Use `scripts/report-assets.sh check` to compare a fresh build with the committed
 JavaScript and deterministic gzip files. `CARGO_BIN` and `NODE_BIN` select the
 Cargo and Node executables when they are not first on `PATH`.

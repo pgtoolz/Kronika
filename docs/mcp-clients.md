@@ -8,7 +8,9 @@ It accepts `POST /mcp` using Streamable HTTP, returns JSON and provides MCP tool
 
 ## Connection parameters
 
-Replace the angle-bracket placeholders with your connection details.
+Replace the angle-bracket placeholders with your connection details. The URL
+must be reachable from the machine running the MCP client. For a remote web
+server, you can use the [SSH tunnel](../INSTALL.md#4-start-web) from the install guide.
 
 | Value | Definition |
 | --- | --- |

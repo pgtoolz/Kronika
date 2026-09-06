@@ -2,9 +2,9 @@
 
 [English version](releases.md) · [Установка](../INSTALL.ru.md)
 
-## Релиз v1.0.0
+## Релиз
 
-[Kronika v1.0.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.0)
+[Текущий релиз](https://github.com/pgtoolz/Kronika/releases/latest)
 содержит четыре программы для Linux x86-64 и ARM64.
 
 <a id="download"></a>
@@ -12,12 +12,12 @@
 
 | Архитектура | Архив | Контрольная сумма |
 | --- | --- | --- |
-| x86-64 | [kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz.sha256) |
-| ARM64 | [kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz.sha256) |
+| x86-64 | [kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz.sha256) |
+| ARM64 | [kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz.sha256) |
 
 Выполните [команды скачивания и установки](../INSTALL.ru.md#1-скачивание-и-распаковка).
-[HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-v1.0.0.html)
-работает без сети; его также можно [открыть в браузере](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html).
+[HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-v1.0.1.html)
+работает без сети; его также можно [открыть в браузере](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html).
 
 ## Состав и идентификация
 
@@ -83,10 +83,6 @@ PNG-иллюстрации, светлые и тёмные SVG-схемы, ре�
 
 ## Сборки для разработки
 
-Сборка [Release package](../.github/workflows/release-package.yml) также
-создаёт архивы в GitHub Actions. Имена результатов содержат полный коммит
-исходников; загрузки доступны 14 дней. Эта сборка не публикует релизы.
-
 Войдите в учётную запись через [GitHub CLI](https://cli.github.com/manual/gh_run_download)
 и выберите успешный запуск автоматической сборки:
 
@@ -99,7 +95,7 @@ target=x86_64-unknown-linux-musl
 gh run download "$run_id" --repo pgtoolz/Kronika \
   --name "kronika-$source_revision-$target" --dir kronika-download
 cd kronika-download
-archive="kronika-1.0.0-$target.tar.gz"
+archive=$(basename kronika-*-"$target".tar.gz)
 sha256sum --check "$archive.sha256"
 tar -xzf "$archive"
 cd "${archive%.tar.gz}"
@@ -148,7 +144,7 @@ scripts/package-release.sh --target x86_64-unknown-linux-musl \
 При установленных `strace`, Node.js 22 и Chromium/Google Chrome передайте один архив:
 
 ```sh
-scripts/check-release.sh dist/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz
+scripts/check-release.sh dist/kronika-*-x86_64-unknown-linux-musl.tar.gz
 ```
 
 | Режим | Проверки |

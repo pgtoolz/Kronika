@@ -12,7 +12,9 @@ happens after an abrupt stop or when a recording cannot be read.
 
 ## Configuration
 
-Environment is validated before the listener binds.
+Environment variables are read and validated at startup, before the network
+port is opened. To apply changed settings to a running process, stop it and
+start it again; for systemd use the [service instructions](../../docs/services.md#operations).
 Source: [config.rs](src/config.rs).
 
 | Variable | Default | Accepted value and meaning |
@@ -32,6 +34,9 @@ suppresses it. The OS bit remains catalog metadata. All tabs and recorded
 sections remain available. Recorded health uses collector metadata.
 
 ## Run
+
+Use the collector's recording directory and choose a password. The example
+marks Linux as configured; use `KRONIKA_WEB_SOURCES=3` for Linux and PostgreSQL.
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -61,7 +66,16 @@ protected API requests also accept the browser session cookie.
 An export creates two temporary files: sliced ZMS, and a file used first for
 slice scratch data then for the complete HTML. Both exist simultaneously and
 are deleted when closed. The service account needs write access and space for
-both. A restricted systemd unit can use:
+both. The default temporary directory works without additional setup. If an
+existing systemd service restricts writable paths, you can configure a separate
+directory. For the root service in the [service guide](../../docs/services.md),
+create it first:
+
+```sh
+sudo install -d -m 0700 /var/tmp/kronika-web
+```
+
+Add these settings to that service:
 
 ```ini
 [Service]
@@ -69,9 +83,9 @@ Environment=TMPDIR=/var/tmp/kronika-web
 ReadWritePaths=/var/tmp/kronika-web
 ```
 
-Create that directory for the service account in the
-[service setup](../../docs/services.md). Query preparation is limited to one
-export at a time per process. Sources: [export.rs](src/export.rs),
+After changing the service settings, reload systemd and restart that service.
+A service running as another user needs ownership or write access to the chosen
+directory. Each process prepares at most one export at a time. Sources: [export.rs](src/export.rs),
 [config.rs](src/config.rs).
 
 ## Process interface

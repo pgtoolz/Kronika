@@ -106,7 +106,7 @@ Optional sums/maxima retain null if no member supplies a value. Earliest represe
 
 `(nodb)` and `(nouser)` are literal PgBouncer connection-context values for an unset database/user. The collector preserves them; a missing context field is null. Host strips the connection port. PgBouncer contributes console groups without shared-timeline marks.
 
-The source/type summary filters groups; Search matches displayed title/chips with `text`, `kind`, `source`, `category`. Expand shows group metrics; representative selection fetches its complete recorded row. A timeline cluster selects its interval and sources; Show all restores the hour. Threshold and sharp-rise marks occupy a separate list. `pg_log_temp_files` is available through MCP `occurrences`, outside the grouped console.
+The source/type summary filters groups; Search matches displayed title/chips with `text`, `kind`, `source`, `category`. Expand shows group metrics; representative selection fetches its complete recorded row. A timeline cluster selects its interval and sources; Show all restores the hour. Threshold marks occupy a separate list. The current index builder emits no sharp-rise marks; see [timeline marks](metrics-time.md#timeline-marks). `pg_log_temp_files` is available through MCP `occurrences`, outside the grouped console.
 
 Sources: [event query and fields](../crates/kronika-query/src/events.rs), [group reductions](../crates/kronika-query/src/events/group.rs), [console controls](../bins/kronika-web/ui/src/events-view.tsx), [PgBouncer parser](../crates/kronika-source-log/src/pgbouncer.rs).
 
@@ -156,6 +156,6 @@ Sources: [tool schemas](../bins/kronika-web/src/mcp/catalog.rs), [typed filters]
 
 The HTML embeds the recording, UI, fonts and WASM query engine. It opens from a local file and evaluates requests synchronously in WASM on the browser main thread. Its visible range is fixed; live refresh, login, export and MCP connection controls are disabled. Stored query text, plans, log text and command lines travel with the recording.
 
-The four installed programs are `kronika-collector`, `kronika-web`, `kronika-dump` and `kronika-report`. CLI [slice](../bins/kronika-dump/README.md) creates a recording range; [report](../bins/kronika-report/README.md) converts it to HTML. Their `--help` describes installed-program parameters.
+The four installed programs are `kronika-collector`, `kronika-web`, `kronika-dump` and `kronika-report`. CLI [slice](../bins/kronika-dump/README.md) creates a recording range; [report](../bins/kronika-report/README.md) converts it to HTML.
 
 Sources: [range arithmetic](../bins/kronika-web/ui/src/export-range.ts), [civil time](../bins/kronika-web/ui/src/export-time.ts), [download dialog](../bins/kronika-web/ui/src/export-dialog.tsx), [offline request transport](../bins/kronika-web/ui/src/report-transport.ts).

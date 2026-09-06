@@ -69,6 +69,8 @@ jobs:
           echo "f59600034d3b72763a52bcfa785248d952a49584970ebeaaaee4498af104d834  $RUNNER_TEMP/site/reports/kronika-demo-hour-5bbe2dd.html" | sha256sum --check
           cp "$RUNNER_TEMP/site/reports/kronika-demo-hour-5bbe2dd.html" \
             "$RUNNER_TEMP/site/reports/kronika-v1.0.0.html"
+          cp "$RUNNER_TEMP/site/reports/kronika-demo-hour-5bbe2dd.html" \
+            "$RUNNER_TEMP/site/reports/kronika-v1.0.1.html"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
