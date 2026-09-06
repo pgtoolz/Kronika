@@ -22,7 +22,7 @@ The four cases use the recorded Linux/PostgreSQL demo workload on **5 September 
 
 ## 1. Container and host resource denominators
 
-[Host, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-demo-hour-5bbe2dd.html?at=1788634833931637&view=host)
+[Host, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=host)
 
 ![Container, Network namespace and Host readings](images/host-scopes.png)
 
@@ -44,7 +44,7 @@ The [Linux reference](metrics-linux.md) defines effective ceilings, PSI units, d
 
 ## 2. Command contribution and one PID
 
-[Processes CPU, 19:03:39 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-demo-hour-5bbe2dd.html?at=1788635019201666&lens=cpu)
+[Processes CPU, 19:03:39 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788635019201666&lens=cpu)
 
 ![Whole-hour command Activity and Processes CPU](images/processes.png)
 
@@ -64,7 +64,7 @@ The command summary spans the hour; the PID table uses its adjacent observation 
 
 ## 3. Statement interval and stored plan
 
-[Statements, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-demo-hour-5bbe2dd.html?at=1788634833931637&view=pg.statements)
+[Statements, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.statements)
 
 1. Open **Activity → Execution time**. Apply `query_id:-665077864269413128`; select the customer-order lookup.
 
@@ -91,7 +91,7 @@ where customer_id = $1 order by placed_at desc limit $2
 
 ## 4. Blocker chain and backend state
 
-[Locks, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-demo-hour-5bbe2dd.html?at=1788634833931637&view=pg.locks)
+[Locks, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.locks)
 
 ![Root holder and two waiters](images/locks.png)
 

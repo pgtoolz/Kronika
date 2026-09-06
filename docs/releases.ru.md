@@ -2,43 +2,27 @@
 
 [English version](releases.md) · [Установка](../INSTALL.ru.md)
 
-## Доступные сборки
+## Релиз v1.0.0
 
-Версия исходников — `1.0.0`. Различайте сборки по коммиту —
-идентификатору версии исходного кода.
-
-Текущий архив с четырьмя программами можно скачать из результатов автоматической
-сборки [Release package](../.github/workflows/release-package.yml) в GitHub
-Actions. Имя архива содержит коммит, результаты хранятся 14 дней. Сборка
-создаёт архивы, но не публикует релиз и не создаёт тег.
+[Kronika v1.0.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.0)
+содержит четыре программы для Linux x86-64 и ARM64.
 
 <a id="download"></a>
 ## Скачивание
 
-Войдите в учётную запись через [GitHub CLI](https://cli.github.com/manual/gh_run_download)
-и выберите успешный запуск автоматической сборки:
+| Архитектура | Архив | Контрольная сумма |
+| --- | --- | --- |
+| x86-64 | [kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz.sha256) |
+| ARM64 | [kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz.sha256) |
 
-```sh
-gh run list --repo pgtoolz/Kronika --workflow release-package.yml --status success --limit 10
-run_id=REPLACE_WITH_RUN_ID
-gh run view "$run_id" --repo pgtoolz/Kronika
-source_revision=$(gh run view "$run_id" --repo pgtoolz/Kronika --json headSha --jq .headSha)
-target=x86_64-unknown-linux-musl
-gh run download "$run_id" --repo pgtoolz/Kronika \
-  --name "kronika-$source_revision-$target" --dir kronika-download
-cd kronika-download
-```
-
-Для ARM64 задайте `target=aarch64-unknown-linux-musl`. Команда `gh run view`
-показывает две сборки для соответствующих архитектур и 22 проверки запуска
-в разных дистрибутивах. Результат загрузки содержит архив `.tar.gz` и его
-контрольную сумму `.tar.gz.sha256`. Затем выполните
-[распаковку и установку](../INSTALL.ru.md#1-скачивание-и-распаковка).
+Выполните [команды скачивания и установки](../INSTALL.ru.md#1-скачивание-и-распаковка).
+[HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-v1.0.0.html)
+работает без сети; его также можно [открыть в браузере](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html).
 
 ## Состав и идентификация
 
 ```text
-kronika-<cargo-version>-<12-character-commit>-<target>/
+kronika-<cargo-version>-<target>/
   kronika-collector   kronika-web   kronika-dump   kronika-report
   BUILDINFO          SHA256SUMS    LICENSE       THIRD_PARTY_LICENSES.html
   README.md          README.ru.md  INSTALL.md    INSTALL.ru.md
@@ -54,7 +38,7 @@ PNG-иллюстрации, светлые и тёмные SVG-схемы, ре�
 
 | Файл или поле | Значение |
 | --- | --- |
-| Имя архива | Версия проекта, первые 12 шестнадцатеричных символов коммита упаковки и целевая платформа. |
+| Имя архива | Версия проекта и целевая платформа. |
 | `BUILDINFO.package_source_revision` | Полный идентификатор коммита, из которого упакован архив. Рабочий каталог при упаковке не содержит несохранённых изменений. |
 | `BUILDINFO.build_mode` | `source`: программы скомпилированы командой упаковки. `prebuilt`: готовые программы переданы через `--bin-dir`; их исходная ревизия и компилятор в этом режиме не определяются. |
 | `BUILDINFO.source_date_epoch` | Время коммита упаковки в Unix-секундах. |
@@ -97,6 +81,37 @@ PNG-иллюстрации, светлые и тёмные SVG-схемы, ре�
 окружение дистрибутива с этим ядром, а не каждое возможное ядро Linux.
 Список проверок: [release-package.yml](../.github/workflows/release-package.yml).
 
+## Сборки для разработки
+
+Сборка [Release package](../.github/workflows/release-package.yml) также
+создаёт архивы в GitHub Actions. Имена результатов содержат полный коммит
+исходников; загрузки доступны 14 дней. Эта сборка не публикует релизы.
+
+Войдите в учётную запись через [GitHub CLI](https://cli.github.com/manual/gh_run_download)
+и выберите успешный запуск автоматической сборки:
+
+```sh
+gh run list --repo pgtoolz/Kronika --workflow release-package.yml --status success --limit 10
+run_id=REPLACE_WITH_RUN_ID
+gh run view "$run_id" --repo pgtoolz/Kronika
+source_revision=$(gh run view "$run_id" --repo pgtoolz/Kronika --json headSha --jq .headSha)
+target=x86_64-unknown-linux-musl
+gh run download "$run_id" --repo pgtoolz/Kronika \
+  --name "kronika-$source_revision-$target" --dir kronika-download
+cd kronika-download
+archive="kronika-1.0.0-$target.tar.gz"
+sha256sum --check "$archive.sha256"
+tar -xzf "$archive"
+cd "${archive%.tar.gz}"
+sha256sum --check SHA256SUMS
+```
+
+Для ARM64 задайте `target=aarch64-unknown-linux-musl`. Команда `gh run view`
+показывает две сборки для соответствующих архитектур и 22 проверки запуска
+в разных дистрибутивах. Результат загрузки содержит архив `.tar.gz` и его
+контрольную сумму `.tar.gz.sha256`. После проверки и распаковки выполните
+[установку](../INSTALL.ru.md#2-установка).
+
 ## Упаковка
 
 Требования: рабочая копия без несохранённых изменений, Linux нужной архитектуры,
@@ -133,7 +148,7 @@ scripts/package-release.sh --target x86_64-unknown-linux-musl \
 При установленных `strace`, Node.js 22 и Chromium/Google Chrome передайте один архив:
 
 ```sh
-scripts/check-release.sh dist/kronika-1.0.0-REPLACE_WITH_COMMIT-x86_64-unknown-linux-musl.tar.gz
+scripts/check-release.sh dist/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz
 ```
 
 | Режим | Проверки |

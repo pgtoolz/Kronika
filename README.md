@@ -9,15 +9,18 @@ hour: resource use, individual processes and queries, locks and changes over tim
 
 ![Process CPU activity and the process snapshot for a recorded hour](docs/images/processes.png)
 
-[Open the interactive preview](https://pgtoolz.github.io/Kronika/).
+[Open the interactive preview](https://pgtoolz.github.io/Kronika/) ·
+[Download the v1.0.0 HTML example](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-v1.0.0.html).
 
 A recorded hour, 5 September 2026, 19:00–20:00 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-demo-hour-5bbe2dd.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-demo-hour-5bbe2dd.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-demo-hour-5bbe2dd.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-demo-hour-5bbe2dd.html?at=1788634833931637&view=host).
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=host).
 
 ## Install and run
 
-Install a [prebuilt Linux archive](INSTALL.md), or
-[build from source](docs/build.md). The archive contains `kronika-collector`,
+Download Kronika v1.0.0 for [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz)
+or [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz).
+Follow the [installation guide](INSTALL.md) to verify and install the archive,
+or [build from source](docs/build.md). The archive contains `kronika-collector`,
 `kronika-web`, `kronika-dump`, and `kronika-report`.
 
 After installation, start collection on the monitored host:
