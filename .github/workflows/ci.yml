@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # Release binaries are musl (.cargo/config.toml); runners have no musl std,
+  # so lint and test build for host gnu instead.
+  CARGO_BUILD_TARGET: x86_64-unknown-linux-gnu
+
+jobs:
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify pinned Rust toolchain
+        run: rustc --version | grep -F "rustc 1.96.0 "
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.21.1
+          cache: npm
+          cache-dependency-path: bins/kronika-web/ui/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+      - name: Install repository lint tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ripgrep
+          rustup toolchain install nightly-2026-05-28 --profile minimal --component rustc-dev --component llvm-tools-preview
+          tool_dir=$(mktemp -d)
+          curl --fail --location --silent --show-error \
+            https://github.com/trailofbits/dylint/releases/download/v6.0.4/cargo-dylint-x86_64-unknown-linux-gnu-v6.0.4.tar.gz \
+            --output "$tool_dir/cargo-dylint.tar.gz"
+          curl --fail --location --silent --show-error \
+            https://github.com/trailofbits/dylint/releases/download/v6.0.4/dylint-link-x86_64-unknown-linux-gnu-v6.0.4.tar.gz \
+            --output "$tool_dir/dylint-link.tar.gz"
+          echo "14195423ac6bfe6b055ffa94e0c48e282e1f5997abd98dfb4ea8bdf4633aec5c  $tool_dir/cargo-dylint.tar.gz" | sha256sum --check
+          echo "54ce515583ade02b197bc11f6870fd755c30e04b7e44ea015a507726de05fa1d  $tool_dir/dylint-link.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$tool_dir/cargo-dylint.tar.gz" --directory "$tool_dir"
+          tar --extract --gzip --file "$tool_dir/dylint-link.tar.gz" --directory "$tool_dir"
+          install --mode 755 "$tool_dir/cargo-dylint-x86_64-unknown-linux-gnu-v6.0.4/cargo-dylint" "$HOME/.cargo/bin/cargo-dylint"
+          install --mode 755 "$tool_dir/dylint-link-x86_64-unknown-linux-gnu-v6.0.4/dylint-link" "$HOME/.cargo/bin/dylint-link"
+      - run: make ui-install ui-check
+      - run: >-
+          git diff --exit-code --
+          bins/kronika-web/ui/kronika-ui.html.gz
+          bins/kronika-report/assets/kronika-report-shell.html.gz
+      - run: make report
+      - run: make fmt-check lint
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify pinned Rust toolchain
+        run: rustc --version | grep -F "rustc 1.96.0 "
+      - uses: Swatinem/rust-cache@v2
+      - name: Check installed CLI help and version before service startup
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes strace
+          make build
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          python3 scripts/check-cli.py target/x86_64-unknown-linux-gnu/debug --version "$version" --strace
+      - run: make test
+
+  wasm-query:
+    name: portable query and report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.21.1
+          cache: npm
+          cache-dependency-path: bins/kronika-web/ui/package-lock.json
+      - name: Install the pinned WebAssembly target
+        run: rustup target add wasm32-unknown-unknown --toolchain 1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - run: make ui-install
+      - name: Check the embedded query graph
+        env:
+          CC_wasm32_unknown_unknown: clang
+        run: |
+          cargo +1.96.0 test --locked -p kronika-store --lib --no-default-features
+          cargo +1.96.0 check --locked -p kronika-query --lib \
+            --target wasm32-unknown-unknown --no-default-features
+          if cargo +1.96.0 tree -p kronika-query \
+            --target wasm32-unknown-unknown --no-default-features \
+            --edges normal,build --prefix none | grep -E '^(rustix|errno) v'; then
+            echo "portable query graph contains a POSIX dependency" >&2
+            exit 1
+          fi
+      - name: Check the report WebAssembly and native byte parity
+        env:
+          CC_wasm32_unknown_unknown: clang
+        run: |
+          cargo +1.96.0 check --locked -p kronika-report-wasm --lib \
+            --target wasm32-unknown-unknown --no-default-features
+          cargo +1.96.0 clippy --locked -p kronika-report-wasm --lib \
+            --target wasm32-unknown-unknown --no-default-features -- -D warnings
+          RUST_TOOLCHAIN=1.96.0 scripts/report-assets.sh check --download-bindgen
+          cargo +1.96.0 build --locked -p kronika-report-wasm \
+            --example native-parity --target x86_64-unknown-linux-gnu
+          node crates/kronika-report-wasm/tests/node-parity.mjs \
+            bins/kronika-report/assets/kronika-report-wasm.js \
+            bins/kronika-report/assets/kronika-report-wasm.wasm.gz \
+            target/x86_64-unknown-linux-gnu/debug/examples/native-parity
+          cargo +1.96.0 build --locked -p kronika-report \
+            --target x86_64-unknown-linux-gnu
+          report_dir=$(mktemp -d)
+          trap 'rm -rf "$report_dir"' EXIT
+          install -m 0644 \
+            bins/kronika-report/tests/fixtures/standalone.zms \
+            "$report_dir/1709164800000000.zms"
+          target/x86_64-unknown-linux-gnu/debug/kronika-report \
+            "$report_dir/1709164800000000.zms" \
+            "$report_dir/report.html"
+          scripts/report-browser-smoke.sh "$report_dir/report.html"
+          git diff --exit-code -- \
+            bins/kronika-report/assets/kronika-report-wasm.js \
+            bins/kronika-report/assets/kronika-report-wasm.wasm.gz
+
+  bdd:
+    name: bdd
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Report the dependency-layer cache key
+        run: |
+          echo "BDD dependency key: $(./scripts/bdd-image.sh deps-key)"
+      - run: ./scripts/bdd-image.sh run
+
+  demo:
+    name: demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate the demo Compose model
+        run: docker compose --file compose.demo.yml config --quiet
+      - name: Build and start the documented demo
+        run: make demo-up
+      - name: Verify the live synthetic catalog
+        run: |
+          curl --compressed --fail --silent --show-error --user demo:forensics \
+            http://127.0.0.1:8080/api/catalog > demo-catalog.ndjson
+          grep -F '"demo":"synthetic"' demo-catalog.ndjson
+          grep -F '"logical_name":"os_process"' demo-catalog.ndjson
+          grep -F '"logical_name":"pg_stat_activity"' demo-catalog.ndjson
+          grep -F '"logical_name":"pg_store_plans"' demo-catalog.ndjson
+          grep -F '"logical_name":"pgbouncer_events"' demo-catalog.ndjson
+      - name: Show diagnostics after a failure
+        if: failure()
+        run: |
+          make demo-status
+          docker compose --file compose.demo.yml logs --no-color --tail=300
+      - name: Remove demo resources
+        if: always()
+        run: make demo-clean

@@ -1,0 +1,22 @@
+[package]
+name = "kronika-source-pg"
+description = "Collecting metrics from a PostgreSQL server"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1"
+futures-util = "0.3"
+kronika-registry = { path = "../kronika-registry" }
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+tokio-postgres = "0.7"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "sync", "test-util"] }
+
+[lints]
+workspace = true

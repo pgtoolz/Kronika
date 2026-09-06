@@ -1,0 +1,64 @@
+# syntax=docker/dockerfile:1.7
+
+# Two layers on purpose. The dependency layer is keyed on the manifests and the
+# lockfile alone, so a source-only change reuses it and CI does not rebuild the
+# crates.io graph on every run.
+ARG BDD_BASE=docker.io/library/rust:1.96.0-slim-bookworm
+
+FROM ${BDD_BASE} AS deps
+# The log scenarios run a real PostgreSQL and a real PgBouncer, so they are
+# installed here, in the layer keyed on the manifests, and not rebuilt on a
+# source change. The PostgreSQL package also creates the `postgres` user the
+# server tools require.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql pgbouncer \
+    && rm -rf /var/lib/apt/lists/*
+# .cargo/config.toml pins musl for release binaries; the image has no musl std,
+# so everything here builds for the host gnu target instead.
+ENV CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu
+WORKDIR /work
+COPY Cargo.toml Cargo.lock clippy.toml rustfmt.toml ./
+COPY crates/kronika-layout/Cargo.toml crates/kronika-layout/
+COPY crates/kronika-format/Cargo.toml crates/kronika-format/
+COPY crates/kronika-derive/Cargo.toml crates/kronika-derive/
+COPY crates/kronika-registry/Cargo.toml crates/kronika-registry/
+COPY crates/kronika-writer/Cargo.toml crates/kronika-writer/
+COPY crates/kronika-store/Cargo.toml crates/kronika-store/
+COPY crates/kronika-reader/Cargo.toml crates/kronika-reader/
+COPY crates/kronika-source-os/Cargo.toml crates/kronika-source-os/
+COPY crates/kronika-source-log/Cargo.toml crates/kronika-source-log/
+COPY crates/kronika-source-pg/Cargo.toml crates/kronika-source-pg/
+COPY crates/kronika-index/Cargo.toml crates/kronika-index/
+COPY crates/kronika-query/Cargo.toml crates/kronika-query/
+COPY crates/kronika-api/Cargo.toml crates/kronika-api/
+COPY crates/kronika-report-wasm/Cargo.toml crates/kronika-report-wasm/
+COPY crates/kronika-bdd/Cargo.toml crates/kronika-bdd/
+COPY bins/kronika-collector/Cargo.toml bins/kronika-collector/
+COPY bins/kronika-dump/Cargo.toml bins/kronika-dump/
+COPY bins/kronika-demo/Cargo.toml bins/kronika-demo/
+COPY bins/kronika-report/Cargo.toml bins/kronika-report/
+COPY bins/kronika-web/Cargo.toml bins/kronika-web/
+# Placeholder sources let cargo resolve and compile the dependency graph. A
+# proc-macro crate gets no bin target: cargo rejects one.
+RUN set -eu; \
+    for crate in crates/* bins/*; do \
+        mkdir -p "$crate/src"; \
+        : > "$crate/src/lib.rs"; \
+        grep -q 'proc-macro = true' "$crate/Cargo.toml" \
+            || echo 'fn main() {}' > "$crate/src/main.rs"; \
+    done; \
+    cargo build --workspace --locked --release; \
+    rm -rf crates/*/src bins/*/src; \
+    find target -name 'kronika*' -o -name 'libkronika*' | xargs -r rm -rf
+
+FROM deps AS bdd
+WORKDIR /work
+COPY . .
+# Release, because one scenario holds the collector to its peak-RSS limit and
+# a debug build carries megabytes the shipped binary does not.
+RUN cargo build --locked --release -p kronika-collector -p kronika-demo -p kronika-dump -p kronika-bdd
+ENV KRONIKA_COLLECTOR_BIN=/work/target/x86_64-unknown-linux-gnu/release/kronika-collector
+ENV KRONIKA_DEMO_BIN=/work/target/x86_64-unknown-linux-gnu/release/kronika-demo
+ENV KRONIKA_FEATURES=/work/crates/kronika-bdd/features
+ENV KRONIKA_FIXTURES=/work/crates/kronika-bdd/fixtures
+CMD ["/work/target/x86_64-unknown-linux-gnu/release/kronika-bdd"]

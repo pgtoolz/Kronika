@@ -1,0 +1,45 @@
+[package]
+name = "kronika-web"
+description = "Serves the recorded history over HTTP for the dashboard to read"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+flate2 = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+kronika-index = { path = "../../crates/kronika-index" }
+kronika-api = { path = "../../crates/kronika-api" }
+kronika-dump = { path = "../kronika-dump" }
+kronika-query = { path = "../../crates/kronika-query" }
+kronika-reader = { path = "../../crates/kronika-reader" }
+kronika-report = { path = "../kronika-report" }
+rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server"] }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
+
+[dev-dependencies]
+kronika-format = { path = "../../crates/kronika-format" }
+kronika-layout = { path = "../../crates/kronika-layout" }
+kronika-registry = { path = "../../crates/kronika-registry" }
+kronika-writer = { path = "../../crates/kronika-writer" }
+
+[build-dependencies]
+base64 = "0.22"
+flate2 = "1"
+sha2 = "0.10"
+
+[lints]
+workspace = true

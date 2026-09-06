@@ -1,0 +1,22 @@
+[package]
+name = "kronika-layout"
+description = "Typed, bounded, descriptor-relative access to the Kronika data directory"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["posix"]
+posix = ["dep:rustix"]
+
+[dependencies]
+rustix = { version = "1", features = ["fs"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

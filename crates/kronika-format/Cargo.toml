@@ -1,0 +1,21 @@
+[package]
+name = "kronika-format"
+description = "ZMS container primitives: end catalog, tail index, CRC32C, str_id, dictionaries"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+crc = "3"
+sha2 = "0.10"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+
+[lints]
+workspace = true

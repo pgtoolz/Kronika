@@ -1,0 +1,14 @@
+/target
+/lints/kronika_lints/target
+/lints/kronika_lints/fixtures/target
+__pycache__/
+.DS_Store
+*.drawio.bkp
+
+# Demo output
+/demo-data/
+/demo-data-*/
+/demo-image.tar
+
+# Prepared release archives
+/dist/

@@ -1,0 +1,46 @@
+name: kronika-demo
+
+services:
+  kronika:
+    image: ${DEMO_IMAGE:-kronika-demo:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+      args:
+        VCS_REF: ${DEMO_VCS_REF:-unknown}
+    environment:
+      KRONIKA_DEMO_SYSTEM_WORKLOAD_ENABLED: "${KRONIKA_DEMO_SYSTEM_WORKLOAD_ENABLED-true}"
+      KRONIKA_DEMO_SYSTEM_WORKLOAD_DIR: "${KRONIKA_DEMO_SYSTEM_WORKLOAD_DIR-/var/lib/kronika/data/system-activity}"
+      KRONIKA_DEMO_SYSTEM_CPU_PERCENT: "${KRONIKA_DEMO_SYSTEM_CPU_PERCENT-12}"
+      KRONIKA_DEMO_SYSTEM_MEMORY_MIB: "${KRONIKA_DEMO_SYSTEM_MEMORY_MIB-32}"
+      KRONIKA_DEMO_SYSTEM_FILE_MIB: "${KRONIKA_DEMO_SYSTEM_FILE_MIB-8}"
+      KRONIKA_DEMO_SYSTEM_DISK_KIB_PER_S: "${KRONIKA_DEMO_SYSTEM_DISK_KIB_PER_S-32}"
+      KRONIKA_DEMO_SYSTEM_NETWORK_KIB_PER_S: "${KRONIKA_DEMO_SYSTEM_NETWORK_KIB_PER_S-32}"
+      KRONIKA_DEMO_SYSTEM_FLUSH_INTERVAL_S: "${KRONIKA_DEMO_SYSTEM_FLUSH_INTERVAL_S-5}"
+      KRONIKA_DEMO_WORKLOAD_SESSIONS: "${KRONIKA_DEMO_WORKLOAD_SESSIONS:-4}"
+      KRONIKA_DEMO_WORKLOAD_TPS: "${KRONIKA_DEMO_WORKLOAD_TPS:-20}"
+      KRONIKA_DEMO_WORKLOAD_MAX_ORDERS: "${KRONIKA_DEMO_WORKLOAD_MAX_ORDERS:-10000}"
+    ports:
+      - "${DEMO_BIND_ADDRESS:-127.0.0.1}:${DEMO_PORT:-8080}:8080"
+    volumes:
+      - data:/var/lib/kronika/data
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m
+      - /var/lib/kronika/pgdata:rw,nosuid,nodev,noexec,size=512m
+      - /var/lib/kronika/pgbouncer:rw,nosuid,nodev,noexec,size=16m
+    read_only: true
+    shm_size: 128m
+    cpus: 2.0
+    mem_limit: 1g
+    pids_limit: 512
+    stop_grace_period: 50s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  data:

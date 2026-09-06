@@ -1,0 +1,20 @@
+[package]
+name = "kronika-source-log"
+description = "Bounded log tailing and the PostgreSQL and PgBouncer log parsers built on it"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+memchr = "2"
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

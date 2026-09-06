@@ -1,0 +1,24 @@
+[package]
+name = "kronika-store"
+description = "Read-only local ZMS directory and live-journal scanning"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["posix"]
+posix = ["kronika-layout/posix"]
+
+[dependencies]
+kronika-format = { path = "../kronika-format" }
+kronika-layout = { path = "../kronika-layout", default-features = false }
+sha2 = "0.10"
+
+[target.'cfg(unix)'.dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

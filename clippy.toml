@@ -1,0 +1,11 @@
+# Crates are internal (publish = false), so clippy may suggest
+# API-breaking changes freely.
+avoid-breaking-exported-api = false
+
+# Strict lints apply to production code; tests may unwrap/panic/dbg.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+allow-indexing-slicing-in-tests = true

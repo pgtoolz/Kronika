@@ -1,0 +1,26 @@
+[package]
+name = "kronika-index"
+description = "Health and the index files a dashboard reads instead of every segment"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["posix"]
+posix = ["kronika-layout/posix", "kronika-reader/posix"]
+
+[dependencies]
+kronika-format = { path = "../kronika-format" }
+kronika-layout = { path = "../kronika-layout", default-features = false, optional = true }
+kronika-reader = { path = "../kronika-reader", default-features = false }
+kronika-registry = { path = "../kronika-registry" }
+
+[dev-dependencies]
+kronika-writer = { path = "../kronika-writer" }
+tempfile = "3"
+
+[lints]
+workspace = true

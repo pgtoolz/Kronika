@@ -1,0 +1,26 @@
+[package]
+name = "kronika-registry"
+description = "Section type ids, schemas, contracts, and codecs"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kronika-derive = { path = "../kronika-derive" }
+kronika-format = { path = "../kronika-format" }
+arrow-array = "55"
+arrow-ord = "55"
+arrow-schema = "55"
+arrow-select = "55"
+bytes = "1"
+parquet = { version = "55", default-features = false, features = ["arrow", "zstd"] }
+thrift = { version = "0.17", default-features = false }
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true

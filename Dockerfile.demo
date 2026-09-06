@@ -1,0 +1,104 @@
+# syntax=docker/dockerfile:1.7
+
+ARG RUST_BASE=docker.io/library/rust:1.96.0-slim-bookworm@sha256:4732ca96fd086cb9be682050c3f0176288eebaac2b80aa2bcefccfaf198e1950
+ARG RUNTIME_BASE=docker.io/library/debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+
+FROM ${RUST_BASE} AS deps
+ARG TARGETARCH
+WORKDIR /work
+RUN case "$TARGETARCH" in \
+        amd64) target=x86_64-unknown-linux-gnu ;; \
+        arm64) target=aarch64-unknown-linux-gnu ;; \
+        *) echo "Dockerfile.demo: unsupported architecture $TARGETARCH (expected amd64 or arm64)" >&2; exit 1 ;; \
+    esac \
+    && printf '%s' "$target" >/demo-target
+COPY Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml ./
+COPY crates/kronika-layout/Cargo.toml crates/kronika-layout/
+COPY crates/kronika-format/Cargo.toml crates/kronika-format/
+COPY crates/kronika-derive/Cargo.toml crates/kronika-derive/
+COPY crates/kronika-registry/Cargo.toml crates/kronika-registry/
+COPY crates/kronika-writer/Cargo.toml crates/kronika-writer/
+COPY crates/kronika-store/Cargo.toml crates/kronika-store/
+COPY crates/kronika-reader/Cargo.toml crates/kronika-reader/
+COPY crates/kronika-source-os/Cargo.toml crates/kronika-source-os/
+COPY crates/kronika-source-log/Cargo.toml crates/kronika-source-log/
+COPY crates/kronika-source-pg/Cargo.toml crates/kronika-source-pg/
+COPY crates/kronika-index/Cargo.toml crates/kronika-index/
+COPY crates/kronika-query/Cargo.toml crates/kronika-query/
+COPY crates/kronika-api/Cargo.toml crates/kronika-api/
+COPY crates/kronika-report-wasm/Cargo.toml crates/kronika-report-wasm/
+COPY crates/kronika-bdd/Cargo.toml crates/kronika-bdd/
+COPY bins/kronika-collector/Cargo.toml bins/kronika-collector/
+COPY bins/kronika-dump/Cargo.toml bins/kronika-dump/
+COPY bins/kronika-demo/Cargo.toml bins/kronika-demo/
+COPY bins/kronika-report/Cargo.toml bins/kronika-report/
+COPY bins/kronika-web/Cargo.toml bins/kronika-web/
+RUN set -eu; \
+    for crate in crates/* bins/*; do \
+        mkdir -p "$crate/src"; \
+        : >"$crate/src/lib.rs"; \
+        grep -q 'proc-macro = true' "$crate/Cargo.toml" \
+            || echo 'fn main() {}' >"$crate/src/main.rs"; \
+    done; \
+    cargo build --workspace --locked --release --target "$(cat /demo-target)"; \
+    rm -rf crates/*/src bins/*/src; \
+    find target -name 'kronika*' -o -name 'libkronika*' | xargs -r rm -rf
+
+FROM deps AS build
+COPY crates/ crates/
+COPY bins/kronika-collector/src/ bins/kronika-collector/src/
+COPY bins/kronika-dump/src/ bins/kronika-dump/src/
+COPY bins/kronika-demo/src/ bins/kronika-demo/src/
+COPY bins/kronika-report/src/ bins/kronika-report/src/
+COPY bins/kronika-report/assets/ bins/kronika-report/assets/
+COPY bins/kronika-web/build.rs bins/kronika-web/build.rs
+COPY bins/kronika-web/src/ bins/kronika-web/src/
+COPY bins/kronika-web/ui/kronika-ui.html.gz bins/kronika-web/ui/kronika-ui.html.gz
+RUN target=$(cat /demo-target) \
+    && cargo build --locked --release --target "$target" \
+        -p kronika-collector -p kronika-web -p kronika-demo \
+    && install -d /opt/kronika/bin \
+    && install -m 0755 "target/$target/release/kronika-collector" /opt/kronika/bin/ \
+    && install -m 0755 "target/$target/release/kronika-web" /opt/kronika/bin/ \
+    && install -m 0755 "target/$target/release/kronika-demo" /opt/kronika/bin/
+
+FROM ${RUNTIME_BASE} AS pg-store-plans
+ARG PG_STORE_PLANS_COMMIT=e802804d4d2763ad3b32fc8fcf9f218c61cc475f
+ARG PG_STORE_PLANS_SHA256=1ac2e75f037b927fa4cdbaf0fd95937ba92059b50b332844d1d382fcdbf3dc98
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl gcc libc6-dev make postgresql-server-dev-15 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN curl --fail --location --retry 3 \
+        --output pg-store-plans.tar.gz \
+        "https://github.com/ossc-db/pg_store_plans/archive/${PG_STORE_PLANS_COMMIT}.tar.gz" \
+    && printf '%s  %s\n' "$PG_STORE_PLANS_SHA256" pg-store-plans.tar.gz | sha256sum --check --strict \
+    && mkdir source \
+    && tar --extract --gzip --file pg-store-plans.tar.gz --strip-components=1 --directory source \
+    && make --directory source --jobs="$(nproc)" USE_PGXS=1 \
+    && make --directory source install USE_PGXS=1 DESTDIR=/opt/pg-store-plans \
+    && install -D -m 0644 source/LICENSE /opt/pg-store-plans/usr/share/doc/pg-store-plans/LICENSE
+
+FROM ${RUNTIME_BASE} AS demo
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl pgbouncer postgresql-15 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 kronika \
+    && useradd --system --uid 10001 --gid kronika --groups postgres \
+        --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin kronika \
+    && install -d -o kronika -g kronika -m 0750 /var/lib/kronika/data
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="Kronika interactive demo" \
+      org.opencontainers.image.description="Local PostgreSQL, PgBouncer, Kronika collector, workload, and web UI" \
+      org.opencontainers.image.source="https://github.com/pgtoolz/Kronika" \
+      org.opencontainers.image.revision="$VCS_REF" \
+      org.opencontainers.image.licenses="MIT AND BSD-3-Clause"
+COPY --from=pg-store-plans /opt/pg-store-plans/ /
+COPY --from=build /opt/kronika/bin/ /usr/local/bin/
+COPY --chmod=0755 scripts/demo-entrypoint.sh scripts/demo-healthcheck.sh /usr/local/bin/
+EXPOSE 8080
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=5s --timeout=10s --start-period=10s --retries=36 \
+    CMD ["/usr/local/bin/demo-healthcheck.sh"]
+ENTRYPOINT ["/usr/local/bin/demo-entrypoint.sh"]
