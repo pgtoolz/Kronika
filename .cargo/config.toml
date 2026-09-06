@@ -1,0 +1,9 @@
+# Release builds target static x86-64 Linux binaries by default.
+[build]
+target = "x86_64-unknown-linux-musl"
+
+[target.x86_64-unknown-linux-musl]
+linker = "musl-gcc"
+
+[env]
+CC_x86_64_unknown_linux_musl = "musl-gcc"

@@ -1,0 +1,30 @@
+[package]
+name = "kronika-reader"
+description = "Reading a Kronika data directory back into rows"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["posix"]
+posix = ["kronika-store/posix"]
+
+[dependencies]
+kronika-format = { path = "../kronika-format" }
+kronika-registry = { path = "../kronika-registry" }
+kronika-store = { path = "../kronika-store", default-features = false }
+arrow-array = "55"
+arrow-schema = "55"
+parquet = { version = "55", default-features = false, features = ["arrow", "zstd"] }
+
+[dev-dependencies]
+kronika-layout = { path = "../kronika-layout" }
+kronika-writer = { path = "../kronika-writer" }
+sha2 = "0.10"
+tempfile = "3"
+
+[lints]
+workspace = true

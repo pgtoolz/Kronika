@@ -1,0 +1,18 @@
+[mordant]
+# Keep only the four high-signal rules accepted for the blocking gate.
+disabled = [
+    "group:state",
+    "group:checks",
+    "group:enums",
+    "group:keys_locks",
+    "group:comments",
+    "group:custom",
+    "stringly_error",
+    "stringified_error",
+    "unread_error_variant",
+    "arg_named_like_other_param",
+    "interchangeable_aliases",
+    "index_of_other_kind",
+    "unit_mismatch",
+    "generic_body_not_generic",
+]

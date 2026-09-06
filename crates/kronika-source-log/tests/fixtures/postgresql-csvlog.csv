@@ -1,0 +1,7 @@
+2026-08-07 12:34:56.789 MSK,"alice","shop",12345,"10.0.0.1:53124",6893a1b2.3039,1,"SELECT",2026-08-07 12:34:00.000 MSK,3/15,0,ERROR,42P01,"relation ""orders"" does not exist at character 15","","","",,,"select * from orders",15,,"psql"
+2026-08-07 12:34:57.100 MSK,"bob","shop",12345,"10.0.0.1:53125",6893a1b2.3039,2,"SELECT",2026-08-07 12:34:00.000 MSK,3/16,0,ERROR,42P01,"relation ""clients"" does not exist at character 15","","","",,,"select id
+from clients
+where id = 1",15,,"psql"
+2026-08-07 12:35:11.500 MSK,,,12346,,6893a1b3.303a,1,,2026-08-07 12:30:00.000 MSK,,0,LOG,00000,"checkpoint complete: wrote 3 buffers (0.0%); 1 WAL file(s) added, 2 removed, 3 recycled; write=0.201 s, sync=0.011 s, total=0.230 s; sync files=4, longest=0.008 s, average=0.006 s; distance=512 kB, estimate=1024 kB","","","",,,"",,,""
+2026-08-07 12:35:20.000 MSK,"alice","shop",12347,"10.0.0.1:53126",6893a1b4.303b,3,"SELECT",2026-08-07 12:34:00.000 MSK,3/17,0,LOG,00000,"duration: 1234.567 ms  statement: select pg_sleep(1)","","","",,,"",,,"psql"
+2026-08-07 12:36:00.000 MSK,"alice","shop",12350,"10.0.0.1:53127",6893a1b5.303c,1,"authentication",2026-08-07 12:36:00.000 MSK,4/1,0,LOG,00000,"connection authorized: user=alice database=shop","","","",,,"",,,"psql"

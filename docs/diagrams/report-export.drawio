@@ -1,0 +1,282 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="Electron" version="31.4.2">
+  <diagram id="report-export" name="report-export">
+    <mxGraphModel grid="1" gridSize="8" page="1" pageScale="1" pageWidth="700" pageHeight="1050" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="canvas" parent="1" vertex="1" value="" style="rounded=0;arcSize=0;fillColor=#ffffff;strokeColor=none;strokeWidth=0;html=0;">
+          <mxGeometry as="geometry" x="0" y="0" width="700" height="1050" />
+        </mxCell>
+        <mxCell id="title" parent="1" vertex="1" value="One recording → portable HTML" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=30;fontStyle=1;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="36" y="28" width="640" height="44" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" vertex="1" value="Two ways to take a time range with you." style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=22;fontStyle=0;fontColor=#506477;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="36" y="77" width="640" height="32" />
+        </mxCell>
+        <mxCell id="recording" parent="1" vertex="1" value="" style="rounded=1;arcSize=5;fillColor=#eff4f8;strokeColor=#cdd7df;strokeWidth=1.5;html=0;">
+          <mxGeometry as="geometry" x="68" y="139" width="564" height="94" />
+        </mxCell>
+        <mxCell id="file-4-outline" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="92" y="201" />
+            <mxPoint as="targetPoint" x="92" y="201" />
+            <Array as="points">
+              <mxPoint x="92" y="169" />
+              <mxPoint x="112.48" y="169" />
+              <mxPoint x="124" y="179.88" />
+              <mxPoint x="124" y="201" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="file-4-fold" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="112.48" y="169" />
+            <mxPoint as="targetPoint" x="124" y="179.88" />
+            <Array as="points">
+              <mxPoint x="112.48" y="179.88" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="file-40.57" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="99.36" y="187.24" />
+            <mxPoint as="targetPoint" x="116.0" y="187.24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="file-40.76" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="99.36" y="193.32" />
+            <mxPoint as="targetPoint" x="116.0" y="193.32" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="recording-title" parent="1" vertex="1" value="Local recording" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=28;fontStyle=1;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="150" y="147" width="452" height="37" />
+        </mxCell>
+        <mxCell id="recording-detail" parent="1" vertex="1" value="Active WAL + finished ZMS" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=22;fontStyle=0;fontColor=#506477;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="150" y="193" width="452" height="27" />
+        </mxCell>
+        <mxCell id="recording-split" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#728a9f;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="350" y="233" />
+            <mxPoint as="targetPoint" x="350" y="266" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="recording-web" parent="1" edge="1" style="html=0;rounded=0;endArrow=block;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#728a9f;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="350" y="266" />
+            <mxPoint as="targetPoint" x="182" y="326" />
+            <Array as="points">
+              <mxPoint x="182" y="266" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="recording-cli" parent="1" edge="1" style="html=0;rounded=0;endArrow=block;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#728a9f;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="350" y="266" />
+            <mxPoint as="targetPoint" x="518" y="326" />
+            <Array as="points">
+              <mxPoint x="518" y="266" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="web-label" parent="1" vertex="1" value="LIVE WEB" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=20;fontStyle=1;fontColor=#385f80;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="38" y="281" width="136" height="28" />
+        </mxCell>
+        <mxCell id="cli-label" parent="1" vertex="1" value="CLI" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=20;fontStyle=1;fontColor=#385f80;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="374" y="281" width="125" height="28" />
+        </mxCell>
+        <mxCell id="web-runtime" parent="1" vertex="1" value="" style="rounded=1;arcSize=5;fillColor=none;strokeColor=#cdd7df;strokeWidth=1.5;html=0;">
+          <mxGeometry as="geometry" x="40" y="326" width="284" height="300" />
+        </mxCell>
+        <mxCell id="web-export" parent="1" vertex="1" value="Export" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=center;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=28;fontStyle=1;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="58" y="339" width="248" height="39" />
+        </mxCell>
+        <mxCell id="web-name" parent="1" vertex="1" value="kronika-web" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=center;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=22;fontStyle=0;fontColor=#506477;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="58" y="380" width="248" height="30" />
+        </mxCell>
+        <mxCell id="export-slice" parent="1" edge="1" style="html=0;rounded=0;endArrow=block;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#728a9f;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="182" y="420" />
+            <mxPoint as="targetPoint" x="182" y="454" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="shared-slicer" parent="1" vertex="1" value="Shared slicer" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=center;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=24;fontStyle=1;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="60" y="466" width="244" height="33" />
+        </mxCell>
+        <mxCell id="shared-writer" parent="1" vertex="1" value="+ report writer" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=center;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=24;fontStyle=1;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="60" y="503" width="244" height="33" />
+        </mxCell>
+        <mxCell id="in-process" parent="1" vertex="1" value="In-process library calls" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=center;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=22;fontStyle=0;fontColor=#506477;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="54" y="572" width="256" height="29" />
+        </mxCell>
+        <mxCell id="dump-command" parent="1" vertex="1" value="kronika-dump" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=center;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=26;fontStyle=1;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="374" y="334" width="288" height="36" />
+        </mxCell>
+        <mxCell id="slice-command" parent="1" vertex="1" value="slice" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=center;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=24;fontStyle=0;fontColor=#506477;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="374" y="374" width="288" height="30" />
+        </mxCell>
+        <mxCell id="dump-zms" parent="1" edge="1" style="html=0;rounded=0;endArrow=block;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#728a9f;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="518" y="415" />
+            <mxPoint as="targetPoint" x="518" y="454" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="file-16-outline" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="405" y="494" />
+            <mxPoint as="targetPoint" x="405" y="494" />
+            <Array as="points">
+              <mxPoint x="405" y="466" />
+              <mxPoint x="422.92" y="466" />
+              <mxPoint x="433" y="475.52" />
+              <mxPoint x="433" y="494" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="file-16-fold" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="422.92" y="466" />
+            <mxPoint as="targetPoint" x="433" y="475.52" />
+            <Array as="points">
+              <mxPoint x="422.92" y="475.52" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="file-160.57" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="411.44" y="481.96" />
+            <mxPoint as="targetPoint" x="426.0" y="481.96" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="file-160.76" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="411.44" y="487.28" />
+            <mxPoint as="targetPoint" x="426.0" y="487.28" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="zms-file" parent="1" vertex="1" value="incident.zms" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=25;fontStyle=1;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="448" y="462" width="216" height="37" />
+        </mxCell>
+        <mxCell id="zms-report" parent="1" edge="1" style="html=0;rounded=0;endArrow=block;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#728a9f;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="518" y="509" />
+            <mxPoint as="targetPoint" x="518" y="548" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="report-command" parent="1" vertex="1" value="kronika-report" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=center;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=26;fontStyle=1;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="376" y="568" width="286" height="37" />
+        </mxCell>
+        <mxCell id="web-html" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#728a9f;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="182" y="626" />
+            <mxPoint as="targetPoint" x="350" y="687" />
+            <Array as="points">
+              <mxPoint x="182" y="687" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cli-html" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#728a9f;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="518" y="626" />
+            <mxPoint as="targetPoint" x="350" y="687" />
+            <Array as="points">
+              <mxPoint x="518" y="687" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="html-input" parent="1" edge="1" style="html=0;rounded=0;endArrow=block;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#728a9f;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="350" y="687" />
+            <mxPoint as="targetPoint" x="350" y="734" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="html-artifact" parent="1" vertex="1" value="" style="rounded=1;arcSize=5;fillColor=#eff4f8;strokeColor=#728a9f;strokeWidth=1.5;html=0;">
+          <mxGeometry as="geometry" x="68" y="734" width="564" height="189" />
+        </mxCell>
+        <mxCell id="file-19-outline" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="92" y="795" />
+            <mxPoint as="targetPoint" x="92" y="795" />
+            <Array as="points">
+              <mxPoint x="92" y="760" />
+              <mxPoint x="114.4" y="760" />
+              <mxPoint x="127" y="771.9" />
+              <mxPoint x="127" y="795" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="file-19-fold" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="114.4" y="760" />
+            <mxPoint as="targetPoint" x="127" y="771.9" />
+            <Array as="points">
+              <mxPoint x="114.4" y="771.9" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="file-190.57" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="100.05" y="779.95" />
+            <mxPoint as="targetPoint" x="118.25" y="779.95" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="file-190.76" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="100.05" y="786.6" />
+            <mxPoint as="targetPoint" x="118.25" y="786.6" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="html-name" parent="1" vertex="1" value="incident.html" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=30;fontStyle=1;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="150" y="747" width="440" height="42" />
+        </mxCell>
+        <mxCell id="html-single-file" parent="1" vertex="1" value="One self-contained file" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=22;fontStyle=0;fontColor=#506477;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="150" y="791" width="450" height="29" />
+        </mxCell>
+        <mxCell id="html-rule" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1;strokeColor=#cdd7df;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="92" y="835" />
+            <mxPoint as="targetPoint" x="608" y="835" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="html-contents" parent="1" vertex="1" value="React UI + recorded data" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=22;fontStyle=0;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="92" y="848" width="516" height="29" />
+        </mxCell>
+        <mxCell id="html-engine" parent="1" vertex="1" value="Rust queries · WebAssembly" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=22;fontStyle=0;fontColor=#506477;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="92" y="886" width="516" height="28" />
+        </mxCell>
+        <mxCell id="open-file" parent="1" edge="1" style="html=0;rounded=0;endArrow=block;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#728a9f;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="350" y="923" />
+            <mxPoint as="targetPoint" x="350" y="958" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="browser-23" parent="1" vertex="1" value="" style="rounded=0;arcSize=0;fillColor=none;strokeColor=#385f80;strokeWidth=1.5;html=0;">
+          <mxGeometry as="geometry" x="68" y="973" width="44.2" height="34" />
+        </mxCell>
+        <mxCell id="browser-23-bar" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="68" y="981" />
+            <mxPoint as="targetPoint" x="112.2" y="981" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="browser-23-chart" parent="1" edge="1" style="html=0;rounded=0;endArrow=none;endFill=1;endSize=8;strokeWidth=1.8;strokeColor=#385f80;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="74" y="1000" />
+            <mxPoint as="targetPoint" x="99" y="988" />
+            <Array as="points">
+              <mxPoint x="81" y="994" />
+              <mxPoint x="89" y="997" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="offline-browser" parent="1" vertex="1" value="Open in a browser, offline" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=26;fontStyle=1;fontColor=#202d3a;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="130" y="968" width="538" height="39" />
+        </mxCell>
+        <mxCell id="offline-tools" parent="1" vertex="1" value="Tables · heatmap · search · graphs" style="text;html=0;whiteSpace=nowrap;overflow=visible;align=left;verticalAlign=middle;spacing=0;fontFamily=Arial;fontSize=22;fontStyle=0;fontColor=#506477;strokeColor=none;fillColor=none;">
+          <mxGeometry as="geometry" x="130" y="1009" width="538" height="30" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

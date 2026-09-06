@@ -1,0 +1,9 @@
+2026-08-07 12:34:56.789 MSK [12345] LOG C-0x55f1a2b3c4d5: shop/alice@10.0.0.1:41537 closing because: query_wait_timeout (age=42s)
+2026-08-07 12:34:56.790 MSK [12345] WARNING C-0x55f1a2b3c4d5: shop/alice@10.0.0.1:41537 pooler error: query_wait_timeout
+2026-08-07 12:34:57.000 MSK [12345] LOG S-0x55f1a2b3c777: shop/alice@10.0.0.2:5432 closing because: server conn crashed? (age=10s)
+2026-08-07 12:34:58.000 MSK [12345] LOG stats: 1 xacts/s, 2 queries/s, 0 client parses/s, 0 server parses/s, 0 binds/s, 1 client logins/s, 128 in B/s, 256 out B/s, 900 xact us, 800 query us, 700 wait us
+2026-08-07 12:35:00.000 MSK [12345] LOG C-0x55f1a2b3c4d6: (nodb)/(nouser)@unix(9990):0 closing because: no such database: nope (age=0s)
+2026-08-07 12:35:01.000 MSK [12345] WARNING S-0x55f1a2b3c778: shop/alice@10.0.0.2:5432 server login failed: FATAL password authentication failed for user "alice"
+2026-08-07 12:35:02.000 MSK [12345] LOG kernel file descriptor limit: 1024 (hard: 4096); max_client_conn: 100, max expected fd use: 172
+2026-08-07 12:35:03.000 MSK [12345] ERROR C-0x55f1a2b3c4d7: shop/alice@[2001:db8::1]:41539 closing because: bad packet (age=1s)
+2026-08-07 12:35:04.000 MSK [12345] LOG C-0x55f1a2b3c4d8: shop/alice@10.0.0.1:41540 login attempt: db=shop user=alice tls=no

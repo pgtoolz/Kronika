@@ -1,0 +1,33 @@
+[package]
+name = "kronika-collector"
+description = "Kronika collector daemon: snapshot Linux system metrics into finished segments"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kronika-format = { path = "../../crates/kronika-format" }
+kronika-layout = { path = "../../crates/kronika-layout" }
+kronika-registry = { path = "../../crates/kronika-registry" }
+kronika-source-os = { path = "../../crates/kronika-source-os" }
+kronika-source-pg = { path = "../../crates/kronika-source-pg" }
+kronika-writer = { path = "../../crates/kronika-writer" }
+rustix = { version = "1", features = ["fs"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+anyhow = "1"
+futures-util = "0.3"
+kronika-source-log = { version = "1.0.0", path = "../../crates/kronika-source-log" }
+tokio-postgres = "0.7.18"
+
+[target.'cfg(target_env = "musl")'.dependencies]
+tikv-jemallocator = { version = "0.6.1", default-features = false, features = ["override_allocator_on_supported_platforms"] }
+
+[dev-dependencies]
+kronika-reader = { path = "../../crates/kronika-reader" }
+tempfile = "3"
+
+[lints]
+workspace = true

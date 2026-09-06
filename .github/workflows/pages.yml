@@ -1,0 +1,92 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_BUILD_TARGET: x86_64-unknown-linux-gnu
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    name: Build report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.21.1
+
+      - name: Verify pinned Rust toolchain
+        run: rustc --version | grep -F "rustc 1.96.0 "
+
+      - name: Build production report generator
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+          TMPDIR: ${{ runner.temp }}/kronika-tmp
+        run: |
+          install -d "$CARGO_TARGET_DIR" "$TMPDIR"
+          cargo +1.96.0 build --locked --release \
+            --target "$CARGO_BUILD_TARGET" \
+            -p kronika-report
+
+      - name: Build and exercise Pages report
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+          KRONIKA_REPORT_BIN: ${{ runner.temp }}/cargo-target/x86_64-unknown-linux-gnu/release/kronika-report
+          TMPDIR: ${{ runner.temp }}/kronika-tmp
+        run: |
+          install -d "$RUNNER_TEMP/site"
+          scripts/build-pages-report.sh "$RUNNER_TEMP/site/index.html"
+          chmod 0644 "$RUNNER_TEMP/site/index.html"
+          test "$(find "$RUNNER_TEMP/site" -mindepth 1 | wc -l)" -eq 1
+
+      - name: Keep the published example available
+        shell: bash
+        run: |
+          install -d "$RUNNER_TEMP/site/reports"
+          curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/pgtoolz/Kronika/52f995b4ea8fea241c4bdd8ad832f3635a23c25e/reports/kronika-demo-hour-5bbe2dd.html \
+            --output "$RUNNER_TEMP/site/reports/kronika-demo-hour-5bbe2dd.html"
+          echo "f59600034d3b72763a52bcfa785248d952a49584970ebeaaaee4498af104d834  $RUNNER_TEMP/site/reports/kronika-demo-hour-5bbe2dd.html" | sha256sum --check
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+          retention-days: 1
+
+  deploy:
+    name: Deploy
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

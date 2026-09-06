@@ -1,0 +1,29 @@
+[package]
+name = "kronika-dump"
+description = "Read a data directory back and print what is in it"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+arrow-array = "55"
+arrow-select = "55"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+kronika-format = { path = "../../crates/kronika-format" }
+kronika-index = { path = "../../crates/kronika-index" }
+kronika-layout = { path = "../../crates/kronika-layout" }
+kronika-reader = { path = "../../crates/kronika-reader" }
+kronika-registry = { path = "../../crates/kronika-registry" }
+kronika-store = { path = "../../crates/kronika-store" }
+kronika-writer = { path = "../../crates/kronika-writer" }
+serde_json = "1"
+tempfile = "3"
+
+[dev-dependencies]
+kronika-report = { path = "../kronika-report" }
+
+[lints]
+workspace = true

@@ -1,0 +1,38 @@
+{
+  "name": "kronika-forensic-ui",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs && node scripts/build.mjs --report",
+    "check": "node scripts/build.mjs --check && node scripts/build.mjs --report --check",
+    "fixture:check": "node scripts/real-fixture.mjs --check",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs tests/*.test.ts",
+    "test:browser:artifact": "node --experimental-strip-types --test tests/production-artifact.browser.mjs",
+    "test:browser:pg-detail-viewport": "node --experimental-strip-types --test --test-name-pattern='PostgreSQL detail dock stays inside the viewport' tests/production-artifact.browser.mjs",
+    "test:browser:corrections": "node tests/browser-corrections.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.7.0",
+    "@tanstack/react-table": "8.21.3",
+    "@tanstack/react-virtual": "3.14.9",
+    "lucide-react": "1.31.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "uplot": "1.6.32"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.3.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "esbuild": "0.28.2",
+    "fflate": "0.8.2",
+    "pako": "2.1.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2"
+  }
+}

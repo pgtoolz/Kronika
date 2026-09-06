@@ -1,0 +1,22 @@
+2026-08-07 12:34:56.789 MSK [12345] alice@shop ERROR:  relation "orders" does not exist at character 15
+2026-08-07 12:34:56.789 MSK [12345] alice@shop STATEMENT:  select * from orders
+2026-08-07 12:34:57.100 MSK [12345] bob@shop ERROR:  relation "clients" does not exist at character 15
+2026-08-07 12:35:01.000 MSK [12346] LOG:  checkpoint starting: wal
+2026-08-07 12:35:11.500 MSK [12346] LOG:  checkpoint complete: wrote 3 buffers (0.0%); 1 WAL file(s) added, 2 removed, 3 recycled; write=0.201 s, sync=0.011 s, total=0.230 s; sync files=4, longest=0.008 s, average=0.006 s; distance=512 kB, estimate=1024 kB
+2026-08-07 12:35:20.000 MSK [12347] alice@shop LOG:  duration: 1234.567 ms  statement: select pg_sleep(1)
+2026-08-07 12:35:25.000 MSK [12348] alice@shop LOG:  process 12348 still waiting for ShareLock on transaction 987 after 1000.123 ms
+2026-08-07 12:35:25.000 MSK [12348] alice@shop DETAIL:  Process holding the lock: 12347. Wait queue: 12348.
+2026-08-07 12:35:25.000 MSK [12348] alice@shop STATEMENT:  update orders set total = 1 where id = 1
+2026-08-07 12:35:30.000 MSK [12349] alice@shop LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp12349.0", size 1048576
+2026-08-07 12:35:30.000 MSK [12349] alice@shop STATEMENT:  select * from big order by 1
+2026-08-07 12:35:40.000 MSK [12300] LOG:  server process (PID 4242) was terminated by signal 9: Killed
+2026-08-07 12:35:40.000 MSK [12300] DETAIL:  Failed process was running: select count(*) from huge
+2026-08-07 12:35:41.000 MSK [12301] LOG:  automatic vacuum of table "shop.public.orders": index scans: 1
+	pages: 0 removed, 45 remain, 0 skipped due to pins, 0 skipped frozen
+	tuples: 100 removed, 200 remain, 7 are dead but not yet removable, oldest xmin: 800
+	buffer usage: 90 hits, 3 misses, 5 dirtied
+	avg read rate: 1.250 MB/s, avg write rate: 2.500 MB/s
+	system usage: CPU: user: 0.010 s, system: 0.020 s, elapsed: 0.050 s
+	WAL usage: 12 records, 3 full page images, 4567 bytes
+2026-08-07 12:35:50.000 MSK [12300] LOG:  database system is ready to accept connections
+2026-08-07 12:36:00.000 MSK [12350] alice@shop LOG:  connection authorized: user=alice database=shop

@@ -1,0 +1,6 @@
+.git
+target
+bins/kronika-web/ui/node_modules
+demo-data
+*.tar
+.DS_Store

@@ -1,0 +1,130 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/kronika-layout",
+    "crates/kronika-format",
+    "crates/kronika-derive",
+    "crates/kronika-registry",
+    "crates/kronika-writer",
+    "crates/kronika-store",
+    "crates/kronika-reader",
+    "crates/kronika-index",
+    "crates/kronika-query",
+    "crates/kronika-api",
+    "crates/kronika-report-wasm",
+    "crates/kronika-source-os",
+    "crates/kronika-source-log",
+    "crates/kronika-source-pg",
+    "crates/kronika-bdd",
+    "bins/kronika-collector",
+    "bins/kronika-dump",
+    "bins/kronika-demo",
+    "bins/kronika-report",
+    "bins/kronika-web",
+]
+
+[workspace.metadata.dylint]
+libraries = [
+    { git = "https://github.com/scarletindustries/mordant", rev = "8f0803f66dee128cca7cc0e950d8ec051cdd537a" },
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+repository = "https://github.com/pgtoolz/Kronika"
+
+# Crates are internal: the release is a single archive of binaries and
+# nothing is published to crates.io.
+#
+# Everything is "warn" locally; CI promotes warnings to errors via
+# `RUSTFLAGS: -D warnings`, so the build stays usable mid-edit but
+# nothing lands on main with a warning.
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+ambiguous_negative_literals = "warn"
+elided_lifetimes_in_paths = "warn"
+explicit_outlives_requirements = "warn"
+let_underscore_drop = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+missing_copy_implementations = "warn"
+missing_debug_implementations = "warn"
+non_ascii_idents = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unnameable_types = "warn"
+unreachable_pub = "warn"
+unstable_features = "deny"
+unused_crate_dependencies = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+unused_qualifications = "warn"
+variant_size_differences = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# Conflicts with rustc's `unreachable_pub` (enabled above): for a
+# crate-internal item in a private module, one lint demands `pub(crate)`
+# and the other calls it redundant. `unreachable_pub` wins.
+redundant_pub_crate = "allow"
+# `rmcp`/Schemars use `syn` 3 while other workspace proc macros use `syn` 2;
+# the shared lockfile intentionally contains both.
+multiple_crate_versions = "allow"
+# Hand-picked from `restriction` (the whole group is intentionally not enabled:
+# it contains mutually exclusive lints).
+allow_attributes_without_reason = "warn"
+clone_on_ref_ptr = "warn"
+dbg_macro = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+exit = "warn"
+float_cmp_const = "warn"
+fn_to_numeric_cast_any = "warn"
+format_push_string = "warn"
+get_unwrap = "warn"
+if_then_some_else_none = "warn"
+infinite_loop = "warn"
+large_include_file = "warn"
+lossy_float_literal = "warn"
+map_err_ignore = "warn"
+mem_forget = "warn"
+missing_assert_message = "warn"
+mixed_read_write_in_expression = "warn"
+mutex_atomic = "warn"
+needless_raw_strings = "warn"
+panic = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_name_method = "warn"
+str_to_string = "warn"
+string_add = "warn"
+string_slice = "warn"
+suspicious_xor_used_as_pow = "warn"
+# tests_outside_test_module is not enabled: it fires on integration tests
+# under tests/, where a #[cfg(test)] wrapper is pure ceremony.
+todo = "warn"
+try_err = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unneeded_field_pattern = "warn"
+unseparated_literal_suffix = "warn"
+unwrap_in_result = "warn"
+unwrap_used = "warn"
+verbose_file_reads = "warn"

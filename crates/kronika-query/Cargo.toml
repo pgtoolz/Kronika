@@ -1,0 +1,38 @@
+[package]
+name = "kronika-query"
+description = "Storage-neutral execution of recorded-data queries"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["posix"]
+posix = [
+    "kronika-index/posix",
+    "kronika-layout/posix",
+    "kronika-reader/posix",
+    "kronika-store/posix",
+]
+
+[dependencies]
+base64 = "0.22"
+icu_collator = "2.3.1"
+icu_locale_core = "2.3.0"
+kronika-format = { path = "../kronika-format" }
+kronika-index = { path = "../kronika-index", default-features = false }
+kronika-layout = { path = "../kronika-layout", default-features = false }
+kronika-reader = { path = "../kronika-reader", default-features = false }
+kronika-registry = { path = "../kronika-registry" }
+kronika-store = { path = "../kronika-store", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+kronika-writer = { path = "../kronika-writer" }
+tempfile = "3"
+
+[lints]
+workspace = true

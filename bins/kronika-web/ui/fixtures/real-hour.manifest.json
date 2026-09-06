@@ -1,0 +1,17 @@
+{
+  "format": "kronika-ui-real-hour-v1",
+  "source": "index.html",
+  "source_html_sha256": "064925389fca0e3edda0b73e88e6be158b0e4707f51b9b0935da6a0c72b9ec60",
+  "fixture_json_sha256": "d7c7fbca2557105b073a2fc0b7d353a51231312bbe9619fa816fde6218103c3e",
+  "fixture_gzip_sha256": "16296cff0a72de0f474911aaad407330575f88cee3ab7bc99c310907ca692381",
+  "fixture_json_bytes": 28765349,
+  "fixture_gzip_bytes": 6759784,
+  "capture_from_us": "1786376240000000",
+  "capture_to_us": "1786378339159618",
+  "os_snapshots": 420,
+  "os_rows": 111673,
+  "postgresql_activity_snapshots": 70,
+  "postgresql_activity_rows": 2888,
+  "findings": 2884,
+  "exact_pid_joins": 2755
+}

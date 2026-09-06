@@ -1,0 +1,178 @@
+name: Release package
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.21.1
+      - name: Install native packaging tools
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools shellcheck strace
+          rustup target add "$TARGET"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Check packaging scripts
+        run: |
+          bash -n scripts/package-release.sh scripts/check-release.sh
+          shellcheck scripts/package-release.sh scripts/check-release.sh
+      - name: Build all four binaries once and package
+        env:
+          TARGET: ${{ matrix.target }}
+        run: scripts/package-release.sh --target "$TARGET"
+      - name: Verify extracted programs and real OS collection
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          if [[ "$TARGET" == aarch64-unknown-linux-musl ]]; then
+            scripts/check-release.sh --no-browser dist/*.tar.gz
+          else
+            scripts/check-release.sh dist/*.tar.gz
+          fi
+      - name: Verify deterministic packaging
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          scripts/package-release.sh --target "$TARGET" \
+            --bin-dir "target/$TARGET/release" --output-dir "$RUNNER_TEMP/package-one"
+          scripts/package-release.sh --target "$TARGET" \
+            --bin-dir "target/$TARGET/release" --output-dir "$RUNNER_TEMP/package-two"
+          cmp "$RUNNER_TEMP"/package-one/*.tar.gz "$RUNNER_TEMP"/package-two/*.tar.gz
+      - name: Upload immutable review archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: kronika-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  portability:
+    name: ${{ matrix.distro.name }} / ${{ matrix.arch.target }}
+    needs: package
+    runs-on: ${{ matrix.arch.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+        distro:
+          - name: Ubuntu 22.04
+            image: ubuntu:22.04
+            packages: apt
+          - name: Ubuntu 24.04
+            image: ubuntu:24.04
+            packages: apt
+          - name: Ubuntu 26.04
+            image: ubuntu:26.04
+            packages: apt
+          - name: Debian 12 oldstable
+            image: debian:bookworm-slim
+            packages: apt
+          - name: Debian 13 stable
+            image: debian:trixie-slim
+            packages: apt
+          - name: CentOS Stream 9
+            image: quay.io/centos/centos:stream9
+            packages: dnf
+          - name: CentOS Stream 10
+            image: quay.io/centos/centos:stream10
+            packages: dnf
+          - name: Fedora 44
+            image: fedora:44
+            packages: dnf
+          - name: Alpine 3.24
+            image: alpine:3.24
+            packages: apk
+          - name: Rocky Linux 9
+            image: rockylinux/rockylinux:9
+            packages: dnf
+          - name: openSUSE Leap 16.0
+            image: registry.opensuse.org/opensuse/leap:16.0
+            packages: zypper
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: kronika-${{ github.event.pull_request.head.sha || github.sha }}-${{ matrix.arch.target }}
+          path: archive
+      - name: Verify help and version from the same archive in this userspace
+        env:
+          IMAGE: ${{ matrix.distro.image }}
+          PACKAGES: ${{ matrix.distro.packages }}
+        run: |
+          docker pull "$IMAGE"
+          docker image inspect --format '{{json .RepoDigests}}' "$IMAGE" | tee portability.log
+          timeout --signal=TERM --kill-after=10s 600 \
+            docker run --rm --init -e PACKAGES \
+            --volume "$PWD:/check:ro" --workdir /check "$IMAGE" sh -euxc '
+              case "$PACKAGES" in
+                apt)
+                  apt-get update
+                  apt-get install -y --no-install-recommends bash binutils python3 coreutils findutils tar gzip ;;
+                dnf)
+                  dnf install -y --allowerasing --setopt=install_weak_deps=False bash binutils python3 coreutils findutils tar gzip ;;
+                apk)
+                  apk add --no-cache bash binutils python3 coreutils findutils tar gzip ;;
+                zypper)
+                  zypper --non-interactive install --no-recommends bash binutils python3 coreutils findutils tar gzip ;;
+                *) exit 2 ;;
+              esac
+              cat /etc/os-release
+              uname -srm
+              exec bash scripts/check-release.sh --cli-only archive/*.tar.gz
+            ' 2>&1 | tee -a portability.log
+      - name: Save image identity and execution results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portability-${{ matrix.arch.target }}-${{ strategy.job-index }}
+          path: portability.log
+          if-no-files-found: error
+          retention-days: 14
