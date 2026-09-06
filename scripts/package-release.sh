@@ -52,7 +52,7 @@ with open(sys.argv[1], 'rb') as source:
 PY
 )
 [[ "$version" =~ ^[0-9A-Za-z.+-]+$ ]] || { echo 'Invalid package version' >&2; exit 1; }
-name="kronika-$version-${revision:0:12}-$target"
+name="kronika-$version-$target"
 build_mode=prebuilt
 if [[ -z "$bin_dir" ]]; then
   build_mode=source

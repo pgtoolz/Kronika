@@ -12,31 +12,33 @@ connection with monitoring permissions.
 
 ## 1. Download and extract
 
-[Download a candidate archive](docs/releases.md#download) and its
-`.tar.gz.sha256`. Architecture mapping:
+[Kronika v1.0.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.0)
+provides archives and `.tar.gz.sha256` checksum files. Check your machine's
+architecture with `uname -m`:
 
 | `uname -m` | Archive target |
 | --- | --- |
 | `x86_64` | `x86_64-unknown-linux-musl` |
 | `aarch64` | `aarch64-unknown-linux-musl` |
 
-Run in the download directory, substituting the downloaded filename:
+Download, verify and extract the archive. For ARM64, change the first line to
+`target=aarch64-unknown-linux-musl`:
 
 ```sh
-archive='kronika-1.0.0-REPLACE_WITH_COMMIT-x86_64-unknown-linux-musl.tar.gz'
+target=x86_64-unknown-linux-musl
+archive="kronika-1.0.0-$target.tar.gz"
+release_url=https://github.com/pgtoolz/Kronika/releases/download/v1.0.0
+curl -fLO "$release_url/$archive"
+curl -fLO "$release_url/$archive.sha256"
 sha256sum --check "$archive.sha256"
 tar -xzf "$archive"
 cd "${archive%.tar.gz}"
 sha256sum --check SHA256SUMS
-cat BUILDINFO
 ```
 
 ## 2. Install
 
 ```sh
-for binary in kronika-collector kronika-web kronika-dump kronika-report; do
-  "./$binary" --version
-done
 sudo install -d -m 0755 /usr/local/bin
 sudo install -m 0755 kronika-collector kronika-web kronika-dump \
   kronika-report /usr/local/bin/

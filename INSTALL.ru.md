@@ -13,34 +13,35 @@
 
 ## 1. Скачивание и распаковка
 
-[Скачайте архив сборки](docs/releases.ru.md#download) и файл контрольной суммы
-`.tar.gz.sha256`. Команда `uname -m` покажет архитектуру вашей машины:
+В [Kronika v1.0.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.0)
+доступны архивы и файлы контрольных сумм `.tar.gz.sha256`.
+Команда `uname -m` покажет архитектуру вашей машины:
 
 | `uname -m` | Обозначение в имени архива |
 | --- | --- |
 | `x86_64` | `x86_64-unknown-linux-musl` |
 | `aarch64` | `aarch64-unknown-linux-musl` |
 
-В каталоге загрузки подставьте имя скачанного файла. Команды ниже проверяют
-контрольные суммы, распаковывают архив и показывают сведения о сборке:
+Скачайте, проверьте и распакуйте архив. Для ARM64 замените первую строку на
+`target=aarch64-unknown-linux-musl`:
 
 ```sh
-archive='kronika-1.0.0-REPLACE_WITH_COMMIT-x86_64-unknown-linux-musl.tar.gz'
+target=x86_64-unknown-linux-musl
+archive="kronika-1.0.0-$target.tar.gz"
+release_url=https://github.com/pgtoolz/Kronika/releases/download/v1.0.0
+curl -fLO "$release_url/$archive"
+curl -fLO "$release_url/$archive.sha256"
 sha256sum --check "$archive.sha256"
 tar -xzf "$archive"
 cd "${archive%.tar.gz}"
 sha256sum --check SHA256SUMS
-cat BUILDINFO
 ```
 
 ## 2. Установка
 
-Проверьте версии четырёх программ и скопируйте их в `/usr/local/bin`:
+Скопируйте четыре программы в `/usr/local/bin`:
 
 ```sh
-for binary in kronika-collector kronika-web kronika-dump kronika-report; do
-  "./$binary" --version
-done
 sudo install -d -m 0755 /usr/local/bin
 sudo install -m 0755 kronika-collector kronika-web kronika-dump \
   kronika-report /usr/local/bin/

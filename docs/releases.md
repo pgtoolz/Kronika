@@ -2,40 +2,28 @@
 
 [Русская версия](releases.ru.md) · [Install](../INSTALL.md)
 
-## Availability
+## Release v1.0.0
 
-The source version is `1.0.0`. Identify a build by its source commit.
-The current four-program archive is a downloadable result of the
-[Release package](../.github/workflows/release-package.yml) build in GitHub
-Actions. Its name identifies the source commit, and the download is kept for
-14 days. This workflow creates archives without tags or releases.
+[Kronika v1.0.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.0)
+contains four programs for Linux x86-64 and ARM64.
 
 <a id="download"></a>
 ## Download
 
-With an authenticated [GitHub CLI](https://cli.github.com/manual/gh_run_download),
-select a successful workflow run:
+| Architecture | Archive | Checksum |
+| --- | --- | --- |
+| x86-64 | [kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz.sha256) |
+| ARM64 | [kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz.sha256) |
 
-```sh
-gh run list --repo pgtoolz/Kronika --workflow release-package.yml --status success --limit 10
-run_id=REPLACE_WITH_RUN_ID
-gh run view "$run_id" --repo pgtoolz/Kronika
-source_revision=$(gh run view "$run_id" --repo pgtoolz/Kronika --json headSha --jq .headSha)
-target=x86_64-unknown-linux-musl
-gh run download "$run_id" --repo pgtoolz/Kronika \
-  --name "kronika-$source_revision-$target" --dir kronika-download
-cd kronika-download
-```
-
-For ARM64, set `target=aarch64-unknown-linux-musl`. `gh run view` lists both
-builds on their matching architectures and the 22 distribution checks. The downloaded artifact contains
-`.tar.gz` and `.tar.gz.sha256`; continue with [extraction and installation](../INSTALL.md#1-download-and-extract).
+Follow the [download and installation commands](../INSTALL.md#1-download-and-extract).
+The [HTML example](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-v1.0.0.html)
+opens offline; it is also [available in the browser](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html).
 
 <a id="members-and-identity"></a>
 ## Archive contents and build version
 
 ```text
-kronika-<cargo-version>-<12-character-commit>-<target>/
+kronika-<cargo-version>-<target>/
   kronika-collector   kronika-web   kronika-dump   kronika-report
   BUILDINFO          SHA256SUMS    LICENSE       THIRD_PARTY_LICENSES.html
   README.md          README.ru.md  INSTALL.md    INSTALL.ru.md
@@ -49,7 +37,7 @@ files outside the archive resolve to the packaging commit on GitHub.
 
 | File or field | Meaning |
 | --- | --- |
-| Filename | Workspace version, first 12 hexadecimal characters of packaging commit, target. |
+| Filename | Workspace version and target. |
 | `BUILDINFO.package_source_revision` | Full commit of the clean packaging checkout. |
 | `BUILDINFO.build_mode` | `source`: compiled by the packaging command. `prebuilt`: supplied with `--bin-dir`; binary source/compiler identity is not recorded by this mode. |
 | `BUILDINFO.source_date_epoch` | Packaging commit timestamp, Unix seconds. |
@@ -90,6 +78,36 @@ use the build machine's kernel; these checks establish execution in the listed
 distribution environments with that kernel, not with every Linux kernel. Matrix definition:
 [release-package.yml](../.github/workflows/release-package.yml).
 
+## Development builds
+
+The [Release package](../.github/workflows/release-package.yml) workflow also
+provides CI archives. Actions artifact names identify the full source commit;
+these downloads expire after 14 days. The workflow does not publish releases.
+
+With an authenticated [GitHub CLI](https://cli.github.com/manual/gh_run_download),
+select a successful workflow run:
+
+```sh
+gh run list --repo pgtoolz/Kronika --workflow release-package.yml --status success --limit 10
+run_id=REPLACE_WITH_RUN_ID
+gh run view "$run_id" --repo pgtoolz/Kronika
+source_revision=$(gh run view "$run_id" --repo pgtoolz/Kronika --json headSha --jq .headSha)
+target=x86_64-unknown-linux-musl
+gh run download "$run_id" --repo pgtoolz/Kronika \
+  --name "kronika-$source_revision-$target" --dir kronika-download
+cd kronika-download
+archive="kronika-1.0.0-$target.tar.gz"
+sha256sum --check "$archive.sha256"
+tar -xzf "$archive"
+cd "${archive%.tar.gz}"
+sha256sum --check SHA256SUMS
+```
+
+For ARM64, set `target=aarch64-unknown-linux-musl`. `gh run view` lists both
+builds on their matching architectures and the 22 distribution checks. The downloaded artifact contains
+`.tar.gz` and `.tar.gz.sha256`; after verification and extraction, continue with
+[installation](../INSTALL.md#2-install).
+
 ## Package
 
 Requirements: a working copy with all changes committed, Linux on the target
@@ -125,7 +143,7 @@ Source: [package-release.sh](../scripts/package-release.sh).
 With `strace`, Node.js 22 and Chromium/Google Chrome installed, pass one archive:
 
 ```sh
-scripts/check-release.sh dist/kronika-1.0.0-REPLACE_WITH_COMMIT-x86_64-unknown-linux-musl.tar.gz
+scripts/check-release.sh dist/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz
 ```
 
 | Mode | Checks |
