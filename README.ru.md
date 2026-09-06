@@ -4,7 +4,7 @@
 
 Kronika сохраняет метрики Linux, статистику PostgreSQL, планы запросов и
 события из журналов PostgreSQL/PgBouncer. Сборщик работает на наблюдаемой машине
-и пишет данные на её диск. Веб-интерфейс показывает, что происходило в выбранный
+Linux либо подключается к удалённому серверу и записывает только PostgreSQL. Веб-интерфейс показывает, что происходило в выбранный
 час: нагрузку, отдельные процессы и запросы, блокировки и изменения показателей.
 
 ![Использование CPU и значения показателей процессов за записанный час](docs/images/processes.png)
@@ -23,8 +23,8 @@ Kronika сохраняет метрики Linux, статистику PostgreSQL
 или [соберите из исходников](docs/build.ru.md). Архив содержит `kronika-collector`,
 `kronika-web`, `kronika-dump` и `kronika-report`.
 
-Выберите одну команду запуска сборщика: только Linux или Linux вместе с
-PostgreSQL. Примеры сохраняют записи в `/var/lib/kronika`; сборщик создаёт
+Выберите запуск ниже: только Linux, локальный PostgreSQL или удалённый PostgreSQL.
+Примеры локального сбора сохраняют записи в `/var/lib/kronika`; сборщик создаёт
 каталог, если его ещё нет.
 
 ### Только Linux
@@ -43,19 +43,37 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
+  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
   /usr/local/bin/kronika-collector
 ```
 
-Если PostgreSQL на другой машине, SQL-метрики поступают с того сервера,
-а данные Linux по-прежнему относятся к машине сборщика. См.
-[настройку удалённого PostgreSQL](bins/kronika-collector/README.ru.md#remote-postgresql).
+Для этого локального запуска не задавайте `KRONIKA_POSTGRES_EFFECTIVE_CPUS`:
+число CPU берётся из записанных снимков машины.
+
+### Управляемый или удалённый PostgreSQL
+
+Запустите сборщик на любой машине, откуда доступен сервер. Нужны права на запись
+в каталог данных; метрики Linux этой машины собираться не будут:
+
+```sh
+KRONIKA_COLLECTOR_MODE=postgresql \
+  KRONIKA_STORAGE_DIR=./kronika-data \
+  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  /usr/local/bin/kronika-collector
+```
+
+TLS проверяет сертификат и имя сервера. Для частного центра сертификации задайте
+`KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. Если число CPU PostgreSQL известно,
+добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, заменив `4` нужным числом.
+Без него SQL-метрики доступны, а PostgreSQL Health неизвестен. Права root для
+этого режима не нужны. Подробнее — в [настройках сборщика](bins/kronika-collector/README.ru.md#remote-postgresql).
 
 ### Открыть веб-интерфейс
 
 Оставив выбранный сборщик работать, запустите веб-сервер во втором терминале
 с тем же каталогом данных. Для Linux укажите `KRONIKA_WEB_SOURCES=1`, для
-Linux и PostgreSQL замените значение на `3`:
+локального Linux с PostgreSQL — `3`, для только PostgreSQL — `2`. Для удалённого
+примера выше используйте `KRONIKA_STORAGE_DIR=./kronika-data` без `sudo`:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \

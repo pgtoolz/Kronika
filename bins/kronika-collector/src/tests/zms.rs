@@ -5,7 +5,7 @@ use kronika_format::{ENTRY_LEN, FRAME_HEADER_LEN, JOURNAL_HEADER_LEN};
 use kronika_layout::{DataRoot, LayoutLimits, WriterOwner};
 use kronika_reader::{Cell, Reader, Resolved, Row, SegmentKind};
 use kronika_registry::os_block_topology::OsBlockTopology;
-use kronika_registry::os_cgroup_context::OsCgroupContext;
+use kronika_registry::os_cgroup_context::OsCgroupContextV2;
 use kronika_registry::os_cgroup_cpu::OsCgroupCpu;
 use kronika_registry::os_cgroup_io::OsCgroupIo;
 use kronika_registry::os_cgroup_memory::OsCgroupMemory;
@@ -49,7 +49,7 @@ const PG_STAT_STATEMENTS_V6_TYPE_ID: u32 = 1_002_006;
 const PG_STORE_PLANS_VADV_TYPE_ID: u32 = 1_004_001;
 const PG_WAL_STORAGE_TYPE_ID: u32 = 1_020_001;
 const PG_STAT_ACTIVITY_V3_TYPE_ID: u32 = 1_001_004;
-const CGROUP_CONTEXT_TYPE_ID: u32 = 1_205_001;
+const CGROUP_CONTEXT_TYPE_ID: u32 = 1_205_002;
 const CGROUP_CPU_TYPE_ID: u32 = 1_201_001;
 const CGROUP_MEMORY_TYPE_ID: u32 = 1_202_001;
 const CGROUP_IO_TYPE_ID: u32 = 1_203_002;
@@ -137,6 +137,7 @@ struct ReplayArtifactReport {
 
 fn config(root: &Path, journal_max_bytes: u64) -> Config {
     Config {
+        mode: crate::config::CollectorMode::Local,
         storage_dir: root.to_path_buf(),
         tick_secs: 1,
         intervals: Intervals::default(),
@@ -527,7 +528,7 @@ fn statement_sql_timestamp_survives_source_batches_in_one_active_segment() {
     let config = config(directory.path(), u64::MAX);
     let mut segment = SegmentState::default();
     let mut scheduler = Scheduler::new(Intervals::default());
-    let mut process_io = ProcessIoCredentials::new();
+    let mut process_io = Some(ProcessIoCredentials::new());
     let mut rows = (0..=BATCH_ROWS)
         .map(|query_index| {
             let mut row = statement_row(0, query_index);
@@ -669,7 +670,7 @@ fn read_replay_artifacts(root: &Path, expected_paths: usize) -> ReplayArtifactRe
         .zms_bytes
         .checked_sub(report.section_body_bytes)
         .expect("section bodies fit inside ZMS files");
-    report.rss_kib = peak_rss_kib();
+    report.rss_kib = peak_rss_kib().unwrap_or_default();
     report
 }
 
@@ -1003,7 +1004,7 @@ fn activity_datid_hour_reports_production_writer_costs() {
         .saturating_add(u64::try_from(ENTRY_LEN).expect("catalog entry length fits u64"));
     let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let cpu_ticks = self_cpu_ticks().saturating_sub(cpu_before);
-    let rss_kib = peak_rss_kib();
+    let rss_kib = peak_rss_kib().unwrap_or_default();
 
     assert_eq!(listing.segments.len(), 1);
     assert_eq!(write_report.appended_windows, ACTIVITY_SNAPSHOTS_PER_HOUR);
@@ -1161,7 +1162,7 @@ fn relation_tablespace_layouts_report_production_writer_costs() {
         let report = relation_cost_profile(spec);
         let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let cpu_ticks = self_cpu_ticks().saturating_sub(cpu_before);
-        let rss_kib = peak_rss_kib();
+        let rss_kib = peak_rss_kib().unwrap_or_default();
         let bytes = (
             report.raw_wal_bytes,
             report.zms_bytes,
@@ -1622,7 +1623,7 @@ fn cpufreq_hour_reports_collection_and_production_writer_costs() {
     let collection_elapsed_us =
         u64::try_from(collection_started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let collection_cpu_ticks = self_cpu_ticks().saturating_sub(collection_cpu_before);
-    let collection_rss_kib = peak_rss_kib();
+    let collection_rss_kib = peak_rss_kib().unwrap_or_default();
 
     let directory = tempfile::tempdir().expect("create CPUFreq cost directory");
     let writer = owner(directory.path());
@@ -1723,7 +1724,7 @@ fn cpufreq_hour_reports_collection_and_production_writer_costs() {
         .expect("write CPUFreq cost segment");
     let writer_elapsed_us = u64::try_from(writer_started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let writer_cpu_ticks = self_cpu_ticks().saturating_sub(writer_cpu_before);
-    let writer_rss_kib = peak_rss_kib();
+    let writer_rss_kib = peak_rss_kib().unwrap_or_default();
     let reader = Reader::open(directory.path()).expect("open CPUFreq reader");
     let listing = reader.segments(..).expect("list CPUFreq segment");
     let stored = reader
@@ -1857,7 +1858,7 @@ fn user_cost_artifact(
     let config = config(directory.path(), u64::MAX);
     let mut segment = SegmentState::default();
     let mut references = UserReferences::with_passwd(passwd);
-    let collection_rss_baseline_kib = peak_rss_kib();
+    let collection_rss_baseline_kib = peak_rss_kib().unwrap_or_default();
     let mut collection_elapsed_us = 0_u64;
     let mut collection_cpu_ticks = 0_u64;
     let mut collection_peak_rss_kib = collection_rss_baseline_kib;
@@ -1880,7 +1881,7 @@ fn user_cost_artifact(
         collection_cpu_ticks = collection_cpu_ticks
             .saturating_add(self_cpu_ticks().saturating_sub(collection_cpu_before));
         if sample == 0 {
-            collection_peak_rss_kib = peak_rss_kib();
+            collection_peak_rss_kib = peak_rss_kib().unwrap_or_default();
         }
         if rows.is_empty() {
             continue;
@@ -1938,7 +1939,7 @@ fn user_cost_artifact(
         .saturating_add(u64::try_from(writer_started.elapsed().as_micros()).unwrap_or(u64::MAX));
     writer_cpu_ticks =
         writer_cpu_ticks.saturating_add(self_cpu_ticks().saturating_sub(writer_cpu_before));
-    let writer_peak_rss_kib = peak_rss_kib();
+    let writer_peak_rss_kib = peak_rss_kib().unwrap_or_default();
     let reader = Reader::open(directory.path()).expect("open user cost reader");
     let listing = reader.segments(..).expect("list user cost segment");
     let stored = reader
@@ -2118,7 +2119,7 @@ fn storage_hour_reports_collection_and_production_writer_costs() {
     let collection_elapsed_us =
         u64::try_from(collection_started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let collection_cpu_ticks = self_cpu_ticks().saturating_sub(collection_cpu_before);
-    let collection_rss_kib = peak_rss_kib();
+    let collection_rss_kib = peak_rss_kib().unwrap_or_default();
 
     let directory = tempfile::tempdir().expect("create storage cost directory");
     let writer = owner(directory.path());
@@ -2220,7 +2221,7 @@ fn storage_hour_reports_collection_and_production_writer_costs() {
         .expect("write storage cost segment");
     let writer_elapsed_us = u64::try_from(writer_started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let writer_cpu_ticks = self_cpu_ticks().saturating_sub(writer_cpu_before);
-    let writer_rss_kib = peak_rss_kib();
+    let writer_rss_kib = peak_rss_kib().unwrap_or_default();
     let reader = Reader::open(directory.path()).expect("open storage reader");
     let listing = reader.segments(..).expect("list storage segment");
     let stored = reader
@@ -2395,7 +2396,7 @@ fn bounded_cgroup_hour_reports_collection_and_production_writer_costs() {
     let collection_elapsed_us =
         u64::try_from(collection_started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let collection_cpu_ticks = self_cpu_ticks().saturating_sub(collection_cpu_before);
-    let collection_rss_kib = peak_rss_kib();
+    let collection_rss_kib = peak_rss_kib().unwrap_or_default();
     assert!(collection_rss_kib > 0);
 
     let directory = tempfile::tempdir().expect("create cgroup cost directory");
@@ -2516,7 +2517,7 @@ fn bounded_cgroup_hour_reports_collection_and_production_writer_costs() {
     assert_eq!(completed_paths.len(), 2);
     let writer_elapsed_us = u64::try_from(writer_started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let writer_cpu_ticks = self_cpu_ticks().saturating_sub(writer_cpu_before);
-    let writer_rss_kib = peak_rss_kib();
+    let writer_rss_kib = peak_rss_kib().unwrap_or_default();
     let reader = Reader::open(directory.path()).expect("open cgroup reader");
     let listing = reader.segments(..).expect("list cgroup segment");
     assert_eq!(listing.segments.len(), 2);
@@ -2612,6 +2613,10 @@ fn bounded_cgroup_hour_reports_collection_and_production_writer_costs() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one encoded hour measures the registered context layout and validates its decoded facts"
+)]
 fn cgroup_context_hour_reports_raw_and_finished_costs() {
     let directory = tempfile::tempdir().expect("create cgroup context cost directory");
     let writer = owner(directory.path());
@@ -2625,21 +2630,40 @@ fn cgroup_context_hour_reports_raw_and_finished_costs() {
         let ts = BASE_TS.saturating_add(sample.saturating_mul(10_000_000));
         let path = segment
             .interner_mut()
-            .intern(b"/kubepods/pod-a/container-a")
+            .intern(b"/")
             .map(|id| StrId(id.get()))
             .expect("intern cgroup path");
+        let identity = segment
+            .interner_mut()
+            .intern(b"fs/cgroup:/kubepods/pod-a:1:2:3:0")
+            .map(|id| StrId(id.get()))
+            .expect("intern selected directory identity");
+        let root = segment
+            .interner_mut()
+            .intern(b"/kubepods/pod-a")
+            .map(|id| StrId(id.get()))
+            .expect("intern visible mount boundary");
         let mut buffers = SectionBuffers::new();
-        let sources = OsSources::cgroup_context_only(OsCgroupContext {
+        let sources = OsSources::cgroup_context_only(&OsCgroupContextV2 {
             ts: Ts(ts),
             cgroup_version: 2,
             cpu_path: Some(path),
             memory_path: Some(path),
             io_path: Some(path),
             cpuset_cpus: Some(2),
-            effective_cpu_quota_usec: Some(150_000),
-            effective_cpu_period_usec: Some(100_000),
-            effective_memory_max: Some(536_870_912),
-            scope: 3,
+            effective_cpu_quota_usec: None,
+            effective_cpu_period_usec: None,
+            effective_memory_max: None,
+            pids_path: Some(path),
+            cpu_identity: Some(identity),
+            memory_identity: Some(identity),
+            io_identity: Some(identity),
+            pids_identity: Some(identity),
+            cpu_root: Some(root),
+            memory_root: Some(root),
+            io_root: Some(root),
+            pids_root: Some(root),
+            scope: 4,
         });
         push_os_sources(&mut buffers, &sources).expect("buffer cgroup context");
         let flushed = encode_window(buffers, segment.interner()).expect("encode cgroup context");
@@ -2690,19 +2714,21 @@ fn cgroup_context_hour_reports_raw_and_finished_costs() {
     assert_eq!(rows.len(), CGROUP_CONTEXT_SNAPSHOTS_PER_HOUR);
     assert_cgroup_context_values(rows.first().expect("one cgroup context row"));
     let dictionary = stored.dictionary().expect("read cgroup context dictionary");
-    for field in ["cpu_path", "memory_path", "io_path"] {
+    for field in ["cpu_path", "memory_path", "io_path", "pids_path"] {
         let Some(Cell::StrId(path)) = rows.first().and_then(|row| row.get(field)) else {
             panic!("cgroup context {field} must be persisted");
         };
         match dictionary.resolve(*path) {
             Some(Resolved::Str(actual)) => {
-                assert_eq!(actual, b"/kubepods/pod-a/container-a");
+                assert_eq!(actual, b"/");
             }
             Some(Resolved::Blob(_)) => panic!("cgroup context path belongs in dict.strings"),
             None => panic!("cgroup context {field} id resolves"),
         }
     }
-    assert!(raw_wal_bytes < 1024 * 1024);
+    // V2 records four controller identities and mount roots. Keep its actual
+    // encoded WAL envelope bounded per scheduled snapshot (default: 360/hour).
+    assert!(raw_wal_bytes < CGROUP_CONTEXT_SNAPSHOTS_PER_HOUR * 6 * 1024);
     assert!(section.bytes < 8 * 1024);
     assert!(zms_bytes < 16 * 1024);
     println!(
@@ -2716,12 +2742,28 @@ fn cgroup_context_hour_reports_raw_and_finished_costs() {
 }
 
 fn assert_cgroup_context_values(row: &Row) {
-    for (field, expected) in [
-        ("cpuset_cpus", 2),
-        ("effective_cpu_quota_usec", 150_000),
-        ("effective_cpu_period_usec", 100_000),
-        ("effective_memory_max", 536_870_912),
+    assert_eq!(row.get("cpuset_cpus"), Some(&Cell::I64(2)));
+    assert_eq!(row.get("scope"), Some(&Cell::U32(4)));
+    for field in [
+        "effective_cpu_quota_usec",
+        "effective_cpu_period_usec",
+        "effective_memory_max",
     ] {
-        assert_eq!(row.get(field), Some(&Cell::I64(expected)));
+        assert_eq!(row.get(field), Some(&Cell::Null));
+    }
+    for field in [
+        "cpu_identity",
+        "memory_identity",
+        "io_identity",
+        "pids_identity",
+        "cpu_root",
+        "memory_root",
+        "io_root",
+        "pids_root",
+    ] {
+        assert!(
+            matches!(row.get(field), Some(Cell::StrId(_))),
+            "{field} must survive encoding"
+        );
     }
 }

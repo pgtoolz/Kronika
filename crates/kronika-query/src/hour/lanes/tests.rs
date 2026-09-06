@@ -287,7 +287,7 @@ fn container_cpu_lanes_measure_the_collector_cgroup_against_its_capacity() {
     let counters = Counters {
         cg_cpu_usage: BTreeMap::from([(1_000_000, 0), (2_000_000, 500_000)]),
         cg_cpu_throttled: BTreeMap::from([(1_000_000, 0), (2_000_000, 250_000)]),
-        cg_cpu_capacity: BTreeMap::from([(1_000_000, 2.0)]),
+        cg_cpu_capacity: BTreeMap::from([(1_000_000, Some(2.0))]),
         ..Counters::default()
     };
     let out = points(&counters, 100, 4);
@@ -312,10 +312,10 @@ fn container_cpu_lanes_measure_the_collector_cgroup_against_its_capacity() {
 #[test]
 fn container_gauges_events_and_io_have_their_own_lanes() {
     let counters = Counters {
-        cg_memory_share: BTreeMap::from([(1_000_000, 40.0)]),
+        cg_memory_share: BTreeMap::from([(1_000_000, Some(40.0))]),
         cg_memory_bytes: BTreeMap::from([(1_000_000, 1024.0)]),
         cg_pids: BTreeMap::from([(1_000_000, 4.0)]),
-        cg_pids_share: BTreeMap::from([(1_000_000, 3.125)]),
+        cg_pids_share: BTreeMap::from([(1_000_000, Some(3.125))]),
         cg_oom: BTreeMap::from([
             (1_000_000, Some(1)),
             (2_000_000, Some(3)),
@@ -475,4 +475,18 @@ fn a_v2_membership_keeps_threads_when_a_controller_is_unavailable() {
     }
     let no_controller = row(1_205_001, &[("cgroup_version", Cell::U32(2))]);
     assert_eq!(membership(&no_controller).pids, None);
+}
+
+#[test]
+fn selected_context_uses_each_observed_cpu_bound_without_changing_legacy_rules() {
+    let fields = [("cpuset_cpus", Cell::I64(8))];
+    assert_eq!(cgroup_cpu_capacity(&row(1_205_002, &fields)), Some(8.0));
+    assert_eq!(cgroup_cpu_capacity(&row(1_205_001, &fields)), None);
+    let fields = [
+        ("cpuset_cpus", Cell::I64(8)),
+        ("effective_cpu_quota_usec", Cell::I64(150_000)),
+        ("effective_cpu_period_usec", Cell::I64(100_000)),
+    ];
+    assert_eq!(cgroup_cpu_capacity(&row(1_205_002, &fields)), Some(1.5));
+    assert_eq!(cgroup_cpu_capacity(&row(1_205_002, &[])), None);
 }

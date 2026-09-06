@@ -92,7 +92,13 @@ pub(crate) fn push_os_sources(buffers: &mut SectionBuffers, os: &OsSources) -> R
     for row in &os.cgroup_cpu {
         buffer_row(buffers, *row)?;
     }
+    for row in &os.cgroup_ancestor_cpu {
+        buffer_row(buffers, *row)?;
+    }
     for row in &os.cgroup_memory {
+        buffer_row(buffers, *row)?;
+    }
+    for row in &os.cgroup_ancestor_memory {
         buffer_row(buffers, *row)?;
     }
     for row in &os.cgroup_io {

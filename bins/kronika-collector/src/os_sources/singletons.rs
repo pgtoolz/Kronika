@@ -13,12 +13,13 @@ pub(super) fn collect_singletons(
     scope: u8,
     ts: i64,
     in_container: bool,
+    selected: Option<&cgroup::AncestorContext>,
     os: &mut OsSources,
 ) {
     collect_cpu_and_stat(fs, scope, ts, os);
     collect_memory_and_load(fs, scope, ts, os);
     collect_paging(fs, scope, ts, os);
-    collect_pressure_rows(fs, sys, scope, ts, in_container, os);
+    collect_pressure_rows(fs, sys, scope, ts, in_container, selected, os);
 }
 
 /// `/proc/stat`: the CPU lines and the singleton counters beside them.
@@ -229,13 +230,18 @@ fn collect_paging(fs: &ProcFs, scope: u8, ts: i64, os: &mut OsSources) {
     }
 }
 
-/// Host `/proc/pressure` or the collector's exact cgroup v2 pressure files.
+/// Host `/proc/pressure` or the selected ancestor cgroup v2 pressure files.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "pressure shares the tick selection and filesystem views"
+)]
 pub(super) fn collect_pressure_rows(
     fs: &ProcFs,
     sys: &SysFs,
     scope: u8,
     ts: i64,
     in_container: bool,
+    selected: Option<&cgroup::AncestorContext>,
     os: &mut OsSources,
 ) {
     let type_id = 1_107_001_u32;
@@ -244,8 +250,11 @@ pub(super) fn collect_pressure_rows(
         (
             "cgroup/{cpu,memory,io}.pressure",
             "cgroup",
-            OsScope::Container.as_u8(),
-            cgroup::collect_pressure(fs, sys, ts),
+            OsScope::Unknown.as_u8(),
+            selected.map_or_else(
+                || Ok(Vec::new()),
+                |selected| cgroup::collect_ancestor_pressure(sys, selected, ts),
+            ),
         )
     } else {
         let psi_cpu = read_optional_os_file(fs, "pressure/cpu", type_id);

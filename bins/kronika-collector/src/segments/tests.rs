@@ -118,6 +118,7 @@ fn cgroup_v2_window() -> FlushedPart {
 
 fn test_config(storage_dir: &Path) -> Config {
     Config {
+        mode: crate::config::CollectorMode::Local,
         storage_dir: storage_dir.to_path_buf(),
         tick_secs: 5,
         intervals: Intervals::default(),

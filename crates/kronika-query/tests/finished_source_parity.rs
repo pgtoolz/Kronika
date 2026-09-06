@@ -26,7 +26,7 @@ use kronika_query::{
     execute_heatmap_batch, execute_row_detail, validate_row_detail_ref,
 };
 use kronika_reader::Reader;
-use kronika_registry::instance_metadata::InstanceMetadata;
+use kronika_registry::instance_metadata::{InstanceMetadata, InstanceMetadataV3};
 use kronika_registry::os_cpu::OsCpu;
 use kronika_registry::os_process::OsProcess;
 use kronika_registry::pg_locks::PgLocksV2;
@@ -619,11 +619,20 @@ fn fixture_label(interner: &mut Interner, value: &[u8]) -> StrId {
     StrId(interner.intern(value).expect("intern fixture label").get())
 }
 
+fn write_heatmap_fixture(root: &Path, segment_id: SegmentId) -> Arc<[u8]> {
+    write_heatmap_fixture_with_sharing(root, segment_id, None, 42)
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "one shared segment fixture covers every query family without duplicate writers"
 )]
-fn write_heatmap_fixture(root: &Path, segment_id: SegmentId) -> Arc<[u8]> {
+fn write_heatmap_fixture_with_sharing(
+    root: &Path,
+    segment_id: SegmentId,
+    shared: Option<bool>,
+    activity_pid: i32,
+) -> Arc<[u8]> {
     let data_root = DataRoot::open(root).expect("open heatmap data root");
     let owner = data_root
         .acquire_writer(LayoutLimits::default())
@@ -636,21 +645,41 @@ fn write_heatmap_fixture(root: &Path, segment_id: SegmentId) -> Arc<[u8]> {
     let schema = fixture_label(&mut interner, b"parity_schema");
     let table = fixture_label(&mut interner, b"parity_table");
     let mut buffers = SectionBuffers::new();
-    buffers
-        .push(InstanceMetadata {
-            ts: Ts(HEATMAP_FROM),
-            hostname: label,
-            kernel_version: label,
-            environment: 0,
-            clock_ticks_per_sec: 100,
-            page_size_bytes: 4_096,
-            boot_id: label,
-            btime: Ts(1),
-            postgresql_enabled: false,
-            postgresql_interval_seconds: 30,
-            postgresql_effective_cpus: None,
-        })
-        .expect("metadata row fits");
+    if let Some(shared) = shared {
+        buffers
+            .push(InstanceMetadataV3 {
+                ts: Ts(HEATMAP_FROM),
+                hostname: Some(label),
+                kernel_version: Some(label),
+                environment: Some(0),
+                clock_ticks_per_sec: Some(100),
+                page_size_bytes: Some(4_096),
+                boot_id: Some(label),
+                btime: Some(Ts(1)),
+                os_enabled: true,
+                postgresql_processes_shared: shared,
+                postgresql_enabled: true,
+                postgresql_interval_seconds: 30,
+                postgresql_effective_cpus: Some(4),
+            })
+            .expect("metadata row fits");
+    } else {
+        buffers
+            .push(InstanceMetadata {
+                ts: Ts(HEATMAP_FROM),
+                hostname: label,
+                kernel_version: label,
+                environment: 0,
+                clock_ticks_per_sec: 100,
+                page_size_bytes: 4_096,
+                boot_id: label,
+                btime: Ts(1),
+                postgresql_enabled: false,
+                postgresql_interval_seconds: 30,
+                postgresql_effective_cpus: None,
+            })
+            .expect("metadata row fits");
+    }
     for (timestamp, aggregate, first, second) in [(HEATMAP_FROM, 0, 0, 0), (HEATMAP_TO, 30, 10, 20)]
     {
         for (cpu_id, user) in [(-1, aggregate), (0, first), (1, second)] {
@@ -701,7 +730,7 @@ fn write_heatmap_fixture(root: &Path, segment_id: SegmentId) -> Arc<[u8]> {
     buffers
         .push(PgStatActivityV3 {
             ts: Ts(HEATMAP_TO),
-            pid: 42,
+            pid: activity_pid,
             leader_pid: None,
             datid: Some(1),
             datname: Some(database),
@@ -1103,6 +1132,59 @@ fn hour_products_are_byte_identical_for_posix_and_embedded_finished_zms() {
             && record["sample_to"].as_str() == Some(end.as_str())
             && record["values"]["seq_scan"].as_f64() == Some(10.0)
     }));
+}
+
+#[test]
+fn process_summary_pid_associations_require_recorded_sharing_in_both_sources() {
+    let segment_id = SegmentId::new(SEGMENT_ID).expect("segment identity");
+    for shared in [None, Some(false), Some(true)] {
+        let directory = tempfile::tempdir().expect("temporary source root");
+        let payload = write_heatmap_fixture_with_sharing(directory.path(), segment_id, shared, 41);
+        let posix: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(
+            PosixSource::open(directory.path()).expect("POSIX source"),
+        ));
+        let embedded: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(
+            EmbeddedSource::from_owned(
+                segment_id,
+                payload.as_ref().to_vec(),
+                u64::try_from(payload.len()).expect("payload length fits u64"),
+            )
+            .expect("embedded source"),
+        ));
+        let request = series_hour_request(
+            Window {
+                from: Some(HEATMAP_FROM),
+                to: Some(HEATMAP_TO),
+            },
+            "os_process_summary",
+            vec!["postgresql".to_owned()],
+            Vec::new(),
+            None,
+        );
+        let native = hour_bytes(posix, request.clone());
+        let embedded = hour_bytes(embedded, request);
+        assert_eq!(native, embedded, "sharing: {shared:?}");
+        let records = ndjson(&native);
+        let values = records
+            .iter()
+            .filter(|record| record["record"] == "row")
+            .map(|record| {
+                (
+                    record["timestamp"].as_str().expect("timestamp"),
+                    &record["values"][0],
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), 2, "sharing: {shared:?}");
+        assert_eq!(values[0].0, HEATMAP_FROM.to_string());
+        assert!(values[0].1.is_null(), "no PostgreSQL snapshot yet");
+        assert_eq!(values[1].0, HEATMAP_TO.to_string());
+        if shared == Some(true) {
+            assert_eq!(values[1].1.as_f64(), Some(1.0));
+        } else {
+            assert!(values[1].1.is_null(), "a matching PID is insufficient");
+        }
+    }
 }
 
 #[test]

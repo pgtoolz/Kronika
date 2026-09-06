@@ -46,6 +46,19 @@ collection continues and logs `rotation_degraded`. Fixed mode also recounts
 files hourly to include new indexes created by web.
 [Rotation implementation](src/rotation.rs) defines the byte accounting and deletion.
 
+### Collection mode
+
+`KRONIKA_COLLECTOR_MODE=local` is the default: Linux metrics and optional local
+PostgreSQL. PostgreSQL must share the recorded machine and PID namespace for
+process links. In containers, the collected cgroup can include other containers;
+it does not establish shared PostgreSQL processes or CPU capacity.
+
+`KRONIKA_COLLECTOR_MODE=postgresql` records only PostgreSQL. It does not read
+procfs/sysfs, host identity, Linux processes or cgroups. `KRONIKA_PG_DSNS` is
+required. Root access is unnecessary; the process needs network and storage
+access. Explicit `KRONIKA_PG_LOGS` paths are optional. PgBouncer log settings are
+not accepted in this mode. OS intervals do not apply.
+
 ### Collection intervals
 
 Intervals are nonnegative whole seconds. Each source has its own schedule.
@@ -60,7 +73,7 @@ CPU, memory or I/O resources.
 | `KRONIKA_OS_MOUNTTOPO_INTERVAL_S` | 60 | Mounts, filesystem capacity and device topology. |
 | `KRONIKA_OS_PROCESS_INTERVAL_S` | 5 | Process counters. |
 | `KRONIKA_OS_PROCESS_STATUS_INTERVAL_S` | 30 | Process status details. |
-| `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 | Resource limits and use of cgroups to which running container processes directly belong. |
+| `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 | Resource limits and use of the highest accessible ancestor cgroups. |
 | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 | Process-to-cgroup mappings. |
 | `KRONIKA_LOG_INTERVAL_S` | 10 | Configured PostgreSQL/PgBouncer logs. |
 | `KRONIKA_PG_INTERVAL_S` | 30 | PostgreSQL metrics and settings. |
@@ -73,16 +86,17 @@ Separate connection strings and paths with semicolons (`;`).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `KRONIKA_PG_DSNS` | Unset | PostgreSQL connection strings. The first enables server metrics; each locates its server’s current log and format. |
-| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Unset | Number of CPUs available to the first PostgreSQL server: integer `1..4294967295`. Requires `KRONIKA_PG_DSNS`. When unset, the Health indicator and chart marks use the recorded CPU capacity of the collector’s machine or container. |
-| `KRONIKA_PG_LOGS` | Unset | Additional local PostgreSQL log paths; filenames can use `*` and `?` wildcards. When unset, every `KRONIKA_PG_DSNS` entry still discovers its current log through `pg_current_logfile()`. Explicit entries add to discovered sources; files must be readable on the collector host. |
+| `KRONIKA_PG_DSNS` | Unset | PostgreSQL connection strings. The first enables server metrics. In `local` mode, each also discovers its current local log. Required in `postgresql` mode. |
+| `KRONIKA_PG_SSL_ROOT_CERT` | Unset | PEM CA bundle replacing the included public CA roots. When unset, the included public roots are used. TLS validates the server hostname in both cases. |
+| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Unset | Available CPUs of the first PostgreSQL server: integer `1..4294967295`; requires `KRONIKA_PG_DSNS`. Automatic only for a recorded shared local machine. Without capacity, SQL metrics continue and PostgreSQL Health is unknown. |
+| `KRONIKA_PG_LOGS` | Unset | Optional readable local paths; final filename supports `*` and `?`. In `local` mode, paths add to `pg_current_logfile()` discovery. In `postgresql` mode, only explicit paths are opened. |
 | `KRONIKA_PGBOUNCER_DSNS` | Unset | Connections to the administrative console (`dbname=pgbouncer`) to read `SHOW CONFIG`/`logfile`; the account must belong to `stats_users`. |
 | `KRONIKA_PGBOUNCER_LOGS` | Unset | Local PgBouncer log paths; filenames can use `*` and `?` wildcards. |
 
 Blank lists add no explicit entries. Blank entries between semicolons are errors.
 The first PostgreSQL DSN supplies metrics from its initial database and other
 accessible databases on that server, excluding template databases. Further
-DSNs supply log discovery only. PostgreSQL metric rows have no separate field identifying the server.
+DSNs supply log discovery only in `local` mode. PostgreSQL metric rows have no separate field identifying the server.
 
 ### Other settings
 
@@ -97,69 +111,44 @@ DSNs supply log discovery only. PostgreSQL metric rows have no separate field id
 
 ### PostgreSQL CPU capacity
 
-Health and active-session marks use the number of CPUs available to PostgreSQL.
-Without `KRONIKA_POSTGRES_EFFECTIVE_CPUS`, Kronika uses the collector's recorded
-machine or container capacity. Leave the setting unset when PostgreSQL shares
-those CPU limits.
+In `local` mode on a machine/VM shared with PostgreSQL, leave
+`KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset. Each Activity sample uses the count of
+distinct CPUs in the latest complete recorded CPU snapshot at or before it.
+The DSN address does not establish placement.
 
-For each Activity timestamp, the calculation uses the latest CPU information
-recorded at or before it: the machine CPU count, or the collector's container
-CPU-time quota and allowed CPU set (cpuset). Fractional quotas are preserved:
-`150000/100000` gives `1.5` CPUs.
-
-If PostgreSQL has different CPU limits, whether remote or in a separate
-container on the same host, set `KRONIKA_POSTGRES_EFFECTIVE_CPUS` to its available
-CPU count as a positive whole number. This value overrides the automatic one.
-The setting does not enable or disable PostgreSQL collection. When recorded
-capacity is unknown, Health is unavailable (`null`); a known capacity can be
-supplied explicitly. See the [launch examples](../../INSTALL.md#5-postgresql)
-and [Health formulas](../../docs/metrics-time.md#health).
+For remote PostgreSQL or container deployments, an optional positive whole
+number supplies the PostgreSQL CPU capacity. A broader cgroup aggregate does
+not give the capacity of its PostgreSQL child. Without capacity, SQL collection
+continues; PostgreSQL Health and capacity-dependent marks are unknown. Web
+reads the recorded value and has no separate CPU setting.
 
 <a id="remote-postgresql"></a>
-### PostgreSQL on another machine
-
-Collector always records Linux data from its own machine. A remote
-`KRONIKA_PG_DSNS` supplies SQL metrics from the PostgreSQL server; it does not
-collect that server's Linux processes or resources.
-
-For a PostgreSQL server with 4 available CPUs, run collector with:
+### Managed or remote PostgreSQL
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
+KRONIKA_COLLECTOR_MODE=postgresql \
+  KRONIKA_STORAGE_DIR=./kronika-data \
+  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
   /usr/local/bin/kronika-collector
 ```
 
-Start web over the resulting recording in a second terminal:
+Add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4` when that server has 4 available CPUs.
+Use `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem` for a private CA. The DSN accepts
+`sslmode=disable` (plaintext), `prefer` (TLS when available; default), or
+`require` (TLS required). Every TLS connection checks the CA and hostname,
+including reconnects and query cancellation. `verify-full` is not accepted DSN syntax.
 
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
-  KRONIKA_WEB_SOURCES=3 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
-  /usr/local/bin/kronika-web
-```
+Start web over the same recording with `KRONIKA_WEB_SOURCES=2`. This declares
+PostgreSQL in the catalog; the collector mode controls acquisition. Recorded
+PostgreSQL-only data has no Linux hostname or OS Health penalty. Overall equals
+PostgreSQL Health, or is unknown when PostgreSQL Health cannot be calculated.
 
-`KRONIKA_WEB_SOURCES=3` declares both recorded data families. Changing it to `2`
-changes catalog metadata only: it does not disable Linux collection, hide Linux
-rows or change process associations. Web reads the PostgreSQL CPU capacity from
-the recording; it has no separate capacity setting.
-
-The CPU override applies to PostgreSQL Health and capacity-based marks. Overall
-Health combines Linux measurements from the collector machine with PostgreSQL
-measurements from the remote server; it is not a score for one machine.
-
-PostgreSQL-to-Linux process links match numeric PIDs without a server identity.
-Those links and PostgreSQL process counts require a shared machine and PID
-namespace. With remote PostgreSQL, a matching local PID can describe an unrelated
-process; its details and Vacuum CPU/I/O values do not describe the remote backend.
-The CPU override and web source setting do not establish that association.
-
-For separate containers on one host, the PID namespace and CPU limits can also
-differ. The [CPU capacity reference](#postgresql-cpu-capacity) describes how
-recorded limits and an explicit value are used.
+Process links in Activity, Vacuum and Processes require recorded shared-process
+metadata for the selected segment. New local machine recordings supply it;
+PostgreSQL-only, container and older recordings do not. Their PostgreSQL and OS
+rows remain readable independently, without a link based only on matching PIDs.
+See [Health formulas](../../docs/metrics-time.md#health) and
+[container collection](../../docs/metrics-linux.md#container-cgroups).
 
 <a id="postgresql-role"></a>
 ### PostgreSQL role
@@ -203,7 +192,7 @@ Sources: [database pool](../../crates/kronika-source-pg/src/pool.rs),
 
 | Item | Value or behavior |
 | --- | --- |
-| Transport | No TLS encryption (`NoTls`); direct PostgreSQL or PgBouncer session pooling. Transaction/statement pooling do not retain the session state required by metric reads. |
+| Transport | `sslmode=require` uses validated TLS; `prefer` (default) allows plaintext when TLS is unavailable; `disable` uses plaintext. Direct PostgreSQL or PgBouncer session pooling. Transaction/statement pooling do not retain the session state required by metric reads. |
 | Protocol | Administrative queries use Simple Query Protocol. Metrics with known field types use a one-shot unnamed query through Extended Protocol. One query at a time per connection. |
 | Session initialization | `SET statement_timeout = '30s'; SET lock_timeout = '100ms'` in one request before any monitoring query, including log discovery; repeated on every new connection. |
 | Client fetch deadline | 35 seconds, then a CancelRequest attempt with a one-second deadline and connection close. |
@@ -229,7 +218,10 @@ timeouts, slow queries, fetch/encoding/WAL times, encoded/appended bytes and
 
 ## Log collection
 
-For every `KRONIKA_PG_DSNS` entry, discovery reads `pg_current_logfile()`,
+In `postgresql` mode, SQL paths are not opened locally. Only explicit
+`KRONIKA_PG_LOGS` paths are read; remote files are not downloaded.
+
+In `local` mode, for every `KRONIKA_PG_DSNS` entry, discovery reads `pg_current_logfile()`,
 `data_directory` and `log_line_prefix`. This runs even when `KRONIKA_PG_LOGS`
 is unset. The SQL function returns a current log path, not historical rotation
 files; null supplies no automatic file. A relative path is resolved against
@@ -257,11 +249,13 @@ Sources: [source discovery](src/log_sources.rs), [SQL facts and path resolution]
 
 ## Linux collection
 
-The recorded environment is established at collection time. On a physical or virtual machine,
-no cgroup workload rows are collected. In a container, the collector reads
-groups to which running processes directly belong. Their resource limits
-and calculations are defined in the
-[Linux metric reference](../../docs/metrics-linux.md).
+Linux collection runs only in `local` mode. Machine/VM recordings have no
+workload cgroup rows. In a container, collector walks upward from its own
+membership to the highest visible, readable ancestor within the accessible
+mount. Counters describe that group, including its children. The selected
+path can represent a pod, another aggregate or only collector's own group;
+its path is shown without assuming a pod or PostgreSQL identity. Missing
+metrics remain unavailable. See the [Linux reference](../../docs/metrics-linux.md#container-cgroups).
 
 Filesystem capacity is queried for `ext2`, `ext3`, `ext4`, `xfs`, `btrfs`,
 `f2fs`, `zfs`, `tmpfs` and `overlay`. Other types retain null capacity fields.

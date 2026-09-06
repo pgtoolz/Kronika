@@ -4,7 +4,7 @@ import { registry } from "kronika:registry"
 
 import { copyText } from "./clipboard"
 import { DatabasesActivity, PlansActivity, RelationsActivity, StatementsActivity } from "./activity"
-import type { DataRow, Finding, HourData, SegmentBound, SnapshotRows, StatementScope } from "./api"
+import type { DataRow, Finding, HourData, LaneContext, SegmentBound, SnapshotRows, StatementScope } from "./api"
 import { buildMetricSamples } from "./chart"
 import { contextMatches, contextualRows, type EntityContext } from "./entity-context"
 import { DetailList, DetailRow } from "./detail-list"
@@ -22,6 +22,7 @@ import { ActivityFacts } from "./detail-activity"
 import { PlanStatementPanel, StatementPlansPanel } from "./detail-plans"
 import { settingAt } from "./postgres-vitals"
 import { ProcessFacts } from "./detail-process"
+import { postgresProcessesShared } from "./source-availability"
 import { activityFor, asNumber, compact, humanBytes, humanDuration, humanPercent, identifier, measure, rawText, snapshot, value, type Locale } from "./model"
 import { activityDurationHistory, activityDurationSource, activityDurationMs, decorateActivityRow, transactionDurationMs } from "./postgres-activity"
 import { decoratePostgresIntervalRow, findingSemanticField, intervalMetric, PG_STAT_STATEMENTS_TYPE_IDS, PG_STORE_PLANS_TYPE_IDS, physicalField, physicalFields, planDefaultOrder, postgresHistory, postgresIdentity, statementDefaultOrder, unique, type PlanLens, type PostgresSemanticField, type StatementLens } from "./postgres-metrics"
@@ -664,6 +665,7 @@ function VacuumView({ cursor, data, historyRevision, hour, locale, onCursor, onO
       {selected !== null && <InspectorPortal identity={`postgres:pg_stat_progress_vacuum:${rowKey(selected)}`} onClose={() => { setSelected(null); onSelectedKey(null) }} title={detailTitle(selected, "pg_stat_progress_vacuum", t)}>
         <PgDetail
           allRows={allRows}
+          contexts={data.laneContexts}
           columns={vacuumDetailColumns(selected, blockSize)}
           cursor={cursor}
           historyField="heap_blks_scanned"
@@ -680,7 +682,7 @@ function VacuumView({ cursor, data, historyRevision, hour, locale, onCursor, onO
         {joinedActivity.row !== null && <InspectorRelatedPortal id="pg_stat_activity" identity={`vacuum:${rowKey(selected)}`} label={t("pg.section.activity")}>
           <ActivityFacts activity={joinedActivity.row} activityTime={joinedActivity.snapshotTime} locale={locale} onRelated={onRelated} t={t} />
         </InspectorRelatedPortal>}
-        {selectedEpisode !== undefined && <InspectorRelatedPortal id="os_process" identity={`vacuum:${rowKey(selected)}`} label={t("pg.related.process_tab")}>
+        {selectedEpisode !== undefined && postgresProcessesShared(data.laneContexts, selected.segmentId) && <InspectorRelatedPortal id="os_process" identity={`vacuum:${rowKey(selected)}`} label={t("pg.related.process_tab")}>
           <VacuumProcessTab blockSize={blockSize} cursor={cursor} episode={selectedEpisode} hour={hour} locale={locale} t={t} ticksPerSecond={ticksPerSecond} />
         </InspectorRelatedPortal>}
       </InspectorPortal>}
@@ -931,11 +933,11 @@ function VacuumProcessTab({ blockSize, cursor, episode, hour, locale, t, ticksPe
     acceptResponse(
       loadSeries(hour, "os_process", { pid: String(pid) }, [], controller.signal),
       controller.signal,
-      (loaded) => setRows(loaded),
+      (loaded) => setRows(loaded.filter((row) => row.segmentId === episode.last.segmentId)),
       () => setRows(null),
     )
     return () => controller.abort()
-  }, [hour, pid])
+  }, [episode.last.segmentId, hour, pid])
   if (rows === undefined) return <section className="p-3" data-testid="vacuum-process-panel"><p className="m-0 text-sm text-fg4">{t("history.loading")}</p></section>
   if (rows === null || rows.length === 0) return <section className="p-3" data-testid="vacuum-process-panel"><p className="m-0 text-sm text-fg4">{t("pg.related.process_missing")}</p></section>
   const current = snapshot(rows, cursor)[0] ?? null
@@ -1125,7 +1127,7 @@ function PgEntityView({
       <EntityTable accessory={accessory} className={section === "pg_stat_statements" ? "[&_.entity-cell]:text-sm" : undefined} columns={visibleColumns} contentSized={contentSized} contextLabel={activeContext?.label} empty={t("table.no_rows")} filterRows={section === "pg_locks" ? filterLockForest : undefined} requestPhase={requestPhase} finding={finding} findingField={finding === null || finding === undefined ? null : fieldNameForLocator(finding)} label={t(`pg.section.${sectionName(section)}`)} locale={locale} onContextClear={onContextClear} onNearEnd={densePageState === "idle" && canLoadMore ? onLoadMore : undefined} onOrder={onOrder} onPattern={onPattern} onSelect={(row) => { setSelected(row); onSelectedKey?.(rowKey(row)) }} order={activeOrder} pattern={pattern} rowLabel={section === "pg_locks" ? (row) => lockRowLabel(row, t) : undefined} searchRequest={searchRequest} searchSurface={section} serverSorted={dense} rows={rows} selectedKey={selectedRowKey} status={status} t={t} testId={`pg-${sectionName(section)}-table`} />
       {paging !== undefined && <div className="lens-tabs max-[760px]:w-full max-[760px]:[&>button]:min-w-0 max-[760px]:[&>button]:flex-1 max-[760px]:[&>button]:px-1" data-testid="table-paging">{paging}</div>}
     </div>
-    {selected !== null && <InspectorPortal identity={`postgres:${section}:${rowKey(selected)}`} onClose={() => { setSelected(null); onSelectedKey?.(null) }} title={detailTitle(selected, section, t)}><PgDetail allRows={allRows} columns={visibleDetailColumns} cursor={cursor} historyField={selectedHistoryField} historyRevision={historyRevision} hour={Math.floor(cursor / 3_600_000_000) * 3_600_000_000} locale={locale} onCursor={onCursor} onRelated={onRelated} row={selected} section={section} segments={segments ?? NO_SEGMENTS} t={t} /></InspectorPortal>}
+    {selected !== null && <InspectorPortal identity={`postgres:${section}:${rowKey(selected)}`} onClose={() => { setSelected(null); onSelectedKey?.(null) }} title={detailTitle(selected, section, t)}><PgDetail allRows={allRows} contexts={data.laneContexts} columns={visibleDetailColumns} cursor={cursor} historyField={selectedHistoryField} historyRevision={historyRevision} hour={Math.floor(cursor / 3_600_000_000) * 3_600_000_000} locale={locale} onCursor={onCursor} onRelated={onRelated} row={selected} section={section} segments={segments ?? NO_SEGMENTS} t={t} /></InspectorPortal>}
   </div>
 }
 
@@ -1165,7 +1167,7 @@ function visibleEntityColumns(columns: readonly EntityColumn[], rows: readonly D
     .map((column) => column.rate === true || rates.includes(column.field) ? { ...column, rate: true } : column)
 }
 
-function PgDetail({ allRows, columns, cursor, historyField, historyRevision, hour, locale, onCursor, onRelated, prelude, row, section, segments = NO_SEGMENTS, t }: { readonly allRows: readonly DataRow[]; readonly columns: readonly EntityColumn[]; readonly cursor: number; readonly historyField: string | null; readonly historyRevision: number; readonly hour: number; readonly locale: Locale; readonly onCursor: (timestamp: number) => void; readonly onRelated?: ((target: RelatedNavigation) => void) | undefined; readonly prelude?: ReactNode | undefined; readonly row: DataRow; readonly section: string; readonly segments?: readonly SegmentBound[] | undefined; readonly t: Translate }) {
+function PgDetail({ allRows, contexts, columns, cursor, historyField, historyRevision, hour, locale, onCursor, onRelated, prelude, row, section, segments = NO_SEGMENTS, t }: { readonly allRows: readonly DataRow[]; readonly contexts: readonly LaneContext[]; readonly columns: readonly EntityColumn[]; readonly cursor: number; readonly historyField: string | null; readonly historyRevision: number; readonly hour: number; readonly locale: Locale; readonly onCursor: (timestamp: number) => void; readonly onRelated?: ((target: RelatedNavigation) => void) | undefined; readonly prelude?: ReactNode | undefined; readonly row: DataRow; readonly section: string; readonly segments?: readonly SegmentBound[] | undefined; readonly t: Translate }) {
   const entityRows = useMemo(() => allRows.filter((candidate) => sameEntity(candidate, row, section)), [allRows, row, section])
   const localHistoryRows = useMemo(() => [...entityRows.filter((candidate) => rowKey(candidate) !== rowKey(row)), row], [entityRows, row])
   const dense = section === "pg_stat_statements" || section === "pg_store_plans"
@@ -1192,7 +1194,7 @@ function PgDetail({ allRows, columns, cursor, historyField, historyRevision, hou
   const planTarget = section === "pg_store_plans" ? statementsForPlan(row) : null
   const activityTarget = section === "pg_stat_activity" ? statementsForActivity(row) : null
   const statementTarget = section === "pg_stat_statements" ? plansForStatement(row) : null
-  const backendPid = section === "pg_stat_activity" ? asNumber(value(row, "pid")) : null
+  const backendPid = section === "pg_stat_activity" && postgresProcessesShared(contexts, row.segmentId) ? asNumber(value(row, "pid")) : null
   const [backendProcess, setBackendProcess] = useState<DataRow | null | undefined>(undefined)
   useEffect(() => {
     setBackendProcess(undefined)

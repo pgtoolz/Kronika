@@ -31,6 +31,23 @@ pub fn cgroup_cpu_capacity(
     }
 }
 
+/// Finite CPU bound observed for the selected group. Each available constraint
+/// contributes independently; limits above the exposed hierarchy are unobserved.
+#[must_use]
+pub fn observed_cgroup_cpu_capacity(
+    cpuset: Option<i64>,
+    quota: Option<i64>,
+    period: Option<i64>,
+) -> Option<f64> {
+    cgroup_cpu_capacity(cpuset, quota, period).or_else(|| {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "recorded CPU counts fit f64 capacity"
+        )]
+        cpuset.filter(|cpus| *cpus > 0).map(|cpus| cpus as f64)
+    })
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct RecordedCpuCapacity {
     explicit: Option<f64>,

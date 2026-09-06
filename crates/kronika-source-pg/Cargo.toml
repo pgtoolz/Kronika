@@ -14,6 +14,10 @@ futures-util = "0.3"
 kronika-registry = { path = "../kronika-registry" }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 tokio-postgres = "0.7"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+tokio-postgres-rustls = { version = "0.14", default-features = false }
+webpki-roots = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "sync", "test-util"] }

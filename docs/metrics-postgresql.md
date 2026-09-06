@@ -253,6 +253,8 @@ Episode key is physical type + PID + database OID + relation OID. A new episode 
 | `vacuuming indexes`, `cleaning up indexes` | Heavy | `indexes_processed`, PostgreSQL 17+ |
 | `truncating heap` | Dangerous | Repeated phase samples; phase is set before the conditional exclusive-lock attempt |
 
+Process resource details require explicit recorded sharing with Linux processes in the same segment. PostgreSQL-only, container and older recordings do not create those links from numeric PID matches. SQL progress and Activity remain available.
+
 Process load resolves this PID's OS samples at or before the episode's first and last timestamps. With recorded CPU accounting rate `H` ticks/s, CPU ms = `1000Δ(utime+stime)/H`; CPU share = `min(100,100 × CPU seconds / OS sample elapsed seconds)`; block-wait ms = `1000Δblkdelay_ticks/H`. Read/write bytes and major faults are `Δread_bytes`, `Δwrite_bytes`, `Δmajflt`. Read share = `min(100,100Δread_bytes/(B × final heap_blks_scanned))`. These deltas include all work performed by that PID between the selected OS samples. Missing accounting rate or block size suppresses only the dependent calculation.
 
 ## Summary strips and value marks

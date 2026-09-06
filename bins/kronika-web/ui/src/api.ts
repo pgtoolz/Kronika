@@ -212,6 +212,8 @@ export interface LanePoint {
 export interface LaneContext {
   readonly segmentId: string
   readonly postgresqlIntervalSeconds: number | null
+  readonly osEnabled?: boolean | null
+  readonly postgresqlProcessesShared?: boolean
   // instance_metadata.environment of the segment: 0 machine, 1 container.
   readonly environment: number | null
 }
@@ -460,6 +462,8 @@ export async function loadTimelineLanes(
       contexts.push({
         segmentId: requiredText(record.segment_id, "lane context segment id"),
         postgresqlIntervalSeconds: seconds === null ? null : integer(seconds, "PostgreSQL interval"),
+        osEnabled: typeof record.os_enabled === "boolean" ? record.os_enabled : null,
+        postgresqlProcessesShared: record.postgresql_processes_shared === true,
         environment: typeof environment === "number" && Number.isSafeInteger(environment) ? environment : null,
       })
     } else if (record.record === "lane") {

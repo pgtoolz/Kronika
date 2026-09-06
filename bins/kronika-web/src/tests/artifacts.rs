@@ -9,7 +9,7 @@ use hyper::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, ETAG, Heade
 use hyper::{HeaderMap, StatusCode};
 use kronika_format::DictLimits;
 use kronika_layout::{DataRoot, LayoutLimits, SegmentAddress, SegmentId, WriterOwner};
-use kronika_registry::instance_metadata::InstanceMetadata;
+use kronika_registry::instance_metadata::{InstanceMetadata, InstanceMetadataV3};
 use kronika_registry::os_cgroup_cpu::OsCgroupCpu;
 use kronika_registry::os_diskstats::OsDiskstats;
 use kronika_registry::os_mountinfo::OsMountinfo;
@@ -335,15 +335,17 @@ impl Fixture {
         let dictionary = dict::encode(interner.window()).expect("health dictionary");
         let mut buffers = SectionBuffers::new();
         buffers
-            .push(InstanceMetadata {
+            .push(InstanceMetadataV3 {
                 ts: Ts(at),
-                hostname: StrId(901),
-                kernel_version: StrId(902),
-                environment: 0,
-                clock_ticks_per_sec: 100,
-                page_size_bytes: 4_096,
-                boot_id: StrId(903),
-                btime: Ts(1),
+                hostname: Some(StrId(901)),
+                kernel_version: Some(StrId(902)),
+                environment: Some(0),
+                clock_ticks_per_sec: Some(100),
+                page_size_bytes: Some(4_096),
+                boot_id: Some(StrId(903)),
+                btime: Some(Ts(1)),
+                os_enabled: true,
+                postgresql_processes_shared: true,
                 postgresql_enabled: true,
                 postgresql_interval_seconds: interval_seconds,
                 postgresql_effective_cpus: Some(2),
@@ -484,15 +486,17 @@ impl Fixture {
         let dictionary = dict::encode(interner.window()).expect("process summary dictionary");
         let mut buffers = SectionBuffers::new();
         buffers
-            .push(InstanceMetadata {
+            .push(InstanceMetadataV3 {
                 ts: Ts(ts),
-                hostname: label,
-                kernel_version: label,
-                environment: 0,
-                clock_ticks_per_sec: 100,
-                page_size_bytes: 4_096,
-                boot_id: label,
-                btime: Ts(1),
+                hostname: Some(label),
+                kernel_version: Some(label),
+                environment: Some(0),
+                clock_ticks_per_sec: Some(100),
+                page_size_bytes: Some(4_096),
+                boot_id: Some(label),
+                btime: Some(Ts(1)),
+                os_enabled: true,
+                postgresql_processes_shared: true,
                 postgresql_enabled: true,
                 postgresql_interval_seconds: 30,
                 postgresql_effective_cpus: Some(2),
@@ -4661,6 +4665,32 @@ fn process_summary_series_uses_the_complete_set_and_previous_segment() {
     assert_eq!(values[13], Value::Null, "all unavailable values stay null");
     assert_eq!(values[14], 4_080.0);
     assert_eq!(values[15], 8_160.0);
+}
+
+#[test]
+fn process_summary_does_not_borrow_postgresql_pids_from_the_previous_segment() {
+    let mut fixture = Fixture::new();
+    fixture.append_process_summary_snapshot(1_000_000, 1_000, None, 900_000, 0..10, None);
+    fixture.finish_and_continue(SEGMENT_ID + 1_000);
+    fixture.append_process_summary_snapshot(6_000_000, 1_100, None, 6_500_000, 0..10, None);
+    fixture.finish();
+
+    let records = stream(fixture.prepare(
+        "/api/hour?from=6000000&to=6000000&section=os_process_summary&field=postgresql&field=user_cores",
+        None,
+    ))
+    .expect("process summary before this segment's activity snapshot");
+    let rows = row_records(&records);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0]["values"][0],
+        Value::Null,
+        "neither old-segment nor future PostgreSQL PIDs are joined"
+    );
+    assert_eq!(
+        rows[0]["values"][1], 41.0,
+        "OS counter predecessors remain usable"
+    );
 }
 
 #[test]

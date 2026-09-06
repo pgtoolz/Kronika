@@ -39,6 +39,7 @@ async fn shutdown_drops_in_progress_collection() {
 
 fn config(storage_dir: &Path) -> Config {
     Config {
+        mode: crate::config::CollectorMode::Local,
         storage_dir: storage_dir.to_owned(),
         tick_secs: 1,
         intervals: Intervals::default(),

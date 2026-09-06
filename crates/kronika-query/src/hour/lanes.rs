@@ -32,21 +32,22 @@ struct Counters {
     waiting: BTreeMap<i64, f64>,
     lock_waiting: BTreeMap<i64, f64>,
     oldest_xact: BTreeMap<i64, f64>,
-    // The container scope: the collector's own cgroup, selected by the exact
+    // The container scope: the selected recorded cgroup, selected by the exact
     // paths `os_cgroup_context` records, and the pressure of that cgroup.
     cg_cpu_usage: BTreeMap<i64, i64>,
     cg_cpu_throttled: BTreeMap<i64, i64>,
-    cg_cpu_capacity: BTreeMap<i64, f64>,
+    cg_cpu_capacity: BTreeMap<i64, Option<f64>>,
+    cg_boundaries: BTreeSet<i64>,
     cg_stall_cpu: BTreeMap<i64, i64>,
     cg_stall_memory: BTreeMap<i64, i64>,
     cg_stall_io: BTreeMap<i64, i64>,
     cg_memory_bytes: BTreeMap<i64, f64>,
-    cg_memory_share: BTreeMap<i64, f64>,
+    cg_memory_share: BTreeMap<i64, Option<f64>>,
     cg_oom: BTreeMap<i64, Option<i64>>,
     cg_io_read: BTreeMap<i64, i64>,
     cg_io_write: BTreeMap<i64, i64>,
     cg_pids: BTreeMap<i64, f64>,
-    cg_pids_share: BTreeMap<i64, f64>,
+    cg_pids_share: BTreeMap<i64, Option<f64>>,
 }
 
 impl Counters {
@@ -70,6 +71,9 @@ impl Counters {
         retain_latest(&mut self.cg_cpu_usage);
         retain_latest(&mut self.cg_cpu_throttled);
         retain_latest(&mut self.cg_cpu_capacity);
+        if let Some(last) = self.cg_boundaries.last().copied() {
+            self.cg_boundaries.retain(|ts| *ts == last);
+        }
         retain_latest(&mut self.cg_stall_cpu);
         retain_latest(&mut self.cg_stall_memory);
         retain_latest(&mut self.cg_stall_io);
@@ -98,6 +102,7 @@ fn retain_latest<T>(samples: &mut BTreeMap<i64, T>) {
 pub(super) struct State {
     counters: Counters,
     emitted_before: i64,
+    cgroup_identity: Option<Vec<Vec<u8>>>,
 }
 
 impl Default for State {
@@ -105,6 +110,7 @@ impl Default for State {
         Self {
             counters: Counters::default(),
             emitted_before: i64::MIN,
+            cgroup_identity: None,
         }
     }
 }
@@ -114,6 +120,8 @@ pub(super) struct SegmentFacts {
     pub(super) postgresql_interval_seconds: Option<u64>,
     /// `instance_metadata.environment`: 0 machine, 1 container.
     pub(super) environment: Option<u32>,
+    pub(super) os_enabled: Option<bool>,
+    pub(super) postgresql_processes_shared: bool,
 }
 
 pub(super) fn collect(
@@ -122,13 +130,20 @@ pub(super) fn collect(
     state: &mut State,
 ) -> Result<(Vec<LanePoint>, SegmentFacts), QueryError> {
     let mut facts = Facts::default();
-    // Clock facts and the collector's cgroup membership come first: the
+    let collection = kronika_index::collection_facts(segment)?;
+    // Clock facts and selected cgroup membership come first: the
     // container rows below are selected by those exact paths and scope.
     for (type_id, _rows) in segment.sections() {
         match logical_section_name(type_id) {
             Some("instance_metadata") => read_metadata(segment, type_id, &mut facts)?,
             Some("os_cgroup_context") => {
-                read_cgroup_context(segment, type_id, &mut facts, &mut state.counters)?;
+                read_cgroup_context(
+                    segment,
+                    type_id,
+                    &mut facts,
+                    &mut state.counters,
+                    &mut state.cgroup_identity,
+                )?;
             }
             _other => {}
         }
@@ -171,6 +186,8 @@ pub(super) fn collect(
         SegmentFacts {
             postgresql_interval_seconds: facts.postgresql_interval_seconds,
             environment: facts.environment,
+            os_enabled: collection.os_enabled,
+            postgresql_processes_shared: collection.postgresql_processes_shared,
         },
     ))
 }
@@ -181,11 +198,11 @@ struct Facts {
     cores: BTreeSet<i64>,
     postgresql_interval_seconds: Option<u64>,
     environment: Option<u32>,
-    membership: Option<Membership>,
-    memory_limits: BTreeMap<i64, f64>,
+    memberships: BTreeMap<i64, Membership>,
+    memory_limits: BTreeMap<i64, Option<f64>>,
 }
 
-/// The collector's own cgroup memberships recorded by `os_cgroup_context`.
+/// The selected recorded cgroup memberships recorded by `os_cgroup_context`.
 /// Paths are dictionary ids of the segment, so rows compare without text.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Membership {
@@ -202,6 +219,7 @@ fn read_cgroup_context(
     type_id: u32,
     facts: &mut Facts,
     counters: &mut Counters,
+    previous_identity: &mut Option<Vec<Vec<u8>>>,
 ) -> Result<(), QueryError> {
     const FIELDS: [&str; 9] = [
         "ts",
@@ -214,24 +232,67 @@ fn read_cgroup_context(
         "effective_cpu_period_usec",
         "effective_memory_max",
     ];
-    let names = with_columns(type_id, &FIELDS, &["scope"]);
-    let mut latest: Option<(i64, Membership)> = None;
+    let names = with_columns(
+        type_id,
+        &FIELDS,
+        &[
+            "scope",
+            "pids_path",
+            "cpu_identity",
+            "memory_identity",
+            "io_identity",
+            "pids_identity",
+        ],
+    );
+    let mut identities = BTreeMap::<i64, Vec<Option<u64>>>::new();
     segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
         let Some(ts) = timestamp(&row, "ts") else {
             return true;
         };
-        if latest.as_ref().is_none_or(|(before, _)| ts >= *before) {
-            latest = Some((ts, membership(&row)));
-        }
-        if let Some(capacity) = cgroup_cpu_capacity(&row) {
-            counters.cg_cpu_capacity.insert(ts, capacity);
-        }
-        if let Some(limit) = number(&row, "effective_memory_max").filter(|limit| *limit > 0.0) {
-            facts.memory_limits.insert(ts, limit);
-        }
+        facts.memberships.insert(ts, membership(&row));
+        identities.insert(
+            ts,
+            [
+                "cpu_identity",
+                "memory_identity",
+                "io_identity",
+                "pids_identity",
+                "cpu_path",
+                "memory_path",
+                "io_path",
+                "pids_path",
+            ]
+            .iter()
+            .map(|name| string_id(&row, name))
+            .collect(),
+        );
+        counters
+            .cg_cpu_capacity
+            .insert(ts, cgroup_cpu_capacity(&row));
+        facts.memory_limits.insert(
+            ts,
+            number(&row, "effective_memory_max").filter(|limit| *limit > 0.0),
+        );
         true
     })?;
-    facts.membership = latest.map(|(_ts, membership)| membership);
+    let ids = identities.values().flatten().flatten().copied().collect();
+    let dictionary = segment.dictionary_for(&ids)?;
+    for (ts, ids) in identities {
+        let identity = ids
+            .iter()
+            .map(|id| match id.and_then(|id| dictionary.resolve(id)) {
+                Some(Resolved::Str(bytes)) => bytes.to_vec(),
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        if previous_identity
+            .as_ref()
+            .is_some_and(|before| *before != identity)
+        {
+            counters.cg_boundaries.insert(ts);
+        }
+        *previous_identity = Some(identity);
+    }
     Ok(())
 }
 
@@ -239,9 +300,11 @@ fn membership(row: &Row) -> Membership {
     let cpu = string_id(row, "cpu_path");
     let memory = string_id(row, "memory_path");
     let io = string_id(row, "io_path");
-    let pids = (integer(row, "cgroup_version") == Some(2))
-        .then_some(cpu.or(memory).or(io))
-        .flatten();
+    let pids = string_id(row, "pids_path").or_else(|| {
+        (integer(row, "cgroup_version") == Some(2))
+            .then_some(cpu.or(memory).or(io))
+            .flatten()
+    });
     Membership {
         scope: integer(row, "scope"),
         cpu,
@@ -252,14 +315,19 @@ fn membership(row: &Row) -> Membership {
 }
 
 fn cgroup_cpu_capacity(row: &Row) -> Option<f64> {
-    kronika_index::cgroup_cpu_capacity(
+    let resolve = if row.contract().type_id.get() == 1_205_002 {
+        kronika_index::observed_cgroup_cpu_capacity
+    } else {
+        kronika_index::cgroup_cpu_capacity
+    };
+    resolve(
         integer(row, "cpuset_cpus"),
         integer(row, "effective_cpu_quota_usec"),
         integer(row, "effective_cpu_period_usec"),
     )
 }
 
-/// Whether a cgroup row is the collector's own membership for one controller.
+/// Whether a cgroup row is the selected recorded membership for one controller.
 fn member_row(row: &Row, membership: Option<&Membership>, path: Option<u64>) -> bool {
     let (Some(membership), Some(path)) = (membership, path) else {
         return false;
@@ -273,20 +341,21 @@ fn read_cgroup_cpu(
     facts: &Facts,
     counters: &mut Counters,
 ) -> Result<(), QueryError> {
-    let path = facts
-        .membership
-        .as_ref()
-        .and_then(|membership| membership.cpu);
-    if path.is_none() {
-        return Ok(());
-    }
     let names = with_columns(
         type_id,
         &["ts", "cgroup_path", "usage_usec", "throttled_usec"],
         &["scope"],
     );
     segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
-        if !member_row(&row, facts.membership.as_ref(), path) {
+        let membership = timestamp(&row, "ts").and_then(|ts| {
+            facts
+                .memberships
+                .range(..=ts)
+                .next_back()
+                .map(|(_, value)| value)
+        });
+        let path = membership.and_then(|value| value.cpu);
+        if !member_row(&row, membership, path) {
             return true;
         }
         let Some(ts) = timestamp(&row, "ts") else {
@@ -309,20 +378,21 @@ fn read_cgroup_memory(
     facts: &Facts,
     counters: &mut Counters,
 ) -> Result<(), QueryError> {
-    let path = facts
-        .membership
-        .as_ref()
-        .and_then(|membership| membership.memory);
-    if path.is_none() {
-        return Ok(());
-    }
     let names = with_columns(
         type_id,
         &["ts", "cgroup_path", "current", "oom_kill"],
         &["scope"],
     );
     segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
-        if !member_row(&row, facts.membership.as_ref(), path) {
+        let membership = timestamp(&row, "ts").and_then(|ts| {
+            facts
+                .memberships
+                .range(..=ts)
+                .next_back()
+                .map(|(_, value)| value)
+        });
+        let path = membership.and_then(|value| value.memory);
+        if !member_row(&row, membership, path) {
             return true;
         }
         let Some(ts) = timestamp(&row, "ts") else {
@@ -330,10 +400,14 @@ fn read_cgroup_memory(
         };
         if let Some(current) = number(&row, "current") {
             counters.cg_memory_bytes.insert(ts, current);
-            // The share needs the effective hierarchy limit, not the leaf `max`.
-            if let Some(limit) = at_or_before(&facts.memory_limits, ts) {
-                counters.cg_memory_share.insert(ts, current / limit * 100.0);
-            }
+            let limit = facts
+                .memory_limits
+                .range(..=ts)
+                .next_back()
+                .and_then(|(_, limit)| *limit);
+            counters
+                .cg_memory_share
+                .insert(ts, limit.map(|limit| current / limit * 100.0));
         }
         counters.cg_oom.insert(ts, integer(&row, "oom_kill"));
         true
@@ -347,20 +421,21 @@ fn read_cgroup_io(
     facts: &Facts,
     counters: &mut Counters,
 ) -> Result<(), QueryError> {
-    let path = facts
-        .membership
-        .as_ref()
-        .and_then(|membership| membership.io);
-    if path.is_none() {
-        return Ok(());
-    }
     let names = with_columns(
         type_id,
         &["ts", "cgroup_path", "rbytes", "wbytes"],
         &["scope"],
     );
     segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
-        if !member_row(&row, facts.membership.as_ref(), path) {
+        let membership = timestamp(&row, "ts").and_then(|ts| {
+            facts
+                .memberships
+                .range(..=ts)
+                .next_back()
+                .map(|(_, value)| value)
+        });
+        let path = membership.and_then(|value| value.io);
+        if !member_row(&row, membership, path) {
             return true;
         }
         let Some(ts) = timestamp(&row, "ts") else {
@@ -384,36 +459,34 @@ fn read_cgroup_pids(
     facts: &Facts,
     counters: &mut Counters,
 ) -> Result<(), QueryError> {
-    let path = facts
-        .membership
-        .as_ref()
-        .and_then(|membership| membership.pids);
-    if path.is_none() {
-        return Ok(());
-    }
     let names = with_columns(
         type_id,
         &["ts", "cgroup_path", "current", "max"],
         &["scope"],
     );
     segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
-        if !member_row(&row, facts.membership.as_ref(), path) {
+        let membership = timestamp(&row, "ts").and_then(|ts| {
+            facts
+                .memberships
+                .range(..=ts)
+                .next_back()
+                .map(|(_, value)| value)
+        });
+        let path = membership.and_then(|value| value.pids);
+        if !member_row(&row, membership, path) {
             return true;
         }
         let (Some(ts), Some(current)) = (timestamp(&row, "ts"), number(&row, "current")) else {
             return true;
         };
         counters.cg_pids.insert(ts, current);
-        if let Some(max) = number(&row, "max").filter(|max| *max > 0.0) {
-            counters.cg_pids_share.insert(ts, current / max * 100.0);
-        }
+        let max = number(&row, "max").filter(|max| *max > 0.0);
+        counters
+            .cg_pids_share
+            .insert(ts, max.map(|max| current / max * 100.0));
         true
     })?;
     Ok(())
-}
-
-fn at_or_before(samples: &BTreeMap<i64, f64>, ts: i64) -> Option<f64> {
-    samples.range(..=ts).next_back().map(|(_ts, value)| *value)
 }
 
 fn read_metadata(segment: &Segment, type_id: u32, facts: &mut Facts) -> Result<(), QueryError> {
@@ -504,7 +577,7 @@ fn read_psi(segment: &Segment, type_id: u32, counters: &mut Counters) -> Result<
 }
 
 /// Host pressure (scope 0) feeds the host lanes; the pressure of the
-/// collector's own cgroup (scope 3) feeds the container lanes. Resource 0 is
+/// selected recorded cgroup (legacy scope 3 or current scope 4) feeds the container lanes. Resource 0 is
 /// cpu, 1 memory, 2 io; host memory pressure has no lane.
 const fn pressure_lane(
     counters: &mut Counters,
@@ -514,9 +587,9 @@ const fn pressure_lane(
     match (scope, resource) {
         (0, 0) => Some(&mut counters.stall_cpu),
         (0, 2) => Some(&mut counters.stall_io),
-        (3, 0) => Some(&mut counters.cg_stall_cpu),
-        (3, 1) => Some(&mut counters.cg_stall_memory),
-        (3, 2) => Some(&mut counters.cg_stall_io),
+        (3 | 4, 0) => Some(&mut counters.cg_stall_cpu),
+        (3 | 4, 1) => Some(&mut counters.cg_stall_memory),
+        (3 | 4, 2) => Some(&mut counters.cg_stall_io),
         _other => None,
     }
 }
@@ -823,12 +896,14 @@ fn points(counters: &Counters, ticks_per_second: i64, cpu_count: i64) -> Vec<Lan
     out
 }
 
-/// The container lanes: the collector's own cgroup against its recorded
+/// The container lanes: the selected recorded cgroup against its recorded
 /// capacity, its pressure, its events and its gauges.
 fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
-    for (ts, cores) in rate(&counters.cg_cpu_usage, |value, seconds| {
-        value / 1_000_000.0 / seconds
-    }) {
+    for (ts, cores) in group_rate(
+        &counters.cg_cpu_usage,
+        &counters.cg_boundaries,
+        |value, seconds| value / 1_000_000.0 / seconds,
+    ) {
         out.push(LanePoint {
             key: "cg_cpu_cores",
             ts,
@@ -837,7 +912,12 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         // A share needs a recorded capacity; host cores never substitute.
         if !counters.cg_cpu_capacity.is_empty() {
             let share = cores.and_then(|cores| {
-                at_or_before(&counters.cg_cpu_capacity, ts).map(|capacity| cores / capacity * 100.0)
+                counters
+                    .cg_cpu_capacity
+                    .range(..=ts)
+                    .next_back()
+                    .and_then(|(_, capacity)| *capacity)
+                    .map(|capacity| cores / capacity * 100.0)
             });
             out.push(LanePoint {
                 key: "cg_cpu_share",
@@ -852,7 +932,7 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         ("cg_mem_psi", &counters.cg_stall_memory),
         ("cg_io_psi", &counters.cg_stall_io),
     ] {
-        for (ts, value) in rate(stalls, |value, seconds| {
+        for (ts, value) in group_rate(stalls, &counters.cg_boundaries, |value, seconds| {
             value / 1_000_000.0 / seconds * 100.0
         }) {
             out.push(LanePoint { key, ts, value });
@@ -862,11 +942,18 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         ("cg_io_read", &counters.cg_io_read),
         ("cg_io_write", &counters.cg_io_write),
     ] {
-        for (ts, value) in rate(stored, |value, seconds| value / seconds) {
+        for (ts, value) in group_rate(stored, &counters.cg_boundaries, |value, seconds| {
+            value / seconds
+        }) {
             out.push(LanePoint { key, ts, value });
         }
     }
-    for (ts, value) in nullable_rate(&counters.cg_oom, |value, seconds| value / seconds) {
+    for (ts, value) in rate_samples(
+        counters.cg_oom.iter().map(|(ts, value)| (*ts, *value)),
+        counters.cg_oom.len(),
+        |value, seconds| value / seconds,
+        Some(&counters.cg_boundaries),
+    ) {
         out.push(LanePoint {
             key: "cg_oom",
             ts,
@@ -875,8 +962,18 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
     }
     for (key, stored) in [
         ("cg_memory", &counters.cg_memory_share),
-        ("cg_memory_bytes", &counters.cg_memory_bytes),
         ("cg_pids_share", &counters.cg_pids_share),
+    ] {
+        for (ts, value) in stored {
+            out.push(LanePoint {
+                key,
+                ts: *ts,
+                value: *value,
+            });
+        }
+    }
+    for (key, stored) in [
+        ("cg_memory_bytes", &counters.cg_memory_bytes),
         ("cg_pids", &counters.cg_pids),
     ] {
         for (ts, value) in stored {
@@ -889,12 +986,26 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
     }
 }
 
+fn group_rate(
+    stored: &BTreeMap<i64, i64>,
+    boundaries: &BTreeSet<i64>,
+    scale: impl Fn(f64, f64) -> f64,
+) -> Vec<(i64, Option<f64>)> {
+    rate_samples(
+        stored.iter().map(|(ts, value)| (*ts, Some(*value))),
+        stored.len(),
+        scale,
+        Some(boundaries),
+    )
+}
+
 /// Returns per-second deltas; the first or unusable sample is null.
 fn rate(stored: &BTreeMap<i64, i64>, scale: impl Fn(f64, f64) -> f64) -> Vec<(i64, Option<f64>)> {
     rate_samples(
         stored.iter().map(|(ts, value)| (*ts, Some(*value))),
         stored.len(),
         scale,
+        None,
     )
 }
 
@@ -907,6 +1018,7 @@ fn nullable_rate(
         stored.iter().map(|(ts, value)| (*ts, *value)),
         stored.len(),
         scale,
+        None,
     )
 }
 
@@ -914,6 +1026,7 @@ fn rate_samples(
     samples: impl Iterator<Item = (i64, Option<i64>)>,
     len: usize,
     scale: impl Fn(f64, f64) -> f64,
+    boundaries: Option<&BTreeSet<i64>>,
 ) -> Vec<(i64, Option<f64>)> {
     let mut out = Vec::with_capacity(len);
     let mut earlier: Option<(i64, i64)> = None;
@@ -928,7 +1041,18 @@ fn rate_samples(
             let seconds = (ts - before_ts) as f64 / 1_000_000.0;
             #[expect(clippy::cast_precision_loss, reason = "counters stay below 2^53")]
             let delta = (value - before) as f64;
-            (seconds > 0.0 && delta >= 0.0).then(|| scale(delta, seconds))
+            (seconds > 0.0
+                && delta >= 0.0
+                && !boundaries.is_some_and(|points| {
+                    points
+                        .range((
+                            std::ops::Bound::Excluded(before_ts),
+                            std::ops::Bound::Included(ts),
+                        ))
+                        .next()
+                        .is_some()
+                }))
+            .then(|| scale(delta, seconds))
         } else {
             None
         };

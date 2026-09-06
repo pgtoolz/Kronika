@@ -10,10 +10,6 @@ import { asNumber, humanDuration, identifier, measure, rawText, value, type Loca
 import { activityDurationMs, backendAgeMs, stateDurationMs, transactionDurationMs } from "./postgres-activity"
 import { statementsForActivity, type RelatedNavigation } from "./statement-navigation"
 
-// The PostgreSQL backend recorded under the selected process PID. It is the
-// same identity in another recorded section, so it reads as its own panel
-// rather than as a tail below the process facts.
-
 const ACTIVITY_FIELDS = [
   ["leader_pid", "pg.leader_pid", "id", "machine"], ["backend_type", "pg.backend_type", "text", "machine"], ["datname", "pg.datname", "text", "machine"],
   ["usename", "pg.usename", "text", "machine"],

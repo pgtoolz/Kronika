@@ -1,9 +1,12 @@
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use kronika_format::DictLimits;
 use kronika_layout::{DataRoot, LayoutLimits, SegmentAddress, SegmentId};
 use kronika_reader::{Reader, SegmentKind, SegmentRef};
-use kronika_registry::instance_metadata::{InstanceMetadata, InstanceMetadataV1};
+use kronika_registry::instance_metadata::{
+    InstanceMetadata, InstanceMetadataV1, InstanceMetadataV3,
+};
 use kronika_registry::os_cgroup_memory::OsCgroupMemoryV2;
 use kronika_registry::os_cpu::OsCpu;
 use kronika_registry::os_loadavg::OsLoadavg;
@@ -117,15 +120,17 @@ fn append_health_fixture(
     let dictionary = dict::encode(interner.window()).expect("health dictionary");
     let mut buffers = SectionBuffers::new();
     buffers
-        .push(InstanceMetadata {
+        .push(InstanceMetadataV3 {
             ts: Ts(samples.first().expect("health sample").0),
-            hostname: label,
-            kernel_version: label,
-            environment: config.environment,
-            clock_ticks_per_sec: 100,
-            page_size_bytes: 4_096,
-            boot_id: label,
-            btime: Ts(config.boot_time),
+            hostname: Some(label),
+            kernel_version: Some(label),
+            environment: Some(config.environment),
+            clock_ticks_per_sec: Some(100),
+            page_size_bytes: Some(4_096),
+            boot_id: Some(label),
+            btime: Some(Ts(config.boot_time)),
+            os_enabled: true,
+            postgresql_processes_shared: true,
             postgresql_enabled: config.postgres.is_some(),
             postgresql_interval_seconds: 30,
             postgresql_effective_cpus: config.postgres.map(|_| 2),
@@ -1397,15 +1402,17 @@ fn previous_idx_is_rebuilt_from_recorded_cpu_for_health_and_findings() {
     let dictionary = dict::encode(interner.window()).expect("dictionary");
     let mut buffers = SectionBuffers::new();
     buffers
-        .push(InstanceMetadata {
+        .push(InstanceMetadataV3 {
             ts: Ts(SEGMENT_ID),
-            hostname: active,
-            kernel_version: active,
-            environment: 0,
-            clock_ticks_per_sec: 100,
-            page_size_bytes: 4_096,
-            boot_id: active,
-            btime: Ts(1),
+            hostname: Some(active),
+            kernel_version: Some(active),
+            environment: Some(0),
+            clock_ticks_per_sec: Some(100),
+            page_size_bytes: Some(4_096),
+            boot_id: Some(active),
+            btime: Some(Ts(1)),
+            os_enabled: true,
+            postgresql_processes_shared: true,
             postgresql_enabled: true,
             postgresql_interval_seconds: 30,
             postgresql_effective_cpus: None,
@@ -1454,7 +1461,7 @@ fn previous_idx_is_rebuilt_from_recorded_cpu_for_health_and_findings() {
         }
     }
     let mut stale = stale.encode().expect("valid old calculation");
-    stale[..8].copy_from_slice(b"KRNIDX6\0");
+    stale[..8].copy_from_slice(b"KRNIDX1\0");
     let mut checksum = kronika_format::Crc32c::new();
     checksum.update(&stale[..12]);
     checksum.update(&stale[16..]);
@@ -1895,4 +1902,212 @@ fn process_and_statement_metrics_stay_out_of_finding_indexes() {
     assert!(read(&index_path).expect("read published index").blocks.iter().all(
         |block| !matches!(block, SeriesBlock::Findings(block) if matches!(block.type_id, 1_100_001 | 1_002_001..=1_002_006))
     ));
+}
+
+#[test]
+fn postgresql_only_health_wal_zms_and_valid_cache_reuse() {
+    for capacity in [None, Some(2)] {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = DataRoot::open(directory.path()).expect("data root");
+        let writer = root
+            .acquire_writer(LayoutLimits::default())
+            .expect("writer");
+        let mut journal = Journal::open(&writer, JournalConfig::default()).expect("journal");
+        let mut interner = Interner::new(DictLimits::default());
+        let active = StrId(interner.intern(b"active").expect("state").get());
+        let dictionary = dict::encode(interner.window()).expect("dictionary");
+        let mut buffers = SectionBuffers::new();
+        buffers
+            .push(InstanceMetadataV3 {
+                ts: Ts(SEGMENT_ID),
+                hostname: None,
+                kernel_version: None,
+                environment: None,
+                clock_ticks_per_sec: None,
+                page_size_bytes: None,
+                boot_id: None,
+                btime: None,
+                os_enabled: false,
+                postgresql_processes_shared: false,
+                postgresql_enabled: true,
+                postgresql_interval_seconds: 30,
+                postgresql_effective_cpus: capacity,
+            })
+            .expect("SQL-only metadata");
+        for pid in 1..=5 {
+            buffers
+                .push(activity_row(SEGMENT_ID + 1, pid, active, active))
+                .expect("activity");
+        }
+        let part = buffers.flush(&dictionary).expect("encode").expect("part");
+        journal.append(address().id, &part).expect("append");
+        let reader = Reader::open(directory.path()).expect("reader");
+        let live = only_segment(&reader, SegmentKind::Active);
+        let live_health =
+            resource(directory.path(), &reader, &live, "health").expect("live health");
+        let expected = capacity.map(|_| 80);
+        assert!(health_values(&live_health, "os").is_empty());
+        assert_eq!(health_values(&live_health, "postgres"), [expected]);
+        assert_eq!(health_values(&live_health, "overall"), [expected]);
+        drop(reader);
+        write_segment(&journal, &writer, address()).expect("seal");
+        journal.reset().expect("reset");
+        let reader = Reader::open(directory.path()).expect("reader");
+        let finished = only_segment(&reader, SegmentKind::Finished);
+        let sealed =
+            resource(directory.path(), &reader, &finished, "health").expect("sealed health");
+        assert_eq!(sealed.index.blocks, live_health.index.blocks);
+        let zms = zms_path(directory.path(), &finished);
+        let original_zms = std::fs::read(&zms).expect("source bytes");
+        let index = path_of(&zms).expect("index path");
+        let before = std::fs::metadata(&index).expect("index metadata");
+        let reused = resource(directory.path(), &reader, &finished, "health").expect("cache reuse");
+        assert_eq!(reused, sealed);
+        assert_eq!(
+            std::fs::metadata(&index).expect("reused metadata").ino(),
+            before.ino()
+        );
+        assert_eq!(std::fs::read(&zms).expect("unchanged source"), original_zms);
+    }
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one encoded fixture exercises Health and OOM identity across WAL and ZMS"
+)]
+fn selected_cgroup_replacement_breaks_health_inside_one_segment() {
+    use kronika_registry::os_cgroup_context::OsCgroupContextV2;
+    use kronika_registry::os_cgroup_memory::OsCgroupMemoryV3;
+    let directory = tempfile::tempdir().expect("tempdir");
+    let root = DataRoot::open(directory.path()).expect("data root");
+    let writer = root
+        .acquire_writer(LayoutLimits::default())
+        .expect("writer");
+    let mut journal = Journal::open(&writer, JournalConfig::default()).expect("journal");
+    let mut interner = Interner::new(DictLimits::default());
+    let label = StrId(interner.intern(b"/visible").expect("path").get());
+    let first = StrId(interner.intern(b"directory:first").expect("identity").get());
+    let second = StrId(
+        interner
+            .intern(b"directory:replacement")
+            .expect("identity")
+            .get(),
+    );
+    let dictionary = dict::encode(interner.window()).expect("dictionary");
+    let mut buffers = SectionBuffers::new();
+    buffers
+        .push(InstanceMetadataV3 {
+            ts: Ts(SEGMENT_ID),
+            hostname: Some(label),
+            kernel_version: Some(label),
+            environment: Some(1),
+            clock_ticks_per_sec: Some(100),
+            page_size_bytes: Some(4096),
+            boot_id: Some(label),
+            btime: Some(Ts(1)),
+            os_enabled: true,
+            postgresql_processes_shared: false,
+            postgresql_enabled: false,
+            postgresql_interval_seconds: 30,
+            postgresql_effective_cpus: None,
+        })
+        .expect("container metadata");
+    for (offset, total, identity, oom_kill) in [
+        (0, 0, first, Some(0)),
+        (1_000_000, 100_000, first, Some(1)),
+        (2_000_000, 500_000, second, Some(100)),
+        (3_000_000, 600_000, second, None),
+        (4_000_000, 700_000, second, Some(110)),
+        (5_000_000, 800_000, second, Some(111)),
+    ] {
+        let ts = Ts(SEGMENT_ID + offset);
+        buffers
+            .push(OsCgroupContextV2 {
+                ts,
+                cgroup_version: 2,
+                cpu_path: Some(label),
+                memory_path: Some(label),
+                io_path: Some(label),
+                cpuset_cpus: None,
+                effective_cpu_quota_usec: None,
+                effective_cpu_period_usec: None,
+                effective_memory_max: None,
+                pids_path: Some(label),
+                cpu_identity: Some(identity),
+                memory_identity: Some(identity),
+                io_identity: Some(identity),
+                pids_identity: Some(identity),
+                cpu_root: Some(label),
+                memory_root: Some(label),
+                io_root: Some(label),
+                pids_root: Some(label),
+                scope: 4,
+            })
+            .expect("selected identity");
+        buffers
+            .push(OsCgroupMemoryV3 {
+                ts,
+                cgroup_path: label,
+                current: 1024,
+                max: None,
+                anon: None,
+                file: None,
+                kernel: None,
+                slab: None,
+                low_events: None,
+                high_events: None,
+                max_events: None,
+                oom_events: None,
+                oom_kill,
+                max_unlimited: None,
+                scope: 4,
+            })
+            .expect("nullable selected memory");
+        for resource in 0..3 {
+            buffers
+                .push(OsPsi {
+                    ts,
+                    resource,
+                    some_avg10: 0.0,
+                    some_avg60: 0.0,
+                    some_avg300: 0.0,
+                    some_total: total,
+                    full_avg10: None,
+                    full_avg60: None,
+                    full_avg300: None,
+                    full_total: None,
+                    scope: 4,
+                })
+                .expect("PSI");
+        }
+    }
+    let part = buffers.flush(&dictionary).expect("encode").expect("part");
+    journal.append(address().id, &part).expect("append");
+    for kind in [SegmentKind::Active, SegmentKind::Finished] {
+        if kind == SegmentKind::Finished {
+            write_segment(&journal, &writer, address()).expect("seal");
+            journal.reset().expect("reset");
+        }
+        let reader = Reader::open(directory.path()).expect("reader");
+        let segment = only_segment(&reader, kind);
+        let health = resource(directory.path(), &reader, &segment, "health").expect("health");
+        assert_eq!(
+            health_values(&health, "os"),
+            [None, Some(90), None, Some(90), Some(90), Some(90)]
+        );
+        let findings = resource(directory.path(), &reader, &segment, "os_cgroup_memory")
+            .expect("OOM findings");
+        let [SeriesBlock::Findings(block)] = findings.index.blocks.as_slice() else {
+            panic!("one selected memory finding block");
+        };
+        assert_eq!(
+            block
+                .findings
+                .iter()
+                .map(|finding| (finding.timestamp, finding.field_ordinal))
+                .collect::<Vec<_>>(),
+            [(SEGMENT_ID + 1_000_000, 12), (SEGMENT_ID + 5_000_000, 12)]
+        );
+    }
 }

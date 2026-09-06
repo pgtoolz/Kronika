@@ -5,8 +5,12 @@
 pub struct CgroupCollection {
     /// CPU rows.
     pub cpu: Vec<CgroupCpuRow>,
+    /// Selected-ancestor CPU rows with nullable unavailable fields.
+    pub ancestor_cpu: Vec<AncestorCpuRow>,
     /// Memory rows.
     pub memory: Vec<CgroupMemoryRow>,
+    /// Selected-ancestor memory with nullable unsupported fields.
+    pub ancestor_memory: Vec<AncestorMemoryRow>,
     /// I/O rows.
     pub io: Vec<CgroupIoRow>,
     /// PIDs rows.
@@ -124,4 +128,60 @@ pub struct CgroupPidsRow {
     pub current: i64,
     /// Local thread limit; `None` means unlimited.
     pub max: Option<i64>,
+}
+
+/// Selected-ancestor memory counters before string interning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AncestorMemoryRow {
+    /// Collection timestamp.
+    pub ts: i64,
+    /// Selected hierarchy path.
+    pub cgroup_path: String,
+    /// Recorded current usage, bytes.
+    pub current: i64,
+    /// Recorded finite limit, bytes.
+    pub max: Option<i64>,
+    /// Validated unlimited marker; absent means unknown limit.
+    pub max_unlimited: Option<bool>,
+    /// Anonymous bytes.
+    pub anon: Option<i64>,
+    /// File-backed bytes.
+    pub file: Option<i64>,
+    /// Kernel bytes.
+    pub kernel: Option<i64>,
+    /// Slab bytes.
+    pub slab: Option<i64>,
+    /// Low events.
+    pub low_events: Option<i64>,
+    /// High events.
+    pub high_events: Option<i64>,
+    /// Maximum-boundary events.
+    pub max_events: Option<i64>,
+    /// OOM events.
+    pub oom_events: Option<i64>,
+    /// OOM kills.
+    pub oom_kill: Option<i64>,
+}
+
+/// Selected CPU counters before string interning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AncestorCpuRow {
+    /// Collection timestamp.
+    pub ts: i64,
+    /// Selected controller path.
+    pub cgroup_path: String,
+    /// Total CPU time, microseconds.
+    pub usage_usec: i64,
+    /// User CPU time, microseconds.
+    pub user_usec: i64,
+    /// System CPU time, microseconds.
+    pub system_usec: i64,
+    /// Throttled time, microseconds.
+    pub throttled_usec: Option<i64>,
+    /// Throttling event count.
+    pub nr_throttled: Option<i64>,
+    /// Validated quota; -1 means recorded unlimited.
+    pub quota_usec: Option<i64>,
+    /// Period paired with quota.
+    pub period_usec: Option<i64>,
 }

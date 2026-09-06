@@ -10,12 +10,20 @@ use crate::{ProcFs, SysFs};
 mod model;
 mod parse;
 mod sections;
+mod selected;
+
+pub use selected::{
+    AncestorContext, SelectedCgroup, charged_ancestor_devices, collect_ancestor_context,
+    collect_ancestor_pressure, collect_ancestor_rows,
+};
 
 pub use model::{
-    CgroupCollection, CgroupContextRow, CgroupCpuRow, CgroupIoRow, CgroupMemoryRow, CgroupPidsRow,
+    AncestorCpuRow, AncestorMemoryRow, CgroupCollection, CgroupContextRow, CgroupCpuRow,
+    CgroupIoRow, CgroupMemoryRow, CgroupPidsRow,
 };
 pub use parse::{parse_blkio_service_stats, parse_cpu_max, parse_cpu_stat, parse_io_stat};
 pub use sections::{
+    to_ancestor_context_section, to_ancestor_cpu_section, to_ancestor_memory_section,
     to_context_section, to_cpu_section, to_io_section, to_memory_section, to_pids_section,
 };
 

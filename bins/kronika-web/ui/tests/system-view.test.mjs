@@ -7,7 +7,7 @@ import { importModule, registryPlugin } from "./import-module.mjs"
 import { parseDictionary, validateDictionaries } from "../scripts/i18n.mjs"
 
 const helpers = await importModule(
-  'export { cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, cgroupSnapshotPlan, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, CGROUP_SNAPSHOT_REQUESTS, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"',
+  'export { cgroupDevicePresentations, cgroupHistoryGroups, dockGroupMetrics, effectiveCpuCapacity, cgroupSnapshotPlan, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, CGROUP_SNAPSHOT_REQUESTS, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"',
   { plugins: [registryPlugin([
     { typeId: "1108001", logicalName: "os_diskstats", identity: ["major", "minor"], columns: ["ts", "major", "minor", "device", "io_in_progress"] },
     { typeId: "1112002", logicalName: "os_mountinfo", identity: ["major", "minor", "mount_point"], columns: ["ts", "major", "minor", "mount_point", "root", "fstype", "source", "is_k8s_infra", "total_bytes", "free_bytes", "total_inodes", "available_inodes", "scope"] },
@@ -274,11 +274,19 @@ test("collector cgroup rows keep leaf settings factual and use effective hierarc
   assert.equal(memory.values.memory_unclassified, 100)
   assert.equal(helpers.systemEntityRows(source, "os_cgroup_io", 10)[0].values.device_id, "8:0")
   assert.equal(helpers.effectiveCpuCapacity(null, null, 2), null)
+  assert.equal(helpers.effectiveCpuCapacity(null, null, 8, true), 8)
+  assert.equal(helpers.effectiveCpuCapacity(50_000, 0, 8, true), 8)
+  assert.equal(helpers.effectiveCpuCapacity(null, null, null, true), null)
   assert.equal(helpers.effectiveCpuCapacity(-1, null, 2), 2)
   assert.equal(helpers.effectiveCpuCapacity(-1, 100_000, null), null)
   assert.equal(helpers.effectiveCpuCapacity(50_000, 100_000, null), 0.5)
   assert.equal(helpers.effectiveCpuCapacity(300_000, 100_000, 2), 2)
   assert.equal(helpers.effectiveCpuCapacity(50_000, 0, 2), null)
+  for (const [typeId, cpuset, expected] of [["1205001", 8, null], ["1205002", 8, 8], ["1205002", null, null]]) {
+    const observed = { ...context, typeId, values: { ...context.values, cpuset_cpus: cpuset, effective_cpu_quota_usec: null, effective_cpu_period_usec: null } }
+    const projected = helpers.systemEntityRows({ ...source, sections: { ...source.sections, os_cgroup_context: [observed] } }, "os_cgroup_cpu", 10)
+    assert.equal(projected.find(({ values }) => values.cgroup_path === "/mine").values.cgroup_capacity, expected, typeId)
+  }
   const malformedContext = { ...context, values: { ...context.values, effective_memory_max: -1 } }
   const malformedMemory = helpers.systemEntityRows({ ...source, sections: { ...source.sections, os_cgroup_context: [malformedContext] } }, "os_cgroup_memory", 10)[0]
   assert.equal(malformedMemory.values.effective_memory_max, null)
@@ -734,4 +742,16 @@ test("the usage chart draws the recorded share components under its own line", (
   for (const one of series) assert.equal(one.scale, "percent")
   // Colours step past the usage line the chart prepends, so no pair collides.
   assert.equal(new Set(series.map(({ color }) => color)).size, series.length)
+})
+
+test("cgroup history breaks when a selected path is recreated, without counter rollback", () => {
+  const row = (timestamp, usage) => ({ logicalName: "os_cgroup_cpu", ordinal: String(timestamp), segmentId: "s", timestamp, typeId: "1201001", values: { cgroup_path: "/", scope: 4, usage_usec: usage } })
+  const context = (timestamp, identity, segmentId = "s") => ({ logicalName: "os_cgroup_context", ordinal: String(timestamp), segmentId, timestamp, typeId: "1205002", values: { cpu_path: "/", scope: 4, cpu_identity: identity } })
+  const rows = [row(1_000_000, 0), row(2_000_000, 1_000_000), row(3_000_000, 10_000_000), row(4_000_000, 11_000_000)]
+  const groups = helpers.cgroupHistoryGroups(rows, [context(1_000_000, "first"), context(3_000_000, "replacement")])
+  assert.deepEqual(groups.map((group) => group.map((row) => row.timestamp)), [[1_000_000, 2_000_000], [3_000_000, 4_000_000]])
+  const cpu = helpers.SYSTEM_ENTITIES.find((panel) => panel.section === "os_cgroup_cpu").columns.find((column) => column.field === "cgroup_used_cores")
+  assert.deepEqual(groups.flatMap((group) => cpu.points(group)).map((point) => point.value), [null, 1, null, 1])
+  assert.deepEqual(helpers.cgroupHistoryGroups(rows, []).flatMap((group) => cpu.points(group)).map((point) => point.value), [null, null, null, null])
+  assert.equal(helpers.cgroupHistoryGroups(rows, [context(1_000_000, "foreign", "other-segment")]).length, 4)
 })

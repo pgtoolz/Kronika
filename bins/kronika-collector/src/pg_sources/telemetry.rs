@@ -131,7 +131,7 @@ impl PgTelemetry {
     fn shutdown_fields(
         &mut self,
         now: Instant,
-        peak_rss_kib: u64,
+        peak_rss_kib: Option<u64>,
     ) -> Option<Vec<LogField<'static>>> {
         if self.shutdown_emitted {
             return None;
@@ -149,7 +149,7 @@ impl PgTelemetry {
         &mut self,
         now: Instant,
         reason: &'static str,
-        peak_rss_kib: u64,
+        peak_rss_kib: Option<u64>,
     ) -> Vec<LogField<'static>> {
         let interval = now.saturating_duration_since(self.interval_started);
         let totals = std::mem::take(&mut self.totals);
@@ -256,7 +256,7 @@ fn summary_fields(
     reason: &'static str,
     interval: Duration,
     totals: Totals,
-    peak_rss_kib: u64,
+    peak_rss_kib: Option<u64>,
 ) -> Vec<LogField<'static>> {
     let timeouts = totals
         .query_timeouts

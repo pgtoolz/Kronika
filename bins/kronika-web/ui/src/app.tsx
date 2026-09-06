@@ -60,7 +60,6 @@ import { parseSearch, type SearchSurface } from "./search"
 import { findAfterSurfaceNavigation, searchSurfaceForLocation, searchSurfaceForSection } from "./search-navigation"
 import { beginSearchRequest, IDLE_SEARCH_REQUEST, searchRequestForSurface, type SearchRequestState } from "./search-request"
 import {
-  activityFor,
   asNumber,
   floorHour,
   interpolate,
@@ -81,7 +80,7 @@ import { latestTimelineTimestamp, refreshedCursor, scheduleRefresh } from "./ref
 import { reportLatestHour, reportVisibleAt, reportVisibleCursor, reportVisibleRange } from "./report-transport"
 import type { ChartPoint } from "./series-chart"
 import { apiFetch, bootstrapSession, getSessionSnapshot, logout, subscribeSession } from "./session"
-import { hasPostgresTelemetry } from "./source-availability"
+import { activityForProcess, hasPostgresTelemetry, postgresProcessesShared, recordedLinuxEnabled } from "./source-availability"
 import type { RelatedNavigation } from "./statement-navigation"
 import {
   CGROUP_SNAPSHOT_REQUESTS,
@@ -264,6 +263,7 @@ function App({ locale, onLocale, t }: {
   const [error, setError] = useState<string | null>(null)
   const [source, setSource] = useState<Source>(sourceOf(opened.current.view))
   const [systemMetric, setSystemMetric] = useState<string | null>(opened.current.metric)
+  const osEnabled = recordedLinuxEnabled(timelineData.laneContexts)
   const visibleSource = source
   const [pgSection, setPgSection] = useState<PostgresSection>(pgSectionOf(opened.current.view))
   const [statementLens, setStatementLens] = useState<StatementLens>(statementLensOf(opened.current.pgLens))
@@ -284,6 +284,14 @@ function App({ locale, onLocale, t }: {
   const [order, setOrder] = useState<TableOrder | null>(opened.current.sort)
   const [selectedKey, setSelectedKey] = useState<string | null>(opened.current.row)
   const [inspectorPanel, setInspectorPanel] = useState<InspectorPanel>(opened.current.panel)
+  useEffect(() => {
+    if (osEnabled || (source !== "host" && source !== "processes")) return
+    setSource("postgresql")
+    setFind("")
+    setOrder(null)
+    setSelectedKey(null)
+    setInspectorPanel(null)
+  }, [osEnabled, source])
   const [mobileSearch, setMobileSearch] = useState(false)
   const [inspectorDetailRoot, setInspectorDetailRoot] = useState<HTMLElement | null>(null)
   const [inspectorChartRoot, setInspectorChartRoot] = useState<HTMLElement | null>(null)
@@ -821,8 +829,8 @@ function App({ locale, onLocale, t }: {
   const pgRows = useMemo(() => snapshot(data.activities, cursor), [cursor, data.activities])
   const linkedPids = useMemo(() => new Set(pgRows.flatMap((row) => {
     const pid = asNumber(value(row, "pid"))
-    return pid === null ? [] : [pid]
-  })), [pgRows])
+    return pid === null || !postgresProcessesShared(data.laneContexts, row.segmentId) ? [] : [`${row.segmentId}:${pid}`]
+  })), [data.laneContexts, pgRows])
   const selectedProcess = useMemo(
     () => processTableRows.find((row) => processKey(row) === selectedKey) ?? null,
     [processTableRows, selectedKey],
@@ -864,7 +872,7 @@ function App({ locale, onLocale, t }: {
     return () => controller.abort()
   }, [data, findingRow, selectedFinding])
   const pgFocus = selectedFinding !== null && selectedFinding.logicalName.startsWith("pg_") ? contextRow : null
-  const joinedActivity = activityFor(selectedProcess, data.activities, selectedProcess?.timestamp ?? cursor)
+  const joinedActivity = activityForProcess(selectedProcess, data.activities, data.laneContexts, cursor)
   const selectedPid = selectedProcess === null ? null : rawText(value(selectedProcess, "pid"))
   const processHistoryKey = hour === null || selectedPid === null ? null : JSON.stringify([hour, selectedPid])
   const processHistory = useHistoryRequest(processHistoryKey, refreshVersion,
@@ -1117,8 +1125,8 @@ function App({ locale, onLocale, t }: {
       <h1>{database === null ? t("app.title") : `${t("app.title")} — ${database}`}</h1>
 
       <nav aria-label={t("nav.sources")} className="source-tabs max-[760px]:overflow-x-auto">
-        <button aria-current={visibleSource === "host" ? "page" : undefined} className={visibleSource === "host" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(null); setSystemFocus(null); setSelectedKey(null); setInspectorPanel(null); setSource("host") }} type="button">{t("nav.host")}</button>
-        <button aria-current={visibleSource === "processes" ? "page" : undefined} className={visibleSource === "processes" ? "source-active" : undefined} data-testid="process-tab" onClick={() => { navigateSearchSurface("os_process"); setSelectedKey(null); setInspectorPanel(null); setSource("processes") }} type="button">{t("nav.processes")}</button>
+        {osEnabled && <button aria-current={visibleSource === "host" ? "page" : undefined} className={visibleSource === "host" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(null); setSystemFocus(null); setSelectedKey(null); setInspectorPanel(null); setSource("host") }} type="button">{t("nav.host")}</button>}
+        {osEnabled && <button aria-current={visibleSource === "processes" ? "page" : undefined} className={visibleSource === "processes" ? "source-active" : undefined} data-testid="process-tab" onClick={() => { navigateSearchSurface("os_process"); setSelectedKey(null); setInspectorPanel(null); setSource("processes") }} type="button">{t("nav.processes")}</button>}
         <button aria-current={visibleSource === "postgresql" ? "page" : undefined} className={visibleSource === "postgresql" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(searchSurfaceForSection(pgSection)); setSelectedKey(null); setInspectorPanel(null); setSource("postgresql") }} title={pgPresent ? undefined : t("nav.no_data")} type="button">{t("nav.postgresql")}</button>
         <button aria-current={visibleSource === "events" ? "page" : undefined} className={visibleSource === "events" ? "source-active" : undefined} onClick={() => { navigateSearchSurface("events"); setEventScope(null); setSelectedFinding(null); setInspectorPanel(null); setSource("events") }} title={eventsPresent ? undefined : t("nav.no_data")} type="button">{t("nav.events")}</button>
       </nav>

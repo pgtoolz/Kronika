@@ -463,6 +463,20 @@ async fn a_dead_client_is_not_reported_as_a_reusable_generation() {
 fn accept_startup(stream: &mut TcpStream) -> Vec<u8> {
     let mut len = [0_u8; 4];
     stream.read_exact(&mut len).expect("read startup length");
+    if u32::from_be_bytes(len) == 8 {
+        let mut request = [0_u8; 4];
+        stream.read_exact(&mut request).expect("read SSLRequest");
+        assert_eq!(
+            u32::from_be_bytes(request),
+            80_877_103,
+            "PostgreSQL SSLRequest"
+        );
+        stream.write_all(b"N").expect("probe declines TLS");
+        stream.flush().expect("flush TLS refusal");
+        stream
+            .read_exact(&mut len)
+            .expect("read plaintext startup length");
+    }
     let body_len = usize::try_from(u32::from_be_bytes(len).saturating_sub(4))
         .expect("the startup body length fits usize");
     let mut body = vec![0_u8; body_len];

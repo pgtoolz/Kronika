@@ -352,6 +352,7 @@ function systemRequests(): readonly SectionRequest[] {
     "cpu_path", "memory_path", "io_path", "cpuset_cpus", "effective_cpu_quota_usec",
     "effective_cpu_period_usec", "effective_memory_max", "cgroup_version", "scope",
   ])
+  need("os_cgroup_memory", ["max_unlimited"])
   need("instance_metadata", ["environment"])
   need("os_cpufreq_policy", [
     "policy_id", "related_cpus", "scaling_driver", "actual_source",
@@ -878,7 +879,13 @@ function SystemEntityPanel({
     return loadSeries(hour, requestSection, where, fields, signal, requestTypeId)
   })
   const chartRows = history.value?.length ? history.value : selectedRow === null ? [] : [selectedRow]
-  const chartPoints = useMemo(() => selectedColumn === undefined ? [] : entityMetricPoints(chartRows, selectedColumn), [chartRows, selectedColumn])
+  const cgroupHistoryKey = historyKey !== null && section.startsWith("os_cgroup_") ? `${hour}:cgroup-context` : null
+  const cgroupHistory = useHistoryRequest(cgroupHistoryKey, historyRevision,
+    cgroupHistoryKey === null ? null : (signal) => loadSeries(hour, "os_cgroup_context", {}, [], signal))
+  const chartPoints = useMemo(() => selectedColumn === undefined ? []
+    : cgroupHistoryKey === null ? entityMetricPoints(chartRows, selectedColumn)
+      : cgroupHistoryGroups(chartRows, cgroupHistory.value ?? []).flatMap((group) => entityMetricPoints(group, selectedColumn)),
+  [cgroupHistory.value, cgroupHistoryKey, chartRows, selectedColumn])
   const pairSeries = useMemo(() => mountPair ? mountPairSeries(chartRows, t, mountPairKind) : null, [chartRows, mountPair, mountPairKind, t])
   const chartMetadata = selectedRow === null || selectedColumn === undefined || selectedColumn.historyFields !== undefined
     ? null : registryColumn(selectedRow.typeId, physicalField(selectedColumn, selectedRow.typeId))
@@ -956,7 +963,7 @@ function SystemEntityPanel({
             onCursor={onCursor}
             points={chartPoints}
             scale={selectedColumn.kind === "percent" ? "percent" : "nonnegative"}
-            status={history.status}
+            status={cgroupHistoryKey !== null && cgroupHistory.status !== "ready" ? cgroupHistory.status : history.status}
             t={t}
             unit={entityMetricUnit(selectedColumn, locale, chartMetadata)}
           />}
@@ -993,6 +1000,38 @@ export function entityHistoryRequest(row: DataRow, column: SystemEntityColumn): 
     typeId: row.typeId,
     where,
   }
+}
+
+export function cgroupHistoryGroups(rows: readonly DataRow[], contexts: readonly DataRow[]): readonly (readonly DataRow[])[] {
+  const bySegment = new Map<string, DataRow[]>()
+  for (const context of contexts) {
+    const segment = bySegment.get(context.segmentId) ?? []
+    segment.push(context)
+    bySegment.set(context.segmentId, segment)
+  }
+  for (const segment of bySegment.values()) segment.sort((left, right) => left.timestamp - right.timestamp)
+  const groups: DataRow[][] = []
+  let previousIdentity: string | null = null
+  for (const row of rows.slice().sort((left, right) => left.timestamp - right.timestamp)) {
+    const controller = row.logicalName.replace("os_cgroup_", "")
+    const segment = bySegment.get(row.segmentId) ?? []
+    let low = 0
+    let high = segment.length
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2)
+      if (segment[middle]!.timestamp <= row.timestamp) low = middle + 1
+      else high = middle
+    }
+    const context = low === 0 ? null : segment[low - 1]!
+    const identity = context !== null
+      && rawText(value(context, `${controller}_path`)) === rawText(value(row, "cgroup_path"))
+      && rawText(value(context, "scope")) === rawText(value(row, "scope"))
+      ? rawText(value(context, `${controller}_identity`)) : null
+    if (identity === null || identity !== previousIdentity) groups.push([])
+    groups.at(-1)!.push(row)
+    previousIdentity = identity
+  }
+  return groups
 }
 
 function entityMetricPoints(rows: readonly DataRow[], column: SystemEntityColumn): readonly ChartPoint[] {
@@ -1712,6 +1751,7 @@ function decorateSystemRow(row: DataRow, context: DataRow | null, presentation: 
       asNumber(value(context, "effective_cpu_quota_usec")),
       asNumber(value(context, "effective_cpu_period_usec")),
       cpusetCpus,
+      context?.typeId === "1205002",
     )
   } else if (row.logicalName === "os_cgroup_memory") {
     const effective = asNumber(value(context, "effective_memory_max"))
@@ -1768,6 +1808,12 @@ function localizedSystemColumns(columns: readonly SystemEntityColumn[], section:
     }
     return column
   })
+  if (section === "os_cgroup_memory") return columns.map((column) => column.field !== "max" ? column : {
+    ...column,
+    renderNull: (row: DataRow) => <span>{(Object.hasOwn(row.values, "max_unlimited")
+      ? value(row, "max_unlimited") === true : Object.hasOwn(row.values, "max"))
+      ? t("system.cgroups.pids_unlimited") : t("system.cgroups.pids_unavailable")}</span>,
+  })
   if (section === "os_cgroup_pids") return columns.map((column) => column.field !== "tasks_max" ? column : {
     ...column,
     renderNull: (row: DataRow) => <span>{Object.hasOwn(row.values, "max") ? t("system.cgroups.pids_unlimited") : t("system.cgroups.pids_unavailable")}</span>,
@@ -1816,11 +1862,11 @@ function ratio(row: DataRow, numerator: string, denominator: string): number | n
   return top === undefined || top === null || bottom === undefined || bottom === null || bottom <= 0 ? null : top / bottom
 }
 
-export function effectiveCpuCapacity(quotaUsec: number | null, periodUsec: number | null, cpuset: number | null): number | null {
+export function effectiveCpuCapacity(quotaUsec: number | null, periodUsec: number | null, cpuset: number | null, observedScope = false): number | null {
   const cpusetCpus = cpuset !== null && Number.isFinite(cpuset) && cpuset > 0 ? cpuset : null
   if (quotaUsec === -1) return cpusetCpus
   if (quotaUsec === null || periodUsec === null || !Number.isFinite(quotaUsec) || !Number.isFinite(periodUsec)
-    || quotaUsec <= 0 || periodUsec <= 0) return null
+    || quotaUsec <= 0 || periodUsec <= 0) return observedScope ? cpusetCpus : null
   const quotaCores = quotaUsec / periodUsec
   return cpusetCpus === null ? quotaCores : Math.min(quotaCores, cpusetCpus)
 }

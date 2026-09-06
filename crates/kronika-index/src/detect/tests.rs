@@ -1,4 +1,4 @@
-use super::direct::{CpuRaw, cpu_busy_at_least_80, crosses_wraparound_age};
+use super::direct::{CpuRaw, cgroup_oom_increased, cpu_busy_at_least_80, crosses_wraparound_age};
 use super::{block, finding_layout};
 use crate::{Finding, FindingKind, MAX_FINDINGS_PER_BLOCK};
 
@@ -42,7 +42,7 @@ fn statistical_process_and_statement_series_are_not_findings() {
 
 #[test]
 fn archiver_and_cgroup_memory_layouts_carry_findings() {
-    for type_id in [1_008_001, 1_202_001, 1_202_002] {
+    for type_id in [1_008_001, 1_202_001, 1_202_002, 1_202_003] {
         assert!(finding_layout(type_id));
     }
 }
@@ -78,4 +78,20 @@ fn the_fixed_cap_keeps_timestamp_locator_order_and_reports_omissions() {
         block.findings.last().map(|finding| finding.timestamp),
         Some(4_095)
     );
+}
+
+#[test]
+fn selected_cgroup_oom_requires_adjacent_known_counters_and_same_identity() {
+    let mut before = None;
+    assert!(!cgroup_oom_increased(&mut before, Some(10), 1, Some(2)));
+    assert!(cgroup_oom_increased(&mut before, Some(10), 2, Some(3)));
+    assert!(!cgroup_oom_increased(&mut before, Some(20), 3, Some(100)));
+    assert!(!cgroup_oom_increased(&mut before, Some(10), 4, Some(200)));
+    assert!(!cgroup_oom_increased(&mut before, Some(10), 5, None));
+    assert!(!cgroup_oom_increased(&mut before, Some(10), 6, Some(201)));
+    assert!(cgroup_oom_increased(&mut before, Some(10), 7, Some(202)));
+    assert!(!cgroup_oom_increased(&mut before, None, 8, Some(203)));
+    assert!(!cgroup_oom_increased(&mut before, Some(10), 9, Some(204)));
+    assert!(!cgroup_oom_increased(&mut before, Some(10), 10, Some(1)));
+    assert!(cgroup_oom_increased(&mut before, Some(10), 11, Some(2)));
 }

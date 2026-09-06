@@ -159,6 +159,7 @@ const SEGMENT_OPEN_SOURCES: [SourceKind; 1] = [SourceKind::OsMountTopo];
 #[derive(Debug)]
 pub(crate) struct Scheduler {
     intervals: Intervals,
+    collect_os: bool,
     last_read: [Option<Instant>; ALL_SOURCES.len()],
 }
 
@@ -166,8 +167,24 @@ impl Scheduler {
     pub(crate) const fn new(intervals: Intervals) -> Self {
         Self {
             intervals,
+            collect_os: true,
             last_read: [None; ALL_SOURCES.len()],
         }
+    }
+
+    pub(crate) const fn for_mode(intervals: Intervals, collect_os: bool) -> Self {
+        Self {
+            collect_os,
+            ..Self::new(intervals)
+        }
+    }
+
+    const fn enabled(&self, kind: SourceKind) -> bool {
+        self.collect_os
+            || matches!(
+                kind,
+                SourceKind::Pg | SourceKind::PgRelations | SourceKind::Logs
+            )
     }
 
     /// A segment was just finished, so the next window must re-read the
@@ -188,7 +205,9 @@ impl Scheduler {
         let kinds: Vec<SourceKind> = ALL_SOURCES
             .iter()
             .copied()
-            .filter(|kind| due.has(*kind) || SEGMENT_OPEN_SOURCES.contains(kind))
+            .filter(|kind| {
+                self.enabled(*kind) && (due.has(*kind) || SEGMENT_OPEN_SOURCES.contains(kind))
+            })
             .collect();
         for (slot, kind) in ALL_SOURCES.iter().enumerate() {
             if kinds.contains(kind) {
@@ -210,6 +229,9 @@ impl Scheduler {
             .iter()
             .enumerate()
             .filter_map(|(slot, kind)| {
+                if !self.enabled(*kind) {
+                    return None;
+                }
                 let last = self.last_read[slot]?;
                 let secs = self.intervals.of(*kind);
                 if secs == 0 {
@@ -230,10 +252,15 @@ impl Scheduler {
     pub(crate) fn plan(&mut self, now: Instant, force: bool) -> DueSet {
         if force {
             self.last_read = [Some(now); ALL_SOURCES.len()];
-            return DueSet::all();
+            let mut due = DueSet::all();
+            due.kinds.retain(|kind| self.enabled(*kind));
+            return due;
         }
         let mut kinds = Vec::new();
         for (slot, kind) in ALL_SOURCES.iter().enumerate() {
+            if !self.enabled(*kind) {
+                continue;
+            }
             let secs = self.intervals.of(*kind);
             let interval = Duration::from_secs(secs);
             let is_due =

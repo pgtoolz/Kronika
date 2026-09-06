@@ -4,13 +4,13 @@ use crate::buffering::buffer_row;
 use crate::config::Config;
 use crate::logging::{log_collection_failure, log_collection_finish, log_collection_start};
 use anyhow::{Context, Result};
-use kronika_registry::instance_metadata::{Environment, InstanceMetadata};
+use kronika_registry::instance_metadata::{Environment, InstanceMetadataV3};
 use kronika_registry::{StrId, Ts};
 use kronika_source_os::{OsInstanceFacts, collect_os_instance_facts};
 use kronika_writer::{Interner, SectionBuffers};
 use std::time::Instant;
 
-const INSTANCE_METADATA_TYPE_ID: u32 = 1_021_002;
+const INSTANCE_METADATA_TYPE_ID: u32 = 1_021_003;
 
 /// Read the host identity for a new segment.
 ///
@@ -47,7 +47,7 @@ pub(crate) fn collect_instance() -> Result<OsInstanceFacts> {
 pub(crate) fn push_instance_metadata(
     buffers: &mut SectionBuffers,
     interner: &mut Interner,
-    facts: &OsInstanceFacts,
+    facts: Option<&OsInstanceFacts>,
     in_container: bool,
     config: &Config,
     ts: i64,
@@ -58,15 +58,19 @@ pub(crate) fn push_instance_metadata(
             .map(|id| StrId(id.get()))
             .map_err(|err| anyhow::anyhow!("intern instance metadata string: {err}"))
     };
-    let row = InstanceMetadata {
+    let row = InstanceMetadataV3 {
         ts: Ts(ts),
-        hostname: intern(&facts.hostname)?,
-        kernel_version: intern(&facts.kernel_version)?,
-        environment: Environment::from_container_flag(in_container).as_u8(),
-        clock_ticks_per_sec: facts.clock_ticks_per_sec,
-        page_size_bytes: facts.page_size_bytes,
-        boot_id: intern(&facts.boot_id)?,
-        btime: Ts(facts.btime),
+        hostname: facts.map(|facts| intern(&facts.hostname)).transpose()?,
+        kernel_version: facts
+            .map(|facts| intern(&facts.kernel_version))
+            .transpose()?,
+        environment: facts.map(|_| Environment::from_container_flag(in_container).as_u8()),
+        clock_ticks_per_sec: facts.map(|facts| facts.clock_ticks_per_sec),
+        page_size_bytes: facts.map(|facts| facts.page_size_bytes),
+        boot_id: facts.map(|facts| intern(&facts.boot_id)).transpose()?,
+        btime: facts.map(|facts| Ts(facts.btime)),
+        os_enabled: config.mode.collect_os(),
+        postgresql_processes_shared: config.mode.collect_os() && !in_container,
         postgresql_enabled: !config.pg_dsns.is_empty(),
         postgresql_interval_seconds: effective_interval(config.intervals.pg, config.tick_secs),
         postgresql_effective_cpus: config.postgres_effective_cpus,

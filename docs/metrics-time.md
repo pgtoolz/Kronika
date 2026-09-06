@@ -113,7 +113,7 @@ Health is an integer percentage describing the recorded load inputs. Its OS comp
 
 `OS health = 100 − floor((100 × W + floor(E / 2)) / E)`.
 
-All three PSI components and a positive interval are required; a decreasing component makes that pair null. A null PSI snapshot clears the previous snapshot. Machine recordings use host PSI (`scope = 0`); container recordings use pod/container PSI (`scope = 1` or `3`). The recorded environment and boot identity select the scope and bind predecessor samples. Ambiguous metadata yields unknown health.
+All three PSI components and a positive interval are required; a decreasing component makes that pair null. A null PSI snapshot clears the previous snapshot. Machine recordings use host PSI (`scope = 0`); new container recordings use the highest accessible cgroup (`scope = 4`), retaining its actual identity. Earlier recordings retain their recorded scope. The environment, boot identity and selected cgroup identity bind predecessor samples. Ambiguous metadata yields unknown health.
 
 Let `A` be the count of recorded `pg_stat_activity` rows whose state is exactly
 `active`, and `C` be PostgreSQL CPU capacity in cores. Every active row
@@ -133,22 +133,14 @@ Capacity is selected at each PostgreSQL sample timestamp in this order:
 | Source | Value of `C` |
 | --- | --- |
 | Explicit positive `instance_metadata.postgresql_effective_cpus` | Recorded `KRONIKA_POSTGRES_EFFECTIVE_CPUS` (`1..4294967295`), overriding automatic calculation |
-| Machine/VM, no override | Count of distinct `os_cpu.cpu_id ≥ 0` in the latest complete CPU snapshot at or before the PostgreSQL timestamp; excludes aggregate `cpu_id = −1` |
-| Container, no override | Latest `os_cgroup_context` for collector's own resource scope at or before the PostgreSQL timestamp: positive quota `Q` divided by positive period `P`, capped by positive `cpuset_cpus` when recorded |
-| Container with recorded quota `−1` | Positive `cpuset_cpus`, or `null` when absent |
-| Container with missing or invalid quota/period | `null` |
+| Shared local machine/VM, no override | Count of distinct `os_cpu.cpu_id ≥ 0` in the latest complete CPU snapshot at or before the PostgreSQL timestamp; excludes aggregate `cpu_id = −1` |
+| PostgreSQL-only, container or older metadata without recorded shared placement, no override | `null`; collector resources are not PostgreSQL capacity |
 
-`Q` and `P` are recorded microseconds; `150000/100000 = 1.5` cores. Context
-already records the tightest visible ancestor quota. A changed quota or CPU
-snapshot affects subsequent PostgreSQL samples only. VM capacity uses neither
-CPUFreq policy count nor a union of CPU IDs over the segment. Unknown container
-capacity stays null.
-
-Automatic capacity uses the collector's recorded CPU resources. It describes
-PostgreSQL only when the server has the same available CPUs and resource limits.
-For a remote server or a different cgroup, including one on the same host,
-`KRONIKA_POSTGRES_EFFECTIVE_CPUS` can supply the target server's capacity. The
-collector does not check resource placement from the DSN, hostname or PID.
+Automatic capacity requires the recorded local machine contract. It does not
+use CPUFreq policy counts or the union of CPU IDs over a segment. A topology
+change affects later samples only. The DSN, hostname and matching PIDs do not
+establish placement. Container cgroup capacity belongs to the selected group,
+which can include several containers; it is not automatically PostgreSQL capacity.
 
 `KRONIKA_PG_DSNS` enables PostgreSQL collection independently of capacity.
 Unknown capacity does not disable collection; it leaves PostgreSQL Health and
@@ -164,7 +156,7 @@ At each OS health timestamp, overall health uses the latest PostgreSQL health at
 
 `Overall health = max(0, OS health − PG penalty)`.
 
-Disabled PostgreSQL contributes zero penalty. Enabled PostgreSQL with unknown or older input makes overall health null; unknown OS health always makes overall health null. Web source flags do not participate in these formulas. Sources: [formulas](../crates/kronika-index/src/health.rs), [CPU capacity](../crates/kronika-index/src/cpu_capacity.rs), [scope, activity counts, and time selection](../crates/kronika-index/src/build.rs), [collector metadata](../bins/kronika-collector/src/service_sections.rs).
+In recorded PostgreSQL-only mode (`os_enabled = false`), Overall is calculated at PostgreSQL samples and equals PostgreSQL Health, including null when its operands are unknown. With OS enabled, disabled PostgreSQL contributes zero penalty; unknown or older enabled PostgreSQL input, or unknown OS Health, makes Overall null. Web source flags do not participate in these formulas. Sources: [formulas](../crates/kronika-index/src/health.rs), [CPU capacity](../crates/kronika-index/src/cpu_capacity.rs), [scope, activity counts, and time selection](../crates/kronika-index/src/build.rs), [collector metadata](../bins/kronika-collector/src/service_sections.rs).
 
 ## Timeline marks
 

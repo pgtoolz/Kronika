@@ -494,6 +494,8 @@ fn emit_lanes(
         "segment_id": descriptor.id().to_string(),
         "postgresql_interval_seconds": facts.postgresql_interval_seconds.map(|value| value.to_string()),
         "environment": facts.environment,
+        "os_enabled": facts.os_enabled,
+        "postgresql_processes_shared": facts.postgresql_processes_shared,
     }))?) {
         return Ok(false);
     }

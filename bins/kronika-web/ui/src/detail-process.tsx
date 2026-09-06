@@ -9,9 +9,6 @@ import { identifier, processCommand, rawText, value, type Locale } from "./model
 import { processDetailFields, processDetailValueRole } from "./detail"
 import { CellValue } from "./process-table"
 
-// The OS process recorded under the selected backend's PID. It is the same
-// identity in another recorded section, so it reads as its own panel.
-
 export function ProcessFacts({ locale, process, processTime, t }: {
   readonly locale: Locale
   readonly process: DataRow | null | undefined

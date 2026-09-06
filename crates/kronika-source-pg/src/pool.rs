@@ -12,11 +12,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
 use tokio::time::Instant;
+use tokio_postgres::Config;
 use tokio_postgres::config::Host;
-use tokio_postgres::{Config, NoTls};
 
-use crate::Session;
 use crate::query;
+use crate::{Session, Transport};
 
 /// Maximum time allowed for opening a `PostgreSQL` connection.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -68,6 +68,7 @@ impl Error for ConnectError {
 #[derive(Debug)]
 pub struct Pool {
     config: Config,
+    transport: Transport,
     resolved_user: Option<String>,
     resolved_database: Option<String>,
     open: Option<Open>,
@@ -98,14 +99,18 @@ impl Pool {
     pub fn new(dsn: &str) -> Result<Self> {
         let mut config: Config = dsn.parse().context("parse the PostgreSQL DSN")?;
         config.application_name(collector_application_name());
-        Ok(Self::from_config(config))
+        let transport = Transport::from_env()?;
+        let mut pool = Self::from_config(config);
+        pool.transport = transport;
+        Ok(pool)
     }
 
     /// Build a lazy pool from an already parsed configuration.
     #[must_use]
-    pub const fn from_config(config: Config) -> Self {
+    pub fn from_config(config: Config) -> Self {
         Self {
             config,
+            transport: Transport::default(),
             resolved_user: None,
             resolved_database: None,
             open: None,
@@ -120,6 +125,7 @@ impl Pool {
         config.dbname(dbname);
         Self {
             config,
+            transport: self.transport.clone(),
             resolved_user: self.resolved_user.clone(),
             resolved_database: Some(dbname.to_owned()),
             open: None,
@@ -163,13 +169,21 @@ impl Pool {
         if let Some(open) = self.open.take() {
             if open.reusable() {
                 let open = self.open.insert(open);
-                return Ok(Session::new(&open.client, open.generation));
+                return Ok(Session::with_transport(
+                    &open.client,
+                    open.generation,
+                    &self.transport,
+                ));
             }
             open.driver.abort();
         }
         let connected = self.connect().await?;
         let open = self.open.insert(connected);
-        Ok(Session::new(&open.client, open.generation))
+        Ok(Session::with_transport(
+            &open.client,
+            open.generation,
+            &self.transport,
+        ))
     }
 
     /// Return the existing healthy session only when its generation matches.
@@ -185,7 +199,8 @@ impl Pool {
             return None;
         }
         let open = self.open.as_ref()?;
-        (open.generation == expected).then(|| Session::new(&open.client, open.generation))
+        (open.generation == expected)
+            .then(|| Session::with_transport(&open.client, open.generation, &self.transport))
     }
 
     /// Generation of the current healthy connection.
@@ -205,7 +220,7 @@ impl Pool {
     }
 
     async fn connect(&mut self) -> std::result::Result<Open, ConnectError> {
-        let connecting = self.config.connect(NoTls);
+        let connecting = self.transport.connect(&self.config);
         let (client, connection) = tokio::time::timeout(CONNECT_TIMEOUT, connecting)
             .await
             .map_err(|_elapsed| ConnectError::Timeout)?

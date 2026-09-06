@@ -86,6 +86,56 @@ pub struct InstanceMetadata {
     pub postgresql_effective_cpus: Option<u32>,
 }
 
+/// Recorded collection families and the Linux resource relationship.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Section)]
+#[section(
+    id = 1_021_003,
+    name = "instance_metadata",
+    semantics = snapshot_full,
+    sort_key("ts")
+)]
+pub struct InstanceMetadataV3 {
+    /// Collection timestamp, Unix microseconds.
+    #[column(t)]
+    pub ts: Ts,
+    /// Linux source hostname, absent without OS collection.
+    #[column(l)]
+    pub hostname: Option<StrId>,
+    /// Linux source kernel release.
+    #[column(l)]
+    pub kernel_version: Option<StrId>,
+    /// Linux source environment: 0 machine, 1 container.
+    #[column(l)]
+    pub environment: Option<u8>,
+    /// Ticks per second for recorded OS counters.
+    #[column(l)]
+    pub clock_ticks_per_sec: Option<i64>,
+    /// Page size for recorded OS counters.
+    #[column(l)]
+    pub page_size_bytes: Option<i64>,
+    /// Boot identity of the Linux source.
+    #[column(l)]
+    pub boot_id: Option<StrId>,
+    /// Linux source boot time, Unix microseconds.
+    #[column(l)]
+    pub btime: Option<Ts>,
+    /// Whether Linux collection was configured.
+    #[column(l)]
+    pub os_enabled: bool,
+    /// The deployment uses one machine resource and process namespace for PG and Linux.
+    #[column(l)]
+    pub postgresql_processes_shared: bool,
+    /// Whether `PostgreSQL` collection was configured.
+    #[column(l)]
+    pub postgresql_enabled: bool,
+    /// Effective `PostgreSQL` collection cadence, seconds.
+    #[column(l, unit = seconds)]
+    pub postgresql_interval_seconds: u64,
+    /// Explicit capacity of the `PostgreSQL` server, CPU cores.
+    #[column(l)]
+    pub postgresql_effective_cpus: Option<u32>,
+}
+
 /// Previous type `1_021_001`, retained so existing ZMS remains readable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Section)]
 #[section(

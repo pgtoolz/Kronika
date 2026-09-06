@@ -5,11 +5,11 @@ use crate::logging::{
 use crate::scheduler::{DueSet, SourceKind};
 use anyhow::Result;
 use kronika_registry::os_block_topology::OsBlockTopology;
-use kronika_registry::os_cgroup_context::OsCgroupContext;
-use kronika_registry::os_cgroup_cpu::OsCgroupCpu;
+use kronika_registry::os_cgroup_context::OsCgroupContextV2;
+use kronika_registry::os_cgroup_cpu::{OsCgroupCpu, OsCgroupCpuV3};
 use kronika_registry::os_cgroup_io::OsCgroupIo;
 use kronika_registry::os_cgroup_mapping::OsCgroupMapping;
-use kronika_registry::os_cgroup_memory::OsCgroupMemory;
+use kronika_registry::os_cgroup_memory::{OsCgroupMemory, OsCgroupMemoryV3};
 use kronika_registry::os_cgroup_pids::OsCgroupPids;
 use kronika_registry::os_cpu::OsCpu;
 use kronika_registry::os_cpufreq::{OsCpufreq, OsCpufreqPolicy};
@@ -100,9 +100,11 @@ pub(crate) struct OsSources {
     pending_users: Vec<(u8, u32)>,
     process_status: Vec<OsProcessStatus>,
     cgroup_mapping: Vec<OsCgroupMapping>,
-    cgroup_context: Option<OsCgroupContext>,
+    cgroup_context: Option<OsCgroupContextV2>,
     cgroup_cpu: Vec<OsCgroupCpu>,
+    cgroup_ancestor_cpu: Vec<OsCgroupCpuV3>,
     cgroup_memory: Vec<OsCgroupMemory>,
+    cgroup_ancestor_memory: Vec<OsCgroupMemoryV3>,
     cgroup_io: Vec<OsCgroupIo>,
     cgroup_pids: Vec<OsCgroupPids>,
 }
@@ -139,7 +141,9 @@ impl OsSources {
             cgroup_mapping: Vec::new(),
             cgroup_context: None,
             cgroup_cpu: Vec::new(),
+            cgroup_ancestor_cpu: Vec::new(),
             cgroup_memory: Vec::new(),
+            cgroup_ancestor_memory: Vec::new(),
             cgroup_io: Vec::new(),
             cgroup_pids: Vec::new(),
         }
@@ -160,9 +164,9 @@ impl OsSources {
     }
 
     #[cfg(test)]
-    pub(crate) const fn cgroup_context_only(row: OsCgroupContext) -> Self {
+    pub(crate) const fn cgroup_context_only(row: &OsCgroupContextV2) -> Self {
         let mut sources = Self::empty();
-        sources.cgroup_context = Some(row);
+        sources.cgroup_context = Some(*row);
         sources
     }
 
@@ -234,7 +238,7 @@ fn read_optional_os_file(fs: &ProcFs, rel: &'static str, type_id: u32) -> Option
 /// Counter sections (cpu, stat, meminfo, loadavg, vmstat, pressure, diskstats,
 /// netdev, snmp, netstat) are gated on `due.has(SourceKind::OsCore)` and are
 /// never emitted on an OsMountTopo-only tick. Pressure comes from procfs on a
-/// machine and the collector's exact cgroup v2 path in a container.
+/// machine and the selected ancestor cgroup v2 path in a container.
 /// Mountinfo is parsed on every `OsCore` tick for diskstats attribution and
 /// emitted, together with topology, only when
 /// `due.has(SourceKind::OsMountTopo)` is true.
@@ -274,8 +278,33 @@ pub(crate) fn collect_os_sources(
     let mut os = OsSources::empty();
 
     let sys = SysFs::from_env();
+    let selected = in_container.then(|| {
+        cgroup::collect_ancestor_context(fs, &sys, ts).unwrap_or_else(|err| {
+            log_degraded(1_205_002, "cgroup/context", &err);
+            cgroup::AncestorContext {
+                context: cgroup::CgroupContextRow {
+                    ts,
+                    ..cgroup::CgroupContextRow::default()
+                },
+                ..cgroup::AncestorContext::default()
+            }
+        })
+    });
+    if let Some(selected) = &selected {
+        // Record alongside PSI as well as slower cgroup counters, so a selected
+        // directory change cannot be hidden between context snapshots.
+        cgroups::record_context_section(selected, interner, &mut os);
+    }
     if due.has(SourceKind::OsCore) {
-        singletons::collect_singletons(fs, &sys, scope, ts, in_container, &mut os);
+        singletons::collect_singletons(
+            fs,
+            &sys,
+            scope,
+            ts,
+            in_container,
+            selected.as_ref(),
+            &mut os,
+        );
     }
     // OsCore needs mountinfo for the container device filter in diskstats;
     // OsMountTopo needs it to build the attribution section rows.
@@ -286,13 +315,12 @@ pub(crate) fn collect_os_sources(
         Vec::new()
     };
     // A container's device sections keep the devices its mounts sit on and the
-    // layers its own cgroup charges I/O to; /proc/diskstats and sysfs describe
+    // layers its selected ancestor charges I/O to; /proc/diskstats and sysfs describe
     // the whole node.
     let kept = (in_container && device_tick).then(|| {
         let mut devices = container_device_set(&mounts);
-        match cgroup::charged_devices(fs, &sys) {
-            Ok(charged) => devices.extend(charged),
-            Err(err) => log_degraded(1_108_001, "cgroup/io.stat", &err),
+        if let Some(selected) = &selected {
+            devices.extend(cgroup::charged_ancestor_devices(&sys, selected));
         }
         devices
     });
@@ -336,7 +364,7 @@ pub(crate) fn collect_os_sources(
         process_memberships.as_mut(),
         &mut os,
     );
-    if let Some(process_memberships) = process_memberships {
+    if let (Some(process_memberships), Some(selected)) = (process_memberships, selected.as_ref()) {
         cgroups::collect_cgroup_sections(
             &sys,
             interner,
@@ -345,6 +373,7 @@ pub(crate) fn collect_os_sources(
             fs,
             due,
             process_memberships,
+            selected,
             &mut os,
         );
     }
@@ -385,7 +414,10 @@ pub(crate) fn collect_pressure_for_test(
     in_container: bool,
 ) -> Vec<OsPsi> {
     let mut os = OsSources::empty();
-    singletons::collect_pressure_rows(fs, sys, scope, ts, in_container, &mut os);
+    let selected = in_container
+        .then(|| cgroup::collect_ancestor_context(fs, sys, ts).ok())
+        .flatten();
+    singletons::collect_pressure_rows(fs, sys, scope, ts, in_container, selected.as_ref(), &mut os);
     os.psi
 }
 

@@ -11,10 +11,11 @@ use crate::series::SeriesBlock;
 use super::{
     ARCHIVER_FAILED_COUNT_FIELD, CHECKSUM_FAILURES_FIELD, CPU_IDLE_FIELD, DATABASE_DEADLOCKS_FIELD,
     FROZEN_XID_AGE_FIELD, FindingBuilder, LOAD1_FIELD, LOCKS_BLOCKED_BY_FIELD, MEM_AVAILABLE_FIELD,
-    MIN_MXID_AGE_FIELD, MOUNT_FREE_BYTES_FIELD, OOM_KILL_FIELD, OS_CGROUP_MEMORY_V1, OS_CPU,
-    OS_LOADAVG, OS_MEMINFO, OS_MOUNTINFO, OS_VMSTAT, OVERALL_HEALTH_FIELD, PG_LOG_SLOW_QUERIES,
-    PG_STAT_ARCHIVER, SESSIONS_FATAL_FIELD, SESSIONS_KILLED_FIELD, SLOW_QUERY_DURATION_FIELD,
-    WRAPAROUND_AGE_THRESHOLD, activity_layouts, has_checksum, has_sessions, optional_i64,
+    MIN_MXID_AGE_FIELD, MOUNT_FREE_BYTES_FIELD, OOM_KILL_FIELD, OS_CGROUP_MEMORY_V1,
+    OS_CGROUP_MEMORY_V3, OS_CPU, OS_LOADAVG, OS_MEMINFO, OS_MOUNTINFO, OS_VMSTAT,
+    OVERALL_HEALTH_FIELD, PG_LOG_SLOW_QUERIES, PG_STAT_ARCHIVER, SESSIONS_FATAL_FIELD,
+    SESSIONS_KILLED_FIELD, SLOW_QUERY_DURATION_FIELD, WRAPAROUND_AGE_THRESHOLD, activity_layouts,
+    has_checksum, has_sessions, optional_i64,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -148,8 +149,23 @@ impl FindingBuilder {
         &mut self,
         segment: &Segment,
         type_id: u32,
+        identities: &BTreeMap<i64, u64>,
     ) -> Result<(), BuildError> {
         if segment.rows_of(type_id).is_none() {
+            return Ok(());
+        }
+        if type_id == OS_CGROUP_MEMORY_V3 {
+            for (timestamp, _ordinal, counter) in selected_oom_samples(segment)? {
+                cgroup_oom_increased(
+                    &mut self.cgroup_oom_v3_before,
+                    identities
+                        .range(..=timestamp)
+                        .next_back()
+                        .map(|(_, id)| *id),
+                    timestamp,
+                    counter,
+                );
+            }
             return Ok(());
         }
         segment.visit_rows(
@@ -588,6 +604,7 @@ impl FindingBuilder {
         &mut self,
         segment: &Segment,
         type_id: u32,
+        identities: &BTreeMap<i64, u64>,
         hits: &mut BTreeMap<u32, Vec<Finding>>,
     ) -> Result<(), BuildError> {
         if segment.rows_of(type_id).is_none() {
@@ -595,6 +612,23 @@ impl FindingBuilder {
         }
         let cgroup_hits = hits.entry(type_id).or_default();
         let field_ordinal = cgroup_oom_kill_field(type_id);
+        if type_id == OS_CGROUP_MEMORY_V3 {
+            for (timestamp, ordinal, counter) in selected_oom_samples(segment)? {
+                let increased = cgroup_oom_increased(
+                    &mut self.cgroup_oom_v3_before,
+                    identities
+                        .range(..=timestamp)
+                        .next_back()
+                        .map(|(_, id)| *id),
+                    timestamp,
+                    counter,
+                );
+                if increased && let Ok(row_ordinal) = u32::try_from(ordinal) {
+                    cgroup_hits.push(known_bad(field_ordinal, row_ordinal, timestamp));
+                }
+            }
+            return Ok(());
+        }
         segment.visit_rows(
             type_id,
             &["ts", "cgroup_path", "oom_kill"],
@@ -823,9 +857,46 @@ const fn activity_state_field(type_id: u32) -> u16 {
 
 /// `1_202_002` inserted `shmem` ahead of `oom_kill`, shifting its ordinal.
 const fn cgroup_oom_kill_field(type_id: u32) -> u16 {
-    if type_id == OS_CGROUP_MEMORY_V1 {
+    if matches!(type_id, OS_CGROUP_MEMORY_V1 | OS_CGROUP_MEMORY_V3) {
         12
     } else {
         13
     }
+}
+
+/// Compare adjacent selected-group samples; missing identity/counters break continuity.
+pub(super) fn cgroup_oom_increased(
+    before: &mut Option<(u64, i64, Option<i64>)>,
+    identity: Option<u64>,
+    timestamp: i64,
+    counter: Option<i64>,
+) -> bool {
+    let counter = counter.filter(|value| *value >= 0);
+    let increased = match (*before, identity, counter) {
+        (Some((before_id, before_ts, Some(before_value))), Some(id), Some(value)) => {
+            id == before_id && timestamp > before_ts && value > before_value
+        }
+        _ => false,
+    };
+    *before = identity.map(|id| (id, timestamp, counter));
+    increased
+}
+
+fn selected_oom_samples(segment: &Segment) -> Result<Vec<(i64, u64, Option<i64>)>, BuildError> {
+    let mut samples = Vec::new();
+    segment.visit_rows(
+        OS_CGROUP_MEMORY_V3,
+        &["ts", "oom_kill"],
+        0,
+        usize::MAX,
+        |ordinal, row| {
+            if let Some(Cell::Ts(timestamp)) = row.get("ts") {
+                samples.push((*timestamp, ordinal, optional_i64(row.get("oom_kill"))));
+            }
+            true
+        },
+    )?;
+    // The encoded section is sorted by path first; selected paths can change.
+    samples.sort_unstable_by_key(|sample| (sample.0, sample.1));
+    Ok(samples)
 }

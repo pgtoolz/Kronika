@@ -56,6 +56,63 @@ pub struct OsCgroupMemory {
     pub scope: u8,
 }
 
+/// Selected-ancestor memory; unsupported or unreadable fields remain null.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Section)]
+#[section(
+    id = 1_202_003,
+    name = "os_cgroup_memory",
+    semantics = snapshot_full,
+    sort_key("cgroup_path", "ts"),
+    identity("cgroup_path")
+)]
+pub struct OsCgroupMemoryV3 {
+    /// Collection timestamp, unix microseconds.
+    #[column(t)]
+    pub ts: Ts,
+    /// Cgroup path as a string dictionary reference.
+    #[column(l)]
+    pub cgroup_path: StrId,
+    /// Current memory usage.
+    #[column(g, unit = bytes)]
+    pub current: i64,
+    /// Recorded memory limit, bytes; null is interpreted with `max_unlimited`.
+    #[column(g, unit = bytes)]
+    pub max: Option<i64>,
+    /// Anonymous memory.
+    #[column(g, unit = bytes)]
+    pub anon: Option<i64>,
+    /// File-backed memory.
+    #[column(g, unit = bytes)]
+    pub file: Option<i64>,
+    /// Kernel memory.
+    #[column(g, unit = bytes)]
+    pub kernel: Option<i64>,
+    /// Slab memory.
+    #[column(g, unit = bytes)]
+    pub slab: Option<i64>,
+    /// `memory.events low`.
+    #[column(c, unit = count)]
+    pub low_events: Option<i64>,
+    /// `memory.events high`.
+    #[column(c, unit = count)]
+    pub high_events: Option<i64>,
+    /// `memory.events max` or v1 `memory.failcnt`.
+    #[column(c, unit = count)]
+    pub max_events: Option<i64>,
+    /// `memory.events oom`.
+    #[column(c, unit = count)]
+    pub oom_events: Option<i64>,
+    /// `memory.events oom_kill`.
+    #[column(c, unit = count)]
+    pub oom_kill: Option<i64>,
+    /// Whether a successfully read limit is unlimited; null means unavailable.
+    #[column(l)]
+    pub max_unlimited: Option<bool>,
+    /// Source scope. See `kronika_source_os::OsScope`.
+    #[column(l)]
+    pub scope: u8,
+}
+
 /// Type `1_202_002`, retained so existing WAL and ZMS with `shmem` stay readable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Section)]
 #[section(
@@ -216,5 +273,47 @@ mod tests {
             oom_kill: 5,
             scope: 1,
         }]);
+    }
+}
+
+#[cfg(test)]
+mod ancestor_tests {
+    use super::OsCgroupMemoryV3;
+    use crate::{Section, StrId, Ts};
+
+    #[test]
+    fn ancestor_memory_nulls_roundtrip() {
+        assert_eq!(OsCgroupMemoryV3::CONTRACT.type_id.get(), 1_202_003);
+        let row = OsCgroupMemoryV3 {
+            ts: Ts(1),
+            cgroup_path: StrId(1),
+            current: 4096,
+            max: None,
+            max_unlimited: None,
+            anon: Some(100),
+            file: Some(200),
+            kernel: None,
+            slab: None,
+            low_events: None,
+            high_events: None,
+            max_events: None,
+            oom_events: None,
+            oom_kill: None,
+            scope: 4,
+        };
+        crate::assert_roundtrips(&[
+            row,
+            OsCgroupMemoryV3 {
+                ts: Ts(2),
+                max_unlimited: Some(true),
+                ..row
+            },
+            OsCgroupMemoryV3 {
+                ts: Ts(3),
+                max: Some(8192),
+                max_unlimited: Some(false),
+                ..row
+            },
+        ]);
     }
 }

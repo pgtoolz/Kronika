@@ -1790,3 +1790,11 @@ test("the recorded environment comes from the newest lane context that states it
   assert.equal(api.recordedEnvironmentFromContexts([context("a", 0), context("b", 1), context("c", null)]), "container")
   assert.equal(api.recordedEnvironmentFromContexts([context("a", 7)]), null)
 })
+
+test("PostgreSQL-only Health retains stored Overall without an OS component", async () => {
+  const api = await bundledApi()
+  const point = (series: string, timestamp: number, value: number | null) => ({ identity: {}, logicalName: "health", segmentId: "managed", series, timestamp, typeId: "0", value })
+  const points = [point("postgres_health", START, 75), point("overall_health", START, 75), point("postgres_health", START + 30_000_000, null), point("overall_health", START + 30_000_000, null)]
+  const rows = api.healthRows(points, [{ segmentId: "managed", postgresqlIntervalSeconds: 30, environment: null, osEnabled: false, postgresqlProcessesShared: false }])
+  assert.deepEqual(rows.map((row) => row.values), [{ overall_health: 75, postgres_health: 75 }, { overall_health: null, postgres_health: null }])
+})

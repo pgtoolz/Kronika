@@ -106,6 +106,7 @@ impl PostgresTarget {
 pub(crate) struct LogSources {
     offsets: Offsets,
     pg_dsns: Vec<PostgresTarget>,
+    discover_postgres_paths: bool,
     pg_logs: Vec<String>,
     pgbouncer_dsns: Vec<settings::ConnectionTarget>,
     pgbouncer_logs: Vec<String>,
@@ -131,6 +132,7 @@ impl LogSources {
         Ok(Self {
             offsets,
             pg_dsns,
+            discover_postgres_paths: config.mode.collect_os(),
             pg_logs: config.pg_logs.clone(),
             pgbouncer_dsns,
             pgbouncer_logs: config.pgbouncer_logs.clone(),
@@ -154,7 +156,11 @@ impl LogSources {
 
     async fn rescan_postgres(&mut self, observe: &mut (dyn FnMut(PgObservation) + Send)) {
         let mut wanted: BTreeMap<PathBuf, PostgresFacts> = BTreeMap::new();
-        for target in &mut self.pg_dsns {
+        for target in self
+            .pg_dsns
+            .iter_mut()
+            .filter(|_| self.discover_postgres_paths)
+        {
             match settings::postgres(&target.connection, target.system_identifier, observe).await {
                 Ok(server) => {
                     if let Some(identifier) = server.system_identifier {

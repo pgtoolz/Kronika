@@ -48,7 +48,7 @@ const FIELDS: [FieldSpec; 16] = [
     field("processes", "count", false),
     field("threads", "count", true),
     field("runnable", "count", false),
-    field("postgresql", "count", false),
+    field("postgresql", "count", true),
     field("user_cores", "count", true),
     field("system_cores", "count", true),
     field("run_delay_ms_per_second", "milliseconds_per_second", true),
@@ -158,7 +158,7 @@ struct Summary {
     processes: u64,
     threads: ExactSum,
     runnable: u64,
-    postgresql: u64,
+    postgresql: Option<u64>,
     utime: RateSum,
     stime: RateSum,
     rundelay_ns: RateSum,
@@ -182,7 +182,7 @@ impl Summary {
                 "processes" => count_value(self.processes),
                 "threads" => finite(self.threads.value()),
                 "runnable" => count_value(self.runnable),
-                "postgresql" => count_value(self.postgresql),
+                "postgresql" => self.postgresql.map_or(Value::Null, count_value),
                 "user_cores" => finite(divide(self.utime.value(), self.ticks_per_second)),
                 "system_cores" => finite(divide(self.stime.value(), self.ticks_per_second)),
                 "run_delay_ms_per_second" => {
@@ -312,9 +312,12 @@ fn selected_fields(request: &HourSeriesRequest) -> Result<Vec<FieldSpec>, QueryE
 fn activity_pids(
     segments: &[Segment],
     sink: &dyn QuerySink,
-) -> Result<BTreeMap<i64, BTreeSet<i32>>, QueryError> {
-    let mut snapshots = BTreeMap::<i64, BTreeSet<i32>>::new();
+) -> Result<BTreeMap<(i64, i64), BTreeSet<i32>>, QueryError> {
+    let mut snapshots = BTreeMap::<(i64, i64), BTreeSet<i32>>::new();
     for segment in segments {
+        if !kronika_index::collection_facts(segment)?.postgresql_processes_shared {
+            continue;
+        }
         for (type_id, _rows) in segment.sections() {
             if logical_section_name(type_id) != Some(ACTIVITY) {
                 continue;
@@ -329,7 +332,7 @@ fn activity_pids(
                 let (Some(ts), Some(pid)) = (timestamp(&row), i32_value(row.get("pid"))) else {
                     return true;
                 };
-                snapshots.entry(ts).or_default().insert(pid);
+                snapshots.entry((segment.id(), ts)).or_default().insert(pid);
                 true
             })?;
             if !connected {
@@ -392,12 +395,13 @@ fn previous_moments(moments: BTreeMap<i64, i64>) -> BTreeMap<i64, i64> {
 fn summaries(
     segments: &[Segment],
     moments: &MomentIndex,
-    activities: &BTreeMap<i64, BTreeSet<i32>>,
+    activities: &BTreeMap<(i64, i64), BTreeSet<i32>>,
     sink: &dyn QuerySink,
 ) -> Result<BTreeMap<i64, Summary>, QueryError> {
     let mut out = BTreeMap::<i64, Summary>::new();
     let mut previous = HashMap::<i32, Previous>::new();
     for segment in segments {
+        let shared = kronika_index::collection_facts(segment)?.postgresql_processes_shared;
         let ticks_per_second = ticks_per_second(segment)?;
         let Some(last_segment_moment) = moments.last_by_segment.get(&segment.id()).copied() else {
             continue;
@@ -437,10 +441,16 @@ fn summaries(
                     .filter(|stored| stored.starttime.is_some())
                     .copied();
                 let seconds = predecessor.and_then(|stored| elapsed_seconds(stored.ts, ts));
-                let pg_pids = activities.range(..=ts).next_back().map(|(_ts, pids)| pids);
+                let pg_pids = activities
+                    .range((segment.id(), i64::MIN)..=(segment.id(), ts))
+                    .next_back()
+                    .map(|(_ts, pids)| pids);
                 let summary = out.entry(ts).or_default();
                 summary.segment_id = segment.id();
                 summary.ticks_per_second = ticks_per_second;
+                if shared && pg_pids.is_some() {
+                    summary.postgresql.get_or_insert(0);
+                }
                 add_row(
                     summary,
                     &row,
@@ -448,8 +458,8 @@ fn summaries(
                     predecessor.as_ref().map(|stored| &stored.counters),
                     seconds,
                 );
-                if pg_pids.is_some_and(|pids| pids.contains(&pid)) {
-                    summary.postgresql = summary.postgresql.saturating_add(1);
+                if shared && pg_pids.is_some_and(|pids| pids.contains(&pid)) {
+                    summary.postgresql = Some(summary.postgresql.unwrap_or(0).saturating_add(1));
                 }
                 state.insert(
                     pid,
@@ -749,7 +759,7 @@ mod tests {
         let mut summary = Summary {
             processes: 2,
             runnable: 1,
-            postgresql: 1,
+            postgresql: Some(1),
             ticks_per_second: Some(100.0),
             ..Summary::default()
         };
