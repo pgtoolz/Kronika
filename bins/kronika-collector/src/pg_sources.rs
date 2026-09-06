@@ -272,8 +272,12 @@ impl PgSources {
                 ],
             );
         }
-        let server = Pool::new(dsn).map_err(|_error| {
-            anyhow::anyhow!("KRONIKA_PG_DSNS[0] is not a valid connection string")
+        let server = Pool::new(dsn).map_err(|error| {
+            if error.is::<kronika_source_pg::transport::CaConfigError>() {
+                anyhow::Error::new(kronika_source_pg::transport::CaConfigError)
+            } else {
+                anyhow::anyhow!("KRONIKA_PG_DSNS[0] is not a valid connection string")
+            }
         })?;
         Ok(Self {
             server: Some(server),
@@ -1151,7 +1155,11 @@ impl PgSources {
                 }
                 Err(QueryFailure::Source) => {
                     self.last_discovery = None;
-                    return false;
+                    vec![databases::Database {
+                        oid: probe.datid,
+                        name: probe.database.clone(),
+                        is_current: true,
+                    }]
                 }
             }
         };

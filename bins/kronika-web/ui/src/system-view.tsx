@@ -568,6 +568,7 @@ export function SystemView({
     <Timeline cursor={cursor} environment={environment} findings={data.findings} health={data.health} hour={hour} lanePoints={data.lanePoints} locale={locale} navigationTimestamps={navigationTimestamps} onCursor={onCursor} onFinding={onFinding} onOpenChart={onOpenChart} onPreview={onPreview} onSelectedLane={onSelectedLane} primaryLane={primaryTimelineLane} selectedLane={selectedLane} t={t} />
     <div className="system-main mt-0 min-w-0">
       <UseTable
+        cgroupPaths={uniqueStrings(snapshot(sectionRows(data, "os_cgroup_context"), cursor).flatMap((row) => ["cpu_path", "memory_path", "io_path", "pids_path"].flatMap((field) => { const path = rawText(value(row, field)); return path === null ? [] : [path] }))).join(" · ")}
         containerScopes={environment === "container"}
         cursor={cursor}
         expanded={expanded}
@@ -1023,10 +1024,13 @@ export function cgroupHistoryGroups(rows: readonly DataRow[], contexts: readonly
       else high = middle
     }
     const context = low === 0 ? null : segment[low - 1]!
-    const identity = context !== null
+    const recordedIdentity = rawText(value(row, "cgroup_identity")) ?? (context !== null
       && rawText(value(context, `${controller}_path`)) === rawText(value(row, "cgroup_path"))
       && rawText(value(context, "scope")) === rawText(value(row, "scope"))
-      ? rawText(value(context, `${controller}_identity`)) : null
+      ? rawText(value(context, `${controller}_identity`)) : null)
+    const legacy = context?.typeId !== "1205002" && !["1201003", "1202003", "1203003"].includes(row.typeId)
+    const identity = recordedIdentity !== null ? `${row.segmentId}:${recordedIdentity}`
+      : legacy ? `${row.segmentId}:${rawText(value(row, "scope"))}:${rawText(value(row, "cgroup_path"))}` : null
     if (identity === null || identity !== previousIdentity) groups.push([])
     groups.at(-1)!.push(row)
     previousIdentity = identity

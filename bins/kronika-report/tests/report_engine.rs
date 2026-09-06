@@ -1,5 +1,7 @@
 //! Internal query composition over one production-written standalone fixture.
 
+use {kronika_registry as _, kronika_writer as _};
+
 use std::error::Error as _;
 use std::sync::Arc;
 #[cfg(feature = "generator")]

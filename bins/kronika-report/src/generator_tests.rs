@@ -251,3 +251,143 @@ fn report_is_self_contained_and_deterministic() {
         );
     }
 }
+
+#[path = "../tests/support/collection_modes.rs"]
+mod collection_modes;
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "three encoded collection contracts share one production report assertion path"
+)]
+fn recorded_collection_modes_generate_matching_report_artifacts() {
+    use crate::{ReportEngine, ReportInput};
+    use collection_modes::{Collection, END, START};
+    use kronika_query::{HourPart, HourRequest, QueryRequest, QuerySink, Window};
+
+    #[derive(Default)]
+    struct Records(Vec<u8>);
+    impl QuerySink for Records {
+        fn record(&mut self, bytes: Vec<u8>) -> bool {
+            self.0.extend(bytes);
+            true
+        }
+        fn cancelled(&self) -> bool {
+            false
+        }
+    }
+    for (name, collection, sources, expected) in [
+        (
+            "postgresql-unknown",
+            Collection::Postgresql(None),
+            SOURCE_POSTGRESQL,
+            None,
+        ),
+        (
+            "postgresql-explicit",
+            Collection::Postgresql(Some(2)),
+            SOURCE_POSTGRESQL,
+            Some(80),
+        ),
+        ("selected-cgroup", Collection::Cgroup, SOURCE_OS, None),
+    ] {
+        let zms = collection_modes::encoded(collection);
+        let segment_id = SegmentId::new(START).expect("segment identity");
+        let reader = FinishedReader::new(
+            EmbeddedSource::from_owned(segment_id, zms.clone(), zms.len() as u64).expect("source"),
+        );
+        let resources = reader.resources().expect("resources");
+        let (idx, bits) =
+            isolated_index(&reader, &resources.resources[0]).expect("production isolated index");
+        assert_eq!(bits, sources);
+        let mut html = Vec::new();
+        let summary = write_html(
+            HtmlReportInput {
+                segment_id,
+                zms: zms.clone(),
+                max_zms_bytes: zms.len() as u64,
+                visible_range: ReportTimeRange::new(START, END).expect("range"),
+            },
+            &mut html,
+        )
+        .expect("production report");
+        assert_eq!(summary.configured_sources, sources);
+        let html_text = std::str::from_utf8(&html).expect("HTML");
+        assert!(html_text.contains(&STANDARD.encode(&idx)));
+        assert!(html_text.contains(&STANDARD.encode(&zms)));
+        let engine = ReportEngine::new(ReportInput {
+            segment_id,
+            zms: zms.clone(),
+            idx: idx.clone(),
+            configured_sources: sources,
+            max_zms_bytes: zms.len() as u64,
+        })
+        .expect("report engine");
+        let mut records = Records::default();
+        engine
+            .execute(
+                QueryRequest::Hour(HourRequest {
+                    window: Window {
+                        from: Some(START),
+                        to: Some(END - 1),
+                    },
+                    series: None,
+                    part: HourPart::Lanes,
+                    segments: Some(vec![START]),
+                    active: None,
+                }),
+                &mut records,
+            )
+            .expect("report hour");
+        let values = records
+            .0
+            .split(|byte| *byte == b'\n')
+            .filter(|row| !row.is_empty())
+            .map(|row| serde_json::from_slice::<serde_json::Value>(row).expect("record"))
+            .collect::<Vec<_>>();
+        let context = values
+            .iter()
+            .find(|row| row["record"] == "lane_context")
+            .expect("recorded context");
+        assert_eq!(context["os_enabled"], sources == SOURCE_OS);
+        assert_eq!(context["postgresql_processes_shared"], false);
+        if sources == SOURCE_POSTGRESQL {
+            let segment = reader
+                .open_segment(&resources.resources[0])
+                .expect("segment");
+            assert!(segment.type_ids().all(|id| {
+                !kronika_registry::logical_section_name(id)
+                    .is_some_and(|name| name.starts_with("os_"))
+            }));
+            let index = kronika_index::Index::decode(&idx).expect("decode generated index");
+            let mut pg = None;
+            let mut overall = None;
+            for block in index.blocks {
+                match block {
+                    kronika_index::SeriesBlock::OsHealth(_) => panic!("PG-only OS Health"),
+                    kronika_index::SeriesBlock::PostgresHealth(points) => {
+                        pg = Some(points.into_iter().map(|p| p.value).collect::<Vec<_>>());
+                    }
+                    kronika_index::SeriesBlock::OverallHealth(points) => {
+                        overall = Some(points.into_iter().map(|p| p.value).collect::<Vec<_>>());
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(pg, Some(vec![expected]));
+            assert_eq!(overall, pg);
+        }
+        if let Some(output) = std::env::var_os("KRONIKA_REPORT_TEST_OUTPUT") {
+            let directory = std::path::PathBuf::from(output).join(name);
+            std::fs::create_dir_all(&directory).expect("fixture output directory");
+            for (name, bytes) in [
+                ("recording.zms", zms),
+                ("recording.idx", idx),
+                ("report.html", html),
+            ] {
+                std::fs::write(directory.join(name), bytes).expect("fixture artifact");
+            }
+            std::fs::write(directory.join("sources"), sources.to_string()).expect("family bits");
+        }
+    }
+}

@@ -857,7 +857,7 @@ const fn activity_state_field(type_id: u32) -> u16 {
 
 /// `1_202_002` inserted `shmem` ahead of `oom_kill`, shifting its ordinal.
 const fn cgroup_oom_kill_field(type_id: u32) -> u16 {
-    if matches!(type_id, OS_CGROUP_MEMORY_V1 | OS_CGROUP_MEMORY_V3) {
+    if type_id == OS_CGROUP_MEMORY_V1 {
         12
     } else {
         13

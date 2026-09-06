@@ -104,7 +104,10 @@ impl FindingBuilder {
 
     fn cgroup_identities(&self, segment: &Segment) -> Result<BTreeMap<i64, u64>, BuildError> {
         if self.requested.contains(&OS_CGROUP_MEMORY_V3) {
-            Ok(crate::build::cgroup_identities(segment)?)
+            Ok(crate::build::cgroup_identities(
+                segment,
+                ["memory_identity"],
+            )?)
         } else {
             Ok(BTreeMap::new())
         }

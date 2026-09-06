@@ -214,6 +214,7 @@ pub const fn registry() -> &'static [TypeContract] {
         os_cgroup_memory::OsCgroupMemoryV2::CONTRACT,
         os_cgroup_memory::OsCgroupMemoryV3::CONTRACT,
         os_cgroup_io::OsCgroupIo::CONTRACT,
+        os_cgroup_io::OsCgroupIoV2::CONTRACT,
         os_cgroup_pids::OsCgroupPids::CONTRACT,
         os_cgroup_context::OsCgroupContext::CONTRACT,
         os_cgroup_context::OsCgroupContextV2::CONTRACT,

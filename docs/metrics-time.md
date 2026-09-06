@@ -156,6 +156,8 @@ At each OS health timestamp, overall health uses the latest PostgreSQL health at
 
 `Overall health = max(0, OS health − PG penalty)`.
 
+Older recordings without `os_enabled` have unknown Overall unless PostgreSQL was explicitly disabled, even with a CPU override.
+
 In recorded PostgreSQL-only mode (`os_enabled = false`), Overall is calculated at PostgreSQL samples and equals PostgreSQL Health, including null when its operands are unknown. With OS enabled, disabled PostgreSQL contributes zero penalty; unknown or older enabled PostgreSQL input, or unknown OS Health, makes Overall null. Web source flags do not participate in these formulas. Sources: [formulas](../crates/kronika-index/src/health.rs), [CPU capacity](../crates/kronika-index/src/cpu_capacity.rs), [scope, activity counts, and time selection](../crates/kronika-index/src/build.rs), [collector metadata](../bins/kronika-collector/src/service_sections.rs).
 
 ## Timeline marks

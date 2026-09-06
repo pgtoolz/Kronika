@@ -107,14 +107,19 @@ jobs:
           RUST_TOOLCHAIN=1.96.0 scripts/report-assets.sh check --download-bindgen
           cargo +1.96.0 build --locked -p kronika-report-wasm \
             --example native-parity --target x86_64-unknown-linux-gnu
+          report_dir=$(mktemp -d)
+          trap 'rm -rf "$report_dir"' EXIT
+          KRONIKA_REPORT_TEST_OUTPUT="$report_dir/collection-modes" \
+            cargo +1.96.0 test --locked -p kronika-report --lib \
+            recorded_collection_modes_generate_matching_report_artifacts \
+            --target x86_64-unknown-linux-gnu
           node crates/kronika-report-wasm/tests/node-parity.mjs \
             bins/kronika-report/assets/kronika-report-wasm.js \
             bins/kronika-report/assets/kronika-report-wasm.wasm.gz \
-            target/x86_64-unknown-linux-gnu/debug/examples/native-parity
+            target/x86_64-unknown-linux-gnu/debug/examples/native-parity \
+            "$report_dir/collection-modes"
           cargo +1.96.0 build --locked -p kronika-report \
             --target x86_64-unknown-linux-gnu
-          report_dir=$(mktemp -d)
-          trap 'rm -rf "$report_dir"' EXIT
           install -m 0644 \
             bins/kronika-report/tests/fixtures/standalone.zms \
             "$report_dir/1709164800000000.zms"

@@ -1554,3 +1554,259 @@ fn all_snapshot_finders_are_typed_identical_for_posix_and_embedded_finished_zms(
 
 #[path = "finished_source_parity/statement_scope.rs"]
 mod statement_scope;
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one encoded fixture checks all selected controller counter contracts"
+)]
+fn selected_counter_identity_breaks_generic_history_and_detail_rates() {
+    use kronika_registry::os_cgroup_cpu::OsCgroupCpuV3;
+    use kronika_registry::os_cgroup_io::OsCgroupIoV2;
+    use kronika_registry::os_cgroup_memory::OsCgroupMemoryV3;
+    let directory = tempfile::tempdir().expect("counter fixture");
+    let root = DataRoot::open(directory.path()).expect("root");
+    let owner = root
+        .acquire_writer(LayoutLimits::default())
+        .expect("writer");
+    let mut journal = Journal::open(&owner, JournalConfig::default()).expect("journal");
+    let mut interner = Interner::new(DictLimits::default());
+    let path = fixture_label(&mut interner, b"/same-path");
+    let first = fixture_label(&mut interner, b"first-directory");
+    let second = fixture_label(&mut interner, b"recreated-directory");
+    let mut buffers = SectionBuffers::new();
+    for (offset, counter, cgroup_identity) in [
+        (0, 100, first),
+        (1_000_000, 900, second),
+        (2_000_000, 1000, second),
+    ] {
+        let ts = Ts(SEGMENT_ID + offset);
+        buffers
+            .push(OsCgroupCpuV3 {
+                ts,
+                cgroup_path: path,
+                cgroup_identity,
+                usage_usec: counter,
+                user_usec: counter,
+                system_usec: 0,
+                throttled_usec: None,
+                nr_throttled: None,
+                quota_usec: None,
+                period_usec: None,
+                scope: 4,
+            })
+            .expect("CPU");
+        buffers
+            .push(OsCgroupMemoryV3 {
+                ts,
+                cgroup_path: path,
+                cgroup_identity,
+                current: 1024,
+                max: None,
+                anon: None,
+                file: None,
+                kernel: None,
+                slab: None,
+                low_events: Some(counter),
+                high_events: None,
+                max_events: None,
+                oom_events: None,
+                oom_kill: Some(counter),
+                max_unlimited: None,
+                scope: 4,
+            })
+            .expect("memory");
+        buffers
+            .push(OsCgroupIoV2 {
+                ts,
+                cgroup_path: path,
+                cgroup_identity,
+                major: 8,
+                minor: 0,
+                rbytes: Some(counter),
+                wbytes: None,
+                rios: Some(counter),
+                wios: None,
+                scope: 4,
+            })
+            .expect("IO");
+    }
+    let dictionary = dict::encode(interner.window()).expect("dictionary");
+    let part = buffers.flush(&dictionary).expect("encode").expect("rows");
+    let id = SegmentId::new(SEGMENT_ID).expect("id");
+    journal.append(id, &part).expect("append");
+    write_segment(&journal, &owner, SegmentAddress::new(id).expect("address")).expect("seal");
+    journal.reset().expect("reset");
+    drop(journal);
+    drop(owner);
+    let bytes = std::fs::read(finished_path(directory.path(), id)).expect("ZMS");
+    let length = u64::try_from(bytes.len()).expect("length");
+    let datasets: [Arc<dyn QueryDataset>; 2] = [
+        Arc::new(FinishedDataset::new(
+            PosixSource::open(directory.path()).expect("posix"),
+        )),
+        Arc::new(FinishedDataset::new(
+            EmbeddedSource::from_owned(id, bytes, length).expect("embedded"),
+        )),
+    ];
+    for (section, type_id, field) in [
+        ("os_cgroup_cpu", 1_201_003, "usage_usec"),
+        ("os_cgroup_memory", 1_202_003, "oom_kill"),
+        ("os_cgroup_io", 1_203_003, "rbytes"),
+    ] {
+        let mut histories = Vec::new();
+        for dataset in &datasets {
+            let context = QueryContext::new(Arc::clone(dataset), 1, false);
+            let request = QueryRequest::History(kronika_query::DataRequest {
+                segment: kronika_query::SegmentRequest {
+                    segment_id: SEGMENT_ID,
+                    section: section.to_owned(),
+                },
+                fields: vec![field.to_owned()],
+                filters: Vec::new(),
+                type_id: Some(type_id),
+                after: None,
+            });
+            let mut sink = Records::default();
+            execute(&context, request)
+                .expect("history")
+                .stream(&mut sink)
+                .expect("stream");
+            let records = ndjson(&sink.0);
+            let rows = records
+                .iter()
+                .filter(|r| r["record"] == "row")
+                .collect::<Vec<_>>();
+            assert_eq!(rows.len(), 3);
+            assert_ne!(
+                rows[0]["identity"], rows[1]["identity"],
+                "history splits new object"
+            );
+            assert_eq!(rows[1]["identity"], rows[2]["identity"]);
+            histories.push(sink.0);
+            for (offset, ordinal, expected) in [(1_000_000, 1, None), (2_000_000, 2, Some(100.0))] {
+                let mut identity = serde_json::Map::new();
+                identity.insert("cgroup_path".to_owned(), path.0.to_string().into());
+                identity.insert("cgroup_identity".to_owned(), second.0.to_string().into());
+                if section == "os_cgroup_io" {
+                    identity.insert("major".to_owned(), "8".into());
+                    identity.insert("minor".to_owned(), "0".into());
+                }
+                let locator = detail_locator(
+                    section,
+                    SEGMENT_ID,
+                    SEGMENT_ID + offset,
+                    type_id,
+                    ordinal,
+                    identity,
+                )
+                .detail_ref()
+                .expect("locator");
+                let result = row_detail_result(Arc::clone(dataset), &locator);
+                assert_eq!(
+                    result.fields[field].as_f64(),
+                    expected,
+                    "{section} first new object has no rate"
+                );
+            }
+        }
+        assert_eq!(
+            histories[0], histories[1],
+            "native/embedded history {section}"
+        );
+    }
+}
+
+fn write_selected_cpu_segment(
+    root: &Path,
+    at: i64,
+    group: &[u8],
+    prefix: Option<&[u8]>,
+    counter: i64,
+) -> (StrId, StrId) {
+    use kronika_registry::os_cgroup_cpu::OsCgroupCpuV3;
+    let data_root = DataRoot::open(root).expect("root");
+    let owner = data_root
+        .acquire_writer(LayoutLimits::default())
+        .expect("writer");
+    let mut journal = Journal::open(&owner, JournalConfig::default()).expect("journal");
+    let mut interner = Interner::new(DictLimits::default());
+    if let Some(prefix) = prefix {
+        fixture_label(&mut interner, prefix);
+    }
+    let path = fixture_label(&mut interner, b"/same-path");
+    let identity = fixture_label(&mut interner, group);
+    let mut buffers = SectionBuffers::new();
+    buffers
+        .push(OsCgroupCpuV3 {
+            ts: Ts(at),
+            cgroup_path: path,
+            cgroup_identity: identity,
+            usage_usec: counter,
+            user_usec: counter,
+            system_usec: 0,
+            throttled_usec: None,
+            nr_throttled: None,
+            quota_usec: None,
+            period_usec: None,
+            scope: 4,
+        })
+        .expect("row");
+    let dictionary = dict::encode(interner.window()).expect("dictionary");
+    let part = buffers.flush(&dictionary).expect("encode").expect("rows");
+    let id = SegmentId::new(at).expect("id");
+    journal.append(id, &part).expect("append");
+    write_segment(&journal, &owner, SegmentAddress::new(id).expect("address")).expect("seal");
+    journal.reset().expect("reset");
+    (path, identity)
+}
+
+#[test]
+fn selected_detail_uses_content_identity_across_segments() {
+    let directory = tempfile::tempdir().expect("fixture");
+    let original = write_selected_cpu_segment(directory.path(), SEGMENT_ID, b"first", None, 100);
+    let recreated = write_selected_cpu_segment(
+        directory.path(),
+        SEGMENT_ID + 1_000_000,
+        b"second",
+        None,
+        900,
+    );
+    let continued = write_selected_cpu_segment(
+        directory.path(),
+        SEGMENT_ID + 2_000_000,
+        b"second",
+        Some(b"different dictionary allocation"),
+        1000,
+    );
+    assert_ne!(
+        original, recreated,
+        "different directories have different content IDs"
+    );
+    assert_eq!(
+        recreated, continued,
+        "recorded directory identity is independent of interning order"
+    );
+    let dataset: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(
+        PosixSource::open(directory.path()).expect("posix"),
+    ));
+    for (offset, (path, identity), expected) in [
+        (1_000_000, recreated, None),
+        (2_000_000, continued, Some(100.0)),
+    ] {
+        let at = SEGMENT_ID + offset;
+        let fields = [
+            ("cgroup_path".to_owned(), path.0.to_string().into()),
+            ("cgroup_identity".to_owned(), identity.0.to_string().into()),
+        ]
+        .into_iter()
+        .collect();
+        let detail = detail_locator("os_cgroup_cpu", at, at, 1_201_003, 0, fields)
+            .detail_ref()
+            .expect("locator");
+        assert_eq!(
+            row_detail_result(Arc::clone(&dataset), &detail).fields["usage_usec"].as_f64(),
+            expected
+        );
+    }
+}

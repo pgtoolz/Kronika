@@ -213,7 +213,7 @@ Source: [PostgreSQL documentation](https://www.postgresql.org/docs/current/runti
 
 `pg_query_summary` records query count/rate, rows, logical bytes, errors,
 timeouts, slow queries, fetch/encoding/WAL times, encoded/appended bytes and
-`peak_rss_kib`, the peak physical memory occupied by the process in KiB. Connection labels are `user@host:port`. Source:
+`peak_rss_kib`, the peak physical memory occupied by the process in KiB in local mode; unavailable in PostgreSQL-only mode. Connection labels are `user@host:port`. Source:
 [query.rs](../../crates/kronika-source-pg/src/query.rs).
 
 ## Log collection
@@ -276,5 +276,5 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika /usr/local/bin/kronika-collector
 immediately and requests segment publication when the cycle appends data and the
 segment is nonempty. `-h`, `--help` and `--version` exit before
 configuration or storage access. Readiness and segment paths go to stdout;
-structured logs go to stderr. Each `segment_write_finish` records `rss_kib`,
+structured logs go to stderr. In local mode, each `segment_write_finish` records `rss_kib`,
 the peak physical memory occupied by the process in KiB.

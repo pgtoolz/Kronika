@@ -120,6 +120,8 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 Управляемый или удалённый PostgreSQL, без сбора метрик машины сборщика:
 
+Для сбора только PostgreSQL и TLS ниже нужна [сборка из этой версии исходников](docs/build.ru.md); в опубликованных архивах 1.0.1 этих возможностей нет.
+
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR=./kronika-data \
@@ -154,9 +156,19 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-web
 ```
 
+### Веб-сервер для записи только PostgreSQL
+
+```sh
+KRONIKA_STORAGE_DIR=./kronika-data \
+  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_AUTH=required \
+  KRONIKA_WEB_USER=demo KRONIKA_WEB_PASSWORD=replace-with-password \
+  KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
+```
+
 Откройте <http://127.0.0.1:8080/> и войдите. Веб-серверу нужен доступ на запись в тот же
 каталог: он создаёт индексы `.idx` для быстрого поиска и файл блокировки,
-который предотвращает одновременную перестройку индексов. В этом примере обе
+который предотвращает одновременную перестройку индексов. В примере с `/var/lib/kronika` обе
 программы работают от root с закрытым для других пользователей хранилищем.
 
 `KRONIKA_WEB_SOURCES` сообщает, какие источники настроены; он не включает сбор

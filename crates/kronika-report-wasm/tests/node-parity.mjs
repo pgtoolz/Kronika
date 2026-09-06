@@ -8,7 +8,7 @@ import { runInThisContext } from "node:vm";
 const SEGMENT_ID = "1709164800000000";
 const SAMPLE_TO = "1709164801000000";
 const SOURCES = 3;
-const [glueArgument, wasmArgument, nativeArgument] = process.argv.slice(2);
+const [glueArgument, wasmArgument, nativeArgument, collectionArgument] = process.argv.slice(2);
 assert.ok(glueArgument, "generated WebAssembly glue path is required");
 assert.ok(wasmArgument, "compressed WebAssembly path is required");
 assert.ok(nativeArgument, "native oracle path is required");
@@ -30,18 +30,19 @@ const wasmBytes = gunzipSync(wasmGzip);
 const module = await WebAssembly.compile(wasmBytes);
 const wasm = await bindings.initEmbedded(module);
 const memoryBeforeBytes = wasm.memory.buffer.byteLength;
-const session = new bindings.ReportSession(
+let session = new bindings.ReportSession(
   SEGMENT_ID,
   zms,
   idx,
   SOURCES,
   BigInt(zms.length),
 );
+let nativeFixtureDirectory = null;
 let cases = 0;
 let outputBytes = 0;
 
 function nativeBody(path, query) {
-  const result = spawnSync(nativePath, [path, query], {
+  const result = spawnSync(nativePath, [path, query, ...(nativeFixtureDirectory === null ? [] : [nativeFixtureDirectory])], {
     encoding: null,
     maxBuffer: 16 * 1024 * 1024,
   });
@@ -128,6 +129,62 @@ compare(
   "/api/row-detail",
   `detail_ref=${encodeURIComponent(detailRef)}`,
 );
+
+
+if (collectionArgument) {
+  for (const name of ["postgresql-unknown", "postgresql-explicit", "selected-cgroup"]) {
+    session.free();
+    nativeFixtureDirectory = resolve(collectionArgument, name);
+    const [fixtureZms, fixtureIdx, sourceText, html] = await Promise.all([
+      readFile(resolve(nativeFixtureDirectory, "recording.zms")),
+      readFile(resolve(nativeFixtureDirectory, "recording.idx")),
+      readFile(resolve(nativeFixtureDirectory, "sources"), "utf8"),
+      readFile(resolve(nativeFixtureDirectory, "report.html"), "utf8"),
+    ]);
+    const embedded = /const z=b\("([A-Za-z0-9+/=]+)"\),i=b\("([A-Za-z0-9+/=]+)"\)/.exec(html);
+    assert.ok(embedded, `${name}: generated report must embed both artifacts`);
+    const reportZms = Buffer.from(embedded[1], "base64");
+    const reportIdx = Buffer.from(embedded[2], "base64");
+    assert.deepEqual(reportZms, fixtureZms);
+    assert.deepEqual(reportIdx, fixtureIdx);
+    session = new bindings.ReportSession(SEGMENT_ID, reportZms, reportIdx, Number(sourceText), BigInt(reportZms.length));
+    const catalog = records(compare(`${name}-catalog`, "/api/catalog", ""));
+    const families = catalog.find(row => row.record === "catalog").source_families;
+    const pgOnly = name.startsWith("postgresql-");
+    assert.equal(families.find(row => row.name === "os").configured, !pgOnly);
+    assert.equal(families.find(row => row.name === "postgresql").configured, pgOnly);
+    const hour = records(compare(`${name}-hour`, "/api/hour", `from=${SEGMENT_ID}&to=1709164805000000`));
+    const lanes = records(compare(`${name}-lanes`, "/api/hour", `from=${SEGMENT_ID}&to=1709164805000000&part=lanes&segments=${SEGMENT_ID}`));
+    const context = lanes.find(row => row.record === "lane_context");
+    assert.equal(context.os_enabled, !pgOnly);
+    assert.equal(context.postgresql_processes_shared, false);
+    if (pgOnly) {
+      assert.equal(families.find(row => row.name === "os").present, false);
+      assert.equal(hour.some(row => row.record === "point" && row.series === "os_health"), false);
+      const expected = name === "postgresql-explicit" ? 80 : null;
+      for (const series of ["postgres_health", "overall_health"]) {
+        assert.deepEqual(hour.filter(row => row.record === "point" && row.series === series).map(row => row.value), [expected]);
+      }
+      const processes = records(compare(`${name}-no-process-association`, "/api/hour", `from=${SEGMENT_ID}&to=1709164805000000&section=os_process_summary`));
+      assert.equal(processes.some(row => row.record === "row"), false);
+      const metadata = records(compare(`${name}-metadata`, `/api/segments/${SEGMENT_ID}/sections/instance_metadata/rows`, "field=hostname&field=os_enabled&field=postgresql_processes_shared"));
+      const row = metadata.find(row => row.record === "row");
+      assert.deepEqual(row.values, [null, false, false]);
+    } else {
+      const shares = hour.filter(row => row.record === "lane" && row.lane === "cg_cpu_share");
+      assert.deepEqual(shares.map(row => row.value), [null, 100, 75, null, null, 50]);
+      const history = records(compare(`${name}-counter-history`, "/api/hour", `from=${SEGMENT_ID}&to=1709164805000000&section=os_cgroup_cpu&field=usage_usec`));
+      const reset = history.find(row => row.record === "row" && row.timestamp === "1709164804000000");
+      assert.ok(reset, "replacement sample is retained");
+      assert.equal(reset.values[0], "100000000", "raw replacement counter is retained");
+      const before = history.find(row => row.record === "row" && row.timestamp === "1709164803000000");
+      const after = history.find(row => row.record === "row" && row.timestamp === "1709164805000000");
+      assert.ok(before && after);
+      assert.notDeepEqual(reset.identity, before.identity, "history exposes the replacement identity");
+      assert.deepEqual(reset.identity, after.identity, "subsequent sample retains the new identity");
+    }
+  }
+}
 
 const memoryAfterBytes = wasm.memory.buffer.byteLength;
 session.free();

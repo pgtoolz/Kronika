@@ -114,6 +114,8 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 Managed or remote PostgreSQL, without collecting the collector machine:
 
+PostgreSQL-only collection and TLS below require a [build from this source revision](docs/build.md); the published 1.0.1 archives do not include them.
+
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR=./kronika-data \
@@ -146,10 +148,19 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-web
 ```
 
+### PostgreSQL-only web server
+
+```sh
+KRONIKA_STORAGE_DIR=./kronika-data \
+  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_AUTH=required \
+  KRONIKA_WEB_USER=demo KRONIKA_WEB_PASSWORD=replace-with-password \
+  KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
+```
+
 Open <http://127.0.0.1:8080/> and sign in. Web requires write access to the
 recording directory to create search indexes (`.idx`) and a lock file that
-prevents concurrent index rebuilds. This example runs both programs as root
-with private storage.
+prevents concurrent index rebuilds. The `/var/lib/kronika` example runs both programs as root with private storage.
 
 `KRONIKA_WEB_SOURCES` reports which sources are configured; it does not enable
 collection or hide recorded data. User and password remain required with

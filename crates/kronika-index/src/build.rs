@@ -1033,7 +1033,7 @@ fn visit_stall_snapshots(
         return Ok(());
     };
     let environment = identity.environment;
-    let groups = cgroup_identities(segment)?;
+    let groups = cgroup_identities(segment, ["cpu_identity", "memory_identity", "io_identity"])?;
     let selected_aggregate = segment.rows_of(1_205_002).is_some();
     let mut snapshots: BTreeMap<i64, PartialStall> = BTreeMap::new();
     segment.visit_rows(
@@ -1106,32 +1106,29 @@ fn visit_stall_snapshots(
     Ok(())
 }
 
-pub(crate) fn cgroup_identities(segment: &Segment) -> Result<BTreeMap<i64, u64>, ReaderError> {
+pub(crate) fn cgroup_identities<const N: usize>(
+    segment: &Segment,
+    fields: [&'static str; N],
+) -> Result<BTreeMap<i64, u64>, ReaderError> {
     use std::hash::{Hash, Hasher};
     if segment.rows_of(1_205_002).is_none() {
         return Ok(BTreeMap::new());
     }
     let mut rows = Vec::new();
     let mut ids = HashSet::new();
-    segment.visit_rows(
-        1_205_002,
-        &["ts", "cpu_identity", "memory_identity", "io_identity"],
-        0,
-        usize::MAX,
-        |_, row| {
-            if let Some(Cell::Ts(ts)) = row.get("ts") {
-                let identities = ["cpu_identity", "memory_identity", "io_identity"].map(|name| {
-                    match row.get(name) {
-                        Some(Cell::StrId(id)) => Some(*id),
-                        _ => None,
-                    }
-                });
-                ids.extend(identities.iter().flatten().copied());
-                rows.push((*ts, identities));
-            }
-            true
-        },
-    )?;
+    let mut projection = vec!["ts"];
+    projection.extend(fields);
+    segment.visit_rows(1_205_002, &projection, 0, usize::MAX, |_, row| {
+        if let Some(Cell::Ts(ts)) = row.get("ts") {
+            let identities = fields.map(|name| match row.get(name) {
+                Some(Cell::StrId(id)) => Some(*id),
+                _ => None,
+            });
+            ids.extend(identities.iter().flatten().copied());
+            rows.push((*ts, identities));
+        }
+        true
+    })?;
     let dictionary = segment.dictionary_for(&ids)?;
     Ok(rows
         .into_iter()

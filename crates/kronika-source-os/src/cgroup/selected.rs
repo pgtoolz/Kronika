@@ -95,8 +95,7 @@ pub fn collect_ancestor_context(
         ..AncestorContext::default()
     };
     if let Some(path) = parsed.unified {
-        let unified = unique_mount(&mounts, 2, &[]);
-        if let Some(selected) = unified.and_then(|mount| select(sys, mount, path)) {
+        if let Some(selected) = select_mount(sys, &mounts, 2, &[], path) {
             out.context.cgroup_version = 2;
             out.cpu = Some(selected.clone());
             out.memory = Some(selected.clone());
@@ -107,27 +106,25 @@ pub fn collect_ancestor_context(
         out.context.cgroup_version = 1;
         // Different v1 trees are separate objects even when path text matches.
         out.cpu = parsed.cpuacct.and_then(|path| {
-            unique_mount(&mounts, 1, &["cpuacct"])
-                .and_then(|mount| select(sys, mount, path))
-                .map(|mut selected| {
-                    selected.cpu_bandwidth &= parsed.cpu == parsed.cpuacct;
-                    selected
-                })
+            select_mount(sys, &mounts, 1, &["cpuacct"], path).map(|mut selected| {
+                selected.cpu_bandwidth &= parsed.cpu == parsed.cpuacct;
+                selected
+            })
         });
-        out.memory = parsed.memory.and_then(|path| {
-            unique_mount(&mounts, 1, &["memory"]).and_then(|mount| select(sys, mount, path))
-        });
-        out.io = parsed.io.and_then(|path| {
-            unique_mount(&mounts, 1, &["blkio"]).and_then(|mount| select(sys, mount, path))
-        });
-        out.pids = parsed.pids.and_then(|path| {
-            unique_mount(&mounts, 1, &["pids"]).and_then(|mount| select(sys, mount, path))
-        });
+        out.memory = parsed
+            .memory
+            .and_then(|path| select_mount(sys, &mounts, 1, &["memory"], path));
+        out.io = parsed
+            .io
+            .and_then(|path| select_mount(sys, &mounts, 1, &["blkio"], path));
+        out.pids = parsed
+            .pids
+            .and_then(|path| select_mount(sys, &mounts, 1, &["pids"], path));
         // Only a co-mounted cpuset controller can constrain this same object.
         if let (Some(cpu), Some(path)) = (&out.cpu, parsed.cpuset)
             && parsed.cpuacct == Some(path)
-            && unique_mount(&mounts, 1, &["cpuacct", "cpuset"])
-                .is_some_and(|mount| mount.base == cpu.base)
+            && select_mount(sys, &mounts, 1, &["cpuacct", "cpuset"], path)
+                .is_some_and(|selected| selected.identity == cpu.identity)
         {
             out.context.cpuset_cpus = cpu
                 .read(sys, "cpuset.effective_cpus")
@@ -231,15 +228,50 @@ fn unescape_mount(value: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-fn unique_mount<'a>(mounts: &'a [Mount], version: u8, controllers: &[&str]) -> Option<&'a Mount> {
-    let mut matching = mounts.iter().filter(|mount| {
-        mount.version == version
-            && controllers
-                .iter()
-                .all(|controller| mount.controllers.iter().any(|name| name == controller))
-    });
-    let first = matching.next()?;
-    matching.next().is_none().then_some(first)
+fn membership_relative<'a>(root: &str, own: &'a str) -> Option<&'a str> {
+    let own = normalize_self_cgroup_path(own)?;
+    if root == "/" {
+        Some(own)
+    } else {
+        own.strip_prefix(root)
+            .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+    }
+}
+
+fn select_mount(
+    sys: &SysFs,
+    mounts: &[Mount],
+    version: u8,
+    controllers: &[&str],
+    own: &str,
+) -> Option<SelectedCgroup> {
+    let mut matching = mounts
+        .iter()
+        .filter(|mount| {
+            mount.version == version
+                && membership_relative(&mount.root, own).is_some()
+                && controllers
+                    .iter()
+                    .all(|controller| mount.controllers.iter().any(|name| name == controller))
+        })
+        .collect::<Vec<_>>();
+    // Compatible roots are ancestors of the same membership. Prefer the highest
+    // visible root; aliases are accepted only when they bind the same objects.
+    matching.sort_by(|a, b| a.root.len().cmp(&b.root.len()).then(a.base.cmp(&b.base)));
+    let highest = *matching.first()?;
+    for mount in &matching {
+        let relative = membership_relative(&highest.root, &mount.root)?;
+        let through_highest = format!("{}/{}", highest.base, relative.trim_start_matches('/'));
+        let first = std::fs::metadata(sys.canonical_path(&through_highest).ok()?).ok()?;
+        let alias = std::fs::metadata(sys.canonical_path(&mount.base).ok()?).ok()?;
+        if first.dev() != alias.dev() || first.ino() != alias.ino() {
+            return None;
+        }
+    }
+    matching
+        .into_iter()
+        .filter_map(|mount| select(sys, mount, own))
+        .min_by_key(|group| group.root.trim_end_matches('/').len() + group.path.len())
 }
 
 fn directory_identity(base: &str, root: &str, metadata: &std::fs::Metadata) -> String {
@@ -247,13 +279,7 @@ fn directory_identity(base: &str, root: &str, metadata: &std::fs::Metadata) -> S
 }
 
 fn select(sys: &SysFs, mount: &Mount, own: &str) -> Option<SelectedCgroup> {
-    let own = normalize_self_cgroup_path(own)?;
-    let relative = if mount.root == "/" {
-        own
-    } else {
-        own.strip_prefix(&mount.root)
-            .filter(|rest| rest.is_empty() || rest.starts_with('/'))?
-    };
+    let relative = membership_relative(&mount.root, own)?;
     let own = if relative.is_empty() { "/" } else { relative };
     let boundary = sys.canonical_path(&mount.base).ok()?;
     let mut selected = None;
@@ -389,24 +415,16 @@ pub fn collect_ancestor_rows(
                     None => out.io_omitted = true,
                 }
             }
-        } else {
-            let bytes = group
-                .read(sys, "blkio.throttle.io_service_bytes")
-                .or_else(|| group.read(sys, "blkio.io_service_bytes"));
-            let ops = group
-                .read(sys, "blkio.throttle.io_serviced")
-                .or_else(|| group.read(sys, "blkio.io_serviced"));
-            if bytes.is_some() || ops.is_some() {
-                match super::parse_blkio_service_stats_bounded(
-                    bytes.as_deref().unwrap_or_default(),
-                    ops.as_deref().unwrap_or_default(),
-                    ts,
-                    &group.path,
-                    MAX_CGROUP_IO_ROWS,
-                ) {
-                    Some(rows) => out.io = rows,
-                    None => out.io_omitted = true,
-                }
+        } else if let Some((bytes, ops)) = read_recursive_io(sys, group) {
+            match super::parse_blkio_service_stats_bounded(
+                bytes.as_deref().unwrap_or_default(),
+                ops.as_deref().unwrap_or_default(),
+                ts,
+                &group.path,
+                MAX_CGROUP_IO_ROWS,
+            ) {
+                Some(rows) => out.io = rows,
+                None => out.io_omitted = true,
             }
         }
     }
@@ -434,6 +452,22 @@ pub fn collect_ancestor_rows(
     }
 
     out
+}
+
+fn read_recursive_io(
+    sys: &SysFs,
+    group: &SelectedCgroup,
+) -> Option<(Option<String>, Option<String>)> {
+    for family in ["blkio.throttle", "blkio"] {
+        let bytes = group.read(sys, &format!("{family}.io_service_bytes_recursive"));
+        let ops = group.read(sys, &format!("{family}.io_serviced_recursive"));
+        // An available family owns both fields. Missing members stay unknown;
+        // local-task counters and a different policy family cannot fill them.
+        if bytes.is_some() || ops.is_some() {
+            return Some((bytes, ops));
+        }
+    }
+    None
 }
 
 fn valid_keys(content: &str, keys: &[&str]) -> bool {

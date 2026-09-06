@@ -1977,137 +1977,161 @@ fn postgresql_only_health_wal_zms_and_valid_cache_reuse() {
     reason = "one encoded fixture exercises Health and OOM identity across WAL and ZMS"
 )]
 fn selected_cgroup_replacement_breaks_health_inside_one_segment() {
-    use kronika_registry::os_cgroup_context::OsCgroupContextV2;
-    use kronika_registry::os_cgroup_memory::OsCgroupMemoryV3;
-    let directory = tempfile::tempdir().expect("tempdir");
-    let root = DataRoot::open(directory.path()).expect("data root");
-    let writer = root
-        .acquire_writer(LayoutLimits::default())
-        .expect("writer");
-    let mut journal = Journal::open(&writer, JournalConfig::default()).expect("journal");
-    let mut interner = Interner::new(DictLimits::default());
-    let label = StrId(interner.intern(b"/visible").expect("path").get());
-    let first = StrId(interner.intern(b"directory:first").expect("identity").get());
-    let second = StrId(
-        interner
-            .intern(b"directory:replacement")
-            .expect("identity")
-            .get(),
-    );
-    let dictionary = dict::encode(interner.window()).expect("dictionary");
-    let mut buffers = SectionBuffers::new();
-    buffers
-        .push(InstanceMetadataV3 {
-            ts: Ts(SEGMENT_ID),
-            hostname: Some(label),
-            kernel_version: Some(label),
-            environment: Some(1),
-            clock_ticks_per_sec: Some(100),
-            page_size_bytes: Some(4096),
-            boot_id: Some(label),
-            btime: Some(Ts(1)),
-            os_enabled: true,
-            postgresql_processes_shared: false,
-            postgresql_enabled: false,
-            postgresql_interval_seconds: 30,
-            postgresql_effective_cpus: None,
-        })
-        .expect("container metadata");
-    for (offset, total, identity, oom_kill) in [
-        (0, 0, first, Some(0)),
-        (1_000_000, 100_000, first, Some(1)),
-        (2_000_000, 500_000, second, Some(100)),
-        (3_000_000, 600_000, second, None),
-        (4_000_000, 700_000, second, Some(110)),
-        (5_000_000, 800_000, second, Some(111)),
-    ] {
-        let ts = Ts(SEGMENT_ID + offset);
+    for memory_replaced_at in [2_000_000, 4_000_000] {
+        use kronika_registry::os_cgroup_context::OsCgroupContextV2;
+        use kronika_registry::os_cgroup_memory::OsCgroupMemoryV3;
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = DataRoot::open(directory.path()).expect("data root");
+        let writer = root
+            .acquire_writer(LayoutLimits::default())
+            .expect("writer");
+        let mut journal = Journal::open(&writer, JournalConfig::default()).expect("journal");
+        let mut interner = Interner::new(DictLimits::default());
+        let label = StrId(interner.intern(b"/visible").expect("path").get());
+        let first = StrId(interner.intern(b"directory:first").expect("identity").get());
+        let second = StrId(
+            interner
+                .intern(b"directory:replacement")
+                .expect("identity")
+                .get(),
+        );
+        let dictionary = dict::encode(interner.window()).expect("dictionary");
+        let mut buffers = SectionBuffers::new();
         buffers
-            .push(OsCgroupContextV2 {
-                ts,
-                cgroup_version: 2,
-                cpu_path: Some(label),
-                memory_path: Some(label),
-                io_path: Some(label),
-                cpuset_cpus: None,
-                effective_cpu_quota_usec: None,
-                effective_cpu_period_usec: None,
-                effective_memory_max: None,
-                pids_path: Some(label),
-                cpu_identity: Some(identity),
-                memory_identity: Some(identity),
-                io_identity: Some(identity),
-                pids_identity: Some(identity),
-                cpu_root: Some(label),
-                memory_root: Some(label),
-                io_root: Some(label),
-                pids_root: Some(label),
-                scope: 4,
+            .push(InstanceMetadataV3 {
+                ts: Ts(SEGMENT_ID),
+                hostname: Some(label),
+                kernel_version: Some(label),
+                environment: Some(1),
+                clock_ticks_per_sec: Some(100),
+                page_size_bytes: Some(4096),
+                boot_id: Some(label),
+                btime: Some(Ts(1)),
+                os_enabled: true,
+                postgresql_processes_shared: false,
+                postgresql_enabled: false,
+                postgresql_interval_seconds: 30,
+                postgresql_effective_cpus: None,
             })
-            .expect("selected identity");
-        buffers
-            .push(OsCgroupMemoryV3 {
-                ts,
-                cgroup_path: label,
-                current: 1024,
-                max: None,
-                anon: None,
-                file: None,
-                kernel: None,
-                slab: None,
-                low_events: None,
-                high_events: None,
-                max_events: None,
-                oom_events: None,
-                oom_kill,
-                max_unlimited: None,
-                scope: 4,
-            })
-            .expect("nullable selected memory");
-        for resource in 0..3 {
+            .expect("container metadata");
+        for (offset, total, identity, oom_kill) in [
+            (0, 0, first, Some(0)),
+            (1_000_000, 100_000, first, Some(1)),
+            (2_000_000, 500_000, second, Some(100)),
+            (3_000_000, 600_000, second, None),
+            (4_000_000, 700_000, second, Some(110)),
+            (5_000_000, 800_000, second, Some(111)),
+        ] {
+            let ts = Ts(SEGMENT_ID + offset);
+            let memory_identity = if offset < memory_replaced_at {
+                first
+            } else {
+                second
+            };
             buffers
-                .push(OsPsi {
+                .push(OsCgroupContextV2 {
                     ts,
-                    resource,
-                    some_avg10: 0.0,
-                    some_avg60: 0.0,
-                    some_avg300: 0.0,
-                    some_total: total,
-                    full_avg10: None,
-                    full_avg60: None,
-                    full_avg300: None,
-                    full_total: None,
+                    cgroup_version: 2,
+                    cpu_path: Some(label),
+                    memory_path: Some(label),
+                    io_path: Some(label),
+                    cpuset_cpus: None,
+                    effective_cpu_quota_usec: None,
+                    effective_cpu_period_usec: None,
+                    effective_memory_max: None,
+                    pids_path: Some(label),
+                    cpu_identity: Some(identity),
+                    memory_identity: Some(memory_identity),
+                    io_identity: Some(identity),
+                    pids_identity: Some(identity),
+                    cpu_root: Some(label),
+                    memory_root: Some(label),
+                    io_root: Some(label),
+                    pids_root: Some(label),
                     scope: 4,
                 })
-                .expect("PSI");
+                .expect("selected identity");
+            buffers
+                .push(OsCgroupMemoryV3 {
+                    ts,
+                    cgroup_path: label,
+                    cgroup_identity: memory_identity,
+                    current: 1024,
+                    max: None,
+                    anon: None,
+                    file: None,
+                    kernel: None,
+                    slab: None,
+                    low_events: None,
+                    high_events: None,
+                    max_events: None,
+                    oom_events: None,
+                    oom_kill,
+                    max_unlimited: None,
+                    scope: 4,
+                })
+                .expect("nullable selected memory");
+            for resource in 0..3 {
+                buffers
+                    .push(OsPsi {
+                        ts,
+                        resource,
+                        some_avg10: 0.0,
+                        some_avg60: 0.0,
+                        some_avg300: 0.0,
+                        some_total: total,
+                        full_avg10: None,
+                        full_avg60: None,
+                        full_avg300: None,
+                        full_total: None,
+                        scope: 4,
+                    })
+                    .expect("PSI");
+            }
         }
-    }
-    let part = buffers.flush(&dictionary).expect("encode").expect("part");
-    journal.append(address().id, &part).expect("append");
-    for kind in [SegmentKind::Active, SegmentKind::Finished] {
-        if kind == SegmentKind::Finished {
-            write_segment(&journal, &writer, address()).expect("seal");
-            journal.reset().expect("reset");
+        let part = buffers.flush(&dictionary).expect("encode").expect("part");
+        journal.append(address().id, &part).expect("append");
+        for kind in [SegmentKind::Active, SegmentKind::Finished] {
+            if kind == SegmentKind::Finished {
+                write_segment(&journal, &writer, address()).expect("seal");
+                journal.reset().expect("reset");
+            }
+            let reader = Reader::open(directory.path()).expect("reader");
+            let segment = only_segment(&reader, kind);
+            let health = resource(directory.path(), &reader, &segment, "health").expect("health");
+            assert_eq!(
+                health_values(&health, "os"),
+                [
+                    None,
+                    Some(90),
+                    None,
+                    Some(90),
+                    if memory_replaced_at == 4_000_000 {
+                        None
+                    } else {
+                        Some(90)
+                    },
+                    Some(90)
+                ]
+            );
+            let findings = resource(directory.path(), &reader, &segment, "os_cgroup_memory")
+                .expect("OOM findings");
+            let [SeriesBlock::Findings(block)] = findings.index.blocks.as_slice() else {
+                panic!("one selected memory finding block");
+            };
+            let mut expected = vec![(SEGMENT_ID + 1_000_000, 13)];
+            if memory_replaced_at == 4_000_000 {
+                expected.push((SEGMENT_ID + 2_000_000, 13));
+            }
+            expected.push((SEGMENT_ID + 5_000_000, 13));
+            assert_eq!(
+                block
+                    .findings
+                    .iter()
+                    .map(|finding| (finding.timestamp, finding.field_ordinal))
+                    .collect::<Vec<_>>(),
+                expected
+            );
         }
-        let reader = Reader::open(directory.path()).expect("reader");
-        let segment = only_segment(&reader, kind);
-        let health = resource(directory.path(), &reader, &segment, "health").expect("health");
-        assert_eq!(
-            health_values(&health, "os"),
-            [None, Some(90), None, Some(90), Some(90), Some(90)]
-        );
-        let findings = resource(directory.path(), &reader, &segment, "os_cgroup_memory")
-            .expect("OOM findings");
-        let [SeriesBlock::Findings(block)] = findings.index.blocks.as_slice() else {
-            panic!("one selected memory finding block");
-        };
-        assert_eq!(
-            block
-                .findings
-                .iter()
-                .map(|finding| (finding.timestamp, finding.field_ordinal))
-                .collect::<Vec<_>>(),
-            [(SEGMENT_ID + 1_000_000, 12), (SEGMENT_ID + 5_000_000, 12)]
-        );
     }
 }

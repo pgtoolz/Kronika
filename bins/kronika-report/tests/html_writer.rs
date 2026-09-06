@@ -2,6 +2,8 @@
 
 #![cfg(feature = "generator")]
 
+use {kronika_registry as _, kronika_writer as _};
+
 use kronika_layout::SegmentId;
 use kronika_query::{SOURCE_OS, SOURCE_POSTGRESQL};
 use kronika_report::{HtmlReportInput, ReportTimeRange, write_html};

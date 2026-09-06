@@ -51,10 +51,10 @@ pub(super) struct ConnectionTarget {
 impl ConnectionTarget {
     /// Parse one configured connection without retaining its original text.
     pub(super) fn parse(raw: &str, source_index: usize) -> Result<Self, InvalidConnection> {
-        let config = Config::from_str(raw).map_err(|_error| InvalidConnection)?;
+        let config = Config::from_str(raw).map_err(|_error| InvalidConnection::Dsn)?;
         validate_endpoints(&config)?;
         let label = connection_label(&config);
-        let transport = Transport::from_env().map_err(|_error| InvalidConnection)?;
+        let transport = Transport::from_env().map_err(|_error| InvalidConnection::TlsCa)?;
         Ok(Self {
             config,
             transport,
@@ -90,7 +90,10 @@ impl fmt::Debug for ConnectionTarget {
 
 /// Deliberately carries neither parser details nor the rejected input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct InvalidConnection;
+pub(super) enum InvalidConnection {
+    Dsn,
+    TlsCa,
+}
 
 fn validate_endpoints(config: &Config) -> Result<(), InvalidConnection> {
     let hosts = config.get_hosts().len();
@@ -101,7 +104,7 @@ fn validate_endpoints(config: &Config) -> Result<(), InvalidConnection> {
         || (hosts != 0 && hostaddrs != 0 && hosts != hostaddrs)
         || !matches!(ports, 0 | 1) && ports != endpoints
     {
-        return Err(InvalidConnection);
+        return Err(InvalidConnection::Dsn);
     }
     Ok(())
 }

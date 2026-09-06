@@ -7,7 +7,7 @@ use anyhow::Result;
 use kronika_registry::os_block_topology::OsBlockTopology;
 use kronika_registry::os_cgroup_context::OsCgroupContextV2;
 use kronika_registry::os_cgroup_cpu::{OsCgroupCpu, OsCgroupCpuV3};
-use kronika_registry::os_cgroup_io::OsCgroupIo;
+use kronika_registry::os_cgroup_io::{OsCgroupIo, OsCgroupIoV2};
 use kronika_registry::os_cgroup_mapping::OsCgroupMapping;
 use kronika_registry::os_cgroup_memory::{OsCgroupMemory, OsCgroupMemoryV3};
 use kronika_registry::os_cgroup_pids::OsCgroupPids;
@@ -106,6 +106,7 @@ pub(crate) struct OsSources {
     cgroup_memory: Vec<OsCgroupMemory>,
     cgroup_ancestor_memory: Vec<OsCgroupMemoryV3>,
     cgroup_io: Vec<OsCgroupIo>,
+    cgroup_ancestor_io: Vec<OsCgroupIoV2>,
     cgroup_pids: Vec<OsCgroupPids>,
 }
 
@@ -145,6 +146,7 @@ impl OsSources {
             cgroup_memory: Vec::new(),
             cgroup_ancestor_memory: Vec::new(),
             cgroup_io: Vec::new(),
+            cgroup_ancestor_io: Vec::new(),
             cgroup_pids: Vec::new(),
         }
     }

@@ -1589,7 +1589,9 @@ dependencies = [
  "kronika-layout",
  "kronika-query",
  "kronika-reader",
+ "kronika-registry",
  "kronika-store",
+ "kronika-writer",
  "serde_json",
  "tempfile",
 ]

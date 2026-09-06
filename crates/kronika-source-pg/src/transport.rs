@@ -2,10 +2,22 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use rustls::{ClientConfig, RootCertStore};
 use tokio_postgres::{CancelToken, Client, Config};
 use tokio_postgres_rustls::MakeRustlsConnect;
+
+/// A configured CA bundle could not be read or decoded; contains no supplied data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaConfigError;
+
+impl std::fmt::Display for CaConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("KRONIKA_PG_SSL_ROOT_CERT must name a readable, valid PEM CA bundle")
+    }
+}
+
+impl std::error::Error for CaConfigError {}
 
 /// Shared certificate policy for `PostgreSQL` metrics and log discovery.
 #[derive(Clone)]
@@ -37,7 +49,7 @@ impl Transport {
         let Some(path) = std::env::var_os("KRONIKA_PG_SSL_ROOT_CERT") else {
             return Ok(Self::default());
         };
-        let pem = std::fs::read(path).context("read KRONIKA_PG_SSL_ROOT_CERT")?;
+        let pem = std::fs::read(path).map_err(|_error| CaConfigError)?;
         Self::from_pem(&pem)
     }
 
@@ -50,13 +62,12 @@ impl Transport {
         let mut input = pem;
         for certificate in rustls_pemfile::certs(&mut input) {
             roots
-                .add(certificate.context("decode PostgreSQL CA PEM")?)
-                .context("validate PostgreSQL CA certificate")?;
+                .add(certificate.map_err(|_error| CaConfigError)?)
+                .map_err(|_error| CaConfigError)?;
         }
-        anyhow::ensure!(
-            !roots.is_empty(),
-            "PostgreSQL CA bundle contains no certificates"
-        );
+        if roots.is_empty() {
+            return Err(CaConfigError.into());
+        }
         Ok(Self::from_roots(roots))
     }
 
@@ -112,7 +123,9 @@ mod tests {
     #[test]
     fn empty_or_invalid_custom_ca_never_disables_verification() {
         assert!(Transport::from_pem(b"").is_err());
-        assert!(Transport::from_pem(b"not a certificate").is_err());
+        let error = Transport::from_pem(b"not a certificate").expect_err("invalid CA fails closed");
+        assert!(error.is::<super::CaConfigError>());
+        assert!(error.to_string().contains("KRONIKA_PG_SSL_ROOT_CERT"));
         assert!(
             Transport::from_pem(
                 b"-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----\n"

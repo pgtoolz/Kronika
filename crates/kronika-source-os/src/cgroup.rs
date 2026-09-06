@@ -23,8 +23,9 @@ pub use model::{
 };
 pub use parse::{parse_blkio_service_stats, parse_cpu_max, parse_cpu_stat, parse_io_stat};
 pub use sections::{
-    to_ancestor_context_section, to_ancestor_cpu_section, to_ancestor_memory_section,
-    to_context_section, to_cpu_section, to_io_section, to_memory_section, to_pids_section,
+    to_ancestor_context_section, to_ancestor_cpu_section, to_ancestor_io_section,
+    to_ancestor_memory_section, to_context_section, to_cpu_section, to_io_section,
+    to_memory_section, to_pids_section,
 };
 
 use parse::{

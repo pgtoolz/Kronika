@@ -52,6 +52,8 @@ comes from its recorded CPU snapshots.
 
 ### Managed or remote PostgreSQL
 
+PostgreSQL-only collection and TLS below require a [build from this source revision](docs/build.md); the published 1.0.1 archives do not include them.
+
 Run collector without Linux collection on any machine with network access to the
 server and write access to the recording directory:
 
@@ -82,6 +84,16 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_USER=kronika \
   KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   /usr/local/bin/kronika-web
+```
+
+### PostgreSQL-only web server
+
+```sh
+KRONIKA_STORAGE_DIR=./kronika-data \
+  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_AUTH=required \
+  KRONIKA_WEB_USER=demo KRONIKA_WEB_PASSWORD=replace-with-password \
+  KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
 Open <http://127.0.0.1:8080/> and sign in. Web reads new data while collector

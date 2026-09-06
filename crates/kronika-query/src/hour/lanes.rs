@@ -102,7 +102,7 @@ fn retain_latest<T>(samples: &mut BTreeMap<i64, T>) {
 pub(super) struct State {
     counters: Counters,
     emitted_before: i64,
-    cgroup_identity: Option<Vec<Vec<u8>>>,
+    cgroup_identity: Option<[Vec<u8>; 4]>,
 }
 
 impl Default for State {
@@ -219,7 +219,7 @@ fn read_cgroup_context(
     type_id: u32,
     facts: &mut Facts,
     counters: &mut Counters,
-    previous_identity: &mut Option<Vec<Vec<u8>>>,
+    previous_identity: &mut Option<[Vec<u8>; 4]>,
 ) -> Result<(), QueryError> {
     const FIELDS: [&str; 9] = [
         "ts",
@@ -244,7 +244,7 @@ fn read_cgroup_context(
             "pids_identity",
         ],
     );
-    let mut identities = BTreeMap::<i64, Vec<Option<u64>>>::new();
+    let mut identities = BTreeMap::<i64, [Option<u64>; 4]>::new();
     segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
         let Some(ts) = timestamp(&row, "ts") else {
             return true;
@@ -253,18 +253,12 @@ fn read_cgroup_context(
         identities.insert(
             ts,
             [
-                "cpu_identity",
-                "memory_identity",
-                "io_identity",
-                "pids_identity",
-                "cpu_path",
-                "memory_path",
-                "io_path",
-                "pids_path",
+                ("cpu_identity", "cpu_path"),
+                ("memory_identity", "memory_path"),
+                ("io_identity", "io_path"),
+                ("pids_identity", "pids_path"),
             ]
-            .iter()
-            .map(|name| string_id(&row, name))
-            .collect(),
+            .map(|(identity, path)| string_id(&row, identity).or_else(|| string_id(&row, path))),
         );
         counters
             .cg_cpu_capacity
@@ -278,13 +272,10 @@ fn read_cgroup_context(
     let ids = identities.values().flatten().flatten().copied().collect();
     let dictionary = segment.dictionary_for(&ids)?;
     for (ts, ids) in identities {
-        let identity = ids
-            .iter()
-            .map(|id| match id.and_then(|id| dictionary.resolve(id)) {
-                Some(Resolved::Str(bytes)) => bytes.to_vec(),
-                _ => Vec::new(),
-            })
-            .collect::<Vec<_>>();
+        let identity = ids.map(|id| match id.and_then(|id| dictionary.resolve(id)) {
+            Some(Resolved::Str(bytes)) => bytes.to_vec(),
+            _ => Vec::new(),
+        });
         if previous_identity
             .as_ref()
             .is_some_and(|before| *before != identity)

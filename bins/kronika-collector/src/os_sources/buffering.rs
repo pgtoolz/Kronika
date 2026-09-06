@@ -83,6 +83,10 @@ pub(crate) fn push_os_sources(buffers: &mut SectionBuffers, os: &OsSources) -> R
     for row in &os.process_status {
         buffer_row(buffers, *row)?;
     }
+    push_cgroup_sources(buffers, os)
+}
+
+fn push_cgroup_sources(buffers: &mut SectionBuffers, os: &OsSources) -> Result<()> {
     for row in &os.cgroup_mapping {
         buffer_row(buffers, *row)?;
     }
@@ -102,6 +106,9 @@ pub(crate) fn push_os_sources(buffers: &mut SectionBuffers, os: &OsSources) -> R
         buffer_row(buffers, *row)?;
     }
     for row in &os.cgroup_io {
+        buffer_row(buffers, *row)?;
+    }
+    for row in &os.cgroup_ancestor_io {
         buffer_row(buffers, *row)?;
     }
     for row in &os.cgroup_pids {

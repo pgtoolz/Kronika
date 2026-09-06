@@ -68,12 +68,8 @@ pub(super) fn collect_cgroup_sections(
             .is_none_or(|group| group.path != row.cgroup_path)
     });
     let primary = cgroup::collect_ancestor_rows(sys, selected, ts, clock_ticks);
-    for (rows, scope) in [
-        (rows, scope),
-        (primary, kronika_source_os::OsScope::Unknown.as_u8()),
-    ] {
-        push_cgroup_rows(&rows, scope, interner, os);
-    }
+    push_cgroup_rows(&rows, scope, interner, os);
+    push_primary_cgroup_rows(&primary, selected, interner, os);
     log_collection_finish(context_type_id, "cgroup/context", 1, started.elapsed());
     log_collection_finish(
         cpu_type_id,
@@ -124,24 +120,12 @@ fn push_cgroup_rows(
                 .push(cgroup::to_cpu_section(row, scope, cgroup_path));
         }
     }
-    for row in &rows.ancestor_cpu {
-        if let Some(path) = intern_str(interner, 1_201_003, "cgroup/cpu", &row.cgroup_path) {
-            os.cgroup_ancestor_cpu
-                .push(cgroup::to_ancestor_cpu_section(row, path));
-        }
-    }
     for row in &rows.memory {
         if let Some(cgroup_path) =
             intern_str(interner, memory_type_id, "cgroup/memory", &row.cgroup_path)
         {
             os.cgroup_memory
                 .push(cgroup::to_memory_section(row, scope, cgroup_path));
-        }
-    }
-    for row in &rows.ancestor_memory {
-        if let Some(path) = intern_str(interner, 1_202_003, "cgroup/memory", &row.cgroup_path) {
-            os.cgroup_ancestor_memory
-                .push(cgroup::to_ancestor_memory_section(row, path));
         }
     }
     for row in &rows.io {
@@ -156,6 +140,59 @@ fn push_cgroup_rows(
         {
             os.cgroup_pids
                 .push(cgroup::to_pids_section(row, scope, cgroup_path));
+        }
+    }
+}
+
+fn push_primary_cgroup_rows(
+    rows: &cgroup::CgroupCollection,
+    selected: &cgroup::AncestorContext,
+    interner: &mut Interner,
+    os: &mut OsSources,
+) {
+    let mut primary_ids = |type_id, source, group: &Option<cgroup::SelectedCgroup>| {
+        let group = group.as_ref()?;
+        let path = intern_str(interner, type_id, source, &group.path)?;
+        let identity = intern_str(interner, type_id, source, &group.identity)?;
+        Some((path, identity))
+    };
+    if let Some((path, identity)) = primary_ids(1_201_003, "cgroup/cpu", &selected.cpu) {
+        for row in &rows.ancestor_cpu {
+            os.cgroup_ancestor_cpu
+                .push(cgroup::to_ancestor_cpu_section(row, path, identity));
+        }
+    }
+    if let Some((path, identity)) = primary_ids(1_202_003, "cgroup/memory", &selected.memory) {
+        for row in &rows.ancestor_memory {
+            os.cgroup_ancestor_memory
+                .push(cgroup::to_ancestor_memory_section(row, path, identity));
+        }
+    }
+    if let Some((path, identity)) = primary_ids(1_203_003, "cgroup/io", &selected.io) {
+        for row in &rows.io {
+            os.cgroup_ancestor_io
+                .push(cgroup::to_ancestor_io_section(row, path, identity));
+        }
+    }
+    if rows.io_omitted {
+        log_degraded(
+            1_203_003,
+            "cgroup/io",
+            &std::io::Error::other(format!(
+                "cgroup/device row count exceeds {}",
+                cgroup::MAX_CGROUP_IO_ROWS
+            )),
+        );
+    }
+    if let Some(group) = &selected.pids
+        && let Some(path) = intern_str(interner, 1_204_001, "cgroup/pids", &group.path)
+    {
+        for row in &rows.pids {
+            os.cgroup_pids.push(cgroup::to_pids_section(
+                row,
+                kronika_source_os::OsScope::Unknown.as_u8(),
+                path,
+            ));
         }
     }
 }

@@ -6,7 +6,8 @@ Usage: kronika-collector
        kronika-collector --help | -h | --version
 
 Runs in the foreground. Configure it with environment variables; there are no
-collection flags or public subcommands. Only KRONIKA_STORAGE_DIR is required.
+collection flags or public subcommands. Local mode requires KRONIKA_STORAGE_DIR;
+postgresql mode also requires KRONIKA_PG_DSNS.
 
 EXAMPLES
   Linux recording:
@@ -117,7 +118,7 @@ OPTIONAL COLLECTION INTERVALS (nonnegative whole numbers of seconds)
 OPTIONAL LOGGING AND MOUNT PATHS
   KRONIKA_LOG_LEVEL   default info; error, warn (or warning), info, debug, trace
       Case-insensitive. Structured logs go to stderr; readiness and written
-      segment paths go to stdout. Segment-write logs include peak rss_kib.
+      segment paths go to stdout. In local mode, segment-write logs include peak rss_kib.
   KRONIKA_PROC_ROOT   default /proc; procfs mount to read
       Used only in local mode. Container detection uses that root's cgroup file.
   KRONIKA_SYS_ROOT    default /sys; sysfs mount to read in local mode

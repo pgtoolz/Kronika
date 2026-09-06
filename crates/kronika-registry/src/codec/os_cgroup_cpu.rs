@@ -50,8 +50,8 @@ pub struct OsCgroupCpu {
     id = 1_201_003,
     name = "os_cgroup_cpu",
     semantics = snapshot_full,
-    sort_key("cgroup_path", "ts"),
-    identity("cgroup_path")
+    sort_key("cgroup_path", "cgroup_identity", "ts"),
+    identity("cgroup_path", "cgroup_identity")
 )]
 pub struct OsCgroupCpuV3 {
     /// Collection timestamp, unix microseconds.
@@ -60,6 +60,9 @@ pub struct OsCgroupCpuV3 {
     /// Cgroup path as a string dictionary reference.
     #[column(l)]
     pub cgroup_path: StrId,
+    /// Recorded selected directory identity for counter continuity.
+    #[column(l)]
+    pub cgroup_identity: StrId,
     /// Total CPU usage.
     #[column(c, unit = microseconds)]
     pub usage_usec: i64,
@@ -221,10 +224,15 @@ mod ancestor_tests {
     #[test]
     fn ancestor_cpu_nulls_roundtrip() {
         assert_eq!(OsCgroupCpuV3::CONTRACT.type_id.get(), 1_201_003);
+        assert_eq!(
+            OsCgroupCpuV3::CONTRACT.identity,
+            ["cgroup_path", "cgroup_identity"]
+        );
         crate::assert_roundtrips(&[
             OsCgroupCpuV3 {
                 ts: Ts(1),
                 cgroup_path: StrId(1),
+                cgroup_identity: StrId(2),
                 usage_usec: 100,
                 user_usec: 60,
                 system_usec: 40,
@@ -237,6 +245,7 @@ mod ancestor_tests {
             OsCgroupCpuV3 {
                 ts: Ts(2),
                 cgroup_path: StrId(1),
+                cgroup_identity: StrId(2),
                 usage_usec: 150,
                 user_usec: 90,
                 system_usec: 60,

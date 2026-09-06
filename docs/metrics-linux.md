@@ -205,9 +205,9 @@ PID namespace or identify the PostgreSQL container.
 For v2, controllers refer to one selected group. For v1, each controller retains
 its own mount root, path and identity. CPU usage from cpuacct is paired with quota
 and cpuset only when they refer to a coherent group. Memory uses hierarchical
-`total_*` statistics, independent of line order. Missing limits are not unlimited.
+`total_*` statistics, including descendants. Missing limits are not unlimited.
 With positive quota `Q` and period `P` in microseconds and positive cpuset count
-`S`, capacity is `min(Q/P, S)`, or `Q/P` without `S`; `150000/100000 = 1.5` cores.
+`S`, the recorded CPU limit in cores is `min(Q/P, S)`, or `Q/P` without `S`; `150000/100000 = 1.5` cores.
 For new context records, either finite bound can be used alone, including `S`
 when the quota is missing or unlimited. Without either bound, the CPU limit is
 unknown. Older context records require a known quota before using `S`. Memory

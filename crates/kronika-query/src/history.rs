@@ -350,6 +350,8 @@ fn health_layout() -> Value {
             "inputs": [
                 INSTANCE_METADATA_TYPE_ID.to_string(),
                 INSTANCE_METADATA_V1_TYPE_ID.to_string(),
+                "1021003",
+                "1205002",
                 OS_PSI_TYPE_ID.to_string(),
                 "1001001",
                 "1001002",

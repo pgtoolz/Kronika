@@ -52,6 +52,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ### Управляемый или удалённый PostgreSQL
 
+Для сбора только PostgreSQL и TLS ниже нужна [сборка из этой версии исходников](docs/build.ru.md); в опубликованных архивах 1.0.1 этих возможностей нет.
 Запустите сборщик на любой машине, откуда доступен сервер. Нужны права на запись
 в каталог данных; метрики Linux этой машины собираться не будут:
 
@@ -82,6 +83,16 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_USER=kronika \
   KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   /usr/local/bin/kronika-web
+```
+
+### Веб-сервер для записи только PostgreSQL
+
+```sh
+KRONIKA_STORAGE_DIR=./kronika-data \
+  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_AUTH=required \
+  KRONIKA_WEB_USER=demo KRONIKA_WEB_PASSWORD=replace-with-password \
+  KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
 Откройте <http://127.0.0.1:8080/> и войдите. Веб-сервер читает новые данные,

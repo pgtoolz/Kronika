@@ -497,8 +497,13 @@ fn parse_connections(
         .iter()
         .enumerate()
         .map(|(index, raw)| {
-            settings::ConnectionTarget::parse(raw, index).map_err(|_error| {
-                anyhow::anyhow!("{variable}[{index}] is not a valid connection string")
+            settings::ConnectionTarget::parse(raw, index).map_err(|error| match error {
+                settings::InvalidConnection::TlsCa => {
+                    anyhow::Error::new(kronika_source_pg::transport::CaConfigError)
+                }
+                settings::InvalidConnection::Dsn => {
+                    anyhow::anyhow!("{variable}[{index}] is not a valid connection string")
+                }
             })
         })
         .collect()

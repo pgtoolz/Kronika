@@ -344,3 +344,197 @@ fn v1_coherent_cpuset_is_independent_of_an_unrelated_bandwidth_tree() {
     assert_eq!(selected.context.effective_cpu_quota_usec, None);
     assert_eq!(selected.context.cpuset_cpus, Some(2));
 }
+
+fn v1_io(root: &Path) {
+    write(root, "proc/self/cgroup", "2:blkio:/pod/collector\n");
+    std::fs::create_dir_all(root.join("sys/fs/cgroup/blkio")).expect("I/O hierarchy");
+    write(
+        root,
+        "proc/self/mountinfo",
+        &format!(
+            "40 1 0:30 / {} rw - cgroup cgroup rw,blkio\n",
+            root.join("sys/fs/cgroup/blkio").display()
+        ),
+    );
+}
+
+#[test]
+fn v1_ancestor_io_uses_recursive_totals_instead_of_zero_local_counters() {
+    let (dir, procfs, sys) = fixture();
+    v1_io(dir.path());
+    for name in ["io_service_bytes", "io_serviced"] {
+        write(
+            dir.path(),
+            &format!("sys/fs/cgroup/blkio/blkio.throttle.{name}"),
+            "8:0 Read 0\n8:0 Write 0\n",
+        );
+    }
+    write(
+        dir.path(),
+        "sys/fs/cgroup/blkio/blkio.throttle.io_service_bytes_recursive",
+        "8:0 Read 100\n8:0 Write 200\n",
+    );
+    write(
+        dir.path(),
+        "sys/fs/cgroup/blkio/blkio.throttle.io_serviced_recursive",
+        "8:0 Read 3\n8:0 Write 4\n",
+    );
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selected I/O");
+    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
+    assert_eq!(rows.io.len(), 1);
+    let row = &rows.io[0];
+    assert_eq!(row.cgroup_path, "/");
+    assert_eq!(
+        (row.rbytes, row.wbytes, row.rios, row.wios),
+        (Some(100), Some(200), Some(3), Some(4))
+    );
+}
+
+#[test]
+fn v1_ancestor_io_falls_back_only_to_a_recursive_policy_family() {
+    let (dir, procfs, sys) = fixture();
+    v1_io(dir.path());
+    write(
+        dir.path(),
+        "sys/fs/cgroup/blkio/blkio.throttle.io_service_bytes",
+        "8:0 Read 999\n",
+    );
+    write(
+        dir.path(),
+        "sys/fs/cgroup/blkio/blkio.io_service_bytes_recursive",
+        "8:0 Read 100\n8:0 Write 200\n",
+    );
+    write(
+        dir.path(),
+        "sys/fs/cgroup/blkio/blkio.io_serviced_recursive",
+        "8:0 Read 3\n8:0 Write 4\n",
+    );
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selected I/O");
+    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
+    assert_eq!(rows.io.len(), 1);
+    assert_eq!((rows.io[0].rbytes, rows.io[0].rios), (Some(100), Some(3)));
+}
+
+#[test]
+fn v1_ancestor_io_does_not_combine_recursive_policy_families() {
+    let (dir, procfs, sys) = fixture();
+    v1_io(dir.path());
+    write(
+        dir.path(),
+        "sys/fs/cgroup/blkio/blkio.throttle.io_service_bytes_recursive",
+        "8:0 Read 100\n",
+    );
+    write(
+        dir.path(),
+        "sys/fs/cgroup/blkio/blkio.io_serviced_recursive",
+        "8:0 Read 99\n",
+    );
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selected I/O");
+    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
+    assert_eq!(rows.io.len(), 1);
+    assert_eq!(rows.io[0].rbytes, Some(100));
+    assert_eq!(rows.io[0].rios, None);
+    assert_eq!(rows.io[0].wios, None);
+}
+
+#[test]
+fn v1_ancestor_io_without_recursive_counters_remains_absent() {
+    let (dir, procfs, sys) = fixture();
+    v1_io(dir.path());
+    for family in ["blkio.throttle", "blkio"] {
+        for name in ["io_service_bytes", "io_serviced"] {
+            write(
+                dir.path(),
+                &format!("sys/fs/cgroup/blkio/{family}.{name}"),
+                "8:0 Read 999\n",
+            );
+        }
+    }
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selected I/O");
+    assert!(selected.io.is_some());
+    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
+    assert!(rows.io.is_empty());
+    assert!(!rows.io_omitted);
+}
+
+#[test]
+fn v2_unrelated_extra_mount_does_not_hide_the_compatible_root() {
+    let (dir, procfs, sys) = fixture();
+    v2(dir.path(), "/pod/collector", "/");
+    std::fs::create_dir(dir.path().join("sys/fs/cgroup/extra")).expect("extra mount");
+    let path = dir.path().join("proc/self/mountinfo");
+    let mut text = std::fs::read_to_string(&path).expect("mountinfo");
+    writeln!(
+        &mut text,
+        "41 1 0:30 /other {} rw - cgroup2 cgroup rw",
+        dir.path().join("sys/fs/cgroup/extra").display()
+    )
+    .expect("extra binding");
+    write(dir.path(), "proc/self/mountinfo", &text);
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("root remains selected");
+    assert_eq!(selected.cpu.as_ref().expect("CPU root").base, "fs/cgroup");
+}
+
+#[test]
+fn v1_unrelated_extra_controller_mount_does_not_hide_the_compatible_root() {
+    let (dir, procfs, sys) = fixture();
+    v1_io(dir.path());
+    std::fs::create_dir(dir.path().join("sys/fs/cgroup/extra")).expect("extra mount");
+    let mut text =
+        std::fs::read_to_string(dir.path().join("proc/self/mountinfo")).expect("mountinfo");
+    writeln!(
+        &mut text,
+        "41 1 0:30 /other {} rw - cgroup cgroup rw,blkio",
+        dir.path().join("sys/fs/cgroup/extra").display()
+    )
+    .expect("extra binding");
+    write(dir.path(), "proc/self/mountinfo", &text);
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("I/O root remains selected");
+    assert_eq!(
+        selected.io.as_ref().expect("I/O root").base,
+        "fs/cgroup/blkio"
+    );
+}
+
+#[test]
+fn duplicate_and_subtree_bind_mounts_preserve_the_highest_actual_object() {
+    let (dir, procfs, sys) = fixture();
+    v2(dir.path(), "/pod/collector", "/");
+    std::fs::create_dir_all(dir.path().join("sys/fs/cgroup/pod/collector")).expect("pod tree");
+    let mut text =
+        std::fs::read_to_string(dir.path().join("proc/self/mountinfo")).expect("mountinfo");
+    writeln!(
+        &mut text,
+        "41 1 0:30 / {} rw - cgroup2 cgroup rw",
+        dir.path().join("sys/fs/cgroup").display()
+    )
+    .expect("duplicate binding");
+    writeln!(
+        &mut text,
+        "42 1 0:30 /pod {} rw - cgroup2 cgroup rw",
+        dir.path().join("sys/fs/cgroup/pod").display()
+    )
+    .expect("subtree binding");
+    write(dir.path(), "proc/self/mountinfo", &text);
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("highest selection");
+    assert_eq!(selected.cpu.as_ref().expect("CPU root").base, "fs/cgroup");
+    assert_eq!(selected.context.cpu_path.as_deref(), Some("/"));
+}
+
+#[test]
+fn compatible_mount_paths_with_different_objects_remain_ambiguous() {
+    let (dir, procfs, sys) = fixture();
+    v2(dir.path(), "/pod/collector", "/");
+    std::fs::create_dir(dir.path().join("sys/fs/cgroup/extra")).expect("other object");
+    let mut text =
+        std::fs::read_to_string(dir.path().join("proc/self/mountinfo")).expect("mountinfo");
+    writeln!(
+        &mut text,
+        "41 1 0:31 / {} rw - cgroup2 cgroup rw",
+        dir.path().join("sys/fs/cgroup/extra").display()
+    )
+    .expect("different hierarchy binding");
+    write(dir.path(), "proc/self/mountinfo", &text);
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("ambiguous selection");
+    assert!(selected.cpu.is_none());
+}

@@ -62,8 +62,8 @@ pub struct OsCgroupMemory {
     id = 1_202_003,
     name = "os_cgroup_memory",
     semantics = snapshot_full,
-    sort_key("cgroup_path", "ts"),
-    identity("cgroup_path")
+    sort_key("cgroup_path", "cgroup_identity", "ts"),
+    identity("cgroup_path", "cgroup_identity")
 )]
 pub struct OsCgroupMemoryV3 {
     /// Collection timestamp, unix microseconds.
@@ -72,6 +72,9 @@ pub struct OsCgroupMemoryV3 {
     /// Cgroup path as a string dictionary reference.
     #[column(l)]
     pub cgroup_path: StrId,
+    /// Recorded selected directory identity for counter continuity.
+    #[column(l)]
+    pub cgroup_identity: StrId,
     /// Current memory usage.
     #[column(g, unit = bytes)]
     pub current: i64,
@@ -284,9 +287,14 @@ mod ancestor_tests {
     #[test]
     fn ancestor_memory_nulls_roundtrip() {
         assert_eq!(OsCgroupMemoryV3::CONTRACT.type_id.get(), 1_202_003);
+        assert_eq!(
+            OsCgroupMemoryV3::CONTRACT.identity,
+            ["cgroup_path", "cgroup_identity"]
+        );
         let row = OsCgroupMemoryV3 {
             ts: Ts(1),
             cgroup_path: StrId(1),
+            cgroup_identity: StrId(2),
             current: 4096,
             max: None,
             max_unlimited: None,

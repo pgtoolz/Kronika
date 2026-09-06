@@ -41,6 +41,8 @@ kronika-store = { path = "../../crates/kronika-store", default-features = false 
 tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
+kronika-registry = { path = "../../crates/kronika-registry" }
+kronika-writer = { path = "../../crates/kronika-writer" }
 serde_json = "1"
 
 [lints]
