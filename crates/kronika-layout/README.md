@@ -2,8 +2,8 @@
 
 [Русская версия](README.ru.md)
 
-`kronika-layout` defines Kronika's local data-directory grammar. It maps a
-stable segment identity to a UTC calendar directory, discovers entries within
+`kronika-layout` defines the valid names and paths in Kronika's local data
+directory. It maps a stable segment identity to a UTC calendar directory, discovers entries within
 fixed bounds, and opens files relative to verified directory descriptors.
 Process-wide locks allow one collector to change `active.wal` and ZMS files and
 one web process to change IDX files. `kronika-format` defines ZMS framing and
@@ -24,7 +24,7 @@ DATA_ROOT/
 ```
 
 `N` is the decimal [`SegmentId`](src/time.rs): the Unix timestamp in
-microseconds of the first collection window successfully appended to that
+microseconds of the first batch successfully appended to that
 segment. `YYYY/MM/DD` is the UTC day derived from that value. The path does not
 use the segment catalog's `min_ts` or `max_ts`, finalization time, file
 modification time, or the timestamp of a late event.
@@ -41,9 +41,11 @@ data and uses the same stem. An IDX can be rebuilt from its ZMS.
 `kronika-layout` controls access to the file, while `kronika-format` defines
 its bytes and `kronika-writer` implements its lifecycle.
 
-## Closed grammar
+<a id="closed-grammar"></a>
 
-The data root is Kronika-owned. Its grammar contains the journal, two owner-lock
+## Valid names and paths
+
+The data root is reserved for Kronika files. It contains the journal, two owner-lock
 files, four-digit year directories, two-digit valid months and days, canonical
 final files, and recognized Kronika publication temporaries. The scanner
 follows only verified calendar directories. It records symbolic links, unknown
@@ -86,8 +88,8 @@ Every value must be non-zero and no greater than its hard maximum. Exceeding a
 runtime bound fails the scan instead of returning an incomplete inventory.
 The default 128 MiB cap covers five 365-day years with one segment every
 15 minutes for both cold discovery and an unchanged cached refresh. A wholesale
-same-name replacement is rejected before both complete sets of summaries can
-be retained.
+same-name replacement that would exceed this budget is rejected before both
+complete sets of summaries can be retained.
 
 ## Publication and backup
 

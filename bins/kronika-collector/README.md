@@ -9,7 +9,8 @@ that portion as a compressed `.zms` file, called a segment, and continues.
 
 Set options through environment variables before starting the program.
 `KRONIKA_STORAGE_DIR`, the data directory, is required. Options are read once
-at startup; an invalid value stops startup. Sources:
+at startup; an invalid value stops startup. Changes take effect on the next
+start; [service configuration](../../docs/services.md) covers an existing service. Sources:
 [configuration](src/config.rs), [collection schedule](src/scheduler.rs),
 [main loop](src/main.rs).
 
@@ -73,7 +74,7 @@ Separate connection strings and paths with semicolons (`;`).
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `KRONIKA_PG_DSNS` | Unset | PostgreSQL connection strings. The first enables server metrics; each locates its server’s current log and format. |
-| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Unset | Number of CPUs available to the first PostgreSQL server: integer `1..4294967295`. Requires `KRONIKA_PG_DSNS`. When unset, the Health indicator and chart marks use the recorded CPU capacity of the collector’s VM or container. |
+| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Unset | Number of CPUs available to the first PostgreSQL server: integer `1..4294967295`. Requires `KRONIKA_PG_DSNS`. When unset, the Health indicator and chart marks use the recorded CPU capacity of the collector’s machine or container. |
 | `KRONIKA_PG_LOGS` | Unset | Additional local PostgreSQL log paths; filenames can use `*` and `?` wildcards. When unset, every `KRONIKA_PG_DSNS` entry still discovers its current log through `pg_current_logfile()`. Explicit entries add to discovered sources; files must be readable on the collector host. |
 | `KRONIKA_PGBOUNCER_DSNS` | Unset | Connections to the administrative console (`dbname=pgbouncer`) to read `SHOW CONFIG`/`logfile`; the account must belong to `stats_users`. |
 | `KRONIKA_PGBOUNCER_LOGS` | Unset | Local PgBouncer log paths; filenames can use `*` and `?` wildcards. |
@@ -96,24 +97,29 @@ DSNs supply log discovery only. PostgreSQL metric rows have no separate field id
 
 ### PostgreSQL CPU capacity
 
-When local PostgreSQL shares the collector’s CPU limits, leave
-`KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset. For each time shown in Activity, the calculation
-uses the latest recorded VM CPU count or the collector’s cgroup CPU limits
-available at or before that time. The cgroup limits include its CPU-time
-quota and allowed set of CPUs (cpuset). Fractional quotas are preserved:
+Health and active-session marks use the number of CPUs available to PostgreSQL.
+Without `KRONIKA_POSTGRES_EFFECTIVE_CPUS`, Kronika uses the collector's recorded
+machine or container capacity. Leave the setting unset when PostgreSQL shares
+those CPU limits.
+
+For each Activity timestamp, the calculation uses the latest CPU information
+recorded at or before it: the machine CPU count, or the collector's container
+CPU-time quota and allowed CPU set (cpuset). Fractional quotas are preserved:
 `150000/100000` gives `1.5` CPUs.
 
-For remote PostgreSQL or a different cgroup, including one on the same host,
-set the target PostgreSQL capacity as a positive whole number of CPUs. The
-explicit value takes precedence. The connection address alone does not show whether the programs share
-resource limits. Unknown recorded capacity leaves Health unavailable (`null`); a known capacity
-can be set manually. [Launch examples](../../INSTALL.md#5-postgresql) and
-[formulas](../../docs/metrics-time.md#health).
+If PostgreSQL has different CPU limits, whether remote or in a separate
+container on the same host, set `KRONIKA_POSTGRES_EFFECTIVE_CPUS` to its available
+CPU count as a positive whole number. This value overrides the automatic one.
+The setting does not enable or disable PostgreSQL collection. When recorded
+capacity is unknown, Health is unavailable (`null`); a known capacity can be
+supplied explicitly. See the [launch examples](../../INSTALL.md#5-postgresql)
+and [Health formulas](../../docs/metrics-time.md#health).
 
 <a id="postgresql-role"></a>
 ### PostgreSQL role
 
-[Create a monitoring role](../../INSTALL.md#5-postgresql) with these privileges:
+The PostgreSQL account needs these privileges. The [setup examples](../../INSTALL.md#5-postgresql)
+show how to grant them to a monitoring role:
 
 | Scope | Required privilege |
 | --- | --- |

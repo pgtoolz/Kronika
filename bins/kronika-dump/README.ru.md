@@ -11,11 +11,14 @@
 <a id="inspect"></a>
 ## Просмотр записи
 
+В примерах используется закрытый каталог root из [инструкции установки](../../INSTALL.ru.md).
+Если запись доступна вашему пользователю, `sudo` не нужен.
+
 ```sh
-kronika-dump /var/lib/kronika
-kronika-dump /var/lib/kronika --json
-kronika-dump /var/lib/kronika --index
-kronika-dump /var/lib/kronika --section 1100001 --limit 10
+sudo kronika-dump /var/lib/kronika
+sudo kronika-dump /var/lib/kronika --json
+sudo kronika-dump /var/lib/kronika --index
+sudo kronika-dump /var/lib/kronika --section 1100001 --limit 10
 ```
 
 | Параметр | По умолчанию | Значение |
@@ -37,11 +40,16 @@ kronika-dump /var/lib/kronika --section 1100001 --limit 10
 <a id="slice"></a>
 ## Вырезать интервал
 
+Замените даты примера интервалом, который есть в вашей записи. Выполняйте команды
+в каталоге, куда хотите сохранить результат. Последняя команда передаёт файл,
+созданный через `sudo`, вашему пользователю для дальнейшего создания отчёта:
+
 ```sh
-KRONIKA_STORAGE_DIR=/var/lib/kronika kronika-dump slice \
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika kronika-dump slice \
   --from 2026-09-05T19:00:00Z \
   --to 2026-09-05T19:59:59Z \
-  --out incident.zms
+  --out incident.zms &&
+  sudo chown "$(id -u):$(id -g)" incident.zms
 ```
 
 | Параметр | Значение |

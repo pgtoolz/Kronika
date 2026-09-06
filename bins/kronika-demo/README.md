@@ -9,7 +9,8 @@ archives; those contain collector, web, dump and report.
 
 ## Start and inspect
 
-Requirements: Docker with Compose v2 on an amd64 or arm64 Linux host.
+Requirements: Make and Docker with Compose v2 on an amd64 or arm64 Linux host.
+Run the commands below from the repository root.
 
 ```sh
 make demo-up
@@ -224,7 +225,7 @@ PostgreSQL workload is disabled; the system workload remains enabled by default.
 | Variable | Default | Meaning |
 | --- | ---: | --- |
 | `KRONIKA_DEMO_WORKLOAD_DSN` | unset | Workload connection, normally through PgBouncer. |
-| `KRONIKA_DEMO_WORKLOAD_DIRECT_DSN` | required with workload | Direct PostgreSQL connection for the plan story and session-scoped Vacuum settings. It must not point at transaction-pooled PgBouncer. The image sets this to its embedded PostgreSQL. |
+| `KRONIKA_DEMO_WORKLOAD_DIRECT_DSN` | required with workload | Direct PostgreSQL connection for the plan-change workload and session-scoped Vacuum settings. It must not point at transaction-pooled PgBouncer. The image sets this to its embedded PostgreSQL. |
 | `KRONIKA_DEMO_WORKLOAD_SCHEMAS` | 1 | Commerce schemas to create, from 1 through 8. |
 | `KRONIKA_DEMO_WORKLOAD_TABLES_PER_SCHEMA` | 8 | Tables per schema, from the 8 commerce tables through 64 total tables. |
 | `KRONIKA_DEMO_WORKLOAD_DDL_CONCURRENCY` | 4 | Concurrent setup connections, from 1 through 16. |
@@ -236,12 +237,12 @@ PostgreSQL workload is disabled; the system workload remains enabled by default.
 | `KRONIKA_DEMO_WORKLOAD_LOCK_HOLD_MS` | 4000 | Lock hold time per link in a lock round, milliseconds. |
 | `KRONIKA_DEMO_WORKLOAD_LOCK_ROUND_INTERVAL_S` | 120 | Quiet pause after each lock round, seconds. |
 | `KRONIKA_DEMO_WORKLOAD_EVENT_ROUND_INTERVAL_S` | 180 | Quiet pause after one slow query, one bad statement, and one bad-database attempt. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_ROWS` | 300000 | Rows maintained in `shop.orders` for the plan-change story, from 1 through 500000. |
+| `KRONIKA_DEMO_WORKLOAD_PLAN_ROWS` | 300000 | Rows maintained in `shop.orders` for the plan-change workload, from 1 through 500000. |
 | `KRONIKA_DEMO_WORKLOAD_PLAN_WORKERS` | 4 | Concurrent `checkout-api` sessions exercising the same query, from 1 through 8. |
 | `KRONIKA_DEMO_WORKLOAD_PLAN_BASELINE_S` | 12 | Indexed baseline and recovery window, seconds. |
 | `KRONIKA_DEMO_WORKLOAD_PLAN_REGRESSION_S` | 30 | Window without the supporting checkout index, seconds. |
 | `KRONIKA_DEMO_WORKLOAD_PLAN_ROUND_INTERVAL_S` | 120 | Quiet pause after a complete plan-change round, seconds. |
-| `KRONIKA_DEMO_WORKLOAD_VACUUM_ROWS` | 100000 | Rows in the dedicated Vacuum showcase table, from 1 through 250000. |
+| `KRONIKA_DEMO_WORKLOAD_VACUUM_ROWS` | 100000 | Rows in the dedicated Vacuum workload table, from 1 through 250000. |
 | `KRONIKA_DEMO_WORKLOAD_VACUUM_ROUND_INTERVAL_S` | 180 | Quiet pause after each Vacuum episode, seconds. |
 | `KRONIKA_DEMO_WORKLOAD_VACUUM_STATEMENT_TIMEOUT_S` | 30 | Finite timeout for each update and Vacuum statement, seconds. |
 
@@ -268,13 +269,15 @@ occupy IDs above the plan and Vacuum fixtures.
 The image collects PostgreSQL every 5 seconds. Workload statements and
 transactions have finite timeouts. Source: [workload](src/workload).
 
-For a direct binary run:
+For a native run against an existing PostgreSQL and PgBouncer setup, use
+`make demo-run`. It builds collector and demo for the Rust host target, then
+starts them. The [source build guide](../../docs/build.md) lists build
+dependencies. Replace these example connections with your workload connections:
 
 ```sh
-KRONIKA_COLLECTOR_BIN=target/x86_64-unknown-linux-gnu/debug/kronika-collector \
 KRONIKA_DEMO_WORKLOAD_DSN='host=127.0.0.1 port=6432 user=kronika_demo dbname=kronika_demo' \
 KRONIKA_DEMO_WORKLOAD_DIRECT_DSN='host=127.0.0.1 port=5432 user=kronika_demo dbname=kronika_demo' \
-    kronika-demo
+    make demo-run
 ```
 
 `SIGTERM` and `SIGINT` stop the workload and collector, retain the collector journal,

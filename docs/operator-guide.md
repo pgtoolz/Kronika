@@ -33,11 +33,11 @@ The four cases use the recorded Linux/PostgreSQL demo workload on **5 September 
 | Readout | Calculation / scope |
 | --- | --- |
 | Container CPU **66.8%** | `100 × used cgroup cores / effective cgroup CPU capacity`. |
-| Host CPU **17.5%** | `100 × R(user+nice+system+irq+softirq+steal)/(H×N)`, with recorded ticks/s `H` and online CPU count `N`. |
+| Host CPU **17.5%** | `100 × R(user+nice+system+irq+softirq+steal)/(H×N)`, where `R` is the counter increase per second, `H` is recorded accounting ticks/s, and `N` counts distinct nonnegative CPU IDs recorded across the source segment. |
 | Container memory **53.8%** | `100 × memory.current / effective memory limit`. |
 | Host memory **12.9%** | Host used memory share; operands in [Linux](metrics-linux.md). |
 | Throttled **34.9%** | Cgroup throttled time / observed wall interval × 100. |
-| CPU PSI **4.3%** | Cgroup CPU `some_total` interval delta / observed wall interval × 100. |
+| CPU PSI **4.3%** | Cgroup CPU `some_total` increase / observed wall interval × 100, with both durations in microseconds. |
 | RX **284 KiB/s**, TX **284 KiB/s** | Separate byte counter rates of the recorded network namespace. |
 
 The [Linux reference](metrics-linux.md) defines effective ceilings, PSI units, device identities and USE reductions.
@@ -54,10 +54,10 @@ The [Linux reference](metrics-linux.md) defines effective ceilings, PSI units, d
 
 | Readout | Calculation / population |
 | --- | --- |
-| `postgres`: **517 PIDs**, **9.44 min** | Distinct numeric PIDs observed under the command during the hour; sum of process CPU counter changes divided by recorded clock ticks/s. |
+| `postgres`: **517 PIDs**, **9.44 min** | Distinct numeric PIDs observed under the command during the hour; sum of process CPU counter changes divided by recorded accounting ticks/s. |
 | `kronika-demo`: **4.75 min**; Total **14.6 min** | Command CPU sum; Total includes all commands. |
 | Cell `postgres` **953 ms/s**, `kronika-demo` **79.8 ms/s** | CPU seconds per observed cell interval: displayed rates equal about **0.953** and **0.0798** used cores. |
-| PID 64 user **0.12 cores**, system **0.006 cores** | Adjacent same-PID/same-starttime `Δutime/(HZ×Δt)` and `Δstime/(HZ×Δt)`; combined displayed contribution ≈ **0.126 cores**. |
+| PID 64 user **0.12 cores**, system **0.006 cores** | Adjacent same-PID/same-starttime `Δutime/(HZ×Δt)` and `Δstime/(HZ×Δt)`, where `HZ` is accounting ticks/s and `Δt` is elapsed seconds; combined displayed contribution ≈ **0.126 cores**. |
 | RSS **Average** | Sum of recorded command RSS divided by the shared count of timestamps containing usable process RSS values. |
 
 The command summary spans the hour; the PID table uses its adjacent observation pair. [Heatmap and RSS operands](metrics-time.md).
@@ -78,12 +78,12 @@ where customer_id = $1 order by placed_at desc limit $2
 | Readout | Formula |
 | --- | --- |
 | Hour execution contribution **16.7 min** | Accumulated `total_exec_time` change, converted from milliseconds to minutes. |
-| Interval **19:00:28 → 19:00:33** | Statement's two recorded observations; exact timestamps determine `Δt`. |
-| **120 calls/s** | `Δcalls / Δt`. |
+| Interval **19:00:28 → 19:00:33** | Statement's two recorded observations; exact timestamps determine `Δt` in seconds. |
+| **120 calls/s** | `Δcalls / Δt`: executions per second. |
 | **1.42 s/s** | `Δtotal_exec_time / (1000×Δt)`. Concurrent elapsed execution durations add. |
 | **11.9 ms/call** | `Δtotal_exec_time / Δcalls`; calculated before display rounding. |
 
-2. Select **Per call**, **I/O** and **Resources** for interval measures. **Stability** shows recorded Mean/Min/Max/Stddev and their CV for the extension statistics period; [all operands](metrics-postgresql.md).
+2. Select **Per call**, **I/O** and **Resources** for interval measures. **Stability** shows recorded Mean/Min/Max/Stddev and their coefficient of variation, CV = Stddev/Mean, for the extension statistics period; [all operands](metrics-postgresql.md).
 3. Use **Open plans** and choose Plan ID **`1544266440`**. Inspector contains `Parallel Seq Scan on orders`, `Sort` on `placed_at DESC`, `Gather Merge`, `Limit`, `Workers Planned: 1` and `(customer_id = 4244)`.
 4. Use **Related statements** or browser Back. Open **Tables**, apply `schema:shop AND table_name:orders`, select **Access**, **Size and buffers**, then the relation's Indexes.
 
@@ -105,7 +105,7 @@ where customer_id = $1 order by placed_at desc limit $2
 | Application | `checkout-api`. |
 
 1. Select PID 4761's waiting row; read exact blocker PIDs, target and backend text in Inspector. Select the root row for its state/context.
-2. Open **Activity** manually at the preserved cursor and filter `pid:4761`. Query time is `sample−query_start` for `active`; transaction time is `sample−xact_start`; time in state is `sample−state_change` except exact `idle`.
+2. Open **Activity** manually at the preserved cursor and filter `pid:4761`. Query time is `sample−query_start` for `active`; transaction time is `sample−xact_start`; time in state is `sample−state_change` except exact `idle`. Here `sample` is the recorded snapshot time. The start/state timestamps are Unix microseconds; their differences are elapsed microseconds. Divide the differences by 1000 for milliseconds.
 3. Open **Events**, select lock waits and open the representative record for logged wait duration in milliseconds and holder PID text.
 4. Step to the next recorded instant with →. Activity and Locks select their own source observations.
 

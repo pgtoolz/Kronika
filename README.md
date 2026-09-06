@@ -52,7 +52,7 @@ In this case, leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset: Kronika calculates
 CPU capacity from the recorded machine or container data.
 
 For PostgreSQL on another machine or with different CPU limits, use that
-server's CPU count for the Health calculation. For example, a remote server
+server's CPU count for the PostgreSQL load indicator, Health. For example, a remote server
 with 4 CPUs:
 
 ```sh

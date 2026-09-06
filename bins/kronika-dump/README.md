@@ -9,11 +9,14 @@ can turn into an HTML report. Sources: [inspection parser](src/main.rs), [slice 
 
 ## Inspect
 
+These examples use the root-owned directory from [Install](../../INSTALL.md).
+For a recording you can read as your own user, omit `sudo`.
+
 ```sh
-kronika-dump /var/lib/kronika
-kronika-dump /var/lib/kronika --json
-kronika-dump /var/lib/kronika --index
-kronika-dump /var/lib/kronika --section 1100001 --limit 10
+sudo kronika-dump /var/lib/kronika
+sudo kronika-dump /var/lib/kronika --json
+sudo kronika-dump /var/lib/kronika --index
+sudo kronika-dump /var/lib/kronika --section 1100001 --limit 10
 ```
 
 | Parameter | Default | Meaning |
@@ -33,11 +36,16 @@ successfully; other failures exit nonzero.
 
 ## Slice
 
+Replace the example dates with an interval present in your recording. Run in
+a directory where you want to save the result. The final command gives your
+user ownership of the file created by `sudo`, so you can pass it to report:
+
 ```sh
-KRONIKA_STORAGE_DIR=/var/lib/kronika kronika-dump slice \
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika kronika-dump slice \
   --from 2026-09-05T19:00:00Z \
   --to 2026-09-05T19:59:59Z \
-  --out incident.zms
+  --out incident.zms &&
+  sudo chown "$(id -u):$(id -g)" incident.zms
 ```
 
 | Parameter | Meaning |

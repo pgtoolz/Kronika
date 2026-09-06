@@ -12,11 +12,12 @@ The collector retains one connection per database between cycles. Database and e
 
 | Read | Contract |
 | --- | --- |
-| Administrative queries | Simple Query Protocol. |
-| Typed metrics | Sequential unnamed Extended Protocol queries; no named prepared statements or pipelining. |
+| Administrative queries | Simple Query Protocol sends SQL as one text command. |
+| Typed metrics | Extended Query Protocol sends SQL and typed parameters separately. Queries run sequentially, without named prepared statements or sending the next query before the previous one completes. |
 | Result batch | At most 256 rows; approximately 512 KiB decoded-data target. The final row may exceed the byte target. The batch reaches WAL before the next row is fetched. |
 | Query/plan text | SQL bounds each field to its first 65,536 characters; all eligible rows are read without top-N or a shared text budget. |
-| Timeout | One bounded CancelRequest, then connection closure. |
+| Session limits | `lock_timeout=100ms` limits each wait to acquire a lock; `statement_timeout=30s` limits the SQL statement. The lock timeout does not limit how long an acquired lock is held. |
+| Client result deadline | 35 seconds to open and consume a row stream. On expiry, the collector sends one `CancelRequest`, bounded to 1 second, then closes the connection. |
 
 ## Native server views
 

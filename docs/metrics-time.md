@@ -15,7 +15,7 @@ A snapshot contains values collected at one time. A gauge, such as process RSS (
 | Chart hover/readout | Reads recorded chart points. Chart selection updates the common cursor. A null chart point remains null and terminates the corresponding drawn path. |
 | Heatmap cell click | Sets the cursor to the cell's exclusive upper boundary minus one microsecond; the table then applies its snapshot selection. |
 | Entity row | Selects an entity and its Inspector detail panel. A history button selects its plotted field; a lens is a named set of fields such as CPU or Memory. |
-| Live refresh | The visible current hour refreshes every 15 seconds. A hidden document stops the timer; visibility restoration refreshes the current hour. A cursor following the newest point advances; a manually selected cursor stays fixed. Completed hours have no periodic refresh. |
+| Live refresh | The visible current hour schedules its next refresh 15 seconds after the previous load completes. A hidden document stops the timer; visibility restoration refreshes the current hour. A cursor following the newest point advances; a manually selected cursor stays fixed. Completed hours have no periodic refresh. |
 
 Sources: [snapshot selection](../crates/kronika-query/src/snapshot/mod.rs), [surface selector](../crates/kronika-query/src/snapshot/selector.rs), [cursor timestamps](../bins/kronika-web/ui/src/cursor-timestamps.ts), [refresh](../bins/kronika-web/ui/src/refresh.ts), [heatmap cursor](../bins/kronika-web/ui/src/activity.tsx).
 
@@ -144,12 +144,16 @@ snapshot affects subsequent PostgreSQL samples only. VM capacity uses neither
 CPUFreq policy count nor a union of CPU IDs over the segment. Unknown container
 capacity stays null.
 
-Omitting the override assigns PostgreSQL the collector's VM/container resource
-scope. Remote PostgreSQL or a different cgroup requires an explicit target
-PostgreSQL capacity, including a different cgroup on the same host. This is a
-deployment contract; DSN, hostname and PID do not verify it. `KRONIKA_PG_DSNS`
-enables PostgreSQL collection. Missing active-count input or capacity gives null.
-Conflicting activity layouts at the same timestamp give an unknown count.
+Automatic capacity uses the collector's recorded CPU resources. It describes
+PostgreSQL only when the server has the same available CPUs and resource limits.
+For a remote server or a different cgroup, including one on the same host,
+`KRONIKA_POSTGRES_EFFECTIVE_CPUS` can supply the target server's capacity. The
+collector does not check resource placement from the DSN, hostname or PID.
+
+`KRONIKA_PG_DSNS` enables PostgreSQL collection independently of capacity.
+Unknown capacity does not disable collection; it leaves PostgreSQL Health and
+capacity-dependent marks unavailable. Missing active-count input also gives
+null Health. Conflicting activity layouts at one timestamp give an unknown count.
 
 Health and active-backend marks use the same resolved `C`. Calculation reads
 recorded WAL/ZMS facts; resources of the machine opening the recording do not

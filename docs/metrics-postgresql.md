@@ -169,12 +169,12 @@ A missing layout field or unusable object pair makes the corresponding grouped m
 |---|---|
 | Table data / `main_fork_bytes` | `pg_relation_size(table_oid)`: heap main fork |
 | TOAST / `toast_bytes` | `pg_total_relation_size(reltoastrelid)`: TOAST relation including its auxiliary forks and indexes; null without TOAST |
-| Table + TOAST / `displayed_storage_bytes` | Heap main fork + TOAST; excludes user indexes and heap FSM/VM forks |
+| Table + TOAST / `displayed_storage_bytes` | Heap main fork + TOAST; excludes user indexes and the heap free-space map (FSM) and visibility map (VM) |
 | Index data / `main_fork_bytes` | `pg_relation_size(index_oid)`: index main fork |
 
 ### Table lenses
 
-For one object, `R = r` and `G(x) = x`; for groups use the preceding definitions. Let `D = R(n_tup_ins)+R(n_tup_upd)+R(n_tup_del)`.
+For one object, `R = r` and `G(x) = x`; for groups use the preceding definitions. Let `D = R(n_tup_ins)+R(n_tup_upd)+R(n_tup_del)` be inserted, updated and deleted tuples per second. HOT is an update that keeps the new tuple on the same page without adding entries to ordinary indexes.
 
 | Lens: display / field | Formula, unit and meaning |
 |---|---|
@@ -253,15 +253,13 @@ Episode key is physical type + PID + database OID + relation OID. A new episode 
 | `vacuuming indexes`, `cleaning up indexes` | Heavy | `indexes_processed`, PostgreSQL 17+ |
 | `truncating heap` | Dangerous | Repeated phase samples; phase is set before the conditional exclusive-lock attempt |
 
-Process load resolves this PID's OS samples at or before the episode's first and last timestamps. With recorded clock rate `H` ticks/s, CPU ms = `1000Δ(utime+stime)/H`; CPU share = `min(100,100 × CPU seconds / OS sample elapsed seconds)`; block-wait ms = `1000Δblkdelay_ticks/H`. Read/write bytes and major faults are `Δread_bytes`, `Δwrite_bytes`, `Δmajflt`. Read share = `min(100,100Δread_bytes/(B × final heap_blks_scanned))`. These deltas include all work performed by that PID between the selected OS samples. Missing clock/block size suppresses only the dependent calculation.
+Process load resolves this PID's OS samples at or before the episode's first and last timestamps. With recorded CPU accounting rate `H` ticks/s, CPU ms = `1000Δ(utime+stime)/H`; CPU share = `min(100,100 × CPU seconds / OS sample elapsed seconds)`; block-wait ms = `1000Δblkdelay_ticks/H`. Read/write bytes and major faults are `Δread_bytes`, `Δwrite_bytes`, `Δmajflt`. Read share = `min(100,100Δread_bytes/(B × final heap_blks_scanned))`. These deltas include all work performed by that PID between the selected OS samples. Missing accounting rate or block size suppresses only the dependent calculation.
 
 ## Summary strips and value marks
 
 In the formulas below, `count(...)` counts matching objects, `usable` requires a valid value under that metric’s rules, and `AND` requires both conditions.
 
-The strip above each table summarizes the full set of objects at the selected time. It is separate from the table’s current page and text search.
-
-Summary strips resolve a whole-surface snapshot at or before the cursor, independently of table pagination and text search. Statement and plan summaries use the selected statement scope. Each ratio includes only objects with the required operand pair; numerators and denominators are accumulated together. Here `ΣΔ` denotes these admitted differences at the selected summary snapshot, not an hour total. Source: [summary stream](../crates/kronika-query/src/hour/postgres_summary.rs), [formula implementation](../crates/kronika-query/src/hour/postgres_summary/facts.rs).
+The summary strip above each table uses all objects in the selected snapshot at or before the cursor, independently of the table page and text search. Statement and plan summaries use the selected statement scope. Each ratio includes only objects with the required operand pair; numerators and denominators are accumulated together. Here `ΣΔ` denotes these admitted differences at the selected summary snapshot, not an hour total. Source: [summary stream](../crates/kronika-query/src/hour/postgres_summary.rs), [formula implementation](../crates/kronika-query/src/hour/postgres_summary/facts.rs).
 
 | Summary | Formula |
 |---|---|
@@ -294,7 +292,7 @@ Value colors are fixed display comparisons from [value-tone.ts](../bins/kronika-
 
 ## Settings, reset timestamps and WAL storage
 
-`pg_settings` records the effective collector metric session with database and login-role identity. It is emitted on first success, a change and each new segment. `primary_conninfo` and `ssl_passphrase_command` are excluded. The passport displays server version, max connections, shared buffers, max WAL size, checkpoint timeout, autovacuum and I/O-timing settings. Its changes list compares successive recorded `setting` strings by setting name. Source: [settings collection](../crates/kronika-source-pg/src/settings.rs), [passport lookup](../bins/kronika-web/ui/src/postgres-vitals.ts).
+`pg_settings` records the effective collector metric session with database and login-role identity. It is emitted on first success, a change and each new segment. `primary_conninfo` and `ssl_passphrase_command` are excluded. The Passport server-information panel displays server version, max connections, shared buffers, max WAL size, checkpoint timeout, autovacuum and I/O-timing settings. Its changes list compares successive recorded `setting` strings by setting name. Source: [settings collection](../crates/kronika-source-pg/src/settings.rs), [passport lookup](../bins/kronika-web/ui/src/postgres-vitals.ts).
 
 `stats_reset` fields in database, WAL, I/O, writer/checkpointer, archiver and extension-info sections are the server's reset timestamps. `stats_since` is the statement row's statistics-start timestamp when its layout provides it; `first_call`/`last_call` bound the recorded plan's calls. They are absolute recorded timestamps; the current interface does not derive a reset-age value.
 

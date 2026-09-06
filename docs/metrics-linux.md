@@ -6,7 +6,7 @@ Linux metrics describe CPU, memory, storage and network use by a machine, contai
 
 ## Recorded environment and scope
 
-Scope identifies whose resources a row describes. A cgroup is a Linux process group with shared resource accounting and limits; each controller handles a resource such as CPU or memory.
+Scope identifies whether a row describes the machine, a container or its surrounding resource group. A cgroup is a Linux process group with shared resource accounting and limits; each controller handles a resource such as CPU or memory.
 
 | Recorded fact | Meaning and use |
 |---|---|
@@ -100,7 +100,7 @@ CPU composition requires all eight nonnegative differences and positive `T`. Use
 
 For the CPU usage lane, `N_lane` is the set size of all distinct nonnegative `cpu_id` values encountered across the source segment, accumulated before row scope and timestamp checks. CPU composition and the CPU cores gauge count CPUs at each timestamp. The 10-second PSI chart selects `os_psi` by resource; its request has no additional scope filter. Host/container interval PSI lanes apply their explicit scope selection.
 
-PSI also records `some_avg60`, `some_avg300`, cumulative `some_total`, and memory/I/O `full_avg10/60/300`, `full_total`. `some` counts time at least one task is stalled; `full` counts time all non-idle tasks are stalled. The stored averages are kernel gauges; the interval lanes and [health](metrics-time.md#health) derive from cumulative `some_total`. Source: [PSI reader](../crates/kronika-source-os/src/proc/pressure.rs).
+PSI (Pressure Stall Information) also records `some_avg60`, `some_avg300`, cumulative `some_total`, and memory/I/O `full_avg10/60/300`, `full_total`. `some` counts time at least one task is stalled; `full` counts time all non-idle tasks are stalled. The stored averages are kernel gauges; the interval lanes and [health](metrics-time.md#health) derive from cumulative `some_total`. Source: [PSI reader](../crates/kronika-source-os/src/proc/pressure.rs).
 
 ## Host memory
 

@@ -5,8 +5,8 @@
 Systemd starts collector and web automatically and restarts them after a
 failure. These service files use programs in `/usr/local/bin`, root-owned
 storage and a web server accepting local connections only. Each recording
-directory permits one collector and one web process that creates indexes.
-Stop any copies running in terminals before starting the services.
+directory in this setup has one collector and one web process. If either
+program is already running in a terminal, stop it before starting its service.
 
 ## Environment files
 
@@ -39,18 +39,20 @@ KRONIKA_WEB_PASSWORD=replace-with-a-random-password
 Systemd parses these as environment assignments. Values containing spaces are
 quoted as a whole; shell substitutions and `export` are not evaluated.
 
-After [PostgreSQL role setup](../INSTALL.md#5-postgresql), add to `collector.env`:
+For Linux-only collection, these settings are sufficient. To also collect
+PostgreSQL, [prepare a monitoring role](../INSTALL.md#5-postgresql) and add its
+connection string to `collector.env`:
 
 ```ini
 KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
 ```
 
-Leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset for local PostgreSQL in the same
-VM/container resource scope. For remote PostgreSQL or a different cgroup, set
-the target server's positive whole CPU capacity, for example
+Leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset when local PostgreSQL shares the
+collector's machine or container CPU limits. For remote PostgreSQL or a different
+cgroup, set the target server's positive whole CPU capacity for the Health
+calculation, for example
 `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`. [Capacity calculation](metrics-time.md#health).
-`KRONIKA_WEB_SOURCES=3` marks OS and PostgreSQL
-configured in the web catalog. All parameters:
+Set `KRONIKA_WEB_SOURCES=3` in `web.env` to mark OS and PostgreSQL as configured. All parameters:
 [collector](../bins/kronika-collector/README.md) and
 [web](../bins/kronika-web/README.md).
 
@@ -118,6 +120,15 @@ Open <http://127.0.0.1:8080/>. The same listener serves `/mcp`.
 [SSH forwarding](../INSTALL.md#4-start-web) provides access from another machine.
 
 ## Operations
+
+Settings from these files apply when systemd starts each service. To change an
+already-running service, edit its environment file and restart that service. For example, to
+add PostgreSQL collection and update the web source setting:
+
+```sh
+sudoedit /etc/kronika/collector.env /etc/kronika/web.env
+sudo systemctl restart kronika-collector kronika-web
+```
 
 | Operation | Command |
 | --- | --- |
