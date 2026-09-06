@@ -93,8 +93,7 @@ The role needs inherited `pg_monitor` membership, `CONNECT` to each collected
 database and the database-local extension permissions listed in
 [PostgreSQL role](bins/kronika-collector/README.md#postgresql-role).
 
-For local PostgreSQL sharing the collector's machine or container CPU limits,
-start without `KRONIKA_POSTGRES_EFFECTIVE_CPUS`:
+PostgreSQL on the collector machine:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -110,21 +109,9 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 | Transport | Native client uses `NoTls`; direct PostgreSQL and PgBouncer session pooling are supported. Metric sessions retain `SET` state. |
 | Log paths | Each `KRONIKA_PG_DSNS` entry discovers its current log through `pg_current_logfile()` even with `KRONIKA_PG_LOGS` unset. The server path must be readable on the collector host. `KRONIKA_PG_LOGS` adds local paths/globs; PgBouncer uses `KRONIKA_PGBOUNCER_DSNS` or `KRONIKA_PGBOUNCER_LOGS`. |
 
-For remote PostgreSQL or a different cgroup (a group of processes with shared
-resource limits), set the target PostgreSQL CPU capacity for its load indicator, Health. Example for a collector with 8 CPUs and PostgreSQL with 4 CPUs:
-
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
-  /usr/local/bin/kronika-collector
-```
-
-Leaving this value unset assumes PostgreSQL and collector share the same CPU
-limits; the connection address does not verify that condition. If capacity is
-unknown, PostgreSQL Health is null; collection still works. See
-[CPU capacity](bins/kronika-collector/README.md#postgresql-cpu-capacity) and
-[Health calculation](docs/metrics-time.md#health) for the calculation and limits.
+If PostgreSQL is on another machine, only its SQL data is read remotely;
+Linux data comes from the collector machine. See [remote PostgreSQL](bins/kronika-collector/README.md#remote-postgresql)
+for configuration and the meaning of process links and Health.
 
 [Service configuration](docs/services.md) stores DSNs and web credentials in
 root-readable environment files. [Collector reference](bins/kronika-collector/README.md)

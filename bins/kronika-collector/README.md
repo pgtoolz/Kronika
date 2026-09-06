@@ -115,6 +115,52 @@ capacity is unknown, Health is unavailable (`null`); a known capacity can be
 supplied explicitly. See the [launch examples](../../INSTALL.md#5-postgresql)
 and [Health formulas](../../docs/metrics-time.md#health).
 
+<a id="remote-postgresql"></a>
+### PostgreSQL on another machine
+
+Collector always records Linux data from its own machine. A remote
+`KRONIKA_PG_DSNS` supplies SQL metrics from the PostgreSQL server; it does not
+collect that server's Linux processes or resources.
+
+For a PostgreSQL server with 4 available CPUs, run collector with:
+
+```sh
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
+  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
+  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
+  /usr/local/bin/kronika-collector
+```
+
+Start web over the resulting recording in a second terminal:
+
+```sh
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
+  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_SOURCES=3 \
+  KRONIKA_WEB_USER=kronika \
+  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
+  /usr/local/bin/kronika-web
+```
+
+`KRONIKA_WEB_SOURCES=3` declares both recorded data families. Changing it to `2`
+changes catalog metadata only: it does not disable Linux collection, hide Linux
+rows or change process associations. Web reads the PostgreSQL CPU capacity from
+the recording; it has no separate capacity setting.
+
+The CPU override applies to PostgreSQL Health and capacity-based marks. Overall
+Health combines Linux measurements from the collector machine with PostgreSQL
+measurements from the remote server; it is not a score for one machine.
+
+PostgreSQL-to-Linux process links match numeric PIDs without a server identity.
+Those links and PostgreSQL process counts require a shared machine and PID
+namespace. With remote PostgreSQL, a matching local PID can describe an unrelated
+process; its details and Vacuum CPU/I/O values do not describe the remote backend.
+The CPU override and web source setting do not establish that association.
+
+For separate containers on one host, the PID namespace and CPU limits can also
+differ. The [CPU capacity reference](#postgresql-cpu-capacity) describes how
+recorded limits and an explicit value are used.
+
 <a id="postgresql-role"></a>
 ### PostgreSQL role
 

@@ -49,14 +49,11 @@ PostgreSQL, [подготовьте роль мониторинга](../INSTALL.
 KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
 ```
 
-Для PostgreSQL на той же машине или в контейнере с теми же
-ограничениями ресурсов не задавайте `KRONIKA_POSTGRES_EFFECTIVE_CPUS`. Для
-удалённого PostgreSQL или другой cgroup — группы процессов с общими
-ограничениями ресурсов — для расчёта Health укажите доступное серверу число CPU положительным
-целым числом, например `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`.
-[Как определяется доступное число CPU](metrics-time.ru.md#health).
-В `web.env` задайте `KRONIKA_WEB_SOURCES=3`, чтобы отметить Linux и PostgreSQL
-как настроенные источники. Полный список параметров:
+Для PostgreSQL на машине сборщика используйте строку подключения выше и
+задайте `KRONIKA_WEB_SOURCES=3` в `web.env`, чтобы объявить Linux и PostgreSQL.
+При удалённом сервере данные Linux по-прежнему относятся к машине сборщика;
+[настройка удалённого PostgreSQL](../bins/kronika-collector/README.ru.md#remote-postgresql)
+описывает число CPU, связи процессов и Health. Полный список параметров:
 [сборщик](../bins/kronika-collector/README.ru.md) и
 [веб-сервер](../bins/kronika-web/README.ru.md).
 

@@ -34,13 +34,12 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-### Linux and PostgreSQL
+<a id="linux-and-postgresql"></a>
+### PostgreSQL on the collector machine
 
 To collect PostgreSQL data, supply its connection string in `KRONIKA_PG_DSNS`
 when starting collector. Use a PostgreSQL account with the
 [monitoring privileges](INSTALL.md#5-postgresql).
-
-For local PostgreSQL that shares collector's CPU limits:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -48,24 +47,9 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-In this case, leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset: Kronika calculates
-CPU capacity from the recorded machine or container data.
-
-For PostgreSQL on another machine or with different CPU limits, use that
-server's CPU count for the PostgreSQL load indicator, Health. For example, a remote server
-with 4 CPUs:
-
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
-  /usr/local/bin/kronika-collector
-```
-
-Separate containers on the same host can have different CPU limits.
-The [CPU capacity reference](bins/kronika-collector/README.md#postgresql-cpu-capacity)
-explains automatic and explicit capacity. PostgreSQL collection itself does
-not require an explicit CPU count.
+For PostgreSQL on another machine, SQL data comes from that server, while
+Linux data still describes the collector machine. See [remote PostgreSQL
+configuration](bins/kronika-collector/README.md#remote-postgresql).
 
 ### Open the web interface
 

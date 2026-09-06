@@ -99,9 +99,7 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_current_logfile() TO kronika_monitor;
 каждой базе; они перечислены в разделе
 [«Роль PostgreSQL»](bins/kronika-collector/README.ru.md#postgresql-role).
 
-Если PostgreSQL использует те же ограничения CPU машины или
-контейнера, что и сборщик, запустите сборщик без
-`KRONIKA_POSTGRES_EFFECTIVE_CPUS`:
+PostgreSQL на машине сборщика:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -117,24 +115,9 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 | Подключение | Клиент работает без TLS (`NoTls`). Допустимо прямое подключение к PostgreSQL или PgBouncer в режиме session pooling: одно серверное соединение закрепляется за сессией и сохраняет настройки `SET`. |
 | Журналы | Каждая строка из `KRONIKA_PG_DSNS` автоматически находит текущий журнал через `pg_current_logfile()`, даже если `KRONIKA_PG_LOGS` не задана. Файл должен быть доступен для чтения на машине сборщика. `KRONIKA_PG_LOGS` добавляет локальные пути или шаблоны имён файлов. Для PgBouncer служат `KRONIKA_PGBOUNCER_DSNS` и `KRONIKA_PGBOUNCER_LOGS`. |
 
-Если PostgreSQL удалённый или работает в другой cgroup — группе процессов с
-общими ограничениями ресурсов, — для индикатора нагрузки PostgreSQL Health укажите доступное ему
-число CPU явно.
-Пример: у сборщика 8 CPU, а у PostgreSQL 4 CPU:
-
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
-  /usr/local/bin/kronika-collector
-```
-
-Без этого параметра расчёт предполагает одинаковые ограничения CPU у PostgreSQL
-и сборщика; адрес в строке подключения не подтверждает это условие. Если число
-CPU неизвестно, PostgreSQL Health не вычисляется (`null`), но сбор данных
-продолжается. Подробности и ограничения описаны в разделах
-[«Число CPU PostgreSQL»](bins/kronika-collector/README.ru.md#postgresql-cpu-capacity)
-и [«Расчёт Health»](docs/metrics-time.ru.md#health).
+Если PostgreSQL на другой машине, удалённо читаются только его SQL-данные;
+данные Linux поступают с машины сборщика. [Настройка удалённого PostgreSQL](bins/kronika-collector/README.ru.md#remote-postgresql)
+описывает параметры, связи процессов и смысл Health для такого размещения.
 
 [Настройка сервисов](docs/services.ru.md) показывает, как хранить строки
 подключения и пароль веб-сервера в файлах, доступных только root.

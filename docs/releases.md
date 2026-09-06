@@ -80,10 +80,6 @@ distribution environments with that kernel, not with every Linux kernel. Matrix 
 
 ## Development builds
 
-The [Release package](../.github/workflows/release-package.yml) workflow also
-provides CI archives. Actions artifact names identify the full source commit;
-these downloads expire after 14 days. The workflow does not publish releases.
-
 With an authenticated [GitHub CLI](https://cli.github.com/manual/gh_run_download),
 select a successful workflow run:
 

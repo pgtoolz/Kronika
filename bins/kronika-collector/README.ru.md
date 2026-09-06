@@ -116,6 +116,53 @@ Health и отметки активных сеансов используют ч
 задать явно. См. [примеры запуска](../../INSTALL.ru.md#5-postgresql) и
 [формулы Health](../../docs/metrics-time.ru.md#health).
 
+<a id="remote-postgresql"></a>
+### PostgreSQL на другой машине
+
+Сборщик всегда записывает данные Linux своей машины. Удалённый
+`KRONIKA_PG_DSNS` даёт SQL-метрики сервера PostgreSQL, но не собирает его
+процессы Linux и использование ресурсов.
+
+Для сервера PostgreSQL с 4 доступными CPU запустите сборщик так:
+
+```sh
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
+  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
+  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
+  /usr/local/bin/kronika-collector
+```
+
+Во втором терминале запустите веб-сервер с полученной записью:
+
+```sh
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
+  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_SOURCES=3 \
+  KRONIKA_WEB_USER=kronika \
+  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
+  /usr/local/bin/kronika-web
+```
+
+`KRONIKA_WEB_SOURCES=3` объявляет оба семейства записанных данных. Значение `2`
+меняет только сведения каталога: оно не отключает сбор Linux, не скрывает строки
+Linux и не меняет связи процессов. Число CPU PostgreSQL веб-сервер читает из
+записи; отдельной настройки этого числа у него нет.
+
+Явное число CPU используется для PostgreSQL Health и отметок, зависящих от
+доступных CPU. Общий Health объединяет измерения Linux машины сборщика с
+измерениями удалённого PostgreSQL; это не оценка одной машины.
+
+Связи PostgreSQL с процессами Linux сопоставляют числовые PID без идентификатора
+сервера. Эти связи и число процессов PostgreSQL требуют общей машины и общего
+пространства PID. При удалённом PostgreSQL совпавший локальный PID может относиться
+к другому процессу; его сведения и значения CPU/I/O в Vacuum не описывают
+удалённый серверный процесс PostgreSQL. Настройка числа CPU и признак источника
+у веб-сервера не устанавливают такую связь.
+
+У отдельных контейнеров на одном хосте также могут различаться пространство PID
+и ограничения CPU. [Справочник CPU](#postgresql-cpu-capacity) описывает использование
+записанных ограничений и явно заданного значения.
+
 <a id="postgresql-role"></a>
 ### Права PostgreSQL
 

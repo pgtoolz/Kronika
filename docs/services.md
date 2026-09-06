@@ -47,12 +47,11 @@ connection string to `collector.env`:
 KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
 ```
 
-Leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset when local PostgreSQL shares the
-collector's machine or container CPU limits. For remote PostgreSQL or a different
-cgroup, set the target server's positive whole CPU capacity for the Health
-calculation, for example
-`KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`. [Capacity calculation](metrics-time.md#health).
-Set `KRONIKA_WEB_SOURCES=3` in `web.env` to mark OS and PostgreSQL as configured. All parameters:
+For PostgreSQL on the collector machine, use the connection above and set
+`KRONIKA_WEB_SOURCES=3` in `web.env` to declare Linux and PostgreSQL.
+For a remote server, Linux still belongs to the collector machine; see
+[remote PostgreSQL configuration](../bins/kronika-collector/README.md#remote-postgresql)
+for CPU settings, process associations and Health. All parameters:
 [collector](../bins/kronika-collector/README.md) and
 [web](../bins/kronika-web/README.md).
 

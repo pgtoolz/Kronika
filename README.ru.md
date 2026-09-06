@@ -34,13 +34,12 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-### Linux и PostgreSQL
+<a id="linux-и-postgresql"></a>
+### PostgreSQL на машине сборщика
 
 Для сбора данных PostgreSQL укажите строку подключения в `KRONIKA_PG_DSNS`
 при запуске сборщика. Используйте учётную запись PostgreSQL с
 [правами для сбора данных](INSTALL.ru.md#5-postgresql).
-
-Для локального PostgreSQL с теми же ограничениями CPU, что и у сборщика:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -48,24 +47,9 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-В этом случае не задавайте `KRONIKA_POSTGRES_EFFECTIVE_CPUS`: Kronika определяет
-доступное число CPU по записанным данным машины или контейнера.
-
-Если PostgreSQL работает на другой машине или с другими ограничениями CPU,
-для индикатора нагрузки PostgreSQL Health укажите число CPU, доступных этому серверу. Пример для
-удалённого сервера с 4 CPU:
-
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
-  /usr/local/bin/kronika-collector
-```
-
-У отдельных контейнеров на одной машине могут быть разные ограничения CPU.
-[Справочник настройки CPU](bins/kronika-collector/README.ru.md#postgresql-cpu-capacity)
-описывает автоматическое определение и явное значение. Сам сбор метрик
-PostgreSQL не требует явно заданного числа CPU.
+Если PostgreSQL на другой машине, SQL-метрики поступают с того сервера,
+а данные Linux по-прежнему относятся к машине сборщика. См.
+[настройку удалённого PostgreSQL](bins/kronika-collector/README.ru.md#remote-postgresql).
 
 ### Открыть веб-интерфейс
 
