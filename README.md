@@ -23,15 +23,55 @@ Follow the [installation guide](INSTALL.md) to verify and install the archive,
 or [build from source](docs/build.md). The archive contains `kronika-collector`,
 `kronika-web`, `kronika-dump`, and `kronika-report`.
 
-After installation, start collection on the monitored host:
+Choose one collector command below: Linux only, or Linux with PostgreSQL.
+The examples save recordings in `/var/lib/kronika`; collector creates the
+directory if needed.
+
+### Linux only
 
 ```sh
-sudo install -d -m 0700 /var/lib/kronika
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-In a second terminal, start the web server over that data directory:
+### Linux and PostgreSQL
+
+To collect PostgreSQL data, supply its connection string in `KRONIKA_PG_DSNS`
+when starting collector. Use a PostgreSQL account with the
+[monitoring privileges](INSTALL.md#5-postgresql).
+
+For local PostgreSQL that shares collector's CPU limits:
+
+```sh
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
+  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
+  /usr/local/bin/kronika-collector
+```
+
+In this case, leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset: Kronika calculates
+CPU capacity from the recorded machine or container data.
+
+For PostgreSQL on another machine or with different CPU limits, use that
+server's CPU count for the Health calculation. For example, a remote server
+with 4 CPUs:
+
+```sh
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
+  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
+  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
+  /usr/local/bin/kronika-collector
+```
+
+Separate containers on the same host can have different CPU limits.
+The [CPU capacity reference](bins/kronika-collector/README.md#postgresql-cpu-capacity)
+explains automatic and explicit capacity. PostgreSQL collection itself does
+not require an explicit CPU count.
+
+### Open the web interface
+
+With your chosen collector running, start web in a second terminal over the
+same data directory. Use `KRONIKA_WEB_SOURCES=1` for Linux only, or change it
+to `3` for Linux and PostgreSQL:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -42,38 +82,10 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-web
 ```
 
-Open <http://127.0.0.1:8080/> and sign in. The web server reads new data while
-collection runs. `Ctrl+C` stops either process and retains the recording.
-[Systemd units](docs/services.md) run both programs as services.
-
-### Local and remote PostgreSQL
-
-After [creating a monitoring role](INSTALL.md#5-postgresql), stop the collector
-and set its connection string (DSN). When local PostgreSQL shares the collector’s CPU limits,
-leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset:
-the available CPU count is calculated from recorded data. A cgroup is a Linux
-group of processes with shared resource limits; its CPU-time quota and allowed
-set of CPUs are taken into account.
-
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  /usr/local/bin/kronika-collector
-```
-
-For remote PostgreSQL or PostgreSQL in a different cgroup, set the CPU capacity
-available to that PostgreSQL server. Example for PostgreSQL with 4 CPUs:
-
-```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 \
-  /usr/local/bin/kronika-collector
-```
-
-The connection address alone does not show whether the programs share resource
-limits. When the collector is configured for Linux and PostgreSQL, set
-`KRONIKA_WEB_SOURCES=3` when starting the web server.
+Open <http://127.0.0.1:8080/> and sign in. Web reads new data while collector
+runs. `Ctrl+C` stops either process; the recordings stay on disk.
+[Systemd setup](docs/services.md) covers running both programs as services and
+changing an existing service's configuration.
 
 ### Storage
 

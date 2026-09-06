@@ -94,6 +94,7 @@ DSN — строка подключения к базе данных: набор
 ## Сбор PostgreSQL
 
 <a id="ёмкость-cpu-postgresql"></a>
+<a id="postgresql-cpu-capacity"></a>
 ### Доступные CPU PostgreSQL
 
 Если локальный PostgreSQL использует те же ограничения CPU, что и сборщик,
