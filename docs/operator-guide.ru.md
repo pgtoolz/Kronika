@@ -23,7 +23,7 @@
 <a id="1-знаменатели-ресурсов-container-и-host"></a>
 ## 1. Ресурсы контейнера и машины: от чего считается процент
 
-[Host, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=host)
+[Host, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=host)
 
 ![Показатели контейнера, сетевого пространства имён и машины](images/host-scopes.png)
 
@@ -45,7 +45,7 @@
 
 ## 2. Вклад команды и отдельный PID
 
-[Processes CPU, 19:03:39 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788635019201666&lens=cpu)
+[Processes CPU, 19:03:39 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788635019201666&lens=cpu)
 
 ![Вклад команд за час и таблица CPU процессов](images/processes.png)
 
@@ -66,7 +66,7 @@
 <a id="3-интервал-statement-и-записанный-plan"></a>
 ## 3. Интервальные показатели запроса и записанный план
 
-[Statements, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.statements)
+[Statements, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.statements)
 
 1. Откройте **Activity → Execution time**. Примените `query_id:-665077864269413128` и выберите запрос заказов клиента.
 
@@ -94,7 +94,7 @@ where customer_id = $1 order by placed_at desc limit $2
 <a id="4-цепочка-blockers-и-состояние-backend"></a>
 ## 4. Цепочка блокировок и состояние сеанса
 
-[Locks, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.locks)
+[Locks, 19:00:33 UTC](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.locks)
 
 ![Исходный блокирующий процесс и два ожидающих](images/locks.png)
 

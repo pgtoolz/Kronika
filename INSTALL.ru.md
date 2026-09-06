@@ -14,7 +14,7 @@
 
 ## 1. Скачивание и распаковка
 
-В [Kronika v1.0.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.0)
+В [текущем релизе](https://github.com/pgtoolz/Kronika/releases/latest)
 доступны архивы и файлы контрольных сумм `.tar.gz.sha256`.
 Команда `uname -m` покажет архитектуру вашей машины:
 
@@ -28,8 +28,9 @@
 
 ```sh
 target=x86_64-unknown-linux-musl
-archive="kronika-1.0.0-$target.tar.gz"
-release_url=https://github.com/pgtoolz/Kronika/releases/download/v1.0.0
+version=1.0.1
+archive="kronika-$version-$target.tar.gz"
+release_url="https://github.com/pgtoolz/Kronika/releases/download/v$version"
 curl -fLO "$release_url/$archive"
 curl -fLO "$release_url/$archive.sha256"
 sha256sum --check "$archive.sha256"

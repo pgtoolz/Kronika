@@ -12,7 +12,7 @@ PostgreSQL collection needs a connection with monitoring permissions.
 
 ## 1. Download and extract
 
-[Kronika v1.0.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.0)
+[The latest release](https://github.com/pgtoolz/Kronika/releases/latest)
 provides archives and `.tar.gz.sha256` checksum files. Check your machine's
 architecture with `uname -m`:
 
@@ -26,8 +26,9 @@ Download, verify and extract the archive. For ARM64, change the first line to
 
 ```sh
 target=x86_64-unknown-linux-musl
-archive="kronika-1.0.0-$target.tar.gz"
-release_url=https://github.com/pgtoolz/Kronika/releases/download/v1.0.0
+version=1.0.1
+archive="kronika-$version-$target.tar.gz"
+release_url="https://github.com/pgtoolz/Kronika/releases/download/v$version"
 curl -fLO "$release_url/$archive"
 curl -fLO "$release_url/$archive.sha256"
 sha256sum --check "$archive.sha256"

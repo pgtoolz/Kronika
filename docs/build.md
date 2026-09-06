@@ -24,7 +24,7 @@ cd Kronika
 ```
 
 To build an exact revision, run `git checkout FULL_COMMIT` before `cargo build`;
-use `git checkout v1.0.0` for the published release source.
+use `git checkout v1.0.1` for the published release source.
 
 Choose the build command for your machine. On x86-64 Linux:
 

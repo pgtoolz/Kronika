@@ -10,15 +10,15 @@ Kronika сохраняет метрики Linux, статистику PostgreSQL
 ![Использование CPU и значения показателей процессов за записанный час](docs/images/processes.png)
 
 [Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/) ·
-[Скачать HTML-пример v1.0.0](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-v1.0.0.html).
+[Скачать HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-v1.0.1.html).
 
 Запись за 5 сентября 2026 года, 19:00–20:00 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.0.html?at=1788634833931637&view=host).
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=host).
 
 ## Установка и запуск
 
-Скачайте Kronika v1.0.0 для [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-x86_64-unknown-linux-musl.tar.gz)
-или [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.0/kronika-1.0.0-aarch64-unknown-linux-musl.tar.gz).
+Скачайте Kronika для [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz)
+или [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz).
 Проверьте и установите архив по [инструкции](INSTALL.ru.md)
 или [соберите из исходников](docs/build.ru.md). Архив содержит `kronika-collector`,
 `kronika-web`, `kronika-dump` и `kronika-report`.
