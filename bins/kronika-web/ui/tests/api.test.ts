@@ -1798,3 +1798,64 @@ test("PostgreSQL-only Health retains stored Overall without an OS component", as
   const rows = api.healthRows(points, [{ segmentId: "managed", postgresqlIntervalSeconds: 30, environment: null, osEnabled: false, postgresqlProcessesShared: false }])
   assert.deepEqual(rows.map((row) => row.values), [{ overall_health: 75, postgres_health: 75 }, { overall_health: null, postgres_health: null }])
 })
+
+
+test("cgroup Inspector history filters raw identity and keeps same-group rates across segments", async () => {
+  const registry = [
+    { typeId: "1201003", logicalName: "os_cgroup_cpu", identity: ["cgroup_path", "cgroup_identity"], columns: ["ts", "cgroup_path", "cgroup_identity", "usage_usec", "scope"] },
+    { typeId: "1201001", logicalName: "os_cgroup_cpu", identity: ["cgroup_path"], columns: ["ts", "cgroup_path", "usage_usec", "scope"] },
+  ]
+  const api = await importModule(
+    'export { loadSeries } from "../src/api.ts"; export { entityHistoryRequest, SYSTEM_ENTITIES } from "../src/system-view.tsx"; export { signInBasic } from "../src/session.ts"',
+    { plugins: [registryPlugin(registry)] },
+  )
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(null, { status: 204 })
+  try {
+    await api.signInBasic("test", "test", new AbortController().signal)
+    Reflect.deleteProperty(globalThis, "__KRONIKA_REAL_HOUR__")
+    const column = api.SYSTEM_ENTITIES.find((panel) => panel.section === "os_cgroup_cpu").columns.find((item) => item.field === "cgroup_used_cores")
+    for (const typeId of ["1201003", "1201001"]) {
+      const selected = { typeId, logicalName: "os_cgroup_cpu", segmentId: "second", ordinal: "0", timestamp: START + 2_000_000,
+        values: { cgroup_path: "/group", cgroup_identity: "directory:B", usage_usec: "2000000", scope: 4 } }
+      const request = api.entityHistoryRequest(selected, column)
+      assert.deepEqual(request.where, typeId === "1201003"
+        ? { cgroup_path: "/group", cgroup_identity: "directory:B" } : { cgroup_path: "/group" })
+      const samples = [
+        { segment: "old", timestamp: START, identity: "directory:A", usage: 100 },
+        { segment: "first", timestamp: START + 1_000_000, identity: "directory:B", usage: 1_000_000 },
+        { segment: "second", timestamp: START + 2_000_000, identity: "directory:B", usage: 2_000_000 },
+      ]
+      let requests = 0
+      globalThis.fetch = async (input) => {
+        requests += 1
+        const url = new URL(String(input), "http://kronika.invalid")
+        assert.equal(url.pathname, "/api/hour")
+        assert.equal(url.searchParams.get("section"), "os_cgroup_cpu")
+        assert.equal(url.searchParams.get("type_id"), typeId)
+        assert.deepEqual(url.searchParams.getAll("field"), request.fields)
+        const identity = url.searchParams.get("where.cgroup_identity")
+        assert.equal(identity, typeId === "1201003" ? "directory:B" : null)
+        return ndjson([
+          { record: "layout", layout: { type_id: typeId, logical_name: "os_cgroup_cpu", columns: ["cgroup_path", "cgroup_identity", "usage_usec"].map((name) => ({ name })) } },
+          ...samples.filter((row) => identity === null || row.identity === identity).flatMap((row) => [
+            { record: "series_segment", segment: { id: row.segment } },
+            { record: "row", type_id: typeId, ordinal: "0", timestamp: String(row.timestamp),
+              values: ["/group", row.identity, String(row.usage)] },
+          ]),
+        ])
+      }
+      const rows = await api.loadSeries(START, request.section, request.where, request.fields, new AbortController().signal, request.typeId)
+      assert.equal(requests, 1)
+      if (typeId === "1201003") {
+        assert.deepEqual(rows.map((row) => row.segmentId), ["first", "second"])
+        assert.deepEqual(column.points(rows).map((point) => point.value), [null, 1])
+      } else {
+        assert.equal(rows.length, 3, "legacy path-only history retains its pre-PR generic behavior")
+        assert.equal(column.points(rows).at(-1).value, 1)
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

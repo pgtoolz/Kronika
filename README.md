@@ -4,7 +4,8 @@
 
 Kronika records Linux metrics, PostgreSQL statistics, query plans and events
 from PostgreSQL/PgBouncer logs. The collector runs on the monitored Linux machine
-or connects to a remote PostgreSQL server and records only PostgreSQL data. The web interface shows what happened during a selected
+or records only PostgreSQL data from a local or remote server. The web interface
+shows what happened during a selected
 hour: resource use, individual processes and queries, locks and changes over time.
 
 ![Process CPU activity and the process snapshot for a recorded hour](docs/images/processes.png)
@@ -23,11 +24,14 @@ Follow the [installation guide](INSTALL.md) to verify and install the archive,
 or [build from source](docs/build.md). The archive contains `kronika-collector`,
 `kronika-web`, `kronika-dump`, and `kronika-report`.
 
-Choose a collector command below: Linux only, local PostgreSQL, or remote PostgreSQL.
+Choose a mode: Linux and optional PostgreSQL (`local`), or PostgreSQL only
+on a local or remote server (`postgresql`).
 The local examples save recordings in `/var/lib/kronika`; collector creates the
 directory if needed.
 
-### Linux only
+### Linux and optional PostgreSQL
+
+Without `KRONIKA_PG_DSNS`, the default `local` mode collects Linux only:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -35,10 +39,8 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```
 
 <a id="linux-and-postgresql"></a>
-### PostgreSQL on the collector machine
-
-To collect PostgreSQL data, supply its connection string in `KRONIKA_PG_DSNS`
-when starting collector. Use a PostgreSQL account with the
+For PostgreSQL on the collector machine, supply its connection string in
+`KRONIKA_PG_DSNS` when starting collector. Use a PostgreSQL account with the
 [monitoring privileges](INSTALL.md#5-postgresql).
 
 ```sh
@@ -50,16 +52,18 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 Leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset for this local machine: CPU capacity
 comes from its recorded CPU snapshots.
 
-### Managed or remote PostgreSQL
+### PostgreSQL only — local or remote
 
 PostgreSQL-only collection and TLS below require a [build from this source revision](docs/build.md); the published 1.0.1 archives do not include them.
 
-Run collector without Linux collection on any machine with network access to the
-server and write access to the recording directory:
+Run collector on a machine that can reach the server, with a recording directory
+in your home directory.
+
+PostgreSQL-only collection does not need sudo.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR=./kronika-data \
+  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
   KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
   /usr/local/bin/kronika-collector
 ```
@@ -68,14 +72,17 @@ TLS checks the server certificate and hostname. For a private CA, set
 `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. If the PostgreSQL CPU capacity is
 known, add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, replacing `4` with its CPU count.
 Without it, SQL metrics remain available; PostgreSQL Health is unknown.
-This mode needs no Linux root access. See [collector configuration](bins/kronika-collector/README.md#remote-postgresql).
+See [collector configuration](bins/kronika-collector/README.md#remote-postgresql).
 
 ### Open the web interface
 
 With your chosen collector running, start web in a second terminal over the
-same data directory. Use `KRONIKA_WEB_SOURCES=1` for Linux only, or change it
-to `3` for local Linux and PostgreSQL, or `2` for PostgreSQL-only. For the
-remote example above, use `KRONIKA_STORAGE_DIR=./kronika-data` without `sudo`:
+same data directory.
+
+#### For `local` mode
+
+Use `KRONIKA_WEB_SOURCES=1` for Linux only, as below; change `1` to `3`
+when also collecting PostgreSQL:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -86,13 +93,13 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-web
 ```
 
-### PostgreSQL-only web server
+#### For `postgresql` mode
 
 ```sh
-KRONIKA_STORAGE_DIR=./kronika-data \
+KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
   KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
-  KRONIKA_WEB_AUTH=required \
-  KRONIKA_WEB_USER=demo KRONIKA_WEB_PASSWORD=replace-with-password \
+  KRONIKA_WEB_USER=kronika \
+  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 

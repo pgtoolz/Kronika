@@ -18,8 +18,8 @@ EXAMPLES
       KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
       kronika-collector
 
-  Managed or remote PostgreSQL, without local Linux collection:
-    KRONIKA_COLLECTOR_MODE=postgresql KRONIKA_STORAGE_DIR=./recording \
+  PostgreSQL only, local or remote; no sudo:
+    KRONIKA_COLLECTOR_MODE=postgresql KRONIKA_STORAGE_DIR=$HOME/kronika-data \
       KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
       kronika-collector
 
@@ -33,8 +33,8 @@ REQUIRED ENVIRONMENT
 OPTIONAL COLLECTION MODE
   KRONIKA_COLLECTOR_MODE   default local; local or postgresql
       local: Linux metrics and optional PostgreSQL on the recorded machine.
-      postgresql: PostgreSQL only; requires KRONIKA_PG_DSNS. No local Linux,
-      process, cgroup, or host identity reads. No root access required.
+      postgresql: PostgreSQL only, local or remote; requires KRONIKA_PG_DSNS.
+      No local Linux, process, cgroup, or host identity reads. No root required.
       PgBouncer log settings are not accepted in postgresql mode.
 
 OPTIONAL POSTGRESQL AND LOG ENVIRONMENT (all unset by default)
@@ -113,7 +113,7 @@ OPTIONAL COLLECTION INTERVALS (nonnegative whole numbers of seconds)
   KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S default 30; process-to-cgroup v2 mappings
   KRONIKA_LOG_INTERVAL_S              default 10; configured PostgreSQL/PgBouncer logs
   KRONIKA_PG_INTERVAL_S               default 30; PostgreSQL metrics and settings
-  KRONIKA_PG_RELATIONS_INTERVAL_S     default 300; relations and database/extension discovery
+  KRONIKA_PG_RELATIONS_INTERVAL_S     default 300; tables and indexes
 
 OPTIONAL LOGGING AND MOUNT PATHS
   KRONIKA_LOG_LEVEL   default info; error, warn (or warning), info, debug, trace

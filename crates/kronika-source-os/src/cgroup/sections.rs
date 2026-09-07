@@ -1,36 +1,13 @@
 //! Conversion to registry section rows.
 
-use kronika_registry::os_cgroup_context::{OsCgroupContext, OsCgroupContextV2};
+use kronika_registry::os_cgroup_context::OsCgroupContextV2;
 use kronika_registry::os_cgroup_cpu::{OsCgroupCpu, OsCgroupCpuV3};
 use kronika_registry::os_cgroup_io::{OsCgroupIo, OsCgroupIoV2};
 use kronika_registry::os_cgroup_memory::{OsCgroupMemory, OsCgroupMemoryV3};
 use kronika_registry::os_cgroup_pids::OsCgroupPids;
 use kronika_registry::{StrId, Ts};
 
-use super::model::{CgroupContextRow, CgroupCpuRow, CgroupIoRow, CgroupMemoryRow, CgroupPidsRow};
-
-/// Convert the collector's cgroup context to the registry row.
-#[must_use]
-pub const fn to_context_section(
-    row: &CgroupContextRow,
-    scope: u8,
-    cpu_path: Option<StrId>,
-    memory_path: Option<StrId>,
-    io_path: Option<StrId>,
-) -> OsCgroupContext {
-    OsCgroupContext {
-        ts: Ts(row.ts),
-        cgroup_version: row.cgroup_version,
-        cpu_path,
-        memory_path,
-        io_path,
-        cpuset_cpus: row.cpuset_cpus,
-        effective_cpu_quota_usec: row.effective_cpu_quota_usec,
-        effective_cpu_period_usec: row.effective_cpu_period_usec,
-        effective_memory_max: row.effective_memory_max,
-        scope,
-    }
-}
+use super::model::{CgroupCpuRow, CgroupIoRow, CgroupMemoryRow, CgroupPidsRow};
 
 /// Convert selected ancestors to the new recorded context without changing V1.
 #[must_use]

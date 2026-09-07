@@ -1,10 +1,9 @@
 //! Parse and collect cgroup v2 metrics.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::io;
 
 use crate::proc::pressure::{PsiRow, parse_pressure_at};
-use crate::proc::stat::ParseError;
 use crate::{ProcFs, SysFs};
 
 mod model;
@@ -24,8 +23,7 @@ pub use model::{
 pub use parse::{parse_cpu_max, parse_cpu_stat, parse_io_stat};
 pub use sections::{
     to_ancestor_context_section, to_ancestor_cpu_section, to_ancestor_io_section,
-    to_ancestor_memory_section, to_context_section, to_cpu_section, to_io_section,
-    to_memory_section, to_pids_section,
+    to_ancestor_memory_section, to_cpu_section, to_io_section, to_memory_section, to_pids_section,
 };
 
 use parse::{
@@ -143,173 +141,6 @@ impl WorkloadMemberships {
     }
 }
 
-/// Read PSI from the collector process's exact unified cgroup v2 membership.
-///
-/// Cgroup v1 and systems without a unified hierarchy return no rows. Missing
-/// resource files omit only those resources. Host pressure is never read here.
-///
-/// # Errors
-/// Returns an error when cgroup v2 is present but the exact membership cannot
-/// be read, is invalid or ambiguous, a present pressure file cannot be read,
-/// or a present pressure value cannot be parsed.
-pub fn collect_pressure(procfs: &ProcFs, sys: &SysFs, ts: i64) -> Result<Vec<PsiRow>, ParseError> {
-    if !is_v2(sys) {
-        return Ok(Vec::new());
-    }
-
-    let membership = procfs
-        .read_raw("self/cgroup")
-        .map_err(|err| ParseError(format!("self/cgroup: {err}")))?;
-    let path = parse_unified_cgroup_path(&membership).ok_or_else(|| {
-        ParseError("self/cgroup: no single valid unified cgroup membership".to_owned())
-    })?;
-    let cpu = read_optional_pressure(sys, path, "cpu.pressure")?;
-    let memory = read_optional_pressure(sys, path, "memory.pressure")?;
-    let io = read_optional_pressure(sys, path, "io.pressure")?;
-
-    parse_pressure_at(
-        cpu.as_deref(),
-        memory.as_deref(),
-        io.as_deref(),
-        ts,
-        path,
-        ["cpu.pressure", "memory.pressure", "io.pressure"],
-    )
-    .map_err(|err| ParseError(format!("cgroup v2: {err}")))
-}
-
-/// Block devices charged by the collector's own cgroup v2 `io.stat`.
-///
-/// Cgroup v1 returns no devices.
-///
-/// # Errors
-/// Returns the membership or `io.stat` read error, or an invalid membership.
-pub fn charged_devices(procfs: &ProcFs, sys: &SysFs) -> io::Result<Vec<(i32, i32)>> {
-    if !is_v2(sys) {
-        return Ok(Vec::new());
-    }
-    let membership = procfs
-        .read_raw("self/cgroup")
-        .map_err(|err| io::Error::new(err.kind(), format!("self/cgroup: {err}")))?;
-    let path = parse_unified_cgroup_path(&membership).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "self/cgroup: no single valid unified cgroup membership",
-        )
-    })?;
-    let relative = rel(path, "io.stat");
-    let content = sys
-        .read(&relative)
-        .map_err(|err| io::Error::new(err.kind(), format!("{relative}: {err}")))?;
-    Ok(parse_io_stat(&content, 0, path)
-        .iter()
-        .filter_map(|row| {
-            Some((
-                i32::try_from(row.major).ok()?,
-                i32::try_from(row.minor).ok()?,
-            ))
-        })
-        .collect())
-}
-
-fn read_optional_pressure(
-    sys: &SysFs,
-    path: &str,
-    file: &str,
-) -> Result<Option<String>, ParseError> {
-    let relative = rel(path, file);
-    match sys.read(&relative) {
-        Ok(content) => Ok(Some(content)),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(ParseError(format!("{relative}: {err}"))),
-    }
-}
-
-/// Collect the process's exact cgroup paths, effective cpuset, and capacity.
-///
-/// Cpuset comes only from the exact effective file. Hierarchical capacity stays
-/// absent unless the applicable controller path can be validated coherently.
-///
-/// # Errors
-/// Returns the procfs read error when `self/cgroup` is unavailable.
-pub fn collect_context(procfs: &ProcFs, sys: &SysFs, ts: i64) -> io::Result<CgroupContextRow> {
-    let content = procfs.read_raw("self/cgroup")?;
-    let unified = parse_unified_cgroup_path(&content);
-    let unified_v2 = is_v2(sys);
-    let has_unified = unified.is_some();
-
-    if unified_v2 && has_unified {
-        let path = unified.map(str::to_owned);
-        let cpuset_cpus = path.as_deref().and_then(|path| {
-            sys.read(&rel(path, "cpuset.cpus.effective"))
-                .ok()
-                .and_then(|content| parse_cpuset_count(&content))
-        });
-        let cpu_path = path.clone().filter(|path| usable_cpu_v2(sys, path));
-        let memory_path = path.clone().filter(|path| usable_memory_v2(sys, path));
-        let (effective_cpu_quota_usec, effective_cpu_period_usec) = cpu_path
-            .as_deref()
-            .and_then(|path| effective_cpu_v2(sys, path))
-            .map_or((None, None), |(quota, period)| (Some(quota), Some(period)));
-        let effective_memory_max = memory_path
-            .as_deref()
-            .and_then(|path| effective_memory_v2(sys, path));
-        return Ok(CgroupContextRow {
-            ts,
-            cgroup_version: 2,
-            cpu_path,
-            memory_path,
-            io_path: path.filter(|path| usable_io_v2(sys, path)),
-            cpuset_cpus,
-            effective_cpu_quota_usec,
-            effective_cpu_period_usec,
-            effective_memory_max,
-        });
-    }
-
-    Ok(CgroupContextRow {
-        ts,
-        ..CgroupContextRow::default()
-    })
-}
-
-fn usable_cpu_v2(sys: &SysFs, path: &str) -> bool {
-    sys.read(&rel(path, "cpu.stat")).is_ok_and(|content| {
-        has_numeric_keys(&content, &["usage_usec", "user_usec", "system_usec"])
-    })
-}
-
-fn usable_memory_v2(sys: &SysFs, path: &str) -> bool {
-    sys.read(&rel(path, "memory.current"))
-        .is_ok_and(|content| parse_i64(&content).is_some())
-        && sys
-            .read(&rel(path, "memory.stat"))
-            .is_ok_and(|content| has_numeric_keys(&content, &["anon", "file", "kernel", "slab"]))
-}
-
-fn usable_io_v2(sys: &SysFs, path: &str) -> bool {
-    sys.read(&rel(path, "io.stat")).is_ok_and(|content| {
-        parse_io_stat_bounded(&content, 0, path, MAX_CGROUP_IO_ROWS)
-            .is_some_and(|rows| !rows.is_empty())
-    })
-}
-
-fn numeric_keys(content: &str) -> BTreeSet<&str> {
-    content
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let key = fields.next()?;
-            fields.next()?.parse::<i64>().ok().map(|_value| key)
-        })
-        .collect()
-}
-
-fn has_numeric_keys(content: &str, required: &[&str]) -> bool {
-    let keys = numeric_keys(content);
-    required.iter().all(|key| keys.contains(key))
-}
-
 pub(crate) fn parse_unified_cgroup_path(content: &str) -> Option<&str> {
     let mut path = None;
     let mut unified_seen = false;
@@ -374,28 +205,6 @@ fn parse_cpuset_count(content: &str) -> Option<i64> {
     (count != 0).then(|| i64::try_from(count).ok()).flatten()
 }
 
-fn effective_cpu_v2(sys: &SysFs, path: &str) -> Option<(i64, i64)> {
-    let mut effective = None;
-    let mut leaf_period = None;
-    for (index, ancestor) in hierarchy_paths(path)?.into_iter().enumerate() {
-        let content = match sys.read(&rel(&ancestor, "cpu.max")) {
-            Ok(content) => content,
-            Err(err) if index == 0 && path != "/" && err.kind() == io::ErrorKind::NotFound => {
-                continue;
-            }
-            Err(_err) => return None,
-        };
-        let value = parse_cpu_max_strict(&content)?;
-        leaf_period = Some(match value {
-            CpuQuota::Unlimited { period_usec } | CpuQuota::Limited { period_usec, .. } => {
-                period_usec
-            }
-        });
-        update_effective_cpu(&mut effective, value);
-    }
-    effective.or_else(|| leaf_period.map(|period| (-1, period)))
-}
-
 fn update_effective_cpu(effective: &mut Option<(i64, i64)>, candidate: CpuQuota) {
     let CpuQuota::Limited {
         quota_usec,
@@ -432,23 +241,6 @@ fn parse_cpu_max_strict(content: &str) -> Option<CpuQuota> {
             period_usec,
         })
     }
-}
-
-fn effective_memory_v2(sys: &SysFs, path: &str) -> Option<i64> {
-    let mut effective = None;
-    for (index, ancestor) in hierarchy_paths(path)?.into_iter().enumerate() {
-        let content = match sys.read(&rel(&ancestor, "memory.max")) {
-            Ok(content) => content,
-            Err(err) if index == 0 && path != "/" && err.kind() == io::ErrorKind::NotFound => {
-                continue;
-            }
-            Err(_err) => return None,
-        };
-        if let MemoryLimit::Limited(limit) = parse_memory_max_strict(&content)? {
-            effective = Some(effective.map_or(limit, |current: i64| current.min(limit)));
-        }
-    }
-    effective
 }
 
 fn parse_memory_max_strict(content: &str) -> Option<MemoryLimit> {
@@ -497,45 +289,7 @@ fn hierarchy_paths(path: &str) -> Option<Vec<String>> {
     Some(paths)
 }
 
-/// Collect cgroup v2 rows from `KRONIKA_SYS_ROOT/fs/cgroup`.
-#[must_use]
-pub fn collect(sys: &SysFs, ts: i64) -> CgroupCollection {
-    if is_v2(sys) {
-        collect_v2(sys, ts)
-    } else {
-        CgroupCollection::default()
-    }
-}
-
-/// Collect bounded metrics for cgroups that contain at least one live process.
-///
-/// Membership comes from numeric `/proc/<pid>/cgroup` files. It is direct: no
-/// cgroup hierarchy traversal or recursive attribution is performed. Candidate
-/// overflow rejects the complete workload tick. I/O row overflow rejects only
-/// the I/O section so independently complete CPU, memory, and task rows remain.
-///
-/// # Errors
-/// Returns the procfs directory error or a hard candidate/path ceiling error.
-pub fn collect_workloads(procfs: &ProcFs, sys: &SysFs, ts: i64) -> io::Result<CgroupCollection> {
-    let mut memberships = WorkloadMemberships::new(sys);
-    for pid in procfs.pid_dirs()? {
-        let Ok(content) = procfs.read_raw(&format!("{pid}/cgroup")) else {
-            // Processes can exit between enumerating /proc and reading their
-            // membership. The remaining live snapshot is still coherent.
-            continue;
-        };
-        memberships.observe(&content);
-    }
-    if let Ok(content) = procfs.read_raw("self/cgroup") {
-        memberships.observe(&content);
-    }
-    memberships.collect(sys, ts)
-}
-
 /// Collect bounded metrics from already-read direct process memberships.
-///
-/// This is the production entry point used to reuse the process collector's
-/// `/proc/<pid>/cgroup` reads.
 ///
 /// # Errors
 /// Returns a hard candidate/path ceiling error.
@@ -559,10 +313,6 @@ fn is_v2(sys: &SysFs) -> bool {
     sys.read(&rel("/", "cgroup.controllers")).is_ok()
         || sys.read(&rel("/", "memory.current")).is_ok()
         || sys.read(&rel("/", "io.stat")).is_ok()
-}
-
-fn collect_v2(sys: &SysFs, ts: i64) -> CgroupCollection {
-    collect_v2_paths(sys, ts, discover_v2_paths(sys))
 }
 
 fn collect_v2_paths(
@@ -643,16 +393,6 @@ fn read_memory_v2(sys: &SysFs, ts: i64, path: &str) -> Option<CgroupMemoryRow> {
     Some(row)
 }
 
-/// Read one already validated cgroup memory path without scanning cgroupfs.
-#[must_use]
-pub fn read_memory_path(sys: &SysFs, ts: i64, path: &str) -> Option<(CgroupMemoryRow, bool)> {
-    let limit = sys.read(&rel(path, "memory.max")).ok()?;
-    if limit != "max" && parse_i64(&limit).is_none() {
-        return None;
-    }
-    Some((read_memory_v2(sys, ts, path)?, limit == "max"))
-}
-
 fn read_pids_v2(sys: &SysFs, ts: i64, path: &str) -> Option<CgroupPidsRow> {
     let current = sys.read(&rel(path, "pids.current")).ok()?;
     let max = sys.read(&rel(path, "pids.max")).ok()?;
@@ -673,44 +413,6 @@ fn parse_pids_values(current: &str, max: &str) -> Option<(i64, Option<i64>)> {
         Some(parse_i64(max).filter(|value| *value >= 0)?)
     };
     Some((current, max))
-}
-
-fn discover_v2_paths(sys: &SysFs) -> Vec<String> {
-    discover_tree(sys, CGROUP_ROOT, "/")
-}
-
-fn discover_tree(sys: &SysFs, base_rel: &str, root_path: &str) -> Vec<String> {
-    let Ok(root_children) = sys.read_dir(base_rel) else {
-        return Vec::new();
-    };
-
-    let mut out = vec![normalize_path(root_path, "")];
-    let mut queue: VecDeque<String> = root_children
-        .into_iter()
-        .filter(|entry| entry.is_dir)
-        .map(|entry| entry.name)
-        .collect();
-    while let Some(relative) = queue.pop_front() {
-        out.push(normalize_path(root_path, &relative));
-        let rel = format!("{base_rel}/{relative}");
-        let Ok(children) = sys.read_dir(&rel) else {
-            continue;
-        };
-        for child in children.into_iter().filter(|entry| entry.is_dir) {
-            queue.push_back(format!("{relative}/{}", child.name));
-        }
-    }
-    out
-}
-
-fn normalize_path(root_path: &str, relative: &str) -> String {
-    if relative.is_empty() {
-        root_path.to_owned()
-    } else if root_path == "/" {
-        format!("/{relative}")
-    } else {
-        format!("{root_path}/{relative}")
-    }
 }
 
 fn rel(path: &str, file: &str) -> String {

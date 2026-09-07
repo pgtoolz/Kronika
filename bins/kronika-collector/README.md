@@ -53,7 +53,8 @@ PostgreSQL. PostgreSQL must share the recorded machine and PID namespace for
 process links. In containers, the collected cgroup can include other containers;
 it does not establish shared PostgreSQL processes or CPU capacity.
 
-`KRONIKA_COLLECTOR_MODE=postgresql` records only PostgreSQL. It does not read
+`KRONIKA_COLLECTOR_MODE=postgresql` records only PostgreSQL from a local or
+remote server. It does not read
 procfs/sysfs, host identity, Linux processes or cgroups. `KRONIKA_PG_DSNS` is
 required. Root access is unnecessary; the process needs network and storage
 access. Explicit `KRONIKA_PG_LOGS` paths are optional. PgBouncer log settings are
@@ -77,7 +78,7 @@ CPU, memory or I/O resources.
 | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 | Process-to-cgroup v2 mappings. |
 | `KRONIKA_LOG_INTERVAL_S` | 10 | Configured PostgreSQL/PgBouncer logs. |
 | `KRONIKA_PG_INTERVAL_S` | 30 | PostgreSQL metrics and settings. |
-| `KRONIKA_PG_RELATIONS_INTERVAL_S` | 300 | Tables and indexes; finding databases and extensions. |
+| `KRONIKA_PG_RELATIONS_INTERVAL_S` | 300 | Tables and indexes. |
 
 ### Connections and logs
 
@@ -123,11 +124,13 @@ continues; PostgreSQL Health and capacity-dependent marks are unknown. Web
 reads the recorded value and has no separate CPU setting.
 
 <a id="remote-postgresql"></a>
-### Managed or remote PostgreSQL
+### PostgreSQL only — local or remote
+
+PostgreSQL-only collection does not need sudo.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR=./kronika-data \
+  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
   KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
   /usr/local/bin/kronika-collector
 ```
@@ -139,8 +142,7 @@ Use `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem` for a private CA. The DSN accepts
 including reconnects and query cancellation. `verify-full` is not accepted DSN syntax.
 
 Start web over the same recording with `KRONIKA_WEB_SOURCES=2`. This declares
-PostgreSQL in the catalog; the collector mode controls acquisition. Recorded
-PostgreSQL-only data has no Linux hostname or OS Health penalty. Overall equals
+PostgreSQL in the catalog; the collector mode controls acquisition. Overall equals
 PostgreSQL Health, or is unknown when PostgreSQL Health cannot be calculated.
 
 Process links in Activity, Vacuum and Processes require recorded shared-process
@@ -175,7 +177,7 @@ role. The explicit `pg_current_logfile()` grant is needed on PostgreSQL 10–16.
 
 | Item | Contract |
 | --- | --- |
-| Database sessions | One reused connection per connectable database, replaced after at most one hour while healthy. The database list is refreshed at `KRONIKA_PG_RELATIONS_INTERVAL_S`. |
+| Database sessions | One reused connection per connectable database, replaced after at most one hour while healthy. The database and extension list is normally refreshed every five minutes, on a PostgreSQL or tables/indexes collection pass. Forced collection and failed discovery can cause earlier retries. |
 | Extension inventory | One query per database on each discovery pass; the schema and available functions are remembered. One usable installation of each extension is selected. |
 | `pg_stat_statements` | Supports extension `1.5+` in the `1.x` series; PostgreSQL 14+ requires `1.9+`. The newest compatible set of fields wins, then current database, then database name. |
 | `pg_store_plans` | OSSC and Datasentinel return different fields through a function with no arguments; the vadv boolean interface requires its four-key plan lookup function and plan-to-text converter. Implementation selection uses current database, then database name. |

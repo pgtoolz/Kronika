@@ -46,7 +46,7 @@ use segments::{
     AppendWindowError, SegmentState, append_window_and_maybe_close, close_open_segment,
     encode_window, open_collector_journal,
 };
-use service_sections::{collect_instance, push_instance_metadata};
+use service_sections::push_instance_metadata;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -547,18 +547,9 @@ fn buffer_pg_batch(
     let mut buffers = SectionBuffers::new();
     let mut pending_users = Vec::new();
     if segment.is_empty() {
-        let facts = config
-            .mode
-            .collect_os()
-            .then(collect_instance)
-            .transpose()
-            .map_err(|err| {
-                log_buffer_failure(&err);
-            })?;
         push_instance_metadata(
             &mut buffers,
             segment.interner_mut(),
-            facts.as_ref(),
             in_container,
             config,
             ts,
@@ -840,27 +831,17 @@ fn buffer_window(
     process_io: &mut Option<ProcessIoCredentials>,
 ) -> std::result::Result<Option<BufferedWindow>, BufferFailure> {
     let mut buffers = SectionBuffers::new();
-    if segment.is_empty() {
-        let facts = config
-            .mode
-            .collect_os()
-            .then(collect_instance)
-            .transpose()
-            .map_err(|err| {
-                log_buffer_failure(&err);
-                BufferFailure
-            })?;
-        if let Err(err) = push_instance_metadata(
+    if segment.is_empty()
+        && let Err(err) = push_instance_metadata(
             &mut buffers,
             segment.interner_mut(),
-            facts.as_ref(),
             in_container,
             config,
             ts,
-        ) {
-            log_buffer_failure(&err);
-            return Err(BufferFailure);
-        }
+        )
+    {
+        log_buffer_failure(&err);
+        return Err(BufferFailure);
     }
 
     let os = process_io.as_mut().map(|process_io| {

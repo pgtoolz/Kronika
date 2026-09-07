@@ -37,7 +37,9 @@ struct Counters {
     cg_cpu_usage: BTreeMap<i64, i64>,
     cg_cpu_throttled: BTreeMap<i64, i64>,
     cg_cpu_capacity: BTreeMap<i64, Option<f64>>,
-    cg_boundaries: BTreeSet<i64>,
+    cg_cpu_boundaries: BTreeSet<i64>,
+    cg_memory_boundaries: BTreeSet<i64>,
+    cg_io_boundaries: BTreeSet<i64>,
     cg_stall_cpu: BTreeMap<i64, i64>,
     cg_stall_memory: BTreeMap<i64, i64>,
     cg_stall_io: BTreeMap<i64, i64>,
@@ -71,8 +73,14 @@ impl Counters {
         retain_latest(&mut self.cg_cpu_usage);
         retain_latest(&mut self.cg_cpu_throttled);
         retain_latest(&mut self.cg_cpu_capacity);
-        if let Some(last) = self.cg_boundaries.last().copied() {
-            self.cg_boundaries.retain(|ts| *ts == last);
+        for boundaries in [
+            &mut self.cg_cpu_boundaries,
+            &mut self.cg_memory_boundaries,
+            &mut self.cg_io_boundaries,
+        ] {
+            if let Some(last) = boundaries.last().copied() {
+                boundaries.retain(|ts| *ts == last);
+            }
         }
         retain_latest(&mut self.cg_stall_cpu);
         retain_latest(&mut self.cg_stall_memory);
@@ -102,7 +110,7 @@ fn retain_latest<T>(samples: &mut BTreeMap<i64, T>) {
 pub(super) struct State {
     counters: Counters,
     emitted_before: i64,
-    cgroup_identity: Option<[Vec<u8>; 4]>,
+    cgroup_identity: Option<[Option<u64>; 4]>,
 }
 
 impl Default for State {
@@ -219,7 +227,7 @@ fn read_cgroup_context(
     type_id: u32,
     facts: &mut Facts,
     counters: &mut Counters,
-    previous_identity: &mut Option<[Vec<u8>; 4]>,
+    previous_identity: &mut Option<[Option<u64>; 4]>,
 ) -> Result<(), QueryError> {
     const FIELDS: [&str; 9] = [
         "ts",
@@ -272,15 +280,20 @@ fn read_cgroup_context(
     let ids = identities.values().flatten().flatten().copied().collect();
     let dictionary = segment.dictionary_for(&ids)?;
     for (ts, ids) in identities {
-        let identity = ids.map(|id| match id.and_then(|id| dictionary.resolve(id)) {
-            Some(Resolved::Str(bytes)) => bytes.to_vec(),
-            _ => Vec::new(),
-        });
-        if previous_identity
-            .as_ref()
-            .is_some_and(|before| *before != identity)
-        {
-            counters.cg_boundaries.insert(ts);
+        let identity = ids.map(|id| id.filter(|id| matches!(dictionary.resolve(*id), Some(Resolved::Str(bytes)) if !bytes.is_empty())));
+        if let Some(before) = previous_identity {
+            for (index, boundaries) in [
+                &mut counters.cg_cpu_boundaries,
+                &mut counters.cg_memory_boundaries,
+                &mut counters.cg_io_boundaries,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if before[index] != identity[index] {
+                    boundaries.insert(ts);
+                }
+            }
         }
         *previous_identity = Some(identity);
     }
@@ -892,7 +905,7 @@ fn points(counters: &Counters, ticks_per_second: i64, cpu_count: i64) -> Vec<Lan
 fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
     for (ts, cores) in group_rate(
         &counters.cg_cpu_usage,
-        &counters.cg_boundaries,
+        &counters.cg_cpu_boundaries,
         |value, seconds| value / 1_000_000.0 / seconds,
     ) {
         out.push(LanePoint {
@@ -917,13 +930,29 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
             });
         }
     }
-    for (key, stalls) in [
-        ("cg_cpu_throttle", &counters.cg_cpu_throttled),
-        ("cg_cpu_psi", &counters.cg_stall_cpu),
-        ("cg_mem_psi", &counters.cg_stall_memory),
-        ("cg_io_psi", &counters.cg_stall_io),
+    for (key, stalls, boundaries) in [
+        (
+            "cg_cpu_throttle",
+            &counters.cg_cpu_throttled,
+            &counters.cg_cpu_boundaries,
+        ),
+        (
+            "cg_cpu_psi",
+            &counters.cg_stall_cpu,
+            &counters.cg_cpu_boundaries,
+        ),
+        (
+            "cg_mem_psi",
+            &counters.cg_stall_memory,
+            &counters.cg_memory_boundaries,
+        ),
+        (
+            "cg_io_psi",
+            &counters.cg_stall_io,
+            &counters.cg_io_boundaries,
+        ),
     ] {
-        for (ts, value) in group_rate(stalls, &counters.cg_boundaries, |value, seconds| {
+        for (ts, value) in group_rate(stalls, boundaries, |value, seconds| {
             value / 1_000_000.0 / seconds * 100.0
         }) {
             out.push(LanePoint { key, ts, value });
@@ -933,7 +962,7 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         ("cg_io_read", &counters.cg_io_read),
         ("cg_io_write", &counters.cg_io_write),
     ] {
-        for (ts, value) in group_rate(stored, &counters.cg_boundaries, |value, seconds| {
+        for (ts, value) in group_rate(stored, &counters.cg_io_boundaries, |value, seconds| {
             value / seconds
         }) {
             out.push(LanePoint { key, ts, value });
@@ -943,7 +972,7 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         counters.cg_oom.iter().map(|(ts, value)| (*ts, *value)),
         counters.cg_oom.len(),
         |value, seconds| value / seconds,
-        Some(&counters.cg_boundaries),
+        Some(&counters.cg_memory_boundaries),
     ) {
         out.push(LanePoint {
             key: "cg_oom",

@@ -19,7 +19,7 @@ const INSTANCE_METADATA_TYPE_ID: u32 = 1_021_003;
 /// Returns an error naming the `/proc` file that could not be read. The
 /// identity is what makes a finished segment self-contained, so a failure here
 /// is not a degraded section.
-pub(crate) fn collect_instance() -> Result<OsInstanceFacts> {
+fn collect_instance() -> Result<OsInstanceFacts> {
     let started = Instant::now();
     log_collection_start(INSTANCE_METADATA_TYPE_ID, "procfs");
     match collect_os_instance_facts() {
@@ -42,16 +42,21 @@ pub(crate) fn collect_instance() -> Result<OsInstanceFacts> {
 ///
 /// # Errors
 ///
-/// Returns an error if a string cannot be interned or the section buffer is
-/// full.
+/// Returns an error if host facts cannot be read in local mode, a string cannot
+/// be interned, or the section buffer is full.
 pub(crate) fn push_instance_metadata(
     buffers: &mut SectionBuffers,
     interner: &mut Interner,
-    facts: Option<&OsInstanceFacts>,
     in_container: bool,
     config: &Config,
     ts: i64,
 ) -> Result<()> {
+    let facts = config
+        .mode
+        .collect_os()
+        .then(collect_instance)
+        .transpose()?;
+    let facts = facts.as_ref();
     let mut intern = |value: &str| -> Result<StrId> {
         interner
             .intern(value.as_bytes())

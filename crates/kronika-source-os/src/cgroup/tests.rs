@@ -1,6 +1,22 @@
 use super::*;
 use std::fmt::Write as _;
 
+fn collect_workloads(procfs: &ProcFs, sys: &SysFs, ts: i64) -> io::Result<CgroupCollection> {
+    let mut memberships = WorkloadMemberships::new(sys);
+    for pid in procfs.pid_dirs()? {
+        let Ok(content) = procfs.read_raw(&format!("{pid}/cgroup")) else {
+            // Processes can exit between enumerating /proc and reading their
+            // membership. The remaining live snapshot is still coherent.
+            continue;
+        };
+        memberships.observe(&content);
+    }
+    if let Ok(content) = procfs.read_raw("self/cgroup") {
+        memberships.observe(&content);
+    }
+    memberships.collect(sys, ts)
+}
+
 fn fixture_roots() -> (tempfile::TempDir, ProcFs, SysFs) {
     let dir = tempfile::tempdir().expect("tempdir");
     let proc_root = dir.path().join("proc");
@@ -23,6 +39,14 @@ fn fixture_cgroup_path(
 }
 
 fn prepare_v2_context(dir: &tempfile::TempDir, path: &str) {
+    std::fs::write(
+        dir.path().join("proc/self/mountinfo"),
+        format!(
+            "40 1 0:30 / {} rw - cgroup2 cgroup rw\n",
+            dir.path().join("sys/fs/cgroup").display()
+        ),
+    )
+    .expect("write mount binding");
     std::fs::write(dir.path().join("proc/self/cgroup"), format!("0::{path}\n"))
         .expect("write v2 membership");
     std::fs::write(
@@ -49,13 +73,6 @@ fn prepare_v2_context(dir: &tempfile::TempDir, path: &str) {
     )
     .expect("write v2 io stat");
     std::fs::write(leaf.join("cpuset.cpus.effective"), "0-1\n").expect("write v2 effective cpuset");
-}
-
-fn write_v2_capacity(dir: &tempfile::TempDir, path: &str, cpu_max: &str, memory_max: &str) {
-    let cgroup = fixture_cgroup_path(dir, "", path);
-    std::fs::create_dir_all(&cgroup).expect("mkdir v2 capacity cgroup");
-    std::fs::write(cgroup.join("cpu.max"), cpu_max).expect("write v2 cpu max");
-    std::fs::write(cgroup.join("memory.max"), memory_max).expect("write v2 memory max");
 }
 
 fn write_process_membership(dir: &tempfile::TempDir, pid: i32, content: &str) {
@@ -85,154 +102,6 @@ fn write_optional_file(path: &std::path::Path, content: Option<&str>) {
     }
 }
 
-const CPU_PRESSURE: &str = "some avg10=0.10 avg60=0.05 avg300=0.02 total=10000\n";
-const MEMORY_PRESSURE: &str = "some avg10=1.50 avg60=0.80 avg300=0.30 total=500000\n\
-full avg10=0.20 avg60=0.10 avg300=0.05 total=100000\n";
-const IO_PRESSURE: &str = "some avg10=0.50 avg60=0.25 avg300=0.10 total=200000\n\
-full avg10=0.05 avg60=0.02 avg300=0.01 total=20000\n";
-
-fn prepare_v2_pressure(dir: &tempfile::TempDir, path: &str) -> std::path::PathBuf {
-    std::fs::write(dir.path().join("proc/self/cgroup"), format!("0::{path}\n"))
-        .expect("write unified membership");
-    std::fs::write(
-        dir.path().join("sys/fs/cgroup/cgroup.controllers"),
-        "cpu memory io\n",
-    )
-    .expect("write unified marker");
-    let cgroup = fixture_cgroup_path(dir, "", path);
-    std::fs::create_dir_all(&cgroup).expect("mkdir pressure cgroup");
-    cgroup
-}
-
-#[test]
-fn pressure_reads_only_the_exact_unified_v2_membership() {
-    let (dir, procfs, sys) = fixture_roots();
-    let cgroup = prepare_v2_pressure(&dir, "/team/workload");
-    std::fs::write(cgroup.join("cpu.pressure"), CPU_PRESSURE).expect("write CPU pressure");
-    std::fs::write(cgroup.join("memory.pressure"), MEMORY_PRESSURE).expect("write memory pressure");
-    std::fs::write(cgroup.join("io.pressure"), IO_PRESSURE).expect("write I/O pressure");
-    let other = fixture_cgroup_path(&dir, "", "/team/other");
-    std::fs::create_dir_all(&other).expect("mkdir other cgroup");
-    std::fs::write(
-        other.join("cpu.pressure"),
-        "some avg10=9.00 avg60=9.00 avg300=9.00 total=90000\n",
-    )
-    .expect("write other pressure");
-
-    let rows = collect_pressure(&procfs, &sys, 77).expect("collect cgroup pressure");
-
-    assert_eq!(
-        rows.iter()
-            .map(|row| (row.resource, row.ts, row.some_total))
-            .collect::<Vec<_>>(),
-        [(0, 77, 10_000), (1, 77, 500_000), (2, 77, 200_000)]
-    );
-}
-
-#[test]
-fn pressure_accepts_the_unified_root_membership() {
-    let (dir, procfs, sys) = fixture_roots();
-    let cgroup = prepare_v2_pressure(&dir, "/");
-    std::fs::write(cgroup.join("cpu.pressure"), CPU_PRESSURE).expect("write root pressure");
-
-    let rows = collect_pressure(&procfs, &sys, 88).expect("collect root pressure");
-
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].some_total, 10_000);
-}
-
-#[test]
-fn pressure_rejects_a_membership_path_that_leaves_its_root() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(
-        dir.path().join("sys/fs/cgroup/cgroup.controllers"),
-        "cpu memory io\n",
-    )
-    .expect("write unified marker");
-    std::fs::write(
-        dir.path().join("proc/self/cgroup"),
-        "0::/workload/../outside\n",
-    )
-    .expect("write unsafe membership");
-    let outside = fixture_cgroup_path(&dir, "", "/outside");
-    std::fs::create_dir_all(&outside).expect("mkdir outside cgroup");
-    std::fs::write(outside.join("cpu.pressure"), CPU_PRESSURE).expect("write outside pressure");
-
-    let error = collect_pressure(&procfs, &sys, 99).expect_err("reject unsafe membership");
-
-    assert!(error.to_string().contains("no single valid unified"));
-}
-
-#[test]
-fn pressure_rejects_ambiguous_unified_memberships() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(
-        dir.path().join("sys/fs/cgroup/cgroup.controllers"),
-        "cpu memory io\n",
-    )
-    .expect("write unified marker");
-    std::fs::write(
-        dir.path().join("proc/self/cgroup"),
-        "0::/first\n0::/second\n",
-    )
-    .expect("write ambiguous membership");
-
-    let error = collect_pressure(&procfs, &sys, 100).expect_err("reject ambiguous membership");
-
-    assert!(error.to_string().contains("no single valid unified"));
-}
-
-#[test]
-fn pressure_rejects_a_nonzero_unified_hierarchy_id() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(
-        dir.path().join("sys/fs/cgroup/cgroup.controllers"),
-        "cpu memory io\n",
-    )
-    .expect("write unified marker");
-    let cgroup = fixture_cgroup_path(&dir, "", "/workload");
-    std::fs::create_dir_all(&cgroup).expect("mkdir pressure cgroup");
-    std::fs::write(cgroup.join("cpu.pressure"), CPU_PRESSURE).expect("write CPU pressure");
-    std::fs::write(dir.path().join("proc/self/cgroup"), "7::/workload\n")
-        .expect("write invalid unified membership");
-
-    let error = collect_pressure(&procfs, &sys, 101).expect_err("reject hierarchy ID");
-
-    assert!(error.to_string().contains("no single valid unified"));
-}
-
-#[test]
-fn pressure_omits_a_missing_resource_and_rejects_a_malformed_one() {
-    let (dir, procfs, sys) = fixture_roots();
-    let cgroup = prepare_v2_pressure(&dir, "/workload");
-    std::fs::write(cgroup.join("cpu.pressure"), CPU_PRESSURE).expect("write CPU pressure");
-    std::fs::write(cgroup.join("io.pressure"), IO_PRESSURE).expect("write I/O pressure");
-
-    let rows = collect_pressure(&procfs, &sys, 100).expect("collect partial pressure");
-    assert_eq!(
-        rows.iter().map(|row| row.resource).collect::<Vec<_>>(),
-        [0, 2]
-    );
-
-    std::fs::write(cgroup.join("io.pressure"), "some total=invalid\n")
-        .expect("write malformed pressure");
-    assert!(collect_pressure(&procfs, &sys, 101).is_err());
-}
-
-#[test]
-fn pressure_omits_cgroup_v1_without_reading_host_pressure() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(dir.path().join("proc/self/cgroup"), "2:cpu:/workload\n")
-        .expect("write v1 membership");
-    std::fs::create_dir_all(dir.path().join("proc/pressure")).expect("mkdir host pressure");
-    std::fs::write(dir.path().join("proc/pressure/cpu"), CPU_PRESSURE)
-        .expect("write host pressure");
-
-    let rows = collect_pressure(&procfs, &sys, 102).expect("collect unsupported cgroup pressure");
-
-    assert!(rows.is_empty());
-}
-
 fn collect_v2_pids_fixture(current: Option<&str>, max: Option<&str>) -> CgroupCollection {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().join("fs/cgroup");
@@ -242,7 +111,12 @@ fn collect_v2_pids_fixture(current: Option<&str>, max: Option<&str>) -> CgroupCo
     write_optional_file(&workload.join("pids.current"), current);
     write_optional_file(&workload.join("pids.max"), max);
 
-    collect(&SysFs::new(dir.path().to_path_buf()), 7)
+    let sys = SysFs::new(dir.path().to_path_buf());
+    let mut memberships = WorkloadMemberships::new(&sys);
+    memberships.observe("0::/workload\n");
+    memberships
+        .collect(&sys, 7)
+        .expect("collect direct workload")
 }
 
 #[test]
@@ -366,222 +240,7 @@ fn v2_pids_omits_rows_without_a_valid_max_value() {
 }
 
 #[test]
-fn context_v2_uses_the_unified_self_path_and_effective_cpuset() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(
-        dir.path().join("proc/self/cgroup"),
-        "0::/kubepods/pod-a/container-a\n",
-    )
-    .expect("write self cgroup");
-    let cgroup = dir.path().join("sys/fs/cgroup/kubepods/pod-a/container-a");
-    std::fs::create_dir_all(&cgroup).expect("mkdir unified cgroup");
-    std::fs::write(
-        dir.path().join("sys/fs/cgroup/cgroup.controllers"),
-        "cpu memory io cpuset\n",
-    )
-    .expect("write controllers");
-    std::fs::write(cgroup.join("cpuset.cpus.effective"), "0-2,5,8-9\n")
-        .expect("write effective cpuset");
-    std::fs::write(
-        cgroup.join("cpu.stat"),
-        "usage_usec 10\nuser_usec 6\nsystem_usec 4\n",
-    )
-    .expect("write cpu stat");
-    std::fs::write(cgroup.join("memory.current"), "4096\n").expect("write memory current");
-    std::fs::write(
-        cgroup.join("memory.stat"),
-        "anon 100\nfile 200\nkernel 50\nslab 20\n",
-    )
-    .expect("write memory stat");
-    std::fs::write(
-        cgroup.join("io.stat"),
-        "8:0 rbytes=1 wbytes=2 rios=3 wios=4\n",
-    )
-    .expect("write io stat");
-
-    let context = collect_context(&procfs, &sys, 99).expect("collect context");
-
-    assert_eq!(context.ts, 99);
-    assert_eq!(context.cgroup_version, 2);
-    assert_eq!(
-        context.cpu_path.as_deref(),
-        Some("/kubepods/pod-a/container-a")
-    );
-    assert_eq!(context.memory_path, context.cpu_path);
-    assert_eq!(context.io_path, context.cpu_path);
-    assert_eq!(context.cpuset_cpus, Some(6));
-}
-
-#[test]
-fn context_keeps_unavailable_or_malformed_cpuset_null() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(dir.path().join("proc/self/cgroup"), "0::/workload\n")
-        .expect("write self cgroup");
-    std::fs::write(
-        dir.path().join("sys/fs/cgroup/cgroup.controllers"),
-        "cpu cpuset\n",
-    )
-    .expect("write controllers");
-    let workload = dir.path().join("sys/fs/cgroup/workload");
-    std::fs::create_dir_all(&workload).expect("mkdir workload");
-    std::fs::write(workload.join("cpuset.cpus.effective"), "0-2,2\n")
-        .expect("write malformed effective cpuset");
-
-    let context = collect_context(&procfs, &sys, 1).expect("collect context");
-
-    assert_eq!(context.cgroup_version, 2);
-    assert_eq!(context.cpuset_cpus, None);
-}
-
-#[test]
-fn missing_self_membership_is_reported_even_on_a_v2_mount() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(
-        dir.path().join("sys/fs/cgroup/cgroup.controllers"),
-        "cpu memory io\n",
-    )
-    .expect("write v2 controllers");
-
-    assert_eq!(
-        collect_context(&procfs, &sys, 7)
-            .expect_err("missing membership must be reported")
-            .kind(),
-        io::ErrorKind::NotFound
-    );
-}
-
-#[test]
-fn partial_v2_io_counters_keep_the_unified_path() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(dir.path().join("proc/self/cgroup"), "0::/partial\n")
-        .expect("write self cgroup");
-    std::fs::write(
-        dir.path().join("sys/fs/cgroup/cgroup.controllers"),
-        "cpu memory io\n",
-    )
-    .expect("write controllers");
-    let cgroup = dir.path().join("sys/fs/cgroup/partial");
-    std::fs::create_dir_all(&cgroup).expect("mkdir partial cgroup");
-    std::fs::write(cgroup.join("cpu.stat"), "usage_usec 10\n").expect("write partial cpu stat");
-    std::fs::write(cgroup.join("memory.current"), "4096\n").expect("write partial memory current");
-    std::fs::write(cgroup.join("io.stat"), "8:0 rbytes=1 wbytes=2\n")
-        .expect("write partial io stat");
-
-    let context = collect_context(&procfs, &sys, 7).expect("collect partial context");
-
-    assert_eq!(context.cgroup_version, 2);
-    assert_eq!(context.cpu_path, None);
-    assert_eq!(context.memory_path, None);
-    assert_eq!(context.io_path.as_deref(), Some("/partial"));
-}
-
-#[test]
-fn context_v2_uses_parent_stricter_cpu_and_memory_limits() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v2_context(&dir, "/team/workload");
-    write_v2_capacity(&dir, "/team", "100000 100000\n", "4096\n");
-    write_v2_capacity(&dir, "/team/workload", "300000 100000\n", "8192\n");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect v2 parent limits");
-
-    assert_eq!(context.effective_cpu_quota_usec, Some(100_000));
-    assert_eq!(context.effective_cpu_period_usec, Some(100_000));
-    assert_eq!(context.effective_memory_max, Some(4096));
-}
-
-#[test]
-fn context_v2_includes_present_mount_root_limits() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v2_context(&dir, "/team/workload");
-    write_v2_capacity(&dir, "/", "50000 100000\n", "1024\n");
-    write_v2_capacity(&dir, "/team", "100000 100000\n", "4096\n");
-    write_v2_capacity(&dir, "/team/workload", "200000 100000\n", "8192\n");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect v2 mount-root limits");
-
-    assert_eq!(context.effective_cpu_quota_usec, Some(50_000));
-    assert_eq!(context.effective_cpu_period_usec, Some(100_000));
-    assert_eq!(context.effective_memory_max, Some(1024));
-}
-
-#[test]
-fn context_v2_root_membership_without_limit_files_is_unknown() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v2_context(&dir, "/");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect v2 root membership");
-
-    assert_eq!(context.cpu_path.as_deref(), Some("/"));
-    assert_eq!(context.memory_path.as_deref(), Some("/"));
-    assert_eq!(context.effective_cpu_quota_usec, None);
-    assert_eq!(context.effective_cpu_period_usec, None);
-    assert_eq!(context.effective_memory_max, None);
-}
-
-#[test]
-fn context_v2_does_not_ignore_malformed_mount_root_limits() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v2_context(&dir, "/team/workload");
-    write_v2_capacity(&dir, "/", "max invalid\n", "invalid\n");
-    write_v2_capacity(&dir, "/team", "100000 100000\n", "4096\n");
-    write_v2_capacity(&dir, "/team/workload", "200000 100000\n", "8192\n");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect malformed v2 mount root");
-
-    assert_eq!(context.effective_cpu_quota_usec, None);
-    assert_eq!(context.effective_cpu_period_usec, None);
-    assert_eq!(context.effective_memory_max, None);
-}
-
-#[test]
-fn context_v2_compares_cpu_ratios_and_uses_leaf_stricter_limits() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v2_context(&dir, "/team/workload");
-    write_v2_capacity(&dir, "/team", "50000 10000\n", "8192\n");
-    write_v2_capacity(&dir, "/team/workload", "100000 100000\n", "4096\n");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect v2 leaf limits");
-
-    assert_eq!(context.effective_cpu_quota_usec, Some(100_000));
-    assert_eq!(context.effective_cpu_period_usec, Some(100_000));
-    assert_eq!(context.effective_memory_max, Some(4096));
-}
-
-#[test]
-fn context_v2_distinguishes_validated_unlimited_cpu_from_unknown() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v2_context(&dir, "/team/workload");
-    write_v2_capacity(&dir, "/team", "max 50000\n", "max\n");
-    write_v2_capacity(&dir, "/team/workload", "max 200000\n", "max\n");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect v2 unlimited limits");
-
-    assert_eq!(context.effective_cpu_quota_usec, Some(-1));
-    assert_eq!(context.effective_cpu_period_usec, Some(200_000));
-    assert_eq!(context.effective_memory_max, None);
-    assert_eq!(context.cpuset_cpus, Some(2));
-}
-
-#[test]
-fn context_v2_keeps_incoherent_hierarchies_unknown() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v2_context(&dir, "/team/workload");
-    let parent = fixture_cgroup_path(&dir, "", "/team");
-    std::fs::create_dir_all(&parent).expect("mkdir malformed v2 parent");
-    std::fs::write(parent.join("cpu.max"), "50000 invalid\n").expect("write malformed v2 CPU max");
-    write_v2_capacity(&dir, "/team/workload", "100000 100000\n", "4096\n");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect incoherent v2 hierarchy");
-
-    assert!(context.cpu_path.is_some());
-    assert!(context.memory_path.is_some());
-    assert_eq!(context.effective_cpu_quota_usec, None);
-    assert_eq!(context.effective_cpu_period_usec, None);
-    assert_eq!(context.effective_memory_max, None);
-}
-
-#[test]
-fn collect_v2_reads_every_controller_file() {
+fn direct_v2_workload_reads_every_controller_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().join("fs/cgroup");
     let workload = root.join("workload");
@@ -616,7 +275,11 @@ fn collect_v2_reads_every_controller_file() {
     .expect("write io.stat");
 
     let sys = SysFs::new(dir.path().to_path_buf());
-    let rows = collect(&sys, 99);
+    let mut memberships = WorkloadMemberships::new(&sys);
+    memberships.observe("0::/workload\n");
+    let rows = memberships
+        .collect(&sys, 99)
+        .expect("collect direct workload");
 
     assert_eq!(rows.cpu.len(), 1);
     assert_eq!(rows.memory.len(), 1);
@@ -701,34 +364,6 @@ fn section_conversions_preserve_metric_fields() {
         current: 9,
         max: Some(128),
     };
-    let context = CgroupContextRow {
-        ts: 7,
-        cgroup_version: 2,
-        cpu_path: Some("/workload".to_owned()),
-        memory_path: Some("/workload".to_owned()),
-        io_path: Some("/workload".to_owned()),
-        cpuset_cpus: Some(4),
-        effective_cpu_quota_usec: Some(150_000),
-        effective_cpu_period_usec: Some(100_000),
-        effective_memory_max: Some(536_870_912),
-    };
-
-    let context_section = to_context_section(
-        &context,
-        3,
-        Some(cgroup_path),
-        Some(cgroup_path),
-        Some(cgroup_path),
-    );
-    assert_eq!(context_section.ts, Ts(7));
-    assert_eq!(context_section.cgroup_version, 2);
-    assert_eq!(context_section.cpu_path, Some(cgroup_path));
-    assert_eq!(context_section.cpuset_cpus, Some(4));
-    assert_eq!(context_section.effective_cpu_quota_usec, Some(150_000));
-    assert_eq!(context_section.effective_cpu_period_usec, Some(100_000));
-    assert_eq!(context_section.effective_memory_max, Some(536_870_912));
-    assert_eq!(context_section.scope, 3);
-
     let cpu_section = to_cpu_section(&cpu, 2, cgroup_path);
     assert_eq!(cpu_section.ts, Ts(7));
     assert_eq!(cpu_section.cgroup_path, cgroup_path);
@@ -752,39 +387,6 @@ fn section_conversions_preserve_metric_fields() {
 }
 
 #[test]
-fn charged_devices_lists_the_io_stat_devices_of_the_own_v2_cgroup() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v2_context(&dir, "/workload");
-    std::fs::write(
-        fixture_cgroup_path(&dir, "", "/workload").join("io.stat"),
-        "252:0 rbytes=1 wbytes=2 rios=3 wios=4\n259:0 rbytes=1 wbytes=2 rios=3 wios=4\n",
-    )
-    .expect("write layered io stat");
-
-    assert_eq!(
-        charged_devices(&procfs, &sys).expect("read charged devices"),
-        [(252, 0), (259, 0)]
-    );
-}
-
-#[test]
-fn charged_devices_reports_missing_v2_io_stat_but_omits_v1() {
-    let (dir, procfs, sys) = fixture_roots();
-    assert!(
-        charged_devices(&procfs, &sys)
-            .expect("no v2 hierarchy")
-            .is_empty()
-    );
-
-    prepare_v2_context(&dir, "/workload");
-    std::fs::remove_file(fixture_cgroup_path(&dir, "", "/workload").join("io.stat"))
-        .expect("remove io stat");
-    let error = charged_devices(&procfs, &sys).expect_err("missing io.stat");
-    assert_eq!(error.kind(), io::ErrorKind::NotFound);
-    assert!(error.to_string().contains("workload/io.stat"));
-}
-
-#[test]
 fn all_cgroup_collectors_reject_invalid_unified_memberships() {
     for membership in [
         "7::/workload\n",
@@ -795,18 +397,20 @@ fn all_cgroup_collectors_reject_invalid_unified_memberships() {
         let (dir, procfs, sys) = fixture_roots();
         prepare_v2_context(&dir, "/workload");
         std::fs::write(dir.path().join("proc/self/cgroup"), membership).expect("write membership");
-        assert!(collect_pressure(&procfs, &sys, 1).is_err(), "{membership}");
-        assert_eq!(
-            charged_devices(&procfs, &sys)
-                .expect_err("invalid membership")
-                .kind(),
-            io::ErrorKind::InvalidData,
-            "{membership}",
+        let selected =
+            collect_ancestor_context(&procfs, &sys, 1).expect("invalid membership omitted");
+        assert!(selected.group.is_none(), "{membership}");
+        assert!(
+            collect_ancestor_rows(&sys, &selected, 1)
+                .ancestor_cpu
+                .is_empty()
         );
-        let context = collect_context(&procfs, &sys, 1).expect("collect context");
-        assert_eq!(context.cpu_path, None, "{membership}");
-        assert_eq!(context.memory_path, None, "{membership}");
-        assert_eq!(context.io_path, None, "{membership}");
+        assert!(
+            collect_ancestor_pressure(&sys, &selected, 1)
+                .expect("no selected PSI")
+                .is_empty()
+        );
+        assert!(charged_ancestor_devices(&sys, &selected).is_empty());
         let mut memberships = WorkloadMemberships::new(&sys);
         memberships.observe(membership);
         let workload = memberships.collect(&sys, 1).expect("collect workload");
@@ -869,7 +473,6 @@ fn readable_v1_controllers_do_not_produce_cgroup_metrics_or_capacity() {
     )
     .expect("write directly mounted v1 CPU controller");
     for rows in [
-        collect(&sys, 7),
         collect_workloads(&procfs, &sys, 7).expect("workloads"),
         collect_workload_memberships([membership], &sys, 7).expect("memberships"),
     ] {
@@ -878,7 +481,8 @@ fn readable_v1_controllers_do_not_produce_cgroup_metrics_or_capacity() {
         assert!(rows.io.is_empty());
         assert!(rows.pids.is_empty());
     }
-    let context = collect_context(&procfs, &sys, 7).expect("context");
+    let selected = collect_ancestor_context(&procfs, &sys, 7).expect("context");
+    let context = &selected.context;
     assert_eq!(context.cgroup_version, 0);
     assert_eq!(context.cpu_path, None);
     assert_eq!(context.memory_path, None);
@@ -888,11 +492,11 @@ fn readable_v1_controllers_do_not_produce_cgroup_metrics_or_capacity() {
     assert_eq!(context.effective_cpu_period_usec, None);
     assert_eq!(context.effective_memory_max, None);
     assert!(
-        collect_pressure(&procfs, &sys, 7)
+        collect_ancestor_pressure(&sys, &selected, 7)
             .expect("pressure")
             .is_empty()
     );
-    assert!(charged_devices(&procfs, &sys).expect("devices").is_empty());
+    assert!(charged_ancestor_devices(&sys, &selected).is_empty());
     assert_eq!(crate::proc::process::parse_cgroup_path(membership), None);
 }
 
@@ -906,7 +510,8 @@ fn hybrid_memberships_collect_only_unified_v2_paths() {
     let rows = collect_workload_memberships([membership], &sys, 7).expect("memberships");
     assert_eq!(rows.cpu.len(), 1);
     assert_eq!(rows.cpu[0].cgroup_path, "/workload");
-    let context = collect_context(&procfs, &sys, 7).expect("context");
+    let selected = collect_ancestor_context(&procfs, &sys, 7).expect("context");
+    let context = &selected.context;
     assert_eq!(context.cgroup_version, 2);
-    assert_eq!(context.cpu_path.as_deref(), Some("/workload"));
+    assert_eq!(context.cpu_path.as_deref(), Some("/"));
 }

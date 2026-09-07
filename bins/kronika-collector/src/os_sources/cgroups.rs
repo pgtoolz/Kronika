@@ -55,7 +55,7 @@ pub(super) fn collect_cgroup_sections(
         .retain(|row| selected.context.io_path.as_deref() != Some(row.cgroup_path.as_str()));
     rows.pids.retain(|row| {
         selected
-            .pids
+            .group
             .as_ref()
             .is_none_or(|group| group.path != row.cgroup_path)
     });
@@ -63,6 +63,13 @@ pub(super) fn collect_cgroup_sections(
     push_cgroup_rows(&rows, scope, interner, os);
     push_primary_cgroup_rows(&primary, selected, interner, os);
     log_collection_finish(context_type_id, "cgroup/context", 1, started.elapsed());
+    for (type_id, count) in [
+        (1_201_003, os.cgroup_ancestor_cpu.len()),
+        (1_202_003, os.cgroup_ancestor_memory.len()),
+        (1_203_003, os.cgroup_ancestor_io.len()),
+    ] {
+        log_collection_finish(type_id, "cgroup", count, started.elapsed());
+    }
     log_collection_finish(
         cpu_type_id,
         "cgroup",
@@ -148,19 +155,19 @@ fn push_primary_cgroup_rows(
         let identity = intern_str(interner, type_id, source, &group.identity)?;
         Some((path, identity))
     };
-    if let Some((path, identity)) = primary_ids(1_201_003, "cgroup/cpu", &selected.cpu) {
+    if let Some((path, identity)) = primary_ids(1_201_003, "cgroup/cpu", &selected.group) {
         for row in &rows.ancestor_cpu {
             os.cgroup_ancestor_cpu
                 .push(cgroup::to_ancestor_cpu_section(row, path, identity));
         }
     }
-    if let Some((path, identity)) = primary_ids(1_202_003, "cgroup/memory", &selected.memory) {
+    if let Some((path, identity)) = primary_ids(1_202_003, "cgroup/memory", &selected.group) {
         for row in &rows.ancestor_memory {
             os.cgroup_ancestor_memory
                 .push(cgroup::to_ancestor_memory_section(row, path, identity));
         }
     }
-    if let Some((path, identity)) = primary_ids(1_203_003, "cgroup/io", &selected.io) {
+    if let Some((path, identity)) = primary_ids(1_203_003, "cgroup/io", &selected.group) {
         for row in &rows.io {
             os.cgroup_ancestor_io
                 .push(cgroup::to_ancestor_io_section(row, path, identity));
@@ -176,7 +183,7 @@ fn push_primary_cgroup_rows(
             )),
         );
     }
-    if let Some(group) = &selected.pids
+    if let Some(group) = &selected.group
         && let Some(path) = intern_str(interner, 1_204_001, "cgroup/pids", &group.path)
     {
         for row in &rows.pids {
@@ -194,24 +201,18 @@ pub(super) fn record_context_section(
     interner: &mut Interner,
     os: &mut OsSources,
 ) {
-    let groups = [
-        &selected.cpu,
-        &selected.memory,
-        &selected.io,
-        &selected.pids,
-    ];
-    let mut paths = [None; 4];
-    let mut identities = [None; 4];
-    let mut roots = [None; 4];
-    for (index, group) in groups.into_iter().enumerate() {
-        if let Some(group) = group {
-            paths[index] = intern_str(interner, 1_205_002, "cgroup/context", &group.path);
-            identities[index] = intern_str(interner, 1_205_002, "cgroup/context", &group.identity);
-            roots[index] = intern_str(interner, 1_205_002, "cgroup/context", &group.root);
-        }
-    }
+    let (path, identity, root) = selected.group.as_ref().map_or((None, None, None), |group| {
+        (
+            intern_str(interner, 1_205_002, "cgroup/context", &group.path),
+            intern_str(interner, 1_205_002, "cgroup/context", &group.identity),
+            intern_str(interner, 1_205_002, "cgroup/context", &group.root),
+        )
+    });
     os.cgroup_context = Some(cgroup::to_ancestor_context_section(
-        selected, paths, identities, roots,
+        selected,
+        [path; 4],
+        [identity; 4],
+        [root; 4],
     ));
 }
 
@@ -297,6 +298,13 @@ mod tests {
         assert!(row.cpu_path.is_some());
         assert_eq!(row.cpu_path, row.memory_path);
         assert_eq!(row.io_path, row.cpu_path);
+        assert_eq!(row.pids_path, row.cpu_path);
+        assert_eq!(row.cpu_identity, row.memory_identity);
+        assert_eq!(row.cpu_identity, row.io_identity);
+        assert_eq!(row.cpu_identity, row.pids_identity);
+        assert_eq!(row.cpu_root, row.memory_root);
+        assert_eq!(row.cpu_root, row.io_root);
+        assert_eq!(row.cpu_root, row.pids_root);
         assert_eq!(row.cpuset_cpus, None);
         assert!(row.cpu_identity.is_some());
         assert!(row.cpu_root.is_some());

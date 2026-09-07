@@ -43,7 +43,6 @@ const POSTGRES_SYSTEM_IDENTIFIER_QUERY: &str = concat!(
 /// A parsed connection and the only identity safe to put in a log line.
 pub(super) struct ConnectionTarget {
     config: Config,
-    transport: Transport,
     label: String,
     source_index: usize,
 }
@@ -51,13 +50,11 @@ pub(super) struct ConnectionTarget {
 impl ConnectionTarget {
     /// Parse one configured connection without retaining its original text.
     pub(super) fn parse(raw: &str, source_index: usize) -> Result<Self, InvalidConnection> {
-        let config = Config::from_str(raw).map_err(|_error| InvalidConnection::Dsn)?;
+        let config = Config::from_str(raw).map_err(|_error| InvalidConnection)?;
         validate_endpoints(&config)?;
         let label = connection_label(&config);
-        let transport = Transport::from_env().map_err(|_error| InvalidConnection::TlsCa)?;
         Ok(Self {
             config,
-            transport,
             label,
             source_index,
         })
@@ -90,10 +87,7 @@ impl fmt::Debug for ConnectionTarget {
 
 /// Deliberately carries neither parser details nor the rejected input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum InvalidConnection {
-    Dsn,
-    TlsCa,
-}
+pub(super) struct InvalidConnection;
 
 fn validate_endpoints(config: &Config) -> Result<(), InvalidConnection> {
     let hosts = config.get_hosts().len();
@@ -104,7 +98,7 @@ fn validate_endpoints(config: &Config) -> Result<(), InvalidConnection> {
         || (hosts != 0 && hostaddrs != 0 && hosts != hostaddrs)
         || !matches!(ports, 0 | 1) && ports != endpoints
     {
-        return Err(InvalidConnection::Dsn);
+        return Err(InvalidConnection);
     }
     Ok(())
 }
@@ -211,12 +205,12 @@ struct LogFacts {
 )]
 pub(super) async fn postgres(
     target: &ConnectionTarget,
+    transport: &Transport,
     cached_system_identifier: Option<u64>,
     observe: &mut (dyn FnMut(PgObservation) + Send),
 ) -> Result<PostgresServer> {
     let connect_started = Instant::now();
-    let connected =
-        tokio::time::timeout(CONNECT_TIMEOUT, target.transport.connect(&target.config)).await;
+    let connected = tokio::time::timeout(CONNECT_TIMEOUT, transport.connect(&target.config)).await;
     let (client, connection) = match connected {
         Ok(Ok(connected)) => connected,
         Ok(Err(error)) => {
@@ -281,7 +275,7 @@ pub(super) async fn postgres(
     }
     let mut facts_stats = QueryStats::default();
     let facts_started = Instant::now();
-    let session = Session::with_transport(&client, 0, &target.transport);
+    let session = Session::with_transport(&client, 0, transport);
     let facts = query::timeout(
         session,
         QUERY_TIMEOUT,
@@ -345,7 +339,7 @@ pub(super) async fn postgres(
     } else {
         let mut stats = QueryStats::default();
         let started = Instant::now();
-        let session = Session::with_transport(&client, 0, &target.transport);
+        let session = Session::with_transport(&client, 0, transport);
         let identity = query::timeout(
             session,
             QUERY_TIMEOUT,

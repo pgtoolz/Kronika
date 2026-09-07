@@ -230,7 +230,7 @@ fn postgres_sources(root: &std::path::Path, dsn: &str) -> LogSources {
     LogSources {
         discover_postgres_paths: true,
         offsets: Offsets::load(root).expect("load offsets"),
-        pg_dsns: vec![PostgresTarget::new(connection)],
+        pg_dsns: vec![PostgresTarget::new(connection).expect("load PostgreSQL transport")],
         pg_logs: Vec::new(),
         pgbouncer_dsns: Vec::new(),
         pgbouncer_logs: Vec::new(),

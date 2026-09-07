@@ -145,8 +145,7 @@ pub(crate) enum RetentionConfig {
 /// Parses `KRONIKA_RETENTION` into a rotation target.
 ///
 /// Accepts a raw byte budget (`<u64>`), `auto` (equivalent to `auto:80`), or
-/// `auto:<P>` with `P` in `1..=99`. The name omits a `_BYTES` suffix because a
-/// future time criterion will arrive under its own env as an OR condition.
+/// `auto:<P>` with `P` in `1..=99`.
 ///
 /// # Errors
 ///

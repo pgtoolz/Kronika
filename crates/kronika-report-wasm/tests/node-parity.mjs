@@ -132,7 +132,7 @@ compare(
 
 
 if (collectionArgument) {
-  for (const name of ["postgresql-unknown", "postgresql-explicit", "selected-cgroup"]) {
+  for (const name of ["postgresql-unknown", "postgresql-explicit", "selected-cgroup", "separated-controllers"]) {
     session.free();
     nativeFixtureDirectory = resolve(collectionArgument, name);
     const [fixtureZms, fixtureIdx, sourceText, html] = await Promise.all([
@@ -171,6 +171,10 @@ if (collectionArgument) {
       const row = metadata.find(row => row.record === "row");
       assert.deepEqual(row.values, [null, false, false]);
     } else {
+      if (name === "separated-controllers") {
+        const oom = lanes.filter(row => row.record === "lane" && row.lane === "cg_oom");
+        assert.deepEqual(oom.map(row => row.value), [null, 0, 0, 0, 1, null], "memory continuity survives a CPU identity change but ends on memory replacement");
+      }
       const shares = hour.filter(row => row.record === "lane" && row.lane === "cg_cpu_share");
       assert.deepEqual(shares.map(row => row.value), [null, 100, 75, null, null, 50]);
       const history = records(compare(`${name}-counter-history`, "/api/hour", `from=${SEGMENT_ID}&to=1709164805000000&section=os_cgroup_cpu&field=usage_usec`));

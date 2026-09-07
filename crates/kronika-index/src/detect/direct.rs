@@ -149,7 +149,7 @@ impl FindingBuilder {
         &mut self,
         segment: &Segment,
         type_id: u32,
-        identities: &BTreeMap<i64, u64>,
+        identities: &BTreeMap<i64, [Option<u64>; 1]>,
     ) -> Result<(), BuildError> {
         if segment.rows_of(type_id).is_none() {
             return Ok(());
@@ -604,7 +604,7 @@ impl FindingBuilder {
         &mut self,
         segment: &Segment,
         type_id: u32,
-        identities: &BTreeMap<i64, u64>,
+        identities: &BTreeMap<i64, [Option<u64>; 1]>,
         hits: &mut BTreeMap<u32, Vec<Finding>>,
     ) -> Result<(), BuildError> {
         if segment.rows_of(type_id).is_none() {
@@ -866,8 +866,8 @@ const fn cgroup_oom_kill_field(type_id: u32) -> u16 {
 
 /// Compare adjacent selected-group samples; missing identity/counters break continuity.
 pub(super) fn cgroup_oom_increased(
-    before: &mut Option<(u64, i64, Option<i64>)>,
-    identity: Option<u64>,
+    before: &mut Option<super::CgroupOomSample>,
+    identity: Option<[Option<u64>; 1]>,
     timestamp: i64,
     counter: Option<i64>,
 ) -> bool {

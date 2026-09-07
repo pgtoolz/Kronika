@@ -44,7 +44,7 @@ fn highest_directory_wins_even_without_metrics_and_with_inaccessible_intermediat
     assert_eq!(selected.context.cpu_path.as_deref(), Some("/"));
     assert!(
         selected
-            .cpu
+            .group
             .as_ref()
             .expect("CPU identity")
             .identity
@@ -126,8 +126,8 @@ fn selected_capacity_changes_in_time_without_reusing_the_child_quota() {
         Some(200_000)
     );
     assert_eq!(
-        first.cpu.as_ref().expect("first CPU").identity,
-        second.cpu.as_ref().expect("second CPU").identity
+        first.group.as_ref().expect("first CPU").identity,
+        second.group.as_ref().expect("second CPU").identity
     );
 }
 
@@ -143,7 +143,7 @@ fn hidden_mount_ancestors_do_not_erase_observed_parent_limits() {
     write(dir.path(), "sys/fs/cgroup/cpu.max", "400000 100000");
     write(dir.path(), "sys/fs/cgroup/memory.max", "1000000");
     let selected = collect_ancestor_context(&procfs, &sys, 1).expect("select mounted root");
-    assert_eq!(selected.cpu.as_ref().expect("CPU group").root, "/pod");
+    assert_eq!(selected.group.as_ref().expect("CPU group").root, "/pod");
     assert_eq!(selected.context.cpu_path.as_deref(), Some("/"));
     assert_eq!(selected.context.effective_cpu_quota_usec, Some(400_000));
     assert_eq!(selected.context.effective_memory_max, Some(1_000_000));
@@ -195,8 +195,8 @@ fn selection_identity_changes_when_the_directory_is_replaced() {
     let second = collect_ancestor_context(&procfs, &sys, 2).expect("second");
     assert_eq!(first.context.cpu_path, second.context.cpu_path);
     assert_ne!(
-        first.cpu.expect("first CPU").identity,
-        second.cpu.expect("second CPU").identity
+        first.group.expect("first CPU").identity,
+        second.group.expect("second CPU").identity
     );
 }
 
@@ -205,8 +205,7 @@ fn an_unrelated_mounted_subtree_is_not_an_ancestor() {
     let (dir, procfs, sys) = fixture();
     v2(dir.path(), "/workload/collector", "/other");
     let selected = collect_ancestor_context(&procfs, &sys, 1).expect("read membership and mount");
-    assert!(selected.cpu.is_none());
-    assert!(selected.memory.is_none());
+    assert!(selected.group.is_none());
 }
 
 #[test]
@@ -225,8 +224,8 @@ fn child_churn_does_not_change_parent_counter_identity() {
     std::fs::create_dir(dir.path().join("sys/fs/cgroup/new-child")).expect("new child");
     let second = collect_ancestor_context(&procfs, &sys, 2).expect("second selection");
     assert_eq!(
-        first.cpu.expect("first parent").identity,
-        second.cpu.expect("second parent").identity
+        first.group.expect("first parent").identity,
+        second.group.expect("second parent").identity
     );
 }
 
@@ -263,7 +262,7 @@ fn v2_unrelated_extra_mount_does_not_hide_the_compatible_root() {
     .expect("extra binding");
     write(dir.path(), "proc/self/mountinfo", &text);
     let selected = collect_ancestor_context(&procfs, &sys, 1).expect("root remains selected");
-    assert_eq!(selected.cpu.as_ref().expect("CPU root").base, "fs/cgroup");
+    assert_eq!(selected.group.as_ref().expect("CPU root").base, "fs/cgroup");
 }
 
 #[test]
@@ -287,7 +286,7 @@ fn duplicate_and_subtree_bind_mounts_preserve_the_highest_actual_object() {
     .expect("subtree binding");
     write(dir.path(), "proc/self/mountinfo", &text);
     let selected = collect_ancestor_context(&procfs, &sys, 1).expect("highest selection");
-    assert_eq!(selected.cpu.as_ref().expect("CPU root").base, "fs/cgroup");
+    assert_eq!(selected.group.as_ref().expect("CPU root").base, "fs/cgroup");
     assert_eq!(selected.context.cpu_path.as_deref(), Some("/"));
 }
 
@@ -306,7 +305,7 @@ fn compatible_mount_paths_with_different_objects_remain_ambiguous() {
     .expect("different hierarchy binding");
     write(dir.path(), "proc/self/mountinfo", &text);
     let selected = collect_ancestor_context(&procfs, &sys, 1).expect("ambiguous selection");
-    assert!(selected.cpu.is_none());
+    assert!(selected.group.is_none());
 }
 
 #[test]
@@ -351,12 +350,7 @@ fn v1_files_cannot_supply_selected_rows_capacity_pressure_or_devices() {
     let selected =
         collect_ancestor_context(&procfs, &sys, 1).expect("unsupported hierarchy is absent");
     assert_eq!(selected.context.cgroup_version, 0);
-    assert!(
-        selected.cpu.is_none()
-            && selected.memory.is_none()
-            && selected.io.is_none()
-            && selected.pids.is_none()
-    );
+    assert!(selected.group.is_none());
     assert_eq!(selected.context.effective_cpu_quota_usec, None);
     assert_eq!(selected.context.cpuset_cpus, None);
     assert_eq!(selected.context.effective_memory_max, None);
@@ -412,7 +406,7 @@ fn denied_alias_paths_do_not_hide_independently_readable_groups() {
     assert_eq!(
         selected
             .expect("readable root")
-            .cpu
+            .group
             .expect("CPU group")
             .base,
         "fs/cgroup"
@@ -440,7 +434,7 @@ fn denied_alias_paths_do_not_hide_independently_readable_groups() {
     assert_eq!(
         selected
             .expect("readable alias")
-            .cpu
+            .group
             .expect("CPU group")
             .base,
         "fs/cgroup/alias"
@@ -471,5 +465,120 @@ fn denied_alias_paths_do_not_hide_independently_readable_groups() {
             .expect("restore broad root");
     }
     assert_eq!(denied.kind(), io::ErrorKind::PermissionDenied);
-    assert!(selected.expect("ambiguous readable aliases").cpu.is_none());
+    assert!(
+        selected
+            .expect("ambiguous readable aliases")
+            .group
+            .is_none()
+    );
+}
+
+#[test]
+fn selected_pressure_omits_missing_files_and_rejects_malformed_values() {
+    let (dir, procfs, sys) = fixture();
+    v2(dir.path(), "/collector", "/");
+    write(
+        dir.path(),
+        "sys/fs/cgroup/cpu.pressure",
+        "some avg10=0.10 avg60=0.05 avg300=0.02 total=10000\n",
+    );
+    write(
+        dir.path(),
+        "sys/fs/cgroup/io.pressure",
+        "some avg10=0.50 avg60=0.25 avg300=0.10 total=200000\nfull avg10=0.0 avg60=0.0 avg300=0.0 total=0\n",
+    );
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selection");
+    let rows = collect_ancestor_pressure(&sys, &selected, 7).expect("available pressure");
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.resource, row.ts, row.some_total))
+            .collect::<Vec<_>>(),
+        [(0, 7, 10_000), (2, 7, 200_000)]
+    );
+    write(
+        dir.path(),
+        "sys/fs/cgroup/io.pressure",
+        "some total=invalid\n",
+    );
+    assert!(collect_ancestor_pressure(&sys, &selected, 8).is_err());
+}
+
+#[test]
+fn selected_cpuset_requires_valid_nonoverlapping_ranges() {
+    let (dir, procfs, sys) = fixture();
+    v2(dir.path(), "/collector", "/");
+    let missing = collect_ancestor_context(&procfs, &sys, 1).expect("missing cpuset");
+    assert_eq!(missing.context.cpuset_cpus, None);
+    for value in ["", "0-2,2", "3-1", "-1", "0-1-2", "0,"] {
+        write(dir.path(), "sys/fs/cgroup/cpuset.cpus.effective", value);
+        let selected = collect_ancestor_context(&procfs, &sys, 2).expect("malformed cpuset");
+        assert_eq!(selected.context.cpuset_cpus, None, "{value}");
+    }
+    write(
+        dir.path(),
+        "sys/fs/cgroup/cpuset.cpus.effective",
+        "0-2,4,6-7",
+    );
+    let selected = collect_ancestor_context(&procfs, &sys, 3).expect("valid cpuset");
+    assert_eq!(selected.context.cpuset_cpus, Some(6));
+}
+
+#[test]
+fn missing_self_membership_is_an_acquisition_error() {
+    let (_dir, procfs, sys) = fixture();
+    assert_eq!(
+        collect_ancestor_context(&procfs, &sys, 1)
+            .expect_err("missing membership")
+            .kind(),
+        io::ErrorKind::NotFound
+    );
+}
+
+#[test]
+fn selected_devices_do_not_use_child_io_when_parent_has_no_file() {
+    let (dir, procfs, sys) = fixture();
+    v2(dir.path(), "/collector", "/");
+    write(
+        dir.path(),
+        "sys/fs/cgroup/collector/io.stat",
+        "8:0 rbytes=999 wbytes=999 rios=9 wios=9\n",
+    );
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selection");
+    assert!(charged_ancestor_devices(&sys, &selected).is_empty());
+    write(
+        dir.path(),
+        "sys/fs/cgroup/io.stat",
+        "252:0 rbytes=1 wbytes=2 rios=3 wios=4\n259:0 rbytes=5 wbytes=6 rios=7 wios=8\n",
+    );
+    assert_eq!(
+        charged_ancestor_devices(&sys, &selected),
+        [(252, 0), (259, 0)]
+    );
+}
+
+#[test]
+fn selected_capacity_distinguishes_unlimited_and_malformed_limits() {
+    let (dir, procfs, sys) = fixture();
+    v2(dir.path(), "/collector", "/");
+    write(dir.path(), "sys/fs/cgroup/cpu.max", "max 200000");
+    write(dir.path(), "sys/fs/cgroup/memory.current", "42");
+    write(dir.path(), "sys/fs/cgroup/memory.max", "max");
+    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("unlimited root");
+    assert_eq!(selected.context.effective_cpu_quota_usec, Some(-1));
+    assert_eq!(selected.context.effective_cpu_period_usec, Some(200_000));
+    let memory = &collect_ancestor_rows(&sys, &selected, 1).ancestor_memory[0];
+    assert_eq!(memory.max, None);
+    assert_eq!(memory.max_unlimited, Some(true));
+    for value in [
+        "0 100000",
+        "-1 100000",
+        "max invalid",
+        "100000 0",
+        "100000 100000 extra",
+    ] {
+        write(dir.path(), "sys/fs/cgroup/cpu.max", value);
+        let selected = collect_ancestor_context(&procfs, &sys, 2).expect("malformed limit");
+        assert_eq!(selected.context.effective_cpu_quota_usec, None, "{value}");
+        assert_eq!(selected.context.effective_cpu_period_usec, None, "{value}");
+    }
 }

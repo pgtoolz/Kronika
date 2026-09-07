@@ -83,15 +83,65 @@ fn the_fixed_cap_keeps_timestamp_locator_order_and_reports_omissions() {
 #[test]
 fn selected_cgroup_oom_requires_adjacent_known_counters_and_same_identity() {
     let mut before = None;
-    assert!(!cgroup_oom_increased(&mut before, Some(10), 1, Some(2)));
-    assert!(cgroup_oom_increased(&mut before, Some(10), 2, Some(3)));
-    assert!(!cgroup_oom_increased(&mut before, Some(20), 3, Some(100)));
-    assert!(!cgroup_oom_increased(&mut before, Some(10), 4, Some(200)));
-    assert!(!cgroup_oom_increased(&mut before, Some(10), 5, None));
-    assert!(!cgroup_oom_increased(&mut before, Some(10), 6, Some(201)));
-    assert!(cgroup_oom_increased(&mut before, Some(10), 7, Some(202)));
+    assert!(!cgroup_oom_increased(
+        &mut before,
+        Some([Some(10)]),
+        1,
+        Some(2)
+    ));
+    assert!(cgroup_oom_increased(
+        &mut before,
+        Some([Some(10)]),
+        2,
+        Some(3)
+    ));
+    assert!(!cgroup_oom_increased(
+        &mut before,
+        Some([Some(20)]),
+        3,
+        Some(100)
+    ));
+    assert!(!cgroup_oom_increased(
+        &mut before,
+        Some([Some(10)]),
+        4,
+        Some(200)
+    ));
+    assert!(!cgroup_oom_increased(
+        &mut before,
+        Some([Some(10)]),
+        5,
+        None
+    ));
+    assert!(!cgroup_oom_increased(
+        &mut before,
+        Some([Some(10)]),
+        6,
+        Some(201)
+    ));
+    assert!(cgroup_oom_increased(
+        &mut before,
+        Some([Some(10)]),
+        7,
+        Some(202)
+    ));
     assert!(!cgroup_oom_increased(&mut before, None, 8, Some(203)));
-    assert!(!cgroup_oom_increased(&mut before, Some(10), 9, Some(204)));
-    assert!(!cgroup_oom_increased(&mut before, Some(10), 10, Some(1)));
-    assert!(cgroup_oom_increased(&mut before, Some(10), 11, Some(2)));
+    assert!(!cgroup_oom_increased(
+        &mut before,
+        Some([Some(10)]),
+        9,
+        Some(204)
+    ));
+    assert!(!cgroup_oom_increased(
+        &mut before,
+        Some([Some(10)]),
+        10,
+        Some(1)
+    ));
+    assert!(cgroup_oom_increased(
+        &mut before,
+        Some([Some(10)]),
+        11,
+        Some(2)
+    ));
 }

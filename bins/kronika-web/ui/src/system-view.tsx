@@ -880,13 +880,8 @@ function SystemEntityPanel({
     return loadSeries(hour, requestSection, where, fields, signal, requestTypeId)
   })
   const chartRows = history.value?.length ? history.value : selectedRow === null ? [] : [selectedRow]
-  const cgroupHistoryKey = historyKey !== null && section.startsWith("os_cgroup_") ? `${hour}:cgroup-context` : null
-  const cgroupHistory = useHistoryRequest(cgroupHistoryKey, historyRevision,
-    cgroupHistoryKey === null ? null : (signal) => loadSeries(hour, "os_cgroup_context", {}, [], signal))
   const chartPoints = useMemo(() => selectedColumn === undefined ? []
-    : cgroupHistoryKey === null ? entityMetricPoints(chartRows, selectedColumn)
-      : cgroupHistoryGroups(chartRows, cgroupHistory.value ?? []).flatMap((group) => entityMetricPoints(group, selectedColumn)),
-  [cgroupHistory.value, cgroupHistoryKey, chartRows, selectedColumn])
+    : entityMetricPoints(chartRows, selectedColumn), [chartRows, selectedColumn])
   const pairSeries = useMemo(() => mountPair ? mountPairSeries(chartRows, t, mountPairKind) : null, [chartRows, mountPair, mountPairKind, t])
   const chartMetadata = selectedRow === null || selectedColumn === undefined || selectedColumn.historyFields !== undefined
     ? null : registryColumn(selectedRow.typeId, physicalField(selectedColumn, selectedRow.typeId))
@@ -964,7 +959,7 @@ function SystemEntityPanel({
             onCursor={onCursor}
             points={chartPoints}
             scale={selectedColumn.kind === "percent" ? "percent" : "nonnegative"}
-            status={cgroupHistoryKey !== null && cgroupHistory.status !== "ready" ? cgroupHistory.status : history.status}
+            status={history.status}
             t={t}
             unit={entityMetricUnit(selectedColumn, locale, chartMetadata)}
           />}
@@ -1001,41 +996,6 @@ export function entityHistoryRequest(row: DataRow, column: SystemEntityColumn): 
     typeId: row.typeId,
     where,
   }
-}
-
-export function cgroupHistoryGroups(rows: readonly DataRow[], contexts: readonly DataRow[]): readonly (readonly DataRow[])[] {
-  const bySegment = new Map<string, DataRow[]>()
-  for (const context of contexts) {
-    const segment = bySegment.get(context.segmentId) ?? []
-    segment.push(context)
-    bySegment.set(context.segmentId, segment)
-  }
-  for (const segment of bySegment.values()) segment.sort((left, right) => left.timestamp - right.timestamp)
-  const groups: DataRow[][] = []
-  let previousIdentity: string | null = null
-  for (const row of rows.slice().sort((left, right) => left.timestamp - right.timestamp)) {
-    const controller = row.logicalName.replace("os_cgroup_", "")
-    const segment = bySegment.get(row.segmentId) ?? []
-    let low = 0
-    let high = segment.length
-    while (low < high) {
-      const middle = Math.floor((low + high) / 2)
-      if (segment[middle]!.timestamp <= row.timestamp) low = middle + 1
-      else high = middle
-    }
-    const context = low === 0 ? null : segment[low - 1]!
-    const recordedIdentity = rawText(value(row, "cgroup_identity")) ?? (context !== null
-      && rawText(value(context, `${controller}_path`)) === rawText(value(row, "cgroup_path"))
-      && rawText(value(context, "scope")) === rawText(value(row, "scope"))
-      ? rawText(value(context, `${controller}_identity`)) : null)
-    const legacy = context?.typeId !== "1205002" && !["1201003", "1202003", "1203003"].includes(row.typeId)
-    const identity = recordedIdentity !== null ? `${row.segmentId}:${recordedIdentity}`
-      : legacy ? `${row.segmentId}:${rawText(value(row, "scope"))}:${rawText(value(row, "cgroup_path"))}` : null
-    if (identity === null || identity !== previousIdentity) groups.push([])
-    groups.at(-1)!.push(row)
-    previousIdentity = identity
-  }
-  return groups
 }
 
 function entityMetricPoints(rows: readonly DataRow[], column: SystemEntityColumn): readonly ChartPoint[] {

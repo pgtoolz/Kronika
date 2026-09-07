@@ -245,14 +245,12 @@ pub(super) fn with_predecessors(
     let Some(first_process) = first_process else {
         return selected;
     };
-    for logical_name in [PROCESS, ACTIVITY] {
-        if let Some(previous) = all
-            .iter()
-            .filter(|segment| segment.id() < first_process && has_section(segment, logical_name))
-            .max_by_key(|segment| segment.id())
-        {
-            selected.push(previous.clone());
-        }
+    if let Some(previous) = all
+        .iter()
+        .filter(|segment| segment.id() < first_process && has_section(segment, PROCESS))
+        .max_by_key(|segment| segment.id())
+    {
+        selected.push(previous.clone());
     }
     selected.sort_by_key(DatasetSegment::id);
     selected.dedup_by_key(|segment| segment.id());

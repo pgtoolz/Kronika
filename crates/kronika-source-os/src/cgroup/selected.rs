@@ -49,19 +49,13 @@ impl SelectedCgroup {
     }
 }
 
-/// Selected controller identities and nullable recorded capacity.
+/// Selected cgroup v2 identity and nullable recorded capacity.
 #[derive(Debug, Clone, Default)]
 pub struct AncestorContext {
     /// Capacity belongs to the selected aggregate, not `PostgreSQL`.
     pub context: CgroupContextRow,
-    /// Selected CPU accounting scope; bandwidth is used only when coherent.
-    pub cpu: Option<SelectedCgroup>,
-    /// Selected memory scope.
-    pub memory: Option<SelectedCgroup>,
-    /// Selected I/O scope.
-    pub io: Option<SelectedCgroup>,
-    /// Selected PID scope.
-    pub pids: Option<SelectedCgroup>,
+    /// One selected cgroup v2 directory for all resource controllers.
+    pub group: Option<SelectedCgroup>,
 }
 
 #[derive(Clone)]
@@ -70,11 +64,11 @@ struct Mount {
     root: String,
 }
 
-/// Select the highest readable ancestor of the collector in each hierarchy.
+/// Select the highest readable cgroup v2 ancestor of the collector.
 ///
 /// # Errors
-/// Returns unreadable/invalid collector membership; unavailable controllers
-/// remain absent without borrowing metrics from lower directories.
+/// Unreadable membership or mount information returns an error. Invalid or
+/// unsupported unified membership leaves the context empty.
 pub fn collect_ancestor_context(
     procfs: &ProcFs,
     sys: &SysFs,
@@ -92,30 +86,20 @@ pub fn collect_ancestor_context(
         return Ok(out);
     };
     let mounts = mounts(procfs, sys)?;
-    if let Some(selected) = select_mount(sys, &mounts, path) {
+    out.group = select_mount(sys, &mounts, path);
+    if let Some(group) = &out.group {
         out.context.cgroup_version = 2;
-        out.cpu = Some(selected.clone());
-        out.memory = Some(selected.clone());
-        out.io = Some(selected.clone());
-        out.pids = Some(selected);
-    }
-    if let Some(cpu) = &out.cpu {
-        out.context.cpu_path = Some(cpu.path.clone());
-        out.context.cpuset_cpus = cpu
+        out.context.cpu_path = Some(group.path.clone());
+        out.context.memory_path = Some(group.path.clone());
+        out.context.io_path = Some(group.path.clone());
+        out.context.cpuset_cpus = group
             .read(sys, "cpuset.cpus.effective")
             .and_then(|value| super::parse_cpuset_count(&value));
-        if let Some((quota, period)) = observed_cpu_limit(sys, cpu) {
+        if let Some((quota, period)) = observed_cpu_limit(sys, group) {
             out.context.effective_cpu_quota_usec = Some(quota);
             out.context.effective_cpu_period_usec = Some(period);
         }
-    }
-    if let Some(memory) = &out.memory {
-        out.context.memory_path = Some(memory.path.clone());
-        out.context.effective_memory_max = effective_memory(sys, memory);
-    }
-    out.context.io_path = out.io.as_ref().map(|group| group.path.clone());
-    if out.cpu.is_none() && out.memory.is_none() && out.io.is_none() && out.pids.is_none() {
-        out.context.cgroup_version = 0;
+        out.context.effective_memory_max = effective_memory(sys, group);
     }
     Ok(out)
 }
@@ -242,8 +226,7 @@ fn select(sys: &SysFs, mount: &Mount, own: &str) -> Option<SelectedCgroup> {
     let relative = membership_relative(&mount.root, own)?;
     let own = if relative.is_empty() { "/" } else { relative };
     let boundary = sys.canonical_path(&mount.base).ok()?;
-    let mut selected = None;
-    for path in hierarchy_paths(own)?.into_iter().rev() {
+    for path in hierarchy_paths(own)? {
         let relative = format!("{}/{}", mount.base, path.trim_start_matches('/'));
         let Ok(absolute) = sys.canonical_path(&relative) else {
             continue;
@@ -262,14 +245,14 @@ fn select(sys: &SysFs, mount: &Mount, own: &str) -> Option<SelectedCgroup> {
             continue;
         }
         let identity = directory_identity(&mount.base, &mount.root, &metadata);
-        selected = Some(SelectedCgroup {
+        return Some(SelectedCgroup {
             path,
             root: mount.root.clone(),
             identity,
             base: mount.base.clone(),
         });
     }
-    selected
+    None
 }
 
 // These are observed limits of the selected object, not assertions about
@@ -325,21 +308,21 @@ fn effective_memory(sys: &SysFs, group: &SelectedCgroup) -> Option<i64> {
 #[must_use]
 pub fn collect_ancestor_rows(sys: &SysFs, selected: &AncestorContext, ts: i64) -> CgroupCollection {
     let mut out = CgroupCollection::default();
-    if let Some(group) = &selected.cpu
+    if let Some(group) = &selected.group
         && group.is_current(sys)
         && let Some(row) = read_cpu(sys, group, ts)
         && group.is_current(sys)
     {
         out.ancestor_cpu.push(row);
     }
-    if let Some(group) = &selected.memory
+    if let Some(group) = &selected.group
         && group.is_current(sys)
         && let Some(row) = read_memory(sys, group, ts)
         && group.is_current(sys)
     {
         out.ancestor_memory.push(row);
     }
-    if let Some(group) = &selected.io
+    if let Some(group) = &selected.group
         && group.is_current(sys)
         && let Some(content) = group.read(sys, "io.stat")
     {
@@ -350,13 +333,13 @@ pub fn collect_ancestor_rows(sys: &SysFs, selected: &AncestorContext, ts: i64) -
     }
 
     if selected
-        .io
+        .group
         .as_ref()
         .is_some_and(|group| !group.is_current(sys))
     {
         out.io.clear();
     }
-    if let Some(group) = &selected.pids
+    if let Some(group) = &selected.group
         && group.is_current(sys)
         && let Some((current, max)) = group
             .read(sys, "pids.current")
@@ -466,7 +449,7 @@ pub fn collect_ancestor_pressure(
     selected: &AncestorContext,
     ts: i64,
 ) -> Result<Vec<PsiRow>, ParseError> {
-    let Some(group) = selected.cpu.as_ref() else {
+    let Some(group) = selected.group.as_ref() else {
         return Ok(Vec::new());
     };
     if !group.is_current(sys) {
@@ -491,7 +474,7 @@ pub fn collect_ancestor_pressure(
 /// Device IDs charged to the selected v2 ancestor, without a child fallback.
 #[must_use]
 pub fn charged_ancestor_devices(sys: &SysFs, selected: &AncestorContext) -> Vec<(i32, i32)> {
-    let Some(group) = selected.io.as_ref() else {
+    let Some(group) = selected.group.as_ref() else {
         return Vec::new();
     };
     if !group.is_current(sys) {

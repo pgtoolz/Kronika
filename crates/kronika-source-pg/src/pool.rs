@@ -95,27 +95,19 @@ impl Pool {
     /// # Errors
     ///
     /// Returns the parse error when `dsn` is neither a keyword string nor a
-    /// connection URL.
+    /// connection URL, or an error when the configured CA bundle is invalid.
     pub fn new(dsn: &str) -> Result<Self> {
         let mut config: Config = dsn.parse().context("parse the PostgreSQL DSN")?;
         config.application_name(collector_application_name());
         let transport = Transport::from_env()?;
-        let mut pool = Self::from_config(config);
-        pool.transport = transport;
-        Ok(pool)
-    }
-
-    /// Build a lazy pool from an already parsed configuration.
-    #[must_use]
-    pub fn from_config(config: Config) -> Self {
-        Self {
+        Ok(Self {
             config,
-            transport: Transport::default(),
+            transport,
             resolved_user: None,
             resolved_database: None,
             open: None,
             next_generation: 1,
-        }
+        })
     }
 
     /// The same server and credentials, connecting to `dbname` instead.

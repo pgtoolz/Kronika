@@ -87,17 +87,19 @@ struct PostgresFacts {
 #[derive(Debug)]
 struct PostgresTarget {
     connection: settings::ConnectionTarget,
+    transport: kronika_source_pg::Transport,
     system_identifier: Option<u64>,
     last_log: Option<(PathBuf, String)>,
 }
 
 impl PostgresTarget {
-    const fn new(connection: settings::ConnectionTarget) -> Self {
-        Self {
+    fn new(connection: settings::ConnectionTarget) -> anyhow::Result<Self> {
+        Ok(Self {
             connection,
+            transport: kronika_source_pg::Transport::from_env()?,
             system_identifier: None,
             last_log: None,
-        }
+        })
     }
 }
 
@@ -126,7 +128,7 @@ impl LogSources {
         let pg_dsns = parse_connections("KRONIKA_PG_DSNS", &config.pg_dsns)?
             .into_iter()
             .map(PostgresTarget::new)
-            .collect();
+            .collect::<anyhow::Result<_>>()?;
         let pgbouncer_dsns = parse_connections("KRONIKA_PGBOUNCER_DSNS", &config.pgbouncer_dsns)?;
         let offsets = Offsets::load(&config.storage_dir)?;
         Ok(Self {
@@ -161,7 +163,14 @@ impl LogSources {
             .iter_mut()
             .filter(|_| self.discover_postgres_paths)
         {
-            match settings::postgres(&target.connection, target.system_identifier, observe).await {
+            match settings::postgres(
+                &target.connection,
+                &target.transport,
+                target.system_identifier,
+                observe,
+            )
+            .await
+            {
                 Ok(server) => {
                     if let Some(identifier) = server.system_identifier {
                         target.system_identifier = Some(identifier);
@@ -497,13 +506,8 @@ fn parse_connections(
         .iter()
         .enumerate()
         .map(|(index, raw)| {
-            settings::ConnectionTarget::parse(raw, index).map_err(|error| match error {
-                settings::InvalidConnection::TlsCa => {
-                    anyhow::Error::new(kronika_source_pg::transport::CaConfigError)
-                }
-                settings::InvalidConnection::Dsn => {
-                    anyhow::anyhow!("{variable}[{index}] is not a valid connection string")
-                }
+            settings::ConnectionTarget::parse(raw, index).map_err(|_error| {
+                anyhow::anyhow!("{variable}[{index}] is not a valid connection string")
             })
         })
         .collect()

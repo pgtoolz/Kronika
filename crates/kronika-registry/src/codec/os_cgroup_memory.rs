@@ -99,7 +99,7 @@ pub struct OsCgroupMemoryV3 {
     /// `memory.events high`.
     #[column(c, unit = count)]
     pub high_events: Option<i64>,
-    /// `memory.events max` or v1 `memory.failcnt`.
+    /// `memory.events max`.
     #[column(c, unit = count)]
     pub max_events: Option<i64>,
     /// `memory.events oom`.

@@ -61,6 +61,8 @@ const DATA_CORRUPTION_CATEGORY: u8 = 5;
 const WRAPAROUND_AGE_THRESHOLD: i64 = 1_600_000_000;
 const EVENT_TIMESTAMP_FIELD: u16 = 0;
 
+type CgroupOomSample = ([Option<u64>; 1], i64, Option<i64>);
+
 #[derive(Debug)]
 pub(crate) struct FindingBuilder {
     requested: BTreeSet<u32>,
@@ -73,7 +75,7 @@ pub(crate) struct FindingBuilder {
     checksum_failures_before: BTreeMap<(u32, u32), (i64, Option<i64>)>,
     sessions_before: BTreeMap<(u32, u32), (i64, i64, i64)>,
     cgroup_oom_before: BTreeMap<(u32, u64), (i64, i64)>,
-    cgroup_oom_v3_before: Option<(u64, i64, Option<i64>)>,
+    cgroup_oom_v3_before: Option<CgroupOomSample>,
 }
 
 impl FindingBuilder {
@@ -102,7 +104,10 @@ impl FindingBuilder {
         }
     }
 
-    fn cgroup_identities(&self, segment: &Segment) -> Result<BTreeMap<i64, u64>, BuildError> {
+    fn cgroup_identities(
+        &self,
+        segment: &Segment,
+    ) -> Result<BTreeMap<i64, [Option<u64>; 1]>, BuildError> {
         if self.requested.contains(&OS_CGROUP_MEMORY_V3) {
             Ok(crate::build::cgroup_identities(
                 segment,

@@ -1724,6 +1724,7 @@ fn write_selected_cpu_segment(
     prefix: Option<&[u8]>,
     counter: i64,
 ) -> (StrId, StrId) {
+    use kronika_registry::os_cgroup_context::OsCgroupContextV2;
     use kronika_registry::os_cgroup_cpu::OsCgroupCpuV3;
     let data_root = DataRoot::open(root).expect("root");
     let owner = data_root
@@ -1736,7 +1737,49 @@ fn write_selected_cpu_segment(
     }
     let path = fixture_label(&mut interner, b"/same-path");
     let identity = fixture_label(&mut interner, group);
+    let host = fixture_label(&mut interner, b"fixture");
+    let visible_root = fixture_label(&mut interner, b"/");
     let mut buffers = SectionBuffers::new();
+    buffers
+        .push(InstanceMetadataV3 {
+            ts: Ts(at),
+            hostname: Some(host),
+            kernel_version: Some(host),
+            environment: Some(1),
+            clock_ticks_per_sec: Some(100),
+            page_size_bytes: Some(4096),
+            boot_id: Some(host),
+            btime: Some(Ts(1)),
+            os_enabled: true,
+            postgresql_processes_shared: false,
+            postgresql_enabled: false,
+            postgresql_interval_seconds: 30,
+            postgresql_effective_cpus: None,
+        })
+        .expect("recorded container metadata");
+    buffers
+        .push(OsCgroupContextV2 {
+            ts: Ts(at),
+            cgroup_version: 2,
+            cpu_path: Some(path),
+            memory_path: None,
+            io_path: None,
+            cpuset_cpus: Some(2),
+            effective_cpu_quota_usec: Some(200_000),
+            effective_cpu_period_usec: Some(100_000),
+            effective_memory_max: None,
+            pids_path: None,
+            cpu_identity: Some(identity),
+            memory_identity: None,
+            io_identity: None,
+            pids_identity: None,
+            cpu_root: Some(visible_root),
+            memory_root: None,
+            io_root: None,
+            pids_root: None,
+            scope: 4,
+        })
+        .expect("recorded selected CPU group");
     buffers
         .push(OsCgroupCpuV3 {
             ts: Ts(at),
@@ -1790,6 +1833,59 @@ fn selected_detail_uses_content_identity_across_segments() {
     let dataset: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(
         PosixSource::open(directory.path()).expect("posix"),
     ));
+    let history = hour_bytes(
+        Arc::clone(&dataset),
+        series_hour_request(
+            Window {
+                from: Some(SEGMENT_ID),
+                to: Some(SEGMENT_ID + 2_000_000),
+            },
+            "os_cgroup_cpu",
+            vec![
+                "usage_usec".to_owned(),
+                "cgroup_path".to_owned(),
+                "cgroup_identity".to_owned(),
+            ],
+            vec![
+                Filter {
+                    column: "cgroup_path".to_owned(),
+                    value: "/same-path".to_owned(),
+                },
+                Filter {
+                    column: "cgroup_identity".to_owned(),
+                    value: "second".to_owned(),
+                },
+            ],
+            None,
+        ),
+    );
+    let records = ndjson(&history);
+    assert_eq!(
+        records.iter().filter(|row| row["record"] == "row").count(),
+        2,
+        "the real Inspector query excludes the replaced directory"
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|row| row["record"] == "series_segment")
+            .count(),
+        3,
+        "the real hour spans the three encoded segments"
+    );
+    if let Some(output) = std::env::var_os("KRONIKA_HISTORY_TEST_OUTPUT") {
+        let output = std::path::PathBuf::from(output);
+        for offset in [0, 1_000_000, 2_000_000] {
+            let id = SegmentId::new(SEGMENT_ID + offset).expect("id");
+            let path = finished_path(directory.path(), id);
+            let target = output.join(
+                path.strip_prefix(directory.path())
+                    .expect("fixture relative path"),
+            );
+            std::fs::create_dir_all(target.parent().expect("parent")).expect("output directory");
+            std::fs::copy(path, target).expect("fixture copy");
+        }
+    }
     for (offset, (path, identity), expected) in [
         (1_000_000, recreated, None),
         (2_000_000, continued, Some(100.0)),
@@ -1810,3 +1906,6 @@ fn selected_detail_uses_content_identity_across_segments() {
         );
     }
 }
+
+#[path = "finished_source_parity/controller_continuity.rs"]
+mod controller_continuity;

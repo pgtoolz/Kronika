@@ -4,7 +4,8 @@
 
 Kronika сохраняет метрики Linux, статистику PostgreSQL, планы запросов и
 события из журналов PostgreSQL/PgBouncer. Сборщик работает на наблюдаемой машине
-Linux либо подключается к удалённому серверу и записывает только PostgreSQL. Веб-интерфейс показывает, что происходило в выбранный
+Linux либо записывает только PostgreSQL с локального или удалённого сервера.
+Веб-интерфейс показывает, что происходило в выбранный
 час: нагрузку, отдельные процессы и запросы, блокировки и изменения показателей.
 
 ![Использование CPU и значения показателей процессов за записанный час](docs/images/processes.png)
@@ -23,11 +24,14 @@ Linux либо подключается к удалённому серверу �
 или [соберите из исходников](docs/build.ru.md). Архив содержит `kronika-collector`,
 `kronika-web`, `kronika-dump` и `kronika-report`.
 
-Выберите запуск ниже: только Linux, локальный PostgreSQL или удалённый PostgreSQL.
+Выберите режим: Linux и при необходимости PostgreSQL (`local`) либо только
+PostgreSQL на локальном или удалённом сервере (`postgresql`).
 Примеры локального сбора сохраняют записи в `/var/lib/kronika`; сборщик создаёт
 каталог, если его ещё нет.
 
-### Только Linux
+### Linux и при необходимости PostgreSQL
+
+Без `KRONIKA_PG_DSNS` режим `local` собирает только Linux:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -35,10 +39,8 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```
 
 <a id="linux-и-postgresql"></a>
-### PostgreSQL на машине сборщика
-
-Для сбора данных PostgreSQL укажите строку подключения в `KRONIKA_PG_DSNS`
-при запуске сборщика. Используйте учётную запись PostgreSQL с
+Для PostgreSQL на машине сборщика укажите строку подключения в `KRONIKA_PG_DSNS`
+при запуске. Используйте учётную запись PostgreSQL с
 [правами для сбора данных](INSTALL.ru.md#5-postgresql).
 
 ```sh
@@ -50,15 +52,16 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 Для этого локального запуска не задавайте `KRONIKA_POSTGRES_EFFECTIVE_CPUS`:
 число CPU берётся из записанных снимков машины.
 
-### Управляемый или удалённый PostgreSQL
+### Только PostgreSQL — локальный или удалённый сервер
 
 Для сбора только PostgreSQL и TLS ниже нужна [сборка из этой версии исходников](docs/build.ru.md); в опубликованных архивах 1.0.1 этих возможностей нет.
-Запустите сборщик на любой машине, откуда доступен сервер. Нужны права на запись
-в каталог данных; метрики Linux этой машины собираться не будут:
+Запустите сборщик на машине, откуда доступен сервер, с каталогом записи в домашней папке.
+
+Для сбора только PostgreSQL sudo не нужен.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR=./kronika-data \
+  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
   KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
   /usr/local/bin/kronika-collector
 ```
@@ -66,15 +69,17 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 TLS проверяет сертификат и имя сервера. Для частного центра сертификации задайте
 `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. Если число CPU PostgreSQL известно,
 добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, заменив `4` нужным числом.
-Без него SQL-метрики доступны, а PostgreSQL Health неизвестен. Права root для
-этого режима не нужны. Подробнее — в [настройках сборщика](bins/kronika-collector/README.ru.md#remote-postgresql).
+Без него SQL-метрики доступны, а PostgreSQL Health неизвестен. Подробнее — в [настройках сборщика](bins/kronika-collector/README.ru.md#remote-postgresql).
 
 ### Открыть веб-интерфейс
 
 Оставив выбранный сборщик работать, запустите веб-сервер во втором терминале
-с тем же каталогом данных. Для Linux укажите `KRONIKA_WEB_SOURCES=1`, для
-локального Linux с PostgreSQL — `3`, для только PostgreSQL — `2`. Для удалённого
-примера выше используйте `KRONIKA_STORAGE_DIR=./kronika-data` без `sudo`:
+с тем же каталогом данных.
+
+#### Для режима `local`
+
+Для Linux укажите `KRONIKA_WEB_SOURCES=1`, как ниже; если также собирается
+PostgreSQL, замените `1` на `3`:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -85,13 +90,13 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-web
 ```
 
-### Веб-сервер для записи только PostgreSQL
+#### Для режима `postgresql`
 
 ```sh
-KRONIKA_STORAGE_DIR=./kronika-data \
+KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
   KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
-  KRONIKA_WEB_AUTH=required \
-  KRONIKA_WEB_USER=demo KRONIKA_WEB_PASSWORD=replace-with-password \
+  KRONIKA_WEB_USER=kronika \
+  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 

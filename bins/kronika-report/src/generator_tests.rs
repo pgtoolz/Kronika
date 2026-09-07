@@ -258,7 +258,7 @@ mod collection_modes;
 #[test]
 #[expect(
     clippy::too_many_lines,
-    reason = "three encoded collection contracts share one production report assertion path"
+    reason = "encoded collection contracts share one production report assertion path"
 )]
 fn recorded_collection_modes_generate_matching_report_artifacts() {
     use crate::{ReportEngine, ReportInput};
@@ -290,6 +290,12 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
             Some(80),
         ),
         ("selected-cgroup", Collection::Cgroup, SOURCE_OS, None),
+        (
+            "separated-controllers",
+            Collection::SeparatedControllers,
+            SOURCE_OS,
+            None,
+        ),
     ] {
         let zms = collection_modes::encoded(collection);
         let segment_id = SegmentId::new(START).expect("segment identity");
@@ -376,6 +382,31 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
             }
             assert_eq!(pg, Some(vec![expected]));
             assert_eq!(overall, pg);
+        }
+        if matches!(collection, Collection::SeparatedControllers) {
+            let oom = values
+                .iter()
+                .filter(|row| row["record"] == "lane" && row["lane"] == "cg_oom")
+                .map(|row| row["value"].as_f64())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                oom,
+                [None, Some(0.0), Some(0.0), Some(0.0), Some(1.0), None]
+            );
+            let index = kronika_index::Index::decode(&idx).expect("decode index");
+            let hits = index
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    kronika_index::SeriesBlock::Findings(block) if block.type_id == 1_202_003 => {
+                        Some(&block.findings)
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .map(|finding| finding.timestamp)
+                .collect::<Vec<_>>();
+            assert_eq!(hits, [START + 4_000_000]);
         }
         if let Some(output) = std::env::var_os("KRONIKA_REPORT_TEST_OUTPUT") {
             let directory = std::path::PathBuf::from(output).join(name);

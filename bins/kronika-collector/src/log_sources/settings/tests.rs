@@ -130,7 +130,7 @@ fn server_reported_user_replaces_the_default_label() {
 fn malformed_and_structurally_invalid_inputs_return_opaque_errors() {
     let raw = "host='unterminated MALFORMED_SECRET";
     let error = ConnectionTarget::parse(raw, 0).expect_err("reject malformed connection");
-    assert_eq!(error, InvalidConnection::Dsn);
+    assert_eq!(error, InvalidConnection);
     let rendered = format!("{error:?}");
     assert!(!rendered.contains("MALFORMED_SECRET"));
     assert!(!rendered.contains(raw));
@@ -142,7 +142,7 @@ fn malformed_and_structurally_invalid_inputs_return_opaque_errors() {
         "host=db.example passfile=PASSFILE_SECRET",
     ] {
         let error = ConnectionTarget::parse(invalid, 0).expect_err("reject invalid connection");
-        assert_eq!(error, InvalidConnection::Dsn);
+        assert_eq!(error, InvalidConnection);
         assert!(!format!("{error:?}").contains("PASSFILE_SECRET"));
     }
 }

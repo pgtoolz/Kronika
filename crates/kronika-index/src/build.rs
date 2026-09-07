@@ -53,7 +53,7 @@ struct SnapshotIdentity {
     environment: Option<u32>,
     boot_id: Option<u64>,
     boot_time: Option<i64>,
-    cgroup: Option<u64>,
+    cgroup: Option<[Option<u64>; 3]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,7 +144,7 @@ impl std::fmt::Display for BuildError {
                     "pg_stat_activity state has unresolved dictionary id {id}"
                 )
             }
-            Self::InvalidMetadata => write!(f, "instance_metadata v2 has no usable row"),
+            Self::InvalidMetadata => write!(f, "instance_metadata has no usable row"),
             Self::InvalidLogErrorCategory => {
                 write!(f, "pg_log_errors.category must be between 0 and 10")
             }
@@ -1109,12 +1109,11 @@ fn visit_stall_snapshots(
 pub(crate) fn cgroup_identities<const N: usize>(
     segment: &Segment,
     fields: [&'static str; N],
-) -> Result<BTreeMap<i64, u64>, ReaderError> {
-    use std::hash::{Hash, Hasher};
+) -> Result<BTreeMap<i64, [Option<u64>; N]>, ReaderError> {
     if segment.rows_of(1_205_002).is_none() {
         return Ok(BTreeMap::new());
     }
-    let mut rows = Vec::new();
+    let mut rows = BTreeMap::new();
     let mut ids = HashSet::new();
     let mut projection = vec!["ts"];
     projection.extend(fields);
@@ -1125,25 +1124,17 @@ pub(crate) fn cgroup_identities<const N: usize>(
                 _ => None,
             });
             ids.extend(identities.iter().flatten().copied());
-            rows.push((*ts, identities));
+            rows.insert(*ts, identities);
         }
         true
     })?;
     let dictionary = segment.dictionary_for(&ids)?;
-    Ok(rows
-        .into_iter()
-        .map(|(ts, identities)| {
-            let mut hash = std::hash::DefaultHasher::new();
-            for id in identities {
-                let value = id.and_then(|id| dictionary.resolve(id));
-                match value {
-                    Some(Resolved::Str(bytes)) => Some(bytes).hash(&mut hash),
-                    _ => None::<&[u8]>.hash(&mut hash),
-                }
-            }
-            (ts, hash.finish())
-        })
-        .collect())
+    for identities in rows.values_mut() {
+        for id in identities {
+            *id = id.filter(|id| matches!(dictionary.resolve(*id), Some(Resolved::Str(_))));
+        }
+    }
+    Ok(rows)
 }
 
 fn stall_snapshot_identity(
