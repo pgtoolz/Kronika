@@ -99,7 +99,7 @@ test("RU keeps technical labels in English and localizes help", async () => {
     "filter.field.buffer_hit.label", "filter.field.seq_scan_rate.label", "filter.field.change_rate.label", "filter.field.autovacuum_rate.label",
     "filter.field.autovacuum_mean.label", "filter.field.xid_age.label", "filter.field.scan_rate.label", "pg.pid.label", "pg.datid.label",
     "pg.vacuum.at_sample", "pg.vacuum.load.read.label", "pg.vacuum.load.write.label", "pg.vacuum.load.block_wait.label",
-    "lane.cpu_stall.label", "lane.io_stall.label", "events.source.locks", "events.source.archiver", "events.source.cgroup_memory",
+    "lane.cpu_stall.label", "lane.io_stall.label", "events.source.locks", "events.source.archiver",
     "events.metric.data_corruption", "pg.field.checksum_failures.label", "pg.field.min_mxid_age.label", "pg.field.sessions_fatal.label",
     "pg.field.sessions_killed.label", "pg.field.failed_count.label",
     "use.lane.mem_oom", "use.lane.cg_oom", "use.lane.cg_cpu_throttle",
@@ -119,7 +119,8 @@ test("RU keeps technical labels in English and localizes help", async () => {
   ]
   for (const key of canonical) assert.equal(russian[key], english[key], key)
   for (const [key, value] of Object.entries({
-    "use.scope.container": "Контейнер",
+    "events.source.cgroup_memory": "Память cgroup",
+    "use.scope.container": "Группа cgroup",
     "use.scope.namespace": "Сетевое пространство",
     "use.scope.host": "Хост",
     "use.utilisation": "Использование",
