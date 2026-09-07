@@ -15,7 +15,7 @@ Feature: Container pressure and storage reach the recorded segment
       | file line | sys/fs/cgroup/cgroup.controllers      | cpu memory io pids                   |
       | file line | sys/fs/cgroup/docker/workload/io.stat |                                      |
 
-  Scenario: PSI stores the highest visible ancestor with scope 3
+  Scenario: PSI records the selected ancestor without assuming container scope
     Given a filesystem fixture with these entries
       | kind      | path                                                | value                                               |
       | file line | sys/fs/cgroup/cpu.pressure                         | some avg10=11.5 avg60=11.0 avg300=10.5 total=111000 |
@@ -62,12 +62,13 @@ Feature: Container pressure and storage reach the recorded segment
       | 1107001 | os_psi  | 3        |
     And every snapshot of section 1107001 contains exactly these rows
       | resource | scope | some_avg10 | some_total | full_total |
-      | 0        | 3     | 11.5       | 111000     | null       |
-      | 1        | 3     | 12.5       | 122000     | 12200      |
-      | 2        | 3     | 13.5       | 133000     | 13300      |
+      | 0        | 4     | 11.5       | 111000     | null       |
+      | 1        | 4     | 12.5       | 122000     | 12200      |
+      | 2        | 4     | 13.5       | 133000     | 13300      |
     And no segment records these rows
       | type_id | column     | value  |
       | 1107001 | scope      | 0      |
+      | 1107001 | scope      | 3      |
       | 1107001 | some_total | 11000  |
       | 1107001 | some_total | 22000  |
       | 1107001 | some_total | 33000  |
