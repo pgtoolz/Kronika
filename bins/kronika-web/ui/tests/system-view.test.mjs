@@ -743,4 +743,3 @@ test("the usage chart draws the recorded share components under its own line", (
   // Colours step past the usage line the chart prepends, so no pair collides.
   assert.equal(new Set(series.map(({ color }) => color)).size, series.length)
 })
-
