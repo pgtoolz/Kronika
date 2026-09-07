@@ -30,9 +30,9 @@ build)
 	;;
 run)
 	docker build --file Dockerfile.bdd --tag "$IMAGE" .
-	# --cpus is part of the contract: container.feature asserts the collector
-	# records this quota and not the host's core count.
-	docker run --rm --cpus=2 "$IMAGE"
+	# The private namespace makes this quota the visible root limit checked
+	# by container.feature.
+	docker run --rm --cgroupns=private --cpus=2 "$IMAGE"
 	;;
 *)
 	echo "usage: $0 {deps-key|build|run}" >&2

@@ -1,7 +1,7 @@
 Feature: What the collector records about the container it runs in
 
   The suite runs inside Docker, so the collector under test really is in a
-  container under a cgroup limit. The image runs with --cpus=2; the 2 below has
+  container with a private cgroup namespace. Its visible root has --cpus=2; the 2 below has
   to match it, and a drift between the two fails this feature.
 
   Scenario: The segment says the collector was inside a container
@@ -14,7 +14,7 @@ Feature: What the collector records about the container it runs in
       | column      | value |
       | environment | 1     |
 
-  Scenario: The cgroup the collector lives in reaches the segment
+  Scenario: The highest visible cgroup reaches the segment
     Given a collector with these settings
       | variable                             | value |
       | KRONIKA_INTERVAL_S                   | 1     |
@@ -25,13 +25,13 @@ Feature: What the collector records about the container it runs in
     Then every segment holds these sections
       | type_id | section           | min rows |
       | 1200001 | os_cgroup_mapping | 1        |
-      | 1201001 | os_cgroup_cpu     | 1        |
-      | 1202001 | os_cgroup_memory  | 1        |
-      | 1203002 | os_cgroup_io      | 1        |
+      | 1201003 | os_cgroup_cpu     | 1        |
+      | 1202003 | os_cgroup_memory  | 1        |
+      | 1203003 | os_cgroup_io      | 1        |
       | 1204001 | os_cgroup_pids    | 1        |
-      | 1205001 | os_cgroup_context | 1        |
+      | 1205002 | os_cgroup_context | 1        |
 
-  Scenario: The recorded CPU limit is the container's, not the host's core count
+  Scenario: The private cgroup namespace root records its CPU limit
     Given a collector with these settings
       | variable                     | value |
       | KRONIKA_INTERVAL_S           | 1     |

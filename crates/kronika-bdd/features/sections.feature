@@ -19,7 +19,7 @@ Feature: Which sections reach the segment, and how many rows they may hold
     When it runs for 3 seconds
     Then every segment holds these sections
       | type_id | section            | min rows |
-      | 1021002 | instance_metadata  | 1        |
+      | 1021003 | instance_metadata  | 1        |
       | 1100001 | os_process         | 1        |
       | 1101001 | os_process_status  | 1        |
       | 1102001 | os_cpu             | 2        |
@@ -38,11 +38,11 @@ Feature: Which sections reach the segment, and how many rows they may hold
       | 1117001 | os_numa            | 1        |
       | 1118001 | os_snmp6           | 1        |
       | 1200001 | os_cgroup_mapping  | 1        |
-      | 1201001 | os_cgroup_cpu      | 1        |
-      | 1202001 | os_cgroup_memory   | 1        |
-      | 1203002 | os_cgroup_io       | 1        |
+      | 1201003 | os_cgroup_cpu      | 1        |
+      | 1202003 | os_cgroup_memory   | 1        |
+      | 1203003 | os_cgroup_io       | 1        |
       | 1204001 | os_cgroup_pids     | 1        |
-      | 1205001 | os_cgroup_context  | 1        |
+      | 1205002 | os_cgroup_context  | 1        |
     And every segment holds these sections
       | type_id | section      | min rows |
       | 3001001 | dict.strings | 1        |

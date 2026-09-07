@@ -13,9 +13,9 @@ use cucumber::then;
 use std::path::Path;
 
 /// `type_id` of `instance_metadata`.
-const INSTANCE_METADATA: u32 = 1_021_002;
+const INSTANCE_METADATA: u32 = 1_021_003;
 /// `type_id` of `os_cgroup_cpu`.
-const OS_CGROUP_CPU: u32 = 1_201_001;
+const OS_CGROUP_CPU: u32 = 1_201_003;
 
 /// A `YYYY/MM/DD` prefix, as the layout writes it.
 fn is_utc_calendar_path(relative: &Path) -> bool {
