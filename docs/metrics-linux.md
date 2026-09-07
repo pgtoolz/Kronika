@@ -229,7 +229,7 @@ A controller accounts for its resource across the group. In the formulas, `used_
 |---|---|---|
 | CPU used / user / system | `R(usage_usec) / 10⁶`, `R(user_usec) / 10⁶`, `R(system_usec) / 10⁶` | Core equivalents; `cpu.stat` |
 | Other CPU | `R(usage_usec − user_usec − system_usec) / 10⁶`, calculated from the three differences | Cores; null if a component difference or residual is negative |
-| CPU share | `100 × used_cores / effective_capacity` | %; unavailable without capacity |
+| CPU share | `100 × used_cores / effective_capacity` | Share of the recorded CPU limit, %; unavailable without a known limit |
 | CPU quota / period | `quota_usec`, `period_usec`; displayed quota cores `Q/P` when positive | Local controller ceiling; quota `−1` is unlimited |
 | Throttled | `100 × R(throttled_usec) / 10⁶` | % of wall interval; no capacity division or 100% cap |
 | Throttling events | Recorded cumulative `nr_throttled` | Count; cgroup CPU record |
@@ -259,7 +259,7 @@ USE columns are Utilization (U), Saturation (S), and Errors (E). Cells read thei
 | Host memory | In use % | Swapped pages/s | OOM kills/s |
 | Host storage | Capped summed busy % | Summed average queue | Unavailable |
 | Host/namespace network | RX and TX B/s | Drops including FIFO/s | RX + TX errors/s |
-| Cgroup CPU | Capacity share %, fallback used cores | Throttled % and CPU PSI % | Unavailable |
+| Cgroup CPU | CPU-limit share %, otherwise used cores | Throttled % and CPU PSI % | Unavailable |
 | Cgroup memory | Effective-limit share %, fallback current bytes | Memory PSI % | OOM kills/s |
 | Cgroup I/O | Read and write B/s | I/O PSI % | Unavailable |
 | Cgroup Threads | Local-limit share %, fallback current count | Unavailable | Unavailable |
