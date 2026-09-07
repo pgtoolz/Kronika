@@ -3,11 +3,11 @@
 use std::io;
 use std::os::unix::fs::MetadataExt;
 
-use super::parse::{parse_cpuacct_stat, parse_i64};
+use super::parse::parse_i64;
 use super::{
     CgroupCollection, CgroupContextRow, CpuQuota, MAX_CGROUP_IO_ROWS, MemoryLimit, ProcFs, PsiRow,
-    SysFs, hierarchy_paths, normalize_self_cgroup_path, parse_cpu_max_strict, parse_cpu_stat,
-    parse_io_stat_bounded, parse_pressure_at, parse_self_cgroup, parse_v1_capacity_limit,
+    SysFs, hierarchy_paths, normalize_self_cgroup_path, parse_cpu_max_strict,
+    parse_io_stat_bounded, parse_pressure_at, parse_unified_cgroup_path,
 };
 use crate::proc::stat::ParseError;
 
@@ -21,8 +21,6 @@ pub struct SelectedCgroup {
     /// Directory and bound hierarchy identity for counter continuity.
     pub identity: String,
     base: String,
-    version: u8,
-    cpu_bandwidth: bool,
 }
 
 impl SelectedCgroup {
@@ -70,8 +68,6 @@ pub struct AncestorContext {
 struct Mount {
     base: String,
     root: String,
-    version: u8,
-    controllers: Vec<String>,
 }
 
 /// Select the highest readable ancestor of the collector in each hierarchy.
@@ -85,8 +81,6 @@ pub fn collect_ancestor_context(
     ts: i64,
 ) -> io::Result<AncestorContext> {
     let content = procfs.read_raw("self/cgroup")?;
-    let parsed = parse_self_cgroup(&content);
-    let mounts = mounts(procfs, sys)?;
     let mut out = AncestorContext {
         context: CgroupContextRow {
             ts,
@@ -94,50 +88,22 @@ pub fn collect_ancestor_context(
         },
         ..AncestorContext::default()
     };
-    if let Some(path) = parsed.unified {
-        if let Some(selected) = select_mount(sys, &mounts, 2, &[], path) {
-            out.context.cgroup_version = 2;
-            out.cpu = Some(selected.clone());
-            out.memory = Some(selected.clone());
-            out.io = Some(selected.clone());
-            out.pids = Some(selected);
-        }
-    } else {
-        out.context.cgroup_version = 1;
-        // Different v1 trees are separate objects even when path text matches.
-        out.cpu = parsed.cpuacct.and_then(|path| {
-            select_mount(sys, &mounts, 1, &["cpuacct"], path).map(|mut selected| {
-                selected.cpu_bandwidth &= parsed.cpu == parsed.cpuacct;
-                selected
-            })
-        });
-        out.memory = parsed
-            .memory
-            .and_then(|path| select_mount(sys, &mounts, 1, &["memory"], path));
-        out.io = parsed
-            .io
-            .and_then(|path| select_mount(sys, &mounts, 1, &["blkio"], path));
-        out.pids = parsed
-            .pids
-            .and_then(|path| select_mount(sys, &mounts, 1, &["pids"], path));
-        // Only a co-mounted cpuset controller can constrain this same object.
-        if let (Some(cpu), Some(path)) = (&out.cpu, parsed.cpuset)
-            && parsed.cpuacct == Some(path)
-            && select_mount(sys, &mounts, 1, &["cpuacct", "cpuset"], path)
-                .is_some_and(|selected| selected.identity == cpu.identity)
-        {
-            out.context.cpuset_cpus = cpu
-                .read(sys, "cpuset.effective_cpus")
-                .and_then(|value| super::parse_cpuset_count(&value));
-        }
+    let Some(path) = parse_unified_cgroup_path(&content) else {
+        return Ok(out);
+    };
+    let mounts = mounts(procfs, sys)?;
+    if let Some(selected) = select_mount(sys, &mounts, path) {
+        out.context.cgroup_version = 2;
+        out.cpu = Some(selected.clone());
+        out.memory = Some(selected.clone());
+        out.io = Some(selected.clone());
+        out.pids = Some(selected);
     }
     if let Some(cpu) = &out.cpu {
         out.context.cpu_path = Some(cpu.path.clone());
-        if cpu.version == 2 {
-            out.context.cpuset_cpus = cpu
-                .read(sys, "cpuset.cpus.effective")
-                .and_then(|value| super::parse_cpuset_count(&value));
-        }
+        out.context.cpuset_cpus = cpu
+            .read(sys, "cpuset.cpus.effective")
+            .and_then(|value| super::parse_cpuset_count(&value));
         if let Some((quota, period)) = observed_cpu_limit(sys, cpu) {
             out.context.effective_cpu_quota_usec = Some(quota);
             out.context.effective_cpu_period_usec = Some(period);
@@ -167,11 +133,9 @@ fn mounts(procfs: &ProcFs, sys: &SysFs) -> io::Result<Vec<Mount>> {
         if fields.len() < 5 || tail.len() < 3 {
             continue;
         }
-        let version = match tail[0] {
-            "cgroup2" => 2,
-            "cgroup" => 1,
-            _ => continue,
-        };
+        if tail[0] != "cgroup2" {
+            continue;
+        }
         let Some(point) = unescape_mount(fields[4]) else {
             continue;
         };
@@ -195,12 +159,7 @@ fn mounts(procfs: &ProcFs, sys: &SysFs) -> io::Result<Vec<Mount>> {
         } else {
             format!("fs/cgroup/{relative}")
         };
-        out.push(Mount {
-            base,
-            root,
-            version,
-            controllers: tail[2].split(',').map(str::to_owned).collect(),
-        });
+        out.push(Mount { base, root });
     }
     Ok(out)
 }
@@ -238,40 +197,41 @@ fn membership_relative<'a>(root: &str, own: &'a str) -> Option<&'a str> {
     }
 }
 
-fn select_mount(
-    sys: &SysFs,
-    mounts: &[Mount],
-    version: u8,
-    controllers: &[&str],
-    own: &str,
-) -> Option<SelectedCgroup> {
+fn select_mount(sys: &SysFs, mounts: &[Mount], own: &str) -> Option<SelectedCgroup> {
     let mut matching = mounts
         .iter()
-        .filter(|mount| {
-            mount.version == version
-                && membership_relative(&mount.root, own).is_some()
-                && controllers
-                    .iter()
-                    .all(|controller| mount.controllers.iter().any(|name| name == controller))
-        })
+        .filter_map(|mount| select(sys, mount, own).map(|group| (mount, group)))
         .collect::<Vec<_>>();
-    // Compatible roots are ancestors of the same membership. Prefer the highest
-    // visible root; aliases are accepted only when they bind the same objects.
-    matching.sort_by(|a, b| a.root.len().cmp(&b.root.len()).then(a.base.cmp(&b.base)));
-    let highest = *matching.first()?;
-    for mount in &matching {
-        let relative = membership_relative(&highest.root, &mount.root)?;
-        let through_highest = format!("{}/{}", highest.base, relative.trim_start_matches('/'));
-        let first = std::fs::metadata(sys.canonical_path(&through_highest).ok()?).ok()?;
-        let alias = std::fs::metadata(sys.canonical_path(&mount.base).ok()?).ok()?;
-        if first.dev() != alias.dev() || first.ino() != alias.ino() {
+    matching.sort_by(|(a, left), (b, right)| {
+        (left.root.trim_end_matches('/').len() + left.path.len())
+            .cmp(&(right.root.trim_end_matches('/').len() + right.path.len()))
+            .then(a.root.len().cmp(&b.root.len()))
+            .then(a.base.cmp(&b.base))
+    });
+    let (highest, _) = matching.first()?;
+    for (mount, _) in &matching {
+        let (ancestor, descendant) = if highest.root.len() <= mount.root.len() {
+            (highest, mount)
+        } else {
+            (mount, highest)
+        };
+        let relative = membership_relative(&ancestor.root, &descendant.root)?;
+        let through_ancestor = format!("{}/{}", ancestor.base, relative.trim_start_matches('/'));
+        let metadata = |path: &str| {
+            sys.canonical_path(path)
+                .ok()
+                .and_then(|path| std::fs::metadata(path).ok())
+        };
+        // An unreadable alias comparison cannot invalidate an independently
+        // readable group. A verified different object remains ambiguous.
+        if let (Some(first), Some(alias)) =
+            (metadata(&through_ancestor), metadata(&descendant.base))
+            && (first.dev() != alias.dev() || first.ino() != alias.ino())
+        {
             return None;
         }
     }
-    matching
-        .into_iter()
-        .filter_map(|mount| select(sys, mount, own))
-        .min_by_key(|group| group.root.trim_end_matches('/').len() + group.path.len())
+    matching.into_iter().next().map(|(_, group)| group)
 }
 
 fn directory_identity(base: &str, root: &str, metadata: &std::fs::Metadata) -> String {
@@ -307,8 +267,6 @@ fn select(sys: &SysFs, mount: &Mount, own: &str) -> Option<SelectedCgroup> {
             root: mount.root.clone(),
             identity,
             base: mount.base.clone(),
-            version: mount.version,
-            cpu_bandwidth: mount.version == 2 || mount.controllers.iter().any(|name| name == "cpu"),
         });
     }
     selected
@@ -317,22 +275,16 @@ fn select(sys: &SysFs, mount: &Mount, own: &str) -> Option<SelectedCgroup> {
 // These are observed limits of the selected object, not assertions about
 // unseen constraints or PostgreSQL's resource scope.
 fn observed_cpu_limit(sys: &SysFs, group: &SelectedCgroup) -> Option<(i64, i64)> {
-    if !group.cpu_bandwidth || !group.is_current(sys) {
+    if !group.is_current(sys) {
         return None;
     }
     let mut finite = None;
     let mut unlimited_period = None;
     for path in hierarchy_paths(&group.path)? {
-        let quota = if group.version == 2 {
-            sys.read(&group.relative(&path, "cpu.max"))
-                .ok()
-                .and_then(|value| parse_cpu_max_strict(&value))
-        } else {
-            sys.read(&group.relative(&path, "cpu.cfs_quota_us"))
-                .ok()
-                .zip(sys.read(&group.relative(&path, "cpu.cfs_period_us")).ok())
-                .and_then(|(quota, period)| super::parse_cpu_v1_quota_strict(&quota, &period))
-        };
+        let quota = sys
+            .read(&group.relative(&path, "cpu.max"))
+            .ok()
+            .and_then(|value| parse_cpu_max_strict(&value));
         if let Some(quota) = quota {
             if let CpuQuota::Unlimited { period_usec } = quota {
                 unlimited_period = Some(period_usec);
@@ -354,28 +306,15 @@ fn effective_memory(sys: &SysFs, group: &SelectedCgroup) -> Option<i64> {
         MemoryLimit::Limited(value) => Some(value),
         MemoryLimit::Unlimited => None,
     };
-    let limit = if group.version == 1 {
-        let local = group
-            .read(sys, "memory.limit_in_bytes")
-            .and_then(|value| parse_v1_capacity_limit(&value))
-            .and_then(finite);
-        let hierarchical = group
-            .read(sys, "memory.stat")
-            .and_then(|stat| super::parse_exact_stat_value(&stat, "hierarchical_memory_limit"))
-            .and_then(super::normalize_v1_capacity_limit)
-            .and_then(finite);
-        local.into_iter().chain(hierarchical).min()
-    } else {
-        hierarchy_paths(&group.path)?
-            .into_iter()
-            .filter_map(|path| {
-                sys.read(&group.relative(&path, "memory.max"))
-                    .ok()
-                    .and_then(|value| super::parse_memory_max_strict(&value))
-                    .and_then(finite)
-            })
-            .min()
-    };
+    let limit = hierarchy_paths(&group.path)?
+        .into_iter()
+        .filter_map(|path| {
+            sys.read(&group.relative(&path, "memory.max"))
+                .ok()
+                .and_then(|value| super::parse_memory_max_strict(&value))
+                .and_then(finite)
+        })
+        .min();
     if !group.is_current(sys) {
         return None;
     }
@@ -384,16 +323,11 @@ fn effective_memory(sys: &SysFs, group: &SelectedCgroup) -> Option<i64> {
 
 /// Read one selected aggregate per controller, omitting incomplete non-null rows.
 #[must_use]
-pub fn collect_ancestor_rows(
-    sys: &SysFs,
-    selected: &AncestorContext,
-    ts: i64,
-    hz: i64,
-) -> CgroupCollection {
+pub fn collect_ancestor_rows(sys: &SysFs, selected: &AncestorContext, ts: i64) -> CgroupCollection {
     let mut out = CgroupCollection::default();
     if let Some(group) = &selected.cpu
         && group.is_current(sys)
-        && let Some(row) = read_cpu(sys, group, ts, hz)
+        && let Some(row) = read_cpu(sys, group, ts)
         && group.is_current(sys)
     {
         out.ancestor_cpu.push(row);
@@ -408,26 +342,14 @@ pub fn collect_ancestor_rows(
     if let Some(group) = &selected.io
         && group.is_current(sys)
     {
-        if group.version == 2 {
-            if let Some(content) = group.read(sys, "io.stat") {
-                match parse_io_stat_bounded(&content, ts, &group.path, MAX_CGROUP_IO_ROWS) {
-                    Some(rows) => out.io = rows,
-                    None => out.io_omitted = true,
-                }
-            }
-        } else if let Some((bytes, ops)) = read_recursive_io(sys, group) {
-            match super::parse_blkio_service_stats_bounded(
-                bytes.as_deref().unwrap_or_default(),
-                ops.as_deref().unwrap_or_default(),
-                ts,
-                &group.path,
-                MAX_CGROUP_IO_ROWS,
-            ) {
+        if let Some(content) = group.read(sys, "io.stat") {
+            match parse_io_stat_bounded(&content, ts, &group.path, MAX_CGROUP_IO_ROWS) {
                 Some(rows) => out.io = rows,
                 None => out.io_omitted = true,
             }
         }
     }
+
     if selected
         .io
         .as_ref()
@@ -454,79 +376,20 @@ pub fn collect_ancestor_rows(
     out
 }
 
-fn read_recursive_io(
-    sys: &SysFs,
-    group: &SelectedCgroup,
-) -> Option<(Option<String>, Option<String>)> {
-    for family in ["blkio.throttle", "blkio"] {
-        let bytes = group.read(sys, &format!("{family}.io_service_bytes_recursive"));
-        let ops = group.read(sys, &format!("{family}.io_serviced_recursive"));
-        // An available family owns both fields. Missing members stay unknown;
-        // local-task counters and a different policy family cannot fill them.
-        if bytes.is_some() || ops.is_some() {
-            return Some((bytes, ops));
-        }
-    }
-    None
-}
-
-fn valid_keys(content: &str, keys: &[&str]) -> bool {
-    keys.iter()
-        .all(|key| super::parse_exact_stat_value(content, key).is_some_and(|value| value >= 0))
-}
-
-fn read_cpu(
-    sys: &SysFs,
-    group: &SelectedCgroup,
-    ts: i64,
-    hz: i64,
-) -> Option<super::AncestorCpuRow> {
+fn read_cpu(sys: &SysFs, group: &SelectedCgroup, ts: i64) -> Option<super::AncestorCpuRow> {
     let stat = group.read(sys, "cpu.stat");
     let value = |key| {
         stat.as_deref()
             .and_then(|text| super::parse_exact_stat_value(text, key))
             .filter(|value| *value >= 0)
     };
-    let (usage, user, system, throttled) = if group.version == 2 {
-        (
-            value("usage_usec")?,
-            value("user_usec")?,
-            value("system_usec")?,
-            value("throttled_usec"),
-        )
-    } else {
-        if hz <= 0 {
-            return None;
-        }
-        let account = group.read(sys, "cpuacct.stat")?;
-        if !valid_keys(&account, &["user", "system"]) {
-            return None;
-        }
-        let mut row = parse_cpu_stat("", ts, &group.path);
-        parse_cpuacct_stat(&account, hz, &mut row);
-        let usage = parse_i64(&group.read(sys, "cpuacct.usage")?)?;
-        if usage < 0 {
-            return None;
-        }
-        (
-            usage / 1000,
-            row.user_usec,
-            row.system_usec,
-            value("throttled_time").map(|value| value / 1000),
-        )
-    };
-    let quota = if group.version == 2 {
-        group
-            .read(sys, "cpu.max")
-            .and_then(|value| parse_cpu_max_strict(&value))
-    } else if group.cpu_bandwidth {
-        group
-            .read(sys, "cpu.cfs_quota_us")
-            .zip(group.read(sys, "cpu.cfs_period_us"))
-            .and_then(|(quota, period)| super::parse_cpu_v1_quota_strict(&quota, &period))
-    } else {
-        None
-    };
+    let usage = value("usage_usec")?;
+    let user = value("user_usec")?;
+    let system = value("system_usec")?;
+    let throttled = value("throttled_usec");
+    let quota = group
+        .read(sys, "cpu.max")
+        .and_then(|value| parse_cpu_max_strict(&value));
     let pair = quota.map(|quota| match quota {
         CpuQuota::Unlimited { period_usec } => (-1, period_usec),
         CpuQuota::Limited {
@@ -548,22 +411,13 @@ fn read_cpu(
 }
 
 fn read_memory(sys: &SysFs, group: &SelectedCgroup, ts: i64) -> Option<super::AncestorMemoryRow> {
-    let (current_file, limit_file) = if group.version == 2 {
-        ("memory.current", "memory.max")
-    } else {
-        ("memory.usage_in_bytes", "memory.limit_in_bytes")
-    };
-    let current = parse_i64(&group.read(sys, current_file)?)?;
+    let current = parse_i64(&group.read(sys, "memory.current")?)?;
     if current < 0 {
         return None;
     }
-    let limit = group.read(sys, limit_file).and_then(|value| {
-        if group.version == 2 {
-            super::parse_memory_max_strict(&value)
-        } else {
-            parse_v1_capacity_limit(&value)
-        }
-    });
+    let limit = group
+        .read(sys, "memory.max")
+        .and_then(|value| super::parse_memory_max_strict(&value));
     let stat = group.read(sys, "memory.stat");
     let events = group.read(sys, "memory.events");
     let stat_value = |key| {
@@ -577,26 +431,12 @@ fn read_memory(sys: &SysFs, group: &SelectedCgroup, ts: i64) -> Option<super::An
             .and_then(|text| super::parse_exact_stat_value(text, key))
             .filter(|value| *value >= 0)
     };
-    let (anon, file, kernel, slab) = if group.version == 2 {
-        (
-            stat_value("anon"),
-            stat_value("file"),
-            stat_value("kernel"),
-            stat_value("slab"),
-        )
-    } else {
-        // Total keys are hierarchical; never replace them with local rss/cache.
-        let slab = stat_value("total_slab");
-        let kernel = slab
-            .zip(stat_value("total_kernel_stack"))
-            .and_then(|(slab, stack)| slab.checked_add(stack));
-        (
-            stat_value("total_rss"),
-            stat_value("total_cache"),
-            kernel,
-            slab,
-        )
-    };
+    let (anon, file, kernel, slab) = (
+        stat_value("anon"),
+        stat_value("file"),
+        stat_value("kernel"),
+        stat_value("slab"),
+    );
     Some(super::AncestorMemoryRow {
         ts,
         cgroup_path: group.path.clone(),
@@ -612,14 +452,7 @@ fn read_memory(sys: &SysFs, group: &SelectedCgroup, ts: i64) -> Option<super::An
         slab,
         low_events: event("low"),
         high_events: event("high"),
-        max_events: if group.version == 2 {
-            event("max")
-        } else {
-            group
-                .read(sys, "memory.failcnt")
-                .and_then(|value| parse_i64(&value))
-                .filter(|value| *value >= 0)
-        },
+        max_events: event("max"),
         oom_events: event("oom"),
         oom_kill: event("oom_kill"),
     })
@@ -634,7 +467,7 @@ pub fn collect_ancestor_pressure(
     selected: &AncestorContext,
     ts: i64,
 ) -> Result<Vec<PsiRow>, ParseError> {
-    let Some(group) = selected.cpu.as_ref().filter(|group| group.version == 2) else {
+    let Some(group) = selected.cpu.as_ref() else {
         return Ok(Vec::new());
     };
     if !group.is_current(sys) {
@@ -659,7 +492,7 @@ pub fn collect_ancestor_pressure(
 /// Device IDs charged to the selected v2 ancestor, without a child fallback.
 #[must_use]
 pub fn charged_ancestor_devices(sys: &SysFs, selected: &AncestorContext) -> Vec<(i32, i32)> {
-    let Some(group) = selected.io.as_ref().filter(|group| group.version == 2) else {
+    let Some(group) = selected.io.as_ref() else {
         return Vec::new();
     };
     if !group.is_current(sys) {

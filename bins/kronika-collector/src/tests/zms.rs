@@ -2384,7 +2384,6 @@ fn bounded_cgroup_hour_reports_collection_and_production_writer_costs() {
             memberships.iter().map(String::as_str),
             &sys,
             i64::try_from(sample).expect("sample count fits i64"),
-            100,
         )
         .expect("collect bounded cgroup fixture");
         assert_eq!(rows.cpu.len(), CGROUP_CANDIDATE_COUNT);

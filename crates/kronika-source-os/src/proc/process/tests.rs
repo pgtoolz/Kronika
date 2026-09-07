@@ -50,3 +50,35 @@ fn process_reader_reuses_scratch_without_leaking_optional_content() {
     assert_eq!(second.hot.cmdline, None);
     assert_eq!(second.cgroup, None);
 }
+
+#[test]
+fn process_rows_remain_available_without_unified_cgroup_membership() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let process = dir.path().join("42");
+    std::fs::create_dir(&process).expect("create process");
+    std::fs::write(process.join("stat"), stat_line(42, "postgres")).expect("write stat");
+    std::fs::write(
+        process.join("status"),
+        "Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n",
+    )
+    .expect("write status");
+    std::fs::write(
+        process.join("cgroup"),
+        "2:cpu,cpuacct:/workload\n3:memory:/workload\n",
+    )
+    .expect("write v1 membership");
+    let fs = ProcFs::new(dir.path().to_owned());
+    let facts = ProcessFacts {
+        btime_usec: 1_700_000_000_000_000,
+        clock_ticks_per_sec: 100,
+        page_size_bytes: 4096,
+    };
+    let mut reader = ProcessReader::new(&fs);
+    let cgroup_path = reader.cgroup_membership(42).and_then(parse_cgroup_path);
+    let row = reader
+        .read_without_io(42, facts, 7, cgroup_path)
+        .expect("read process without cgroup mapping");
+    assert_eq!(row.hot.pid, 42);
+    assert_eq!(row.hot.comm, "postgres");
+    assert!(row.cgroup.is_none());
+}

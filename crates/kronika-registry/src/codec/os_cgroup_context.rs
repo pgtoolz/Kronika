@@ -49,9 +49,8 @@ pub struct OsCgroupContext {
 
 /// Highest accessible ancestor paths, directory identities and recorded capacity.
 ///
-/// `cgroup_version` is `1` for cgroup v1, `2` for cgroup v2, and `0` when the
-/// version could not be determined. Optional values stay null when their
-/// controller or file is unavailable.
+/// Current acquisition records cgroup v2 (`2`), or `0` when unavailable.
+/// Optional values stay null when their controller or file is unavailable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Section)]
 #[section(
     id = 1_205_002,

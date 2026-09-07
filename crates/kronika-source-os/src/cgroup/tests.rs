@@ -58,49 +58,6 @@ fn write_v2_capacity(dir: &tempfile::TempDir, path: &str, cpu_max: &str, memory_
     std::fs::write(cgroup.join("memory.max"), memory_max).expect("write v2 memory max");
 }
 
-fn prepare_v1_context(
-    dir: &tempfile::TempDir,
-    path: &str,
-    local_memory_limit: &str,
-    hierarchical_memory_limit: &str,
-) {
-    std::fs::write(
-        dir.path().join("proc/self/cgroup"),
-        format!("2:cpu,cpuacct:{path}\n3:memory:{path}\n4:cpuset:{path}\n"),
-    )
-    .expect("write v1 membership");
-    let cpu = fixture_cgroup_path(dir, "cpu,cpuacct", path);
-    let memory = fixture_cgroup_path(dir, "memory", path);
-    let cpuset = fixture_cgroup_path(dir, "cpuset", path);
-    for cgroup in [&cpu, &memory, &cpuset] {
-        std::fs::create_dir_all(cgroup).expect("mkdir v1 leaf");
-    }
-    std::fs::write(cpu.join("cpuacct.usage"), "1000\n").expect("write v1 CPU usage");
-    std::fs::write(cpu.join("cpuacct.stat"), "user 6\nsystem 4\n")
-        .expect("write v1 CPU account stat");
-    std::fs::write(memory.join("memory.usage_in_bytes"), "4096\n")
-        .expect("write v1 memory current");
-    std::fs::write(memory.join("memory.limit_in_bytes"), local_memory_limit)
-        .expect("write v1 local memory limit");
-    std::fs::write(
-        memory.join("memory.stat"),
-        format!(
-            "total_rss 100\ntotal_cache 200\ntotal_slab 20\n\
-             total_kernel_stack 5\nhierarchical_memory_limit {hierarchical_memory_limit}\n"
-        ),
-    )
-    .expect("write v1 memory stat");
-    std::fs::write(cpuset.join("cpuset.effective_cpus"), "0-1\n")
-        .expect("write v1 effective cpuset");
-}
-
-fn write_v1_cpu_capacity(dir: &tempfile::TempDir, path: &str, quota: &str, period: &str) {
-    let cgroup = fixture_cgroup_path(dir, "cpu,cpuacct", path);
-    std::fs::create_dir_all(&cgroup).expect("mkdir v1 CPU cgroup");
-    std::fs::write(cgroup.join("cpu.cfs_quota_us"), quota).expect("write v1 CPU quota");
-    std::fs::write(cgroup.join("cpu.cfs_period_us"), period).expect("write v1 CPU period");
-}
-
 fn write_process_membership(dir: &tempfile::TempDir, pid: i32, content: &str) {
     let process = dir.path().join("proc").join(pid.to_string());
     std::fs::create_dir_all(&process).expect("mkdir process");
@@ -285,17 +242,7 @@ fn collect_v2_pids_fixture(current: Option<&str>, max: Option<&str>) -> CgroupCo
     write_optional_file(&workload.join("pids.current"), current);
     write_optional_file(&workload.join("pids.max"), max);
 
-    collect(&SysFs::new(dir.path().to_path_buf()), 7, 100)
-}
-
-fn collect_v1_pids_fixture(current: Option<&str>, max: Option<&str>) -> CgroupCollection {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let workload = dir.path().join("fs/cgroup/pids/workload");
-    std::fs::create_dir_all(&workload).expect("mkdir v1 pids fixture");
-    write_optional_file(&workload.join("pids.current"), current);
-    write_optional_file(&workload.join("pids.max"), max);
-
-    collect(&SysFs::new(dir.path().to_path_buf()), 7, 100)
+    collect(&SysFs::new(dir.path().to_path_buf()), 7)
 }
 
 #[test]
@@ -317,7 +264,7 @@ fn workload_collection_uses_only_direct_live_v2_memberships() {
         "8:2 rbytes=9 wbytes=10 rios=11 wios=12\n",
     );
 
-    let rows = collect_workloads(&procfs, &sys, 7, 100).expect("collect workloads");
+    let rows = collect_workloads(&procfs, &sys, 7).expect("collect workloads");
 
     assert_eq!(
         rows.cpu
@@ -348,7 +295,7 @@ fn workload_candidate_count_overflow_rejects_the_complete_tick() {
         );
     }
 
-    let err = collect_workloads(&procfs, &sys, 7, 100).expect_err("candidate limit");
+    let err = collect_workloads(&procfs, &sys, 7).expect_err("candidate limit");
 
     assert!(err.to_string().contains("membership count exceeds 512"));
 }
@@ -370,7 +317,7 @@ fn workload_path_bytes_overflow_rejects_the_complete_tick() {
         );
     }
 
-    let err = collect_workloads(&procfs, &sys, 7, 100).expect_err("path byte limit");
+    let err = collect_workloads(&procfs, &sys, 7).expect_err("path byte limit");
 
     assert!(
         err.to_string()
@@ -393,54 +340,13 @@ fn workload_io_overflow_omits_only_the_complete_io_section() {
     }
     write_v2_workload_files(&dir, "/workload", &io_stat);
 
-    let rows = collect_workloads(&procfs, &sys, 7, 100).expect("collect workloads");
+    let rows = collect_workloads(&procfs, &sys, 7).expect("collect workloads");
 
     assert_eq!(rows.cpu.len(), 1);
     assert_eq!(rows.memory.len(), 1);
     assert_eq!(rows.pids.len(), 1);
     assert!(rows.io.is_empty());
     assert!(rows.io_omitted);
-}
-
-#[test]
-fn workload_v1_keeps_controller_memberships_separate() {
-    let (dir, procfs, sys) = fixture_roots();
-    write_process_membership(
-        &dir,
-        101,
-        "2:cpu,cpuacct:/service/cpu\n3:memory:/service/memory\n\
-         4:blkio:/service/io\n5:pids:/service/tasks\n",
-    );
-    let cpu = fixture_cgroup_path(&dir, "cpu,cpuacct", "/service/cpu");
-    let memory = fixture_cgroup_path(&dir, "memory", "/service/memory");
-    let io = fixture_cgroup_path(&dir, "blkio", "/service/io");
-    let pids = fixture_cgroup_path(&dir, "pids", "/service/tasks");
-    for path in [&cpu, &memory, &io, &pids] {
-        std::fs::create_dir_all(path).expect("mkdir v1 workload");
-    }
-    std::fs::write(cpu.join("cpuacct.usage"), "1000\n").expect("write cpu usage");
-    std::fs::write(cpu.join("cpuacct.stat"), "user 6\nsystem 4\n").expect("write cpu stat");
-    std::fs::write(memory.join("memory.usage_in_bytes"), "4096\n").expect("write memory usage");
-    std::fs::write(pids.join("pids.current"), "9\n").expect("write pids current");
-    std::fs::write(pids.join("pids.max"), "max\n").expect("write pids max");
-    std::fs::write(
-        io.join("blkio.throttle.io_service_bytes"),
-        "8:0 Read 1\n8:0 Write 2\n",
-    )
-    .expect("write io bytes");
-    std::fs::write(
-        io.join("blkio.throttle.io_serviced"),
-        "8:0 Read 3\n8:0 Write 4\n",
-    )
-    .expect("write io operations");
-
-    let rows = collect_workloads(&procfs, &sys, 7, 100).expect("collect v1 workloads");
-
-    assert_eq!(rows.cpu[0].cgroup_path, "/service/cpu");
-    assert_eq!(rows.memory[0].cgroup_path, "/service/memory");
-    assert_eq!(rows.io[0].cgroup_path, "/service/io");
-    assert_eq!(rows.pids[0].cgroup_path, "/service/tasks");
-    assert_eq!(rows.pids[0].max, None);
 }
 
 #[test]
@@ -455,22 +361,6 @@ fn v2_pids_omits_rows_without_a_valid_current_value() {
 fn v2_pids_omits_rows_without_a_valid_max_value() {
     for max in [None, Some("invalid\n"), Some("-1\n")] {
         let rows = collect_v2_pids_fixture(Some("9\n"), max);
-        assert!(rows.pids.is_empty(), "max={max:?}");
-    }
-}
-
-#[test]
-fn v1_pids_omits_rows_without_a_valid_current_value() {
-    for current in [None, Some("invalid\n"), Some("-1\n")] {
-        let rows = collect_v1_pids_fixture(current, Some("128\n"));
-        assert!(rows.pids.is_empty(), "current={current:?}");
-    }
-}
-
-#[test]
-fn v1_pids_omits_rows_without_a_valid_max_value() {
-    for max in [None, Some("invalid\n"), Some("-1\n")] {
-        let rows = collect_v1_pids_fixture(Some("9\n"), max);
         assert!(rows.pids.is_empty(), "max={max:?}");
     }
 }
@@ -523,138 +413,6 @@ fn context_v2_uses_the_unified_self_path_and_effective_cpuset() {
 }
 
 #[test]
-fn context_v1_keeps_controller_specific_paths() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(
-        dir.path().join("proc/self/cgroup"),
-        "2:cpu,cpuacct:/service/cpu\n3:memory:/service/memory\n\
-         4:blkio:/service/io\n5:cpuset:/service/set\n",
-    )
-    .expect("write self cgroup");
-    let cpuset = dir.path().join("sys/fs/cgroup/cpuset/service/set");
-    std::fs::create_dir_all(&cpuset).expect("mkdir cpuset cgroup");
-    std::fs::write(cpuset.join("cpuset.effective_cpus"), "1,3-4\n")
-        .expect("write effective cpuset");
-    let cpu = dir.path().join("sys/fs/cgroup/cpu,cpuacct/service/cpu");
-    let memory = dir.path().join("sys/fs/cgroup/memory/service/memory");
-    let io = dir.path().join("sys/fs/cgroup/blkio/service/io");
-    for path in [&cpu, &memory, &io] {
-        std::fs::create_dir_all(path).expect("mkdir controller cgroup");
-    }
-    std::fs::write(cpu.join("cpuacct.usage"), "1000\n").expect("write cpu usage");
-    std::fs::write(cpu.join("cpuacct.stat"), "user 6\nsystem 4\n").expect("write cpu account stat");
-    std::fs::write(memory.join("memory.usage_in_bytes"), "4096\n").expect("write memory current");
-    std::fs::write(memory.join("memory.limit_in_bytes"), "16384\n").expect("write memory limit");
-    std::fs::write(
-        memory.join("memory.stat"),
-        "total_rss 100\ntotal_cache 200\ntotal_slab 20\ntotal_kernel_stack 5\n\
-         hierarchical_memory_limit 8192\n",
-    )
-    .expect("write memory stat");
-    std::fs::write(
-        io.join("blkio.throttle.io_service_bytes"),
-        "8:0 Read 1\n8:0 Write 2\n",
-    )
-    .expect("write io bytes");
-    std::fs::write(
-        io.join("blkio.throttle.io_serviced"),
-        "8:0 Read 3\n8:0 Write 4\n",
-    )
-    .expect("write io operations");
-
-    let context = collect_context(&procfs, &sys, 123).expect("collect context");
-
-    assert_eq!(context.cgroup_version, 1);
-    assert_eq!(context.cpu_path.as_deref(), Some("/service/cpu"));
-    assert_eq!(context.memory_path.as_deref(), Some("/service/memory"));
-    assert_eq!(context.io_path.as_deref(), Some("/service/io"));
-    assert_eq!(context.cpuset_cpus, Some(3));
-}
-
-#[test]
-fn hybrid_membership_uses_the_v1_tree_selected_by_collection() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(
-        dir.path().join("proc/self/cgroup"),
-        "0::/unified/workload\n2:cpu,cpuacct:/service/cpu\n\
-         3:memory:/service/memory\n4:blkio:/service/io\n5:cpuset:/service/set\n",
-    )
-    .expect("write hybrid self cgroup");
-    let unified = dir.path().join("sys/fs/cgroup/unified");
-    std::fs::create_dir_all(&unified).expect("mkdir nested unified mount");
-    std::fs::write(unified.join("cgroup.controllers"), "cpu memory io cpuset\n")
-        .expect("write nested unified controllers");
-    std::fs::write(unified.join("cpu.max"), "1 100000\n").expect("write unrelated unified quota");
-
-    let cpu = dir.path().join("sys/fs/cgroup/cpu,cpuacct/service/cpu");
-    let memory = dir.path().join("sys/fs/cgroup/memory/service/memory");
-    let io = dir.path().join("sys/fs/cgroup/blkio/service/io");
-    let cpuset = dir.path().join("sys/fs/cgroup/cpuset/service/set");
-    for path in [&cpu, &memory, &io, &cpuset] {
-        std::fs::create_dir_all(path).expect("mkdir hybrid controller cgroup");
-    }
-    std::fs::write(cpu.join("cpuacct.usage"), "1000\n").expect("write cpu usage");
-    write_v1_cpu_capacity(&dir, "/", "-1\n", "100000\n");
-    write_v1_cpu_capacity(&dir, "/service", "200000\n", "100000\n");
-    write_v1_cpu_capacity(&dir, "/service/cpu", "300000\n", "100000\n");
-    std::fs::write(cpu.join("cpuacct.stat"), "user 6\nsystem 4\n").expect("write cpu account stat");
-    std::fs::write(memory.join("memory.usage_in_bytes"), "4096\n").expect("write memory current");
-    std::fs::write(memory.join("memory.limit_in_bytes"), "16384\n").expect("write memory limit");
-    std::fs::write(
-        memory.join("memory.stat"),
-        "total_rss 100\ntotal_cache 200\ntotal_slab 20\ntotal_kernel_stack 5\n\
-         hierarchical_memory_limit 8192\n",
-    )
-    .expect("write memory stat");
-    std::fs::write(
-        io.join("blkio.throttle.io_service_bytes"),
-        "8:0 Read 1\n8:0 Write 2\n",
-    )
-    .expect("write io bytes");
-    std::fs::write(
-        io.join("blkio.throttle.io_serviced"),
-        "8:0 Read 3\n8:0 Write 4\n",
-    )
-    .expect("write io operations");
-    std::fs::write(cpuset.join("cpuset.effective_cpus"), "0-1\n").expect("write effective cpuset");
-
-    let context = collect_context(&procfs, &sys, 123).expect("collect hybrid context");
-    let rows = collect(&sys, 123, 100);
-
-    assert_eq!(context.cgroup_version, 1);
-    assert_eq!(context.cpu_path.as_deref(), Some("/service/cpu"));
-    assert_eq!(context.memory_path.as_deref(), Some("/service/memory"));
-    assert_eq!(context.io_path.as_deref(), Some("/service/io"));
-    assert_eq!(context.cpuset_cpus, Some(2));
-    assert_eq!(context.effective_cpu_quota_usec, Some(200_000));
-    assert_eq!(context.effective_cpu_period_usec, Some(100_000));
-    assert_eq!(context.effective_memory_max, Some(8192));
-    assert!(rows.cpu.iter().any(|row| row.cgroup_path == "/service/cpu"));
-    assert!(
-        rows.memory
-            .iter()
-            .any(|row| row.cgroup_path == "/service/memory")
-    );
-    assert!(rows.io.iter().any(|row| row.cgroup_path == "/service/io"));
-}
-
-#[test]
-fn context_does_not_combine_different_v1_cpu_controller_paths() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(
-        dir.path().join("proc/self/cgroup"),
-        "2:cpu:/service/quota\n3:cpuacct:/service/usage\n",
-    )
-    .expect("write self cgroup");
-
-    let context = collect_context(&procfs, &sys, 1).expect("collect context");
-
-    assert_eq!(context.cgroup_version, 1);
-    assert_eq!(context.cpu_path, None);
-    assert_eq!(context.cpuset_cpus, None);
-}
-
-#[test]
 fn context_keeps_unavailable_or_malformed_cpuset_null() {
     let (dir, procfs, sys) = fixture_roots();
     std::fs::write(dir.path().join("proc/self/cgroup"), "0::/workload\n")
@@ -690,37 +448,6 @@ fn missing_self_membership_is_reported_even_on_a_v2_mount() {
             .kind(),
         io::ErrorKind::NotFound
     );
-}
-
-#[test]
-fn partial_v1_io_counters_keep_the_exact_controller_path() {
-    let (dir, procfs, sys) = fixture_roots();
-    std::fs::write(
-        dir.path().join("proc/self/cgroup"),
-        "2:cpu:/partial\n3:memory:/partial\n4:blkio:/partial\n",
-    )
-    .expect("write self cgroup");
-    let cpu = dir.path().join("sys/fs/cgroup/cpu/partial");
-    let memory = dir.path().join("sys/fs/cgroup/memory/partial");
-    let io = dir.path().join("sys/fs/cgroup/blkio/partial");
-    for path in [&cpu, &memory, &io] {
-        std::fs::create_dir_all(path).expect("mkdir partial controller cgroup");
-    }
-    std::fs::write(cpu.join("cpu.stat"), "nr_throttled 1\n").expect("write partial cpu stat");
-    std::fs::write(memory.join("memory.usage_in_bytes"), "4096\n")
-        .expect("write partial memory current");
-    std::fs::write(
-        io.join("blkio.throttle.io_service_bytes"),
-        "8:0 Read 1\n8:0 Write 2\n",
-    )
-    .expect("write partial io bytes");
-
-    let context = collect_context(&procfs, &sys, 7).expect("collect partial context");
-
-    assert_eq!(context.cgroup_version, 1);
-    assert_eq!(context.cpu_path, None);
-    assert_eq!(context.memory_path, None);
-    assert_eq!(context.io_path.as_deref(), Some("/partial"));
 }
 
 #[test]
@@ -854,130 +581,6 @@ fn context_v2_keeps_incoherent_hierarchies_unknown() {
 }
 
 #[test]
-fn context_v1_uses_kernel_parent_stricter_memory_and_cpu_limits() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v1_context(&dir, "/service/workload", "8192\n", "4096");
-    write_v1_cpu_capacity(&dir, "/", "-1\n", "100000\n");
-    write_v1_cpu_capacity(&dir, "/service", "100000\n", "100000\n");
-    write_v1_cpu_capacity(&dir, "/service/workload", "300000\n", "100000\n");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect v1 parent limits");
-
-    assert_eq!(context.effective_cpu_quota_usec, Some(100_000));
-    assert_eq!(context.effective_cpu_period_usec, Some(100_000));
-    assert_eq!(context.effective_memory_max, Some(4096));
-}
-
-#[test]
-fn context_v1_compares_cpu_ratios_and_uses_leaf_stricter_limits() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v1_context(&dir, "/service/workload", "2048\n", "2048");
-    write_v1_cpu_capacity(&dir, "/", "-1\n", "100000\n");
-    write_v1_cpu_capacity(&dir, "/service", "50000\n", "10000\n");
-    write_v1_cpu_capacity(&dir, "/service/workload", "100000\n", "100000\n");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect v1 leaf limits");
-
-    assert_eq!(context.effective_cpu_quota_usec, Some(100_000));
-    assert_eq!(context.effective_cpu_period_usec, Some(100_000));
-    assert_eq!(context.effective_memory_max, Some(2048));
-}
-
-#[test]
-fn context_v1_handles_unlimited_sentinels() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v1_context(
-        &dir,
-        "/service/workload",
-        "9223372036854771712\n",
-        "9223372036854771712",
-    );
-    write_v1_cpu_capacity(&dir, "/", "-1\n", "100000\n");
-    write_v1_cpu_capacity(&dir, "/service", "-1\n", "50000\n");
-    write_v1_cpu_capacity(&dir, "/service/workload", "-1\n", "200000\n");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect v1 unlimited limits");
-
-    assert_eq!(context.effective_cpu_quota_usec, Some(-1));
-    assert_eq!(context.effective_cpu_period_usec, Some(200_000));
-    assert_eq!(context.effective_memory_max, None);
-}
-
-#[test]
-fn v1_capacity_limit_accepts_one_whitespace_terminated_value_only() {
-    assert_eq!(
-        parse_v1_capacity_limit("4096\n"),
-        Some(MemoryLimit::Limited(4096))
-    );
-    assert_eq!(
-        parse_v1_capacity_limit("-1\n"),
-        Some(MemoryLimit::Unlimited)
-    );
-    assert_eq!(parse_v1_capacity_limit("4096 extra\n"), None);
-}
-
-#[test]
-fn context_v1_rejects_ambiguous_roots_and_malformed_hierarchy_values() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v1_context(&dir, "/service/workload", "8192\n", "not-a-limit");
-    write_v1_cpu_capacity(&dir, "/", "-1\n", "100000\n");
-    write_v1_cpu_capacity(&dir, "/service", "100000\n", "100000\n");
-    write_v1_cpu_capacity(&dir, "/service/workload", "100000\n", "100000\n");
-    let duplicate = fixture_cgroup_path(&dir, "cpu", "/service/workload");
-    std::fs::create_dir_all(&duplicate).expect("mkdir duplicate v1 CPU leaf");
-    std::fs::write(duplicate.join("cpu.cfs_quota_us"), "50000\n")
-        .expect("write duplicate v1 CPU quota");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect ambiguous v1 hierarchy");
-
-    assert!(context.cpu_path.is_some());
-    assert!(context.memory_path.is_some());
-    assert_eq!(context.effective_cpu_quota_usec, None);
-    assert_eq!(context.effective_cpu_period_usec, None);
-    assert_eq!(context.effective_memory_max, None);
-}
-
-#[test]
-fn context_v1_rejects_hierarchical_memory_above_finite_leaf_limit() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v1_context(&dir, "/service/workload", "2048\n", "4096");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect mismatched v1 memory");
-
-    assert!(context.memory_path.is_some());
-    assert_eq!(context.effective_memory_max, None);
-}
-
-#[test]
-fn context_v1_rejects_unlimited_hierarchy_with_finite_leaf_limit() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v1_context(&dir, "/service/workload", "2048\n", "9223372036854771712");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect invalid v1 unlimited value");
-
-    assert!(context.memory_path.is_some());
-    assert_eq!(context.effective_memory_max, None);
-}
-
-#[test]
-fn context_v1_does_not_mix_memory_files_between_controller_roots() {
-    let (dir, procfs, sys) = fixture_roots();
-    prepare_v1_context(&dir, "/service/workload", "8192\n", "4096");
-    let memory = fixture_cgroup_path(&dir, "memory", "/service/workload");
-    std::fs::remove_file(memory.join("memory.limit_in_bytes"))
-        .expect("remove bound-root memory limit");
-    let unrelated = fixture_cgroup_path(&dir, "", "/service/workload");
-    std::fs::create_dir_all(&unrelated).expect("mkdir unrelated memory leaf");
-    std::fs::write(unrelated.join("memory.limit_in_bytes"), "8192\n")
-        .expect("write unrelated memory limit");
-
-    let context = collect_context(&procfs, &sys, 10).expect("collect mixed-root v1 memory");
-
-    assert!(context.memory_path.is_some());
-    assert_eq!(context.effective_memory_max, None);
-}
-
-#[test]
 fn collect_v2_reads_every_controller_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().join("fs/cgroup");
@@ -1013,7 +616,7 @@ fn collect_v2_reads_every_controller_file() {
     .expect("write io.stat");
 
     let sys = SysFs::new(dir.path().to_path_buf());
-    let rows = collect(&sys, 99, 100);
+    let rows = collect(&sys, 99);
 
     assert_eq!(rows.cpu.len(), 1);
     assert_eq!(rows.memory.len(), 1);
@@ -1049,87 +652,6 @@ fn collect_v2_reads_every_controller_file() {
     assert_eq!((rows.io[0].major, rows.io[0].minor), (8, 0));
     assert_eq!(rows.io[0].rbytes, Some(1));
     assert_eq!(rows.io[0].wios, Some(4));
-}
-
-#[test]
-fn collect_v1_reads_every_controller_file() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let root = dir.path().join("fs/cgroup");
-    let cpu = root.join("cpu,cpuacct/workload");
-    let memory = root.join("memory/workload");
-    let pids = root.join("pids/workload");
-    let blkio = root.join("blkio/workload");
-    for path in [&cpu, &memory, &pids, &blkio] {
-        std::fs::create_dir_all(path).expect("mkdir cgroup controller");
-    }
-
-    std::fs::write(cpu.join("cpuacct.usage"), "200000000\n").expect("write cpuacct.usage");
-    std::fs::write(cpu.join("cpuacct.stat"), "user 30\nsystem 20\n").expect("write cpuacct.stat");
-    std::fs::write(cpu.join("cpu.cfs_quota_us"), "50000\n").expect("write cpu.cfs_quota_us");
-    std::fs::write(cpu.join("cpu.cfs_period_us"), "100000\n").expect("write cpu.cfs_period_us");
-    std::fs::write(
-        cpu.join("cpu.stat"),
-        "nr_periods 9\nnr_throttled 3\nthrottled_time 700000000\n",
-    )
-    .expect("write cpu.stat");
-    std::fs::write(memory.join("memory.usage_in_bytes"), "8192\n")
-        .expect("write memory.usage_in_bytes");
-    std::fs::write(memory.join("memory.limit_in_bytes"), "16384\n")
-        .expect("write memory.limit_in_bytes");
-    std::fs::write(
-        memory.join("memory.stat"),
-        "total_rss 1000\ntotal_cache 2000\ntotal_slab 300\ntotal_kernel_stack 40\n",
-    )
-    .expect("write memory.stat");
-    std::fs::write(memory.join("memory.failcnt"), "6\n").expect("write memory.failcnt");
-    std::fs::write(pids.join("pids.current"), "9\n").expect("write pids.current");
-    std::fs::write(pids.join("pids.max"), "128\n").expect("write pids.max");
-    std::fs::write(
-        blkio.join("blkio.throttle.io_service_bytes"),
-        "8:0 Read 10\n8:0 Write 20\n259:0 Read 30\n259:0 Write 40\n",
-    )
-    .expect("write blkio bytes");
-    std::fs::write(
-        blkio.join("blkio.throttle.io_serviced"),
-        "8:0 Read 1\n8:0 Write 2\n259:0 Read 3\n259:0 Write 4\n",
-    )
-    .expect("write blkio ops");
-
-    let sys = SysFs::new(dir.path().to_path_buf());
-    let rows = collect(&sys, 123, 100);
-
-    assert_eq!(rows.cpu.len(), 1);
-    assert_eq!(rows.memory.len(), 1);
-    assert_eq!(rows.pids.len(), 1);
-    assert_eq!(rows.io.len(), 2);
-
-    let cpu = &rows.cpu[0];
-    assert_eq!(cpu.cgroup_path, "/workload");
-    assert_eq!(cpu.ts, 123);
-    assert_eq!(cpu.usage_usec, 200_000);
-    assert_eq!(cpu.user_usec, 300_000);
-    assert_eq!(cpu.system_usec, 200_000);
-    assert_eq!(cpu.nr_throttled, 3);
-    assert_eq!(cpu.throttled_usec, 700_000);
-    assert_eq!(cpu.quota_usec, 50_000);
-    assert_eq!(cpu.period_usec, 100_000);
-
-    let memory = &rows.memory[0];
-    assert_eq!(memory.current, 8192);
-    assert_eq!(memory.max, Some(16_384));
-    assert_eq!(memory.anon, 1000);
-    assert_eq!(memory.file, 2000);
-    assert_eq!(memory.slab, 300);
-    assert_eq!(memory.kernel, 340);
-    assert_eq!(memory.max_events, 6);
-
-    assert_eq!(rows.pids[0].current, 9);
-    assert_eq!(rows.pids[0].max, Some(128));
-    assert_eq!((rows.io[0].major, rows.io[0].minor), (8, 0));
-    assert_eq!(rows.io[0].rbytes, Some(10));
-    assert_eq!(rows.io[0].wbytes, Some(20));
-    assert_eq!(rows.io[0].rios, Some(1));
-    assert_eq!(rows.io[0].wios, Some(2));
 }
 
 #[test]
@@ -1287,10 +809,104 @@ fn all_cgroup_collectors_reject_invalid_unified_memberships() {
         assert_eq!(context.io_path, None, "{membership}");
         let mut memberships = WorkloadMemberships::new(&sys);
         memberships.observe(membership);
-        let workload = memberships.collect(&sys, 1, 100).expect("collect workload");
+        let workload = memberships.collect(&sys, 1).expect("collect workload");
         assert!(workload.cpu.is_empty(), "{membership}");
         assert!(workload.memory.is_empty(), "{membership}");
         assert!(workload.io.is_empty(), "{membership}");
         assert!(workload.pids.is_empty(), "{membership}");
     }
+}
+
+#[test]
+fn readable_v1_controllers_do_not_produce_cgroup_metrics_or_capacity() {
+    let (dir, procfs, sys) = fixture_roots();
+    let membership = "2:cpu,cpuacct:/workload\n3:memory:/workload\n4:blkio:/workload\n5:pids:/workload\n6:cpuset:/workload\n";
+    std::fs::write(dir.path().join("proc/self/cgroup"), membership).expect("write membership");
+    write_process_membership(&dir, 42, membership);
+    for (controller, files) in [
+        (
+            "cpu,cpuacct",
+            vec![
+                ("cpuacct.usage", "200000000"),
+                ("cpuacct.stat", "user 30\nsystem 20"),
+                ("cpu.cfs_quota_us", "50000"),
+                ("cpu.cfs_period_us", "100000"),
+            ],
+        ),
+        (
+            "memory",
+            vec![
+                ("memory.usage_in_bytes", "8192"),
+                ("memory.limit_in_bytes", "16384"),
+                (
+                    "memory.stat",
+                    "total_rss 1000\ntotal_cache 2000\ntotal_slab 300\ntotal_kernel_stack 40\nhierarchical_memory_limit 16384",
+                ),
+            ],
+        ),
+        (
+            "blkio",
+            vec![
+                (
+                    "blkio.throttle.io_service_bytes",
+                    "8:0 Read 10\n8:0 Write 20",
+                ),
+                ("blkio.throttle.io_serviced", "8:0 Read 1\n8:0 Write 2"),
+            ],
+        ),
+        ("pids", vec![("pids.current", "9"), ("pids.max", "128")]),
+        ("cpuset", vec![("cpuset.effective_cpus", "0-7")]),
+    ] {
+        let path = fixture_cgroup_path(&dir, controller, "/workload");
+        std::fs::create_dir_all(&path).expect("mkdir controller");
+        for (name, value) in files {
+            std::fs::write(path.join(name), value).expect("write readable controller");
+        }
+    }
+    std::fs::write(
+        dir.path().join("sys/fs/cgroup/cpu.stat"),
+        "nr_periods 9\nnr_throttled 3\nthrottled_time 700000000\n",
+    )
+    .expect("write directly mounted v1 CPU controller");
+    for rows in [
+        collect(&sys, 7),
+        collect_workloads(&procfs, &sys, 7).expect("workloads"),
+        collect_workload_memberships([membership], &sys, 7).expect("memberships"),
+    ] {
+        assert!(rows.cpu.is_empty());
+        assert!(rows.memory.is_empty());
+        assert!(rows.io.is_empty());
+        assert!(rows.pids.is_empty());
+    }
+    let context = collect_context(&procfs, &sys, 7).expect("context");
+    assert_eq!(context.cgroup_version, 0);
+    assert_eq!(context.cpu_path, None);
+    assert_eq!(context.memory_path, None);
+    assert_eq!(context.io_path, None);
+    assert_eq!(context.cpuset_cpus, None);
+    assert_eq!(context.effective_cpu_quota_usec, None);
+    assert_eq!(context.effective_cpu_period_usec, None);
+    assert_eq!(context.effective_memory_max, None);
+    assert!(
+        collect_pressure(&procfs, &sys, 7)
+            .expect("pressure")
+            .is_empty()
+    );
+    assert!(charged_devices(&procfs, &sys).expect("devices").is_empty());
+    assert_eq!(crate::proc::process::parse_cgroup_path(membership), None);
+}
+
+#[test]
+fn hybrid_memberships_collect_only_unified_v2_paths() {
+    let (dir, procfs, sys) = fixture_roots();
+    prepare_v2_context(&dir, "/workload");
+    let membership = "2:cpu,cpuacct:/unrelated\n3:memory:/unrelated\n0::/workload\n";
+    std::fs::write(dir.path().join("proc/self/cgroup"), membership)
+        .expect("write hybrid membership");
+    let rows = collect_workload_memberships([membership], &sys, 7).expect("memberships");
+    assert_eq!(rows.cpu.len(), 1);
+    assert_eq!(rows.cpu[0].cgroup_path, "/workload");
+    let context = collect_context(&procfs, &sys, 7).expect("context");
+    assert_eq!(context.cgroup_version, 2);
+    assert_eq!(context.cpu_path.as_deref(), Some("/workload"));
 }

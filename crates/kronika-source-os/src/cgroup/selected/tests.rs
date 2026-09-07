@@ -51,7 +51,7 @@ fn highest_directory_wins_even_without_metrics_and_with_inaccessible_intermediat
             .contains("fs/cgroup")
     );
     assert_eq!(selected.context.effective_cpu_quota_usec, None);
-    let rows = collect_ancestor_rows(&sys, &selected, 10, 100);
+    let rows = collect_ancestor_rows(&sys, &selected, 10);
     assert!(rows.ancestor_cpu.is_empty());
     assert!(rows.ancestor_memory.is_empty());
 }
@@ -81,7 +81,7 @@ fn primary_root_never_borrows_complete_child_metrics_or_pressure() {
         "usage_usec 100\nuser_usec 60\nsystem_usec 40\n",
     );
     let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selection");
-    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
+    let rows = collect_ancestor_rows(&sys, &selected, 1);
     let cpu = &rows.ancestor_cpu[0];
     assert_eq!(cpu.cgroup_path, "/");
     assert_eq!(cpu.usage_usec, 100);
@@ -115,14 +115,14 @@ fn selected_capacity_changes_in_time_without_reusing_the_child_quota() {
     assert_eq!(first.context.effective_cpu_period_usec, Some(100_000));
     assert_eq!(first.context.cpuset_cpus, Some(8));
     assert_eq!(
-        collect_ancestor_rows(&sys, &first, 1, 100).ancestor_cpu[0].quota_usec,
+        collect_ancestor_rows(&sys, &first, 1).ancestor_cpu[0].quota_usec,
         Some(150_000)
     );
     write(dir.path(), "sys/fs/cgroup/cpu.max", "200000 100000");
     let second = collect_ancestor_context(&procfs, &sys, 2).expect("second");
     assert_eq!(second.context.effective_cpu_quota_usec, Some(200_000));
     assert_eq!(
-        collect_ancestor_rows(&sys, &second, 2, 100).ancestor_cpu[0].quota_usec,
+        collect_ancestor_rows(&sys, &second, 2).ancestor_cpu[0].quota_usec,
         Some(200_000)
     );
     assert_eq!(
@@ -150,76 +150,6 @@ fn hidden_mount_ancestors_do_not_erase_observed_parent_limits() {
 }
 
 #[test]
-fn selected_v1_memory_preserves_hierarchical_values_and_unknown_events() {
-    let (dir, procfs, sys) = fixture();
-    write(
-        dir.path(),
-        "proc/self/cgroup",
-        "2:memory:/pod/collector\n3:cpu:/pod/collector\n4:cpuacct:/pod/collector\n5:pids:/other/collector\n",
-    );
-    for controller in ["memory", "cpu", "cpuacct", "pids"] {
-        std::fs::create_dir_all(dir.path().join(format!("sys/fs/cgroup/{controller}")))
-            .expect("controller root");
-    }
-    write(
-        dir.path(),
-        "sys/fs/cgroup/memory/memory.usage_in_bytes",
-        "4096",
-    );
-    write(
-        dir.path(),
-        "sys/fs/cgroup/memory/memory.stat",
-        "total_rss 100\nrss 1\ntotal_cache 200\ncache 2\ntotal_slab 30\nslab 3\ntotal_kernel_stack 4\nhierarchical_memory_limit 8192\n",
-    );
-    write(
-        dir.path(),
-        "sys/fs/cgroup/memory/memory.limit_in_bytes",
-        "16384",
-    );
-    write(dir.path(), "sys/fs/cgroup/pids/pids.current", "8");
-    write(dir.path(), "sys/fs/cgroup/pids/pids.max", "max");
-    let mut mounts = String::new();
-    for (index, controller) in ["memory", "cpu", "cpuacct", "pids"].into_iter().enumerate() {
-        writeln!(
-            &mut mounts,
-            "{} 1 0:{} / {} rw - cgroup cgroup rw,{controller}",
-            50 + index,
-            40 + index,
-            dir.path()
-                .join(format!("sys/fs/cgroup/{controller}"))
-                .display()
-        )
-        .expect("format mountinfo fixture");
-    }
-    write(dir.path(), "proc/self/mountinfo", &mounts);
-    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("v1 selection");
-    assert!(
-        !selected
-            .cpu
-            .as_ref()
-            .expect("accounting scope")
-            .cpu_bandwidth,
-        "separate bandwidth tree cannot constrain accounting automatically"
-    );
-    assert_eq!(selected.context.effective_cpu_quota_usec, None);
-    assert_ne!(
-        selected.memory.as_ref().expect("memory").identity,
-        selected.pids.as_ref().expect("pids").identity
-    );
-    assert_eq!(selected.context.effective_memory_max, Some(8192));
-    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
-    let memory = &rows.ancestor_memory[0];
-    assert_eq!(memory.current, 4096);
-    assert_eq!(
-        (memory.anon, memory.file, memory.kernel, memory.slab),
-        (Some(100), Some(200), Some(34), Some(30))
-    );
-    assert_eq!(memory.low_events, None);
-    assert_eq!(memory.oom_kill, None);
-    assert_eq!(rows.pids[0].current, 8);
-}
-
-#[test]
 fn missing_and_invalid_memory_fields_remain_null_without_losing_current() {
     let (dir, procfs, sys) = fixture();
     v2(dir.path(), "/collector", "/");
@@ -231,7 +161,7 @@ fn missing_and_invalid_memory_fields_remain_null_without_losing_current() {
         "anon 0\nfile invalid\nslab -1\n",
     );
     let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selected");
-    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
+    let rows = collect_ancestor_rows(&sys, &selected, 1);
     let memory = &rows.ancestor_memory[0];
     assert_eq!(memory.current, 42);
     assert_eq!(memory.anon, Some(0));
@@ -258,7 +188,7 @@ fn selection_identity_changes_when_the_directory_is_replaced() {
         "usage_usec 900\nuser_usec 600\nsystem_usec 300\n",
     );
     assert!(
-        collect_ancestor_rows(&sys, &first, 2, 100)
+        collect_ancestor_rows(&sys, &first, 2)
             .ancestor_cpu
             .is_empty()
     );
@@ -319,145 +249,6 @@ fn missing_quota_keeps_the_same_scope_cpuset_and_unlimited_memory_has_no_finite_
 }
 
 #[test]
-fn v1_coherent_cpuset_is_independent_of_an_unrelated_bandwidth_tree() {
-    let (dir, procfs, sys) = fixture();
-    write(
-        dir.path(),
-        "proc/self/cgroup",
-        "2:cpuacct,cpuset:/collector\n3:cpu:/elsewhere\n",
-    );
-    write(
-        dir.path(),
-        "sys/fs/cgroup/accounting/cpuset.effective_cpus",
-        "0-1",
-    );
-    write(
-        dir.path(),
-        "proc/self/mountinfo",
-        &format!(
-            "40 1 0:30 / {} rw - cgroup cgroup rw,cpuacct,cpuset\n",
-            dir.path().join("sys/fs/cgroup/accounting").display()
-        ),
-    );
-    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("bound accounting and cpuset");
-    assert_eq!(selected.context.cpu_path.as_deref(), Some("/"));
-    assert_eq!(selected.context.effective_cpu_quota_usec, None);
-    assert_eq!(selected.context.cpuset_cpus, Some(2));
-}
-
-fn v1_io(root: &Path) {
-    write(root, "proc/self/cgroup", "2:blkio:/pod/collector\n");
-    std::fs::create_dir_all(root.join("sys/fs/cgroup/blkio")).expect("I/O hierarchy");
-    write(
-        root,
-        "proc/self/mountinfo",
-        &format!(
-            "40 1 0:30 / {} rw - cgroup cgroup rw,blkio\n",
-            root.join("sys/fs/cgroup/blkio").display()
-        ),
-    );
-}
-
-#[test]
-fn v1_ancestor_io_uses_recursive_totals_instead_of_zero_local_counters() {
-    let (dir, procfs, sys) = fixture();
-    v1_io(dir.path());
-    for name in ["io_service_bytes", "io_serviced"] {
-        write(
-            dir.path(),
-            &format!("sys/fs/cgroup/blkio/blkio.throttle.{name}"),
-            "8:0 Read 0\n8:0 Write 0\n",
-        );
-    }
-    write(
-        dir.path(),
-        "sys/fs/cgroup/blkio/blkio.throttle.io_service_bytes_recursive",
-        "8:0 Read 100\n8:0 Write 200\n",
-    );
-    write(
-        dir.path(),
-        "sys/fs/cgroup/blkio/blkio.throttle.io_serviced_recursive",
-        "8:0 Read 3\n8:0 Write 4\n",
-    );
-    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selected I/O");
-    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
-    assert_eq!(rows.io.len(), 1);
-    let row = &rows.io[0];
-    assert_eq!(row.cgroup_path, "/");
-    assert_eq!(
-        (row.rbytes, row.wbytes, row.rios, row.wios),
-        (Some(100), Some(200), Some(3), Some(4))
-    );
-}
-
-#[test]
-fn v1_ancestor_io_falls_back_only_to_a_recursive_policy_family() {
-    let (dir, procfs, sys) = fixture();
-    v1_io(dir.path());
-    write(
-        dir.path(),
-        "sys/fs/cgroup/blkio/blkio.throttle.io_service_bytes",
-        "8:0 Read 999\n",
-    );
-    write(
-        dir.path(),
-        "sys/fs/cgroup/blkio/blkio.io_service_bytes_recursive",
-        "8:0 Read 100\n8:0 Write 200\n",
-    );
-    write(
-        dir.path(),
-        "sys/fs/cgroup/blkio/blkio.io_serviced_recursive",
-        "8:0 Read 3\n8:0 Write 4\n",
-    );
-    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selected I/O");
-    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
-    assert_eq!(rows.io.len(), 1);
-    assert_eq!((rows.io[0].rbytes, rows.io[0].rios), (Some(100), Some(3)));
-}
-
-#[test]
-fn v1_ancestor_io_does_not_combine_recursive_policy_families() {
-    let (dir, procfs, sys) = fixture();
-    v1_io(dir.path());
-    write(
-        dir.path(),
-        "sys/fs/cgroup/blkio/blkio.throttle.io_service_bytes_recursive",
-        "8:0 Read 100\n",
-    );
-    write(
-        dir.path(),
-        "sys/fs/cgroup/blkio/blkio.io_serviced_recursive",
-        "8:0 Read 99\n",
-    );
-    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selected I/O");
-    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
-    assert_eq!(rows.io.len(), 1);
-    assert_eq!(rows.io[0].rbytes, Some(100));
-    assert_eq!(rows.io[0].rios, None);
-    assert_eq!(rows.io[0].wios, None);
-}
-
-#[test]
-fn v1_ancestor_io_without_recursive_counters_remains_absent() {
-    let (dir, procfs, sys) = fixture();
-    v1_io(dir.path());
-    for family in ["blkio.throttle", "blkio"] {
-        for name in ["io_service_bytes", "io_serviced"] {
-            write(
-                dir.path(),
-                &format!("sys/fs/cgroup/blkio/{family}.{name}"),
-                "8:0 Read 999\n",
-            );
-        }
-    }
-    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selected I/O");
-    assert!(selected.io.is_some());
-    let rows = collect_ancestor_rows(&sys, &selected, 1, 100);
-    assert!(rows.io.is_empty());
-    assert!(!rows.io_omitted);
-}
-
-#[test]
 fn v2_unrelated_extra_mount_does_not_hide_the_compatible_root() {
     let (dir, procfs, sys) = fixture();
     v2(dir.path(), "/pod/collector", "/");
@@ -473,27 +264,6 @@ fn v2_unrelated_extra_mount_does_not_hide_the_compatible_root() {
     write(dir.path(), "proc/self/mountinfo", &text);
     let selected = collect_ancestor_context(&procfs, &sys, 1).expect("root remains selected");
     assert_eq!(selected.cpu.as_ref().expect("CPU root").base, "fs/cgroup");
-}
-
-#[test]
-fn v1_unrelated_extra_controller_mount_does_not_hide_the_compatible_root() {
-    let (dir, procfs, sys) = fixture();
-    v1_io(dir.path());
-    std::fs::create_dir(dir.path().join("sys/fs/cgroup/extra")).expect("extra mount");
-    let mut text =
-        std::fs::read_to_string(dir.path().join("proc/self/mountinfo")).expect("mountinfo");
-    writeln!(
-        &mut text,
-        "41 1 0:30 /other {} rw - cgroup cgroup rw,blkio",
-        dir.path().join("sys/fs/cgroup/extra").display()
-    )
-    .expect("extra binding");
-    write(dir.path(), "proc/self/mountinfo", &text);
-    let selected = collect_ancestor_context(&procfs, &sys, 1).expect("I/O root remains selected");
-    assert_eq!(
-        selected.io.as_ref().expect("I/O root").base,
-        "fs/cgroup/blkio"
-    );
 }
 
 #[test]
@@ -537,4 +307,167 @@ fn compatible_mount_paths_with_different_objects_remain_ambiguous() {
     write(dir.path(), "proc/self/mountinfo", &text);
     let selected = collect_ancestor_context(&procfs, &sys, 1).expect("ambiguous selection");
     assert!(selected.cpu.is_none());
+}
+
+#[test]
+fn v1_files_cannot_supply_selected_rows_capacity_pressure_or_devices() {
+    let (dir, procfs, sys) = fixture();
+    write(
+        dir.path(),
+        "proc/self/cgroup",
+        "2:cpu,cpuacct,memory,blkio,pids:/collector\n",
+    );
+    write(
+        dir.path(),
+        "proc/self/mountinfo",
+        &format!(
+            "40 1 0:30 / {} rw - cgroup cgroup rw,cpu,cpuacct,memory,blkio,pids\n",
+            dir.path().join("sys/fs/cgroup").display()
+        ),
+    );
+    for (file, value) in [
+        ("cpuacct.usage", "100000"),
+        ("cpuacct.stat", "user 10\nsystem 5\n"),
+        ("cpu.cfs_quota_us", "150000"),
+        ("cpu.cfs_period_us", "100000"),
+        ("memory.usage_in_bytes", "4096"),
+        ("memory.limit_in_bytes", "8192"),
+        ("memory.stat", "total_rss 4096\ntotal_cache 0\n"),
+        (
+            "blkio.throttle.io_service_bytes_recursive",
+            "8:0 Read 100\n",
+        ),
+        ("pids.current", "3"),
+        ("pids.max", "max"),
+        (
+            "cpu.pressure",
+            "some avg10=10 avg60=10 avg300=10 total=100\n",
+        ),
+        ("io.stat", "8:0 rbytes=100 wbytes=200 rios=3 wios=4\n"),
+        ("cpuset.cpus.effective", "0-7"),
+    ] {
+        write(dir.path(), &format!("sys/fs/cgroup/{file}"), value);
+    }
+    let selected =
+        collect_ancestor_context(&procfs, &sys, 1).expect("unsupported hierarchy is absent");
+    assert_eq!(selected.context.cgroup_version, 0);
+    assert!(
+        selected.cpu.is_none()
+            && selected.memory.is_none()
+            && selected.io.is_none()
+            && selected.pids.is_none()
+    );
+    assert_eq!(selected.context.effective_cpu_quota_usec, None);
+    assert_eq!(selected.context.cpuset_cpus, None);
+    assert_eq!(selected.context.effective_memory_max, None);
+    let rows = collect_ancestor_rows(&sys, &selected, 1);
+    assert!(
+        rows.ancestor_cpu.is_empty()
+            && rows.ancestor_memory.is_empty()
+            && rows.io.is_empty()
+            && rows.pids.is_empty()
+    );
+    assert!(
+        collect_ancestor_pressure(&sys, &selected, 1)
+            .expect("no pressure")
+            .is_empty()
+    );
+    assert!(charged_ancestor_devices(&sys, &selected).is_empty());
+}
+
+#[test]
+fn denied_alias_paths_do_not_hide_independently_readable_groups() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    if nix::unistd::Uid::effective().is_root() {
+        let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", "cgroup::selected::tests::denied_alias_paths_do_not_hide_independently_readable_groups", "--nocapture"])
+            .uid(65534).gid(65534).status().expect("unprivileged permission test");
+        assert!(status.success(), "unprivileged test failed");
+        return;
+    }
+    let (dir, procfs, sys) = fixture();
+    v2(dir.path(), "/pod/blocked/collector", "/");
+    std::fs::create_dir_all(dir.path().join("sys/fs/cgroup/pod/blocked/collector"))
+        .expect("own group");
+    std::fs::create_dir(dir.path().join("sys/fs/cgroup/alias")).expect("accessible alias");
+    let mut text =
+        std::fs::read_to_string(dir.path().join("proc/self/mountinfo")).expect("mountinfo");
+    writeln!(
+        &mut text,
+        "41 1 0:30 /pod/blocked {} rw - cgroup2 cgroup rw",
+        dir.path().join("sys/fs/cgroup/alias").display()
+    )
+    .expect("alias binding");
+    write(dir.path(), "proc/self/mountinfo", &text);
+    let blocked = dir.path().join("sys/fs/cgroup/pod");
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0)).expect("deny traversal");
+    let denied =
+        std::fs::read_dir(blocked.join("blocked")).expect_err("fixture must deny traversal");
+    let selected = collect_ancestor_context(&procfs, &sys, 1);
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755))
+        .expect("restore fixture");
+    assert_eq!(denied.kind(), io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        selected
+            .expect("readable root")
+            .cpu
+            .expect("CPU group")
+            .base,
+        "fs/cgroup"
+    );
+
+    // An unreadable lexical root cannot suppress a separately accessible mount.
+    std::fs::create_dir(dir.path().join("sys/fs/cgroup/denied")).expect("denied root");
+    write(
+        dir.path(),
+        "proc/self/mountinfo",
+        &format!(
+            "40 1 0:30 / {} rw - cgroup2 cgroup rw\n41 1 0:30 /pod/blocked {} rw - cgroup2 cgroup rw\n",
+            dir.path().join("sys/fs/cgroup/denied").display(),
+            dir.path().join("sys/fs/cgroup/alias").display()
+        ),
+    );
+    let denied_root = dir.path().join("sys/fs/cgroup/denied");
+    std::fs::set_permissions(&denied_root, std::fs::Permissions::from_mode(0)).expect("deny root");
+    let denied = std::fs::read_dir(&denied_root).expect_err("root is unreadable");
+    let selected = collect_ancestor_context(&procfs, &sys, 2);
+    std::fs::set_permissions(&denied_root, std::fs::Permissions::from_mode(0o755))
+        .expect("restore root");
+    assert_eq!(denied.kind(), io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        selected
+            .expect("readable alias")
+            .cpu
+            .expect("CPU group")
+            .base,
+        "fs/cgroup/alias"
+    );
+    // The readable winner may have a narrower mount root. Verify aliases in
+    // either direction when the broader directory is searchable but unreadable.
+    std::fs::create_dir_all(dir.path().join("sys/fs/cgroup/broad/pod/blocked"))
+        .expect("broad tree");
+    write(
+        dir.path(),
+        "proc/self/mountinfo",
+        &format!(
+            "40 1 0:30 / {} rw - cgroup2 cgroup rw\n41 1 0:30 /pod {} rw - cgroup2 cgroup rw\n",
+            dir.path().join("sys/fs/cgroup/broad").display(),
+            dir.path().join("sys/fs/cgroup/alias").display()
+        ),
+    );
+    let broad = dir.path().join("sys/fs/cgroup/broad");
+    let pod = broad.join("pod");
+    for path in [&broad, &pod] {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o111))
+            .expect("searchable only");
+    }
+    let denied = std::fs::read_dir(&broad).expect_err("broad root is unreadable");
+    let selected = collect_ancestor_context(&procfs, &sys, 3);
+    for path in [&broad, &pod] {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .expect("restore broad root");
+    }
+    assert_eq!(denied.kind(), io::ErrorKind::PermissionDenied);
+    assert!(selected.expect("ambiguous readable aliases").cpu.is_none());
 }

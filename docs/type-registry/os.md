@@ -54,27 +54,46 @@ The filesystem roots are overridable with `KRONIKA_PROC_ROOT` (default
 | `1_200_001` | cgroup: process mapping | `snapshot_full` | `(pid, ts)` |
 | `1_201_001` | cgroup: cpu | `snapshot_full` | `(cgroup_path, ts)` |
 | `1_201_002` | cgroup: cpu with effective cpuset, retained reader layout | `snapshot_full` | `(cgroup_path, ts)` |
+| `1_201_003` | selected cgroup: CPU with directory identity | `snapshot_full` | `(cgroup_path, cgroup_identity, ts)` |
 | `1_202_001` | cgroup: memory | `snapshot_full` | `(cgroup_path, ts)` |
 | `1_202_002` | cgroup: memory with shared memory, retained reader layout | `snapshot_full` | `(cgroup_path, ts)` |
+| `1_202_003` | selected cgroup: memory with directory identity | `snapshot_full` | `(cgroup_path, cgroup_identity, ts)` |
 | `1_203_002` | cgroup: io with independently optional device counters | `snapshot_full` | `(cgroup_path, major, minor, ts)` |
+| `1_203_003` | selected cgroup: I/O with directory identity | `snapshot_full` | `(cgroup_path, cgroup_identity, major, minor, ts)` |
 | `1_204_001` | cgroup: pids | `snapshot_full` | `(cgroup_path, ts)` |
-| `1_205_001` | collector cgroup context | `snapshot_full` | `(ts)` |
+| `1_205_001` | historical collector cgroup context | `snapshot_full` | `(ts)` |
+| `1_205_002` | selected ancestor context, identities and visible mount roots | `snapshot_full` | `(ts)` |
 
-The collector currently writes the `1_201_001` and `1_202_001` layouts. The
-`002` layouts remain registered because existing WAL and ZMS files carry them.
+Current collection requires cgroup v2. Without a visible v2 hierarchy, cgroup
+metrics and process mappings are unavailable; other enabled local sources continue.
+Older cgroup v1 recordings remain readable.
 
-Workload cgroup sections contain only cgroups named by direct memberships of
-live numeric `/proc/<pid>` entries; collection never recursively attributes an
-ancestor's descendants. V2 uses its unified membership path. V1 keeps CPU,
-memory, block-I/O, and PIDs controller paths separate, and emits a CPU row only
-when `cpu` and `cpuacct` name the same path. A tick accepts at most 512 distinct
-controller/path candidates and 512 KiB of candidate path bytes. Exceeding
-either ceiling omits all workload cgroup sections for that tick. More than
-1,024 cgroup/device rows omits the complete I/O section while retaining the
-independently complete CPU, memory, and PIDs sections. Cgroup and process-to-cgroup collection each default to a 30-second cadence.
+The primary resource rows describe the highest visible, readable ancestor of the
+collector's unified membership. They use `1_201_003`, `1_202_003` and `1_203_003`;
+`1_205_002` records its paths, visible mount roots and directory identities.
+All controllers use the same selected group. `scope=4` leaves its host/pod
+identity unspecified. A missing metric file does not change the selection or
+substitute a child counter. A changed `cgroup_identity` breaks counter differences.
+CPU quota and period are recorded in microseconds; their ratio is a number of
+cores. Limits describe the selected group and its readable ancestor constraints.
+Missing limits remain unknown; memory `max_unlimited` distinguishes a recorded
+unlimited value from a missing value. See the [Linux reference](../metrics-linux.md#container-cgroups).
+
+Separate workload rows use `1_201_001`, `1_202_001`, `1_203_002` and `1_204_001`.
+They cover unified cgroup v2 memberships named by live numeric `/proc/<pid>`
+entries, without scanning siblings. The primary group is recorded once.
+A tick accepts at most 512 distinct controller/path candidates and 512 KiB of
+candidate path bytes. Exceeding either ceiling omits all workload cgroup sections
+for that tick. More than 1,024 cgroup/device rows omits the complete workload I/O
+section while retaining the independently complete CPU, memory, and PIDs sections.
+Cgroup and process-to-cgroup collection each default to a 30-second cadence.
 The collector reuses the process pass's membership reads on that shared tick.
 Each valid per-device I/O counter is recorded independently; a missing byte or
 operation counter does not discard the other counters from that device row.
+
+**Historical context `1_205_001`.** The following describes older recordings,
+including cgroup v1. It does not describe current ancestor selection.
+The CPU and memory `002` layouts also remain registered for existing WAL and ZMS files.
 
 `os_cgroup_context` records the collector process's exact controller paths from
 `/proc/self/cgroup`. On cgroup v2 the CPU, memory, and I/O paths are the unified
@@ -231,7 +250,7 @@ immediate parent `dev`, and a layered dm/LVM/MD device with each device it
 lists under `slaves/`. Plain whole devices, unresolved sysfs links, and
 bind-mount ancestry emit no inferred edge. Inside a container `1_108_001`
 keeps the devices with a non-infrastructure mount and the devices the
-collector's own cgroup `io.stat` charges, so the physical layers below a
+selected cgroup's `io.stat` charges, so the physical layers below a
 mounted volume stay named, and `1_123_001` keeps only the edges on the chains
 under those devices. `1_112_002` never records mount points inside `/proc` or
 `/sys`: container runtimes mask paths there with empty tmpfs.

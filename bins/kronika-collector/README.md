@@ -73,8 +73,8 @@ CPU, memory or I/O resources.
 | `KRONIKA_OS_MOUNTTOPO_INTERVAL_S` | 60 | Mounts, filesystem capacity and device topology. |
 | `KRONIKA_OS_PROCESS_INTERVAL_S` | 5 | Process counters. |
 | `KRONIKA_OS_PROCESS_STATUS_INTERVAL_S` | 30 | Process status details. |
-| `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 | Resource limits and use of the highest accessible ancestor cgroups. |
-| `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 | Process-to-cgroup mappings. |
+| `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 | Resource limits and use of the highest accessible cgroup v2 ancestor. |
+| `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 | Process-to-cgroup v2 mappings. |
 | `KRONIKA_LOG_INTERVAL_S` | 10 | Configured PostgreSQL/PgBouncer logs. |
 | `KRONIKA_PG_INTERVAL_S` | 30 | PostgreSQL metrics and settings. |
 | `KRONIKA_PG_RELATIONS_INTERVAL_S` | 300 | Tables and indexes; finding databases and extensions. |
@@ -250,7 +250,9 @@ Sources: [source discovery](src/log_sources.rs), [SQL facts and path resolution]
 ## Linux collection
 
 Linux collection runs only in `local` mode. Machine/VM recordings have no
-workload cgroup rows. In a container, collector walks upward from its own
+workload cgroup rows. Cgroup collection requires cgroup v2. On v1-only systems,
+cgroup metrics and process mappings are unavailable; other enabled Linux and
+PostgreSQL sources continue. In a container, collector walks upward from its own
 membership to the highest visible, readable ancestor within the accessible
 mount. Counters describe that group, including its children. The selected
 path can represent a pod, another aggregate or only collector's own group;

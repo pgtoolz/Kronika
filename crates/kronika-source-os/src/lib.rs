@@ -2,7 +2,7 @@
 //!
 //! [`ProcFs`] and [`SysFs`] restrict relative paths to configured roots and
 //! cap each text read at [`MAX_PROC_FILE_BYTES`]. Parsers cover CPU, memory,
-//! disk, network, pressure, mount, process, filesystem, and cgroup v1/v2 data;
+//! disk, network, pressure, mount, process, filesystem, and cgroup v2 data;
 //! conversion helpers produce `kronika-registry` rows where the registry owns
 //! the on-disk contract.
 //!

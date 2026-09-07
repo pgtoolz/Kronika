@@ -133,42 +133,10 @@ pub fn parse_io(content: &str) -> ProcIo {
     io
 }
 
-/// Pick one process cgroup path from `/proc/PID/cgroup`.
+/// Read the process's unified cgroup v2 membership from `/proc/PID/cgroup`.
 #[must_use]
 pub fn parse_cgroup_path(content: &str) -> Option<String> {
-    let mut first = None;
-    let mut preferred = None;
-    for line in content.lines() {
-        let mut parts = line.splitn(3, ':');
-        let _hierarchy = parts.next();
-        let controllers = parts.next()?;
-        let path = normalize_cgroup_path(parts.next()?);
-        if controllers.is_empty() {
-            return Some(path);
-        }
-        if first.is_none() {
-            first = Some(path.clone());
-        }
-        if preferred.is_none()
-            && controllers
-                .split(',')
-                .any(|c| matches!(c, "pids" | "cpu" | "cpuacct" | "memory"))
-        {
-            preferred = Some(path);
-        }
-    }
-    preferred.or(first)
-}
-
-fn normalize_cgroup_path(path: &str) -> String {
-    let trimmed = path.trim();
-    if trimmed.is_empty() || trimmed == "/" {
-        "/".to_owned()
-    } else if trimmed.starts_with('/') {
-        trimmed.to_owned()
-    } else {
-        format!("/{trimmed}")
-    }
+    crate::cgroup::parse_unified_cgroup_path(content).map(str::to_owned)
 }
 
 pub(super) fn parse_btime(stat: &str) -> Option<i64> {
@@ -341,15 +309,28 @@ mod tests {
     }
 
     #[test]
-    fn cgroup_path_prefers_v2_then_known_v1_controllers() {
-        assert_eq!(
-            parse_cgroup_path("0::/kubepods/pod-a/container\n"),
-            Some("/kubepods/pod-a/container".to_owned())
-        );
-        assert_eq!(
-            parse_cgroup_path("1:name=systemd:/x\n4:pids:/docker/abc\n"),
-            Some("/docker/abc".to_owned())
-        );
+    fn cgroup_path_accepts_only_a_single_valid_unified_membership() {
+        for content in [
+            "0::/kubepods/pod-a/container\n",
+            "1:name=systemd:/x\n4:pids:/docker/abc\n0::/kubepods/pod-a/container\n",
+        ] {
+            assert_eq!(
+                parse_cgroup_path(content),
+                Some("/kubepods/pod-a/container".to_owned())
+            );
+        }
+        for content in [
+            "1:name=systemd:/x\n4:pids:/docker/abc\n",
+            "7::/workload\n",
+            "0::/workload\n0::/workload\n",
+            "0::/workload\n0::/other\n0::/workload\n",
+            "0::relative\n",
+            "0::/workload/../other\n",
+            "0::\n",
+        ] {
+            assert_eq!(parse_cgroup_path(content), None, "{content}");
+        }
+        assert_eq!(parse_cgroup_path("0::/\n"), Some("/".to_owned()));
     }
 
     #[test]

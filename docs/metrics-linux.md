@@ -15,10 +15,10 @@ Scope identifies whether a row describes the machine, a container or its surroun
 | Host CPU, memory, pressure, block devices | Kernel values visible through configured procfs/sysfs roots. Container recordings retain host resource context where those files expose it. |
 | Process table | Live PIDs visible through the configured procfs root; PID is numeric identity within the selected hour. |
 | Network in a container | Interfaces and traffic visible in the network namespace, recorded with pod-network scope. |
-| Cgroup resource lanes | Highest accessible ancestor for each controller. Counters and capacity use that recorded group and identity. |
+| Cgroup resource lanes | Highest accessible cgroup v2 ancestor. Counters and capacity use that recorded group and identity. |
 | Filesystems | Data mounts visible in the collector's mount namespace, with capacity from `statvfs` on the visible mount path. |
 
-Linux collection is disabled in `KRONIKA_COLLECTOR_MODE=postgresql`. In `local` mode, machine/VM records have no cgroup workload rows. Container collection walks upward from collector membership to the highest visible, readable ancestor within each compatible mount. It does not scan siblings or require direct processes in the selected parent. See [container cgroups](#container-cgroups).
+Linux collection is disabled in `KRONIKA_COLLECTOR_MODE=postgresql`. In `local` mode, machine/VM records have no cgroup workload rows. Container collection walks upward from collector membership to the highest visible, readable ancestor within a compatible cgroup v2 mount. It does not scan siblings or require direct processes in the selected parent. See [container cgroups](#container-cgroups).
 
 ## Processes
 
@@ -188,6 +188,9 @@ The aggregate sums each timestamp's recorded counters before differentiation. Li
 
 ### Capacity and membership
 
+Collection requires cgroup v2. On v1-only systems, cgroup metrics and process
+mappings are unavailable; other enabled Linux and PostgreSQL sources continue.
+
 `os_cgroup_context` records the selected paths, mount roots, controller identities
 and available limits. Collector ascends from its own membership to the highest
 accessible ancestor; selection does not depend on whether a particular metric
@@ -202,10 +205,7 @@ pod. Parent counters are used once, without adding child counters. The visible
 show the actual observed group. Selecting an ancestor does not establish a common
 PID namespace or identify the PostgreSQL container.
 
-For v2, controllers refer to one selected group. For v1, each controller retains
-its own mount root, path and identity. CPU usage from cpuacct is paired with quota
-and cpuset only when they refer to a coherent group. Memory uses hierarchical
-`total_*` statistics, including descendants. Missing limits are not unlimited.
+Controllers refer to one selected cgroup v2 group. Missing limits are not unlimited.
 With positive quota `Q` and period `P` in microseconds and positive cpuset count
 `S`, the recorded CPU limit in cores is `min(Q/P, S)`, or `Q/P` without `S`; `150000/100000 = 1.5` cores.
 For new context records, either finite bound can be used alone, including `S`
@@ -227,22 +227,22 @@ A controller accounts for its resource across the group. In the formulas, `used_
 
 | Display or recorded field | Calculation/source | Unit |
 |---|---|---|
-| CPU used / user / system | `R(usage_usec) / 10⁶`, `R(user_usec) / 10⁶`, `R(system_usec) / 10⁶` | Core equivalents; v2 `cpu.stat`, v1 `cpuacct` |
+| CPU used / user / system | `R(usage_usec) / 10⁶`, `R(user_usec) / 10⁶`, `R(system_usec) / 10⁶` | Core equivalents; `cpu.stat` |
 | Other CPU | `R(usage_usec − user_usec − system_usec) / 10⁶`, calculated from the three differences | Cores; null if a component difference or residual is negative |
 | CPU share | `100 × used_cores / effective_capacity` | %; unavailable without capacity |
 | CPU quota / period | `quota_usec`, `period_usec`; displayed quota cores `Q/P` when positive | Local controller ceiling; quota `−1` is unlimited |
 | Throttled | `100 × R(throttled_usec) / 10⁶` | % of wall interval; no capacity division or 100% cap |
 | Throttling events | Recorded cumulative `nr_throttled` | Count; cgroup CPU record |
 | CPU / memory / I/O PSI | `100 × R(some_total) / 10⁶` for the selected cgroup pressure | % of sample interval |
-| Memory current | v2 `memory.current`; v1 `memory.usage_in_bytes` | Bytes |
+| Memory current | `memory.current` | Bytes |
 | Memory share | `100 × current / effective_memory_max` | % of positive recorded memory limit |
-| Local memory max | v2 `memory.max`; v1 `memory.limit_in_bytes` | Bytes; newest layout records `max_unlimited` separately; missing is unknown |
+| Local memory max | `memory.max` | Bytes; newest layout records `max_unlimited` separately; missing is unknown |
 | Anon / File / Slab | `anon`, `file`, `slab` from `memory.stat` | Bytes |
 | Other kernel | `kernel − slab` | Bytes; null for absent input or negative difference |
 | Unclassified memory | `current − anon − file − kernel` | Bytes; null for absent input or negative difference |
 | Shared memory, where recorded | `shmem` in the newer memory layout | Bytes included in `file` |
-| Memory events | Cumulative `low_events`, `high_events`, `max_events`, `oom_events`, `oom_kill`; v1 `memory.failcnt` maps to `max_events` | Counts; OOM lane is `R(oom_kill)` kills/s |
-| I/O read/write | `R(rbytes)`, `R(wbytes)` from v2 `io.stat` or v1 blkio service-byte files | B/s per cgroup and device |
+| Memory events | Cumulative `low_events`, `high_events`, `max_events`, `oom_events`, `oom_kill` | Counts; OOM lane is `R(oom_kill)` kills/s |
+| I/O read/write | `R(rbytes)`, `R(wbytes)` from `io.stat` | B/s per cgroup and device |
 | I/O operations | `R(rios)`, `R(wios)` | Operations/s per cgroup and device |
 | Threads (TIDs) / Local pids.max | Direct `pids.current`, `pids.max` | Threads (TIDs) in the cgroup subtree and local subtree limit |
 | Of pids.max | `100 × current / max` for positive local max | %; literal `max` records null unlimited limit |

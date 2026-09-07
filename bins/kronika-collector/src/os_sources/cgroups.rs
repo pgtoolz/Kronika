@@ -1,6 +1,6 @@
 use super::{
     DueSet, Instant, Interner, OsSources, ProcFs, SourceKind, SysFs, cgroup, intern_str,
-    log_collection_finish, log_degraded, process_facts,
+    log_collection_finish, log_degraded,
 };
 
 #[allow(
@@ -28,18 +28,10 @@ pub(super) fn collect_cgroup_sections(
     let io_type_id = 1_203_002_u32;
     let pids_type_id = 1_204_001_u32;
     let started = Instant::now();
-    let clock_ticks = process_facts(fs).map_or_else(
-        |err| {
-            log_degraded(cpu_type_id, "cgroup", &err);
-            0
-        },
-        |facts| facts.clock_ticks_per_sec,
-    );
-
     if let Ok(membership) = fs.read_raw("self/cgroup") {
         process_memberships.observe(&membership);
     }
-    let mut rows = match process_memberships.collect(sys, ts, clock_ticks) {
+    let mut rows = match process_memberships.collect(sys, ts) {
         Ok(rows) => rows,
         Err(err) => {
             for (type_id, source) in [
@@ -67,7 +59,7 @@ pub(super) fn collect_cgroup_sections(
             .as_ref()
             .is_none_or(|group| group.path != row.cgroup_path)
     });
-    let primary = cgroup::collect_ancestor_rows(sys, selected, ts, clock_ticks);
+    let primary = cgroup::collect_ancestor_rows(sys, selected, ts);
     push_cgroup_rows(&rows, scope, interner, os);
     push_primary_cgroup_rows(&primary, selected, interner, os);
     log_collection_finish(context_type_id, "cgroup/context", 1, started.elapsed());
