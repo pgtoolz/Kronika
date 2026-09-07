@@ -401,7 +401,8 @@ fn denied_alias_paths_do_not_hide_independently_readable_groups() {
     .expect("alias binding");
     write(dir.path(), "proc/self/mountinfo", &text);
     let blocked = dir.path().join("sys/fs/cgroup/pod");
-    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0)).expect("deny traversal");
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o0))
+        .expect("deny traversal");
     let denied =
         std::fs::read_dir(blocked.join("blocked")).expect_err("fixture must deny traversal");
     let selected = collect_ancestor_context(&procfs, &sys, 1);
@@ -429,7 +430,8 @@ fn denied_alias_paths_do_not_hide_independently_readable_groups() {
         ),
     );
     let denied_root = dir.path().join("sys/fs/cgroup/denied");
-    std::fs::set_permissions(&denied_root, std::fs::Permissions::from_mode(0)).expect("deny root");
+    std::fs::set_permissions(&denied_root, std::fs::Permissions::from_mode(0o0))
+        .expect("deny root");
     let denied = std::fs::read_dir(&denied_root).expect_err("root is unreadable");
     let selected = collect_ancestor_context(&procfs, &sys, 2);
     std::fs::set_permissions(&denied_root, std::fs::Permissions::from_mode(0o755))

@@ -341,12 +341,11 @@ pub fn collect_ancestor_rows(sys: &SysFs, selected: &AncestorContext, ts: i64) -
     }
     if let Some(group) = &selected.io
         && group.is_current(sys)
+        && let Some(content) = group.read(sys, "io.stat")
     {
-        if let Some(content) = group.read(sys, "io.stat") {
-            match parse_io_stat_bounded(&content, ts, &group.path, MAX_CGROUP_IO_ROWS) {
-                Some(rows) => out.io = rows,
-                None => out.io_omitted = true,
-            }
+        match parse_io_stat_bounded(&content, ts, &group.path, MAX_CGROUP_IO_ROWS) {
+            Some(rows) => out.io = rows,
+            None => out.io_omitted = true,
         }
     }
 
