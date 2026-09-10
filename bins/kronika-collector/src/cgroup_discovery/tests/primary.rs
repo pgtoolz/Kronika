@@ -28,11 +28,7 @@ fn isolated(test_name: &str, denied: bool) {
     }
     let temp = tempfile::tempdir().expect("isolated process fixture");
     permissions(temp.path(), 0o777);
-    let binary = temp.path().join("collector-tests");
-    std::fs::copy(std::env::current_exe().expect("test executable"), &binary)
-        .expect("stage executable");
-    permissions(&binary, 0o755);
-    let mut command = Command::new(&binary);
+    let mut command = Command::new(std::env::current_exe().expect("test executable"));
     command
         .args(["--exact", test_name, "--nocapture"])
         .env(CHILD_ROOT, temp.path())

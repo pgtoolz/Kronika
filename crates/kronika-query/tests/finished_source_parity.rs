@@ -1909,3 +1909,6 @@ fn selected_detail_uses_content_identity_across_segments() {
 
 #[path = "finished_source_parity/controller_continuity.rs"]
 mod controller_continuity;
+
+#[path = "finished_source_parity/encoded_lane_order.rs"]
+mod encoded_lane_order;

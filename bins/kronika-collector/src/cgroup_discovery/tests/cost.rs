@@ -150,9 +150,6 @@ fn append_hour(proc: &ProcFs, sys: &SysFs, storage: &Path) {
         }
     }
     let writer_peak_rss = interval.finish("acquisition_and_production_append_and_seal");
-    assert!(writer_peak_rss > 0);
-    #[cfg(not(debug_assertions))]
-    assert!(writer_peak_rss <= 25_600);
     let reader = Reader::open(storage).expect("reader");
     let listing = reader.segments(..).expect("segments");
     let mut counts = BTreeMap::<u32, usize>::new();
@@ -185,6 +182,9 @@ fn append_hour(proc: &ProcFs, sys: &SysFs, storage: &Path) {
         pass.peak_io_rows,
         pass.peak_string_bytes
     );
+    assert!(writer_peak_rss > 0);
+    #[cfg(not(debug_assertions))]
+    assert!(writer_peak_rss <= 25_600);
 }
 
 #[test]
