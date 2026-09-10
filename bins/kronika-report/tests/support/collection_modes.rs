@@ -8,6 +8,9 @@ use kronika_registry::pg_stat_activity::PgStatActivityV3;
 use kronika_registry::{StrId, Ts};
 use kronika_writer::{Interner, Journal, JournalConfig, SectionBuffers, dict, write_segment};
 
+#[path = "collection_modes/discovery.rs"]
+mod discovery;
+
 pub(super) const START: i64 = 1_709_164_800_000_000;
 pub(super) const END: i64 = START + 5_000_001;
 
@@ -106,6 +109,9 @@ pub(super) fn encoded(collection: Collection) -> Vec<u8> {
             }
         }
         Collection::Cgroup | Collection::SeparatedControllers => {
+            if !separated {
+                discovery::push(&mut buffers, label, first);
+            }
             for (offset, usage, quota, identity) in [
                 (0, 0, Some(150_000), first),
                 (1, 1_500_000, Some(150_000), first),

@@ -192,3 +192,101 @@ fn hour_series_debug_keeps_the_validator_shape_name() {
         "SeriesRequest { section: \"os_cpu\", fields: [\"user\"], filters: [], type_id: Some(1), group: None, scope: All }"
     );
 }
+
+#[derive(Debug)]
+struct PinnedOrderDataset;
+
+fn order_descriptor(id: i64, min_ts: i64, active: bool) -> DatasetSegment {
+    DatasetSegment::new(
+        crate::OpaqueCapture::new(()),
+        id,
+        if active {
+            kronika_reader::SegmentKind::Active
+        } else {
+            kronika_reader::SegmentKind::Finished
+        },
+        min_ts,
+        60,
+        active.then_some(7),
+        Arc::from([]),
+    )
+}
+
+impl CapturedCatalog for PinnedOrderDataset {
+    fn ranges(&self) -> &[(i64, i64)] {
+        &[(0, 60)]
+    }
+    fn segments(&self, _selection: SegmentSelection) -> Result<DatasetListing, QueryError> {
+        Ok(DatasetListing {
+            segments: vec![
+                order_descriptor(1, 0, false),
+                order_descriptor(2, 10, true),
+                order_descriptor(3, 20, false),
+            ],
+            warnings: Vec::new(),
+        })
+    }
+}
+
+impl QueryDataset for PinnedOrderDataset {
+    fn catalog(&self) -> Result<Box<dyn CapturedCatalog + '_>, QueryError> {
+        Ok(Box::new(Self))
+    }
+    fn segment(&self, _id: i64) -> Result<DatasetListing, QueryError> {
+        unreachable!("hour preparation uses catalog")
+    }
+    fn open(&self, _segment: &DatasetSegment) -> Result<Segment, QueryError> {
+        unreachable!("preparation does not open segment bodies")
+    }
+    fn at_active_position(
+        &self,
+        segment: &DatasetSegment,
+        position: u64,
+    ) -> Result<DatasetSegment, QueryError> {
+        assert_eq!((segment.id(), position), (2, 7));
+        Ok(order_descriptor(2, 50, true))
+    }
+}
+
+#[test]
+fn pinned_prefix_restores_time_order_after_validating_listed_ids() {
+    let request = |ids| HourRequest {
+        window: Window {
+            from: Some(0),
+            to: Some(60),
+        },
+        series: None,
+        part: HourPart::Lanes,
+        segments: Some(ids),
+        active: Some(crate::ActiveCursor {
+            segment_id: 2,
+            wal_position: 7,
+        }),
+    };
+    let prepared = super::prepare(
+        Arc::new(PinnedOrderDataset),
+        None,
+        request(vec![1, 2, 3]),
+        1,
+        false,
+    )
+    .expect("valid pinned prefix");
+    assert_eq!(
+        prepared
+            .segments
+            .iter()
+            .map(|segment| (segment.id(), segment.min_ts()))
+            .collect::<Vec<_>>(),
+        [(1, 0), (3, 20), (2, 50)]
+    );
+    assert!(matches!(
+        super::prepare(
+            Arc::new(PinnedOrderDataset),
+            None,
+            request(vec![1, 3, 2]),
+            1,
+            false
+        ),
+        Err(QueryError::BadCursor)
+    ));
+}

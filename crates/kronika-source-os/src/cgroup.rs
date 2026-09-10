@@ -37,6 +37,18 @@ enum CpuQuota {
     Limited { quota_usec: i64, period_usec: i64 },
 }
 
+impl CpuQuota {
+    const fn pair(self) -> (i64, i64) {
+        match self {
+            Self::Unlimited { period_usec } => (-1, period_usec),
+            Self::Limited {
+                quota_usec,
+                period_usec,
+            } => (quota_usec, period_usec),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MemoryLimit {
     Unlimited,

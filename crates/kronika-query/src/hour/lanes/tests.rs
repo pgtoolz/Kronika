@@ -53,7 +53,7 @@ fn only_the_latest_sample_is_carried_into_the_next_segment() {
         ..Counters::default()
     };
 
-    counters.retain_latest();
+    counters.retain_after(i64::MAX);
 
     assert_eq!(counters.busy_ticks, BTreeMap::from([(2_000_000, 20)]));
     assert_eq!(counters.memory, BTreeMap::from([(2_000_000, 60.0)]));
@@ -270,7 +270,7 @@ fn a_shared_boundary_row_is_not_emitted_again_by_the_next_segment() {
             .iter()
             .any(|point| point.key == "cpu_busy" && point.ts == 200 && point.value.is_some())
     );
-    counters.retain_latest();
+    counters.retain_after(i64::MAX);
     counters.busy_ticks.insert(200, 20);
     counters.busy_ticks.insert(300, 30);
     let second = current_points(&counters, 100, 1, 200_i64.saturating_add(1), 300, window);
@@ -489,4 +489,102 @@ fn selected_context_uses_each_observed_cpu_bound_without_changing_legacy_rules()
     ];
     assert_eq!(cgroup_cpu_capacity(&row(1_205_002, &fields)), Some(1.5));
     assert_eq!(cgroup_cpu_capacity(&row(1_205_002, &[])), None);
+}
+
+#[test]
+fn overlapping_portions_keep_finalized_predecessor_and_pending_samples() {
+    let mut counters = Counters {
+        cg_cpu_usage: BTreeMap::from([
+            (1_000_000, 0),
+            (2_000_000, 500_000),
+            (3_000_000, 1_000_000),
+        ]),
+        ..Counters::default()
+    };
+    counters.retain_after(1_999_999);
+    assert_eq!(counters.cg_cpu_usage.len(), 3);
+    let output = current_points(&counters, 0, 0, 2_000_000, 3_000_000, Window::default());
+    let cpu = output
+        .iter()
+        .filter(|point| point.key == "cg_cpu_cores")
+        .map(|point| (point.ts, point.value))
+        .collect::<Vec<_>>();
+    assert_eq!(cpu, [(2_000_000, Some(0.5)), (3_000_000, Some(0.5))]);
+    counters.retain_after(2_999_999);
+    assert_eq!(
+        counters.cg_cpu_usage.keys().copied().collect::<Vec<_>>(),
+        [2_000_000, 3_000_000]
+    );
+}
+
+#[test]
+fn deferred_host_cpu_uses_its_own_recorded_units() {
+    let counters = Counters {
+        busy_ticks: BTreeMap::from([(1_000_000, 0), (2_000_000, 100)]),
+        cpu_units: BTreeMap::from([(1_000_000, (100, 2)), (2_000_000, (100, 2))]),
+        ..Counters::default()
+    };
+    let output = current_points(&counters, 0, 0, 2_000_000, 2_000_000, Window::default());
+    assert_eq!(
+        output
+            .iter()
+            .find(|point| point.key == "cpu_busy")
+            .and_then(|point| point.value),
+        Some(50.0)
+    );
+}
+
+#[test]
+fn selected_io_portions_do_not_count_a_repeated_device_snapshot_twice() {
+    let mut counters = Counters::default();
+    let device = |minor, bytes| {
+        row(
+            1_203_003,
+            &[
+                ("ts", Cell::Ts(1_000_000)),
+                ("cgroup_path", Cell::StrId(7)),
+                ("cgroup_identity", Cell::StrId(8)),
+                ("major", Cell::U32(8)),
+                ("minor", Cell::U32(minor)),
+                ("rbytes", Cell::I64(bytes)),
+            ],
+        )
+    };
+    super::record_cgroup_io(&mut counters, &device(0, 100));
+    super::record_cgroup_io(&mut counters, &device(0, 100));
+    super::record_cgroup_io(&mut counters, &device(1, 200));
+    assert_eq!(counters.cg_io_read, BTreeMap::from([(1_000_000, 300)]));
+    assert!(counters.cg_io_write.is_empty());
+}
+
+#[test]
+fn overlapping_identity_observations_keep_true_transition_only() {
+    let a = [Some(1); 4];
+    let b = [Some(2); 4];
+    let mut identities = BTreeMap::from([(10_000_000, a), (30_000_000, b)]);
+    let mut counters = Counters {
+        cg_cpu_usage: BTreeMap::from([(10_000_000, 0), (30_000_000, 10_000_000)]),
+        ..Counters::default()
+    };
+    super::refresh_identity_boundaries(&mut counters, &identities, i64::MIN);
+    counters.retain_after(19_999_999);
+    super::retain_after(&mut identities, 19_999_999);
+    identities.insert(20_000_000, a);
+    counters.cg_cpu_usage.insert(20_000_000, 5_000_000);
+    super::refresh_identity_boundaries(&mut counters, &identities, 19_999_999);
+    assert_eq!(
+        counters
+            .cg_cpu_boundaries
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [30_000_000]
+    );
+    let output = current_points(&counters, 0, 0, 20_000_000, 30_000_000, Window::default());
+    let cpu = output
+        .iter()
+        .filter(|point| point.key == "cg_cpu_cores")
+        .map(|point| (point.ts, point.value))
+        .collect::<Vec<_>>();
+    assert_eq!(cpu, [(20_000_000, Some(0.5)), (30_000_000, None)]);
 }

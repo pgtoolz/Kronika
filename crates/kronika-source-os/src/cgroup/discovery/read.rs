@@ -133,13 +133,8 @@ pub(super) fn group(
         || scalar(directory, path, "cpu.max", stats, parse_cpu_max_strict),
         |limits| limits.cpu,
     );
-    let pair = cpu_max.map(|limit| match limit {
-        CpuQuota::Unlimited { period_usec } => (-1, period_usec),
-        CpuQuota::Limited {
-            quota_usec,
-            period_usec,
-        } => (quota_usec, period_usec),
-    });
+    let pair = cpu_max.map(CpuQuota::pair);
+
     group.cpu = DiscoveredCpu {
         usage_usec: value(cpu.as_deref(), "usage_usec"),
         user_usec: value(cpu.as_deref(), "user_usec"),

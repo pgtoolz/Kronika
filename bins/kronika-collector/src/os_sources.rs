@@ -133,6 +133,16 @@ impl OsSources {
         }
     }
 
+    pub(crate) fn deduplicate_context(
+        &mut self,
+        recorded: Option<&OsCgroupContextV2>,
+    ) -> Option<OsCgroupContextV2> {
+        if self.cgroup_context.as_ref() == recorded {
+            self.cgroup_context = None;
+        }
+        self.cgroup_context
+    }
+
     pub(crate) fn pending_users(&self) -> &[(u8, u32)] {
         &self.pending_users
     }

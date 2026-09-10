@@ -419,13 +419,8 @@ fn read_cpu(sys: &SysFs, group: &SelectedCgroup, ts: i64) -> Option<super::Ances
     let quota = group
         .read(sys, "cpu.max")
         .and_then(|value| parse_cpu_max_strict(&value));
-    let pair = quota.map(|quota| match quota {
-        CpuQuota::Unlimited { period_usec } => (-1, period_usec),
-        CpuQuota::Limited {
-            quota_usec,
-            period_usec,
-        } => (quota_usec, period_usec),
-    });
+    let pair = quota.map(CpuQuota::pair);
+
     Some(super::AncestorCpuRow {
         ts,
         cgroup_path: group.path.clone(),

@@ -171,6 +171,12 @@ if (collectionArgument) {
       const row = metadata.find(row => row.record === "row");
       assert.deepEqual(row.values, [null, false, false]);
     } else {
+      if (name === "selected-cgroup") {
+        for (const section of ["group", "cpu", "memory", "pids", "io"]) {
+          const rows = records(compare(`discovered-${section}`, `/api/segments/${SEGMENT_ID}/sections/os_cgroup_v2_${section}/rows`, "")).filter(row => row.record === "row");
+          assert.equal(rows.length, 2, `${section}: both recorded observations survive native/WASM/report decoding`);
+        }
+      }
       if (name === "separated-controllers") {
         const oom = lanes.filter(row => row.record === "lane" && row.lane === "cg_oom");
         assert.deepEqual(oom.map(row => row.value), [null, 0, 0, 0, 1, null], "memory continuity survives a CPU identity change but ends on memory replacement");

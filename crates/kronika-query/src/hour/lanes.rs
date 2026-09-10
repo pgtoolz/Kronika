@@ -17,6 +17,8 @@ pub(super) struct LanePoint {
 #[derive(Default)]
 struct Counters {
     busy_ticks: BTreeMap<i64, i64>,
+    cpu_units: BTreeMap<i64, (i64, i64)>,
+    cg_io_devices: BTreeMap<i64, HashSet<(u64, i64, i64)>>,
     stall_cpu: BTreeMap<i64, i64>,
     stall_io: BTreeMap<i64, i64>,
     memory: BTreeMap<i64, f64>,
@@ -53,56 +55,53 @@ struct Counters {
 }
 
 impl Counters {
-    fn retain_latest(&mut self) {
-        retain_latest(&mut self.busy_ticks);
-        retain_latest(&mut self.stall_cpu);
-        retain_latest(&mut self.stall_io);
-        retain_latest(&mut self.memory);
-        retain_latest(&mut self.disk_busy);
-        retain_latest(&mut self.disk_queue);
-        retain_latest(&mut self.net_rx);
-        retain_latest(&mut self.net_tx);
-        retain_latest(&mut self.net_drop);
-        retain_latest(&mut self.net_errors);
-        retain_latest(&mut self.swap);
-        retain_latest(&mut self.oom);
-        retain_latest(&mut self.running);
-        retain_latest(&mut self.waiting);
-        retain_latest(&mut self.lock_waiting);
-        retain_latest(&mut self.oldest_xact);
-        retain_latest(&mut self.cg_cpu_usage);
-        retain_latest(&mut self.cg_cpu_throttled);
-        retain_latest(&mut self.cg_cpu_capacity);
+    fn retain_after(&mut self, finalized: i64) {
+        retain_after(&mut self.busy_ticks, finalized);
+        retain_after(&mut self.cpu_units, finalized);
+        retain_after(&mut self.cg_io_devices, finalized);
+        retain_after(&mut self.stall_cpu, finalized);
+        retain_after(&mut self.stall_io, finalized);
+        retain_after(&mut self.memory, finalized);
+        retain_after(&mut self.disk_busy, finalized);
+        retain_after(&mut self.disk_queue, finalized);
+        retain_after(&mut self.net_rx, finalized);
+        retain_after(&mut self.net_tx, finalized);
+        retain_after(&mut self.net_drop, finalized);
+        retain_after(&mut self.net_errors, finalized);
+        retain_after(&mut self.swap, finalized);
+        retain_after(&mut self.oom, finalized);
+        retain_after(&mut self.running, finalized);
+        retain_after(&mut self.waiting, finalized);
+        retain_after(&mut self.lock_waiting, finalized);
+        retain_after(&mut self.oldest_xact, finalized);
+        retain_after(&mut self.cg_cpu_usage, finalized);
+        retain_after(&mut self.cg_cpu_throttled, finalized);
+        retain_after(&mut self.cg_cpu_capacity, finalized);
         for boundaries in [
             &mut self.cg_cpu_boundaries,
             &mut self.cg_memory_boundaries,
             &mut self.cg_io_boundaries,
         ] {
-            if let Some(last) = boundaries.last().copied() {
-                boundaries.retain(|ts| *ts == last);
+            if let Some(last) = boundaries.range(..=finalized).next_back().copied() {
+                boundaries.retain(|ts| *ts >= last);
             }
         }
-        retain_latest(&mut self.cg_stall_cpu);
-        retain_latest(&mut self.cg_stall_memory);
-        retain_latest(&mut self.cg_stall_io);
-        retain_latest(&mut self.cg_memory_bytes);
-        retain_latest(&mut self.cg_memory_share);
-        retain_latest(&mut self.cg_oom);
-        retain_latest(&mut self.cg_io_read);
-        retain_latest(&mut self.cg_io_write);
-        retain_latest(&mut self.cg_pids);
-        retain_latest(&mut self.cg_pids_share);
+        retain_after(&mut self.cg_stall_cpu, finalized);
+        retain_after(&mut self.cg_stall_memory, finalized);
+        retain_after(&mut self.cg_stall_io, finalized);
+        retain_after(&mut self.cg_memory_bytes, finalized);
+        retain_after(&mut self.cg_memory_share, finalized);
+        retain_after(&mut self.cg_oom, finalized);
+        retain_after(&mut self.cg_io_read, finalized);
+        retain_after(&mut self.cg_io_write, finalized);
+        retain_after(&mut self.cg_pids, finalized);
+        retain_after(&mut self.cg_pids_share, finalized);
     }
 }
 
-fn retain_latest<T>(samples: &mut BTreeMap<i64, T>) {
-    if samples.len() <= 1 {
-        return;
-    }
-    let latest = samples.pop_last();
-    samples.clear();
-    if let Some((ts, value)) = latest {
-        samples.insert(ts, value);
+fn retain_after<T>(samples: &mut BTreeMap<i64, T>, finalized: i64) {
+    if let Some((&previous, _)) = samples.range(..=finalized).next_back() {
+        *samples = samples.split_off(&previous);
     }
 }
 
@@ -110,7 +109,7 @@ fn retain_latest<T>(samples: &mut BTreeMap<i64, T>) {
 pub(super) struct State {
     counters: Counters,
     emitted_before: i64,
-    cgroup_identity: Option<[Option<u64>; 4]>,
+    cgroup_identity: BTreeMap<i64, [Option<u64>; 4]>,
 }
 
 impl Default for State {
@@ -118,7 +117,7 @@ impl Default for State {
         Self {
             counters: Counters::default(),
             emitted_before: i64::MIN,
-            cgroup_identity: None,
+            cgroup_identity: BTreeMap::new(),
         }
     }
 }
@@ -136,6 +135,7 @@ pub(super) fn collect(
     segment: &Segment,
     window: Window,
     state: &mut State,
+    next_min_ts: Option<i64>,
 ) -> Result<(Vec<LanePoint>, SegmentFacts), QueryError> {
     let mut facts = Facts::default();
     let collection = kronika_index::collection_facts(segment)?;
@@ -156,6 +156,11 @@ pub(super) fn collect(
             _other => {}
         }
     }
+    refresh_identity_boundaries(
+        &mut state.counters,
+        &state.cgroup_identity,
+        state.emitted_before,
+    );
     for (type_id, _rows) in segment.sections() {
         let Some(name) = logical_section_name(type_id) else {
             continue;
@@ -179,16 +184,26 @@ pub(super) fn collect(
             _other => {}
         }
     }
+    let cores = i64::try_from(facts.cores.len()).unwrap_or(0);
+    for ts in &facts.cpu_samples {
+        state
+            .counters
+            .cpu_units
+            .insert(*ts, (facts.ticks_per_second, cores));
+    }
+    // Later segments can supply more rows at their minimum timestamp.
+    let finalized = next_min_ts.map_or(i64::MAX, |ts| ts.saturating_sub(1));
     let current = current_points(
         &state.counters,
         facts.ticks_per_second,
-        i64::try_from(facts.cores.len()).unwrap_or(0),
-        segment.min_ts().max(state.emitted_before.saturating_add(1)),
-        segment.max_ts(),
+        cores,
+        state.emitted_before.saturating_add(1),
+        finalized,
         window,
     );
-    state.counters.retain_latest();
-    state.emitted_before = state.emitted_before.max(segment.max_ts());
+    state.counters.retain_after(finalized);
+    retain_after(&mut state.cgroup_identity, finalized);
+    state.emitted_before = state.emitted_before.max(finalized);
     Ok((
         current,
         SegmentFacts {
@@ -204,6 +219,7 @@ pub(super) fn collect(
 struct Facts {
     ticks_per_second: i64,
     cores: BTreeSet<i64>,
+    cpu_samples: BTreeSet<i64>,
     postgresql_interval_seconds: Option<u64>,
     environment: Option<u32>,
     memberships: BTreeMap<i64, Membership>,
@@ -227,7 +243,7 @@ fn read_cgroup_context(
     type_id: u32,
     facts: &mut Facts,
     counters: &mut Counters,
-    previous_identity: &mut Option<[Option<u64>; 4]>,
+    recorded_identities: &mut BTreeMap<i64, [Option<u64>; 4]>,
 ) -> Result<(), QueryError> {
     const FIELDS: [&str; 9] = [
         "ts",
@@ -281,23 +297,33 @@ fn read_cgroup_context(
     let dictionary = segment.dictionary_for(&ids)?;
     for (ts, ids) in identities {
         let identity = ids.map(|id| id.filter(|id| matches!(dictionary.resolve(*id), Some(Resolved::Str(bytes)) if !bytes.is_empty())));
-        if let Some(before) = previous_identity {
-            for (index, boundaries) in [
-                &mut counters.cg_cpu_boundaries,
-                &mut counters.cg_memory_boundaries,
-                &mut counters.cg_io_boundaries,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                if before[index] != identity[index] {
-                    boundaries.insert(ts);
-                }
-            }
-        }
-        *previous_identity = Some(identity);
+        recorded_identities.insert(ts, identity);
     }
     Ok(())
+}
+
+fn refresh_identity_boundaries(
+    counters: &mut Counters,
+    identities: &BTreeMap<i64, [Option<u64>; 4]>,
+    finalized: i64,
+) {
+    for (index, boundaries) in [
+        &mut counters.cg_cpu_boundaries,
+        &mut counters.cg_memory_boundaries,
+        &mut counters.cg_io_boundaries,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        boundaries.retain(|ts| *ts <= finalized);
+        let mut previous = None;
+        for (&ts, identity) in identities {
+            if previous.is_some_and(|before| before != identity[index]) {
+                boundaries.insert(ts);
+            }
+            previous = Some(identity[index]);
+        }
+    }
 }
 
 fn membership(row: &Row) -> Membership {
@@ -427,8 +453,8 @@ fn read_cgroup_io(
 ) -> Result<(), QueryError> {
     let names = with_columns(
         type_id,
-        &["ts", "cgroup_path", "rbytes", "wbytes"],
-        &["scope"],
+        &["ts", "cgroup_path", "major", "minor", "rbytes", "wbytes"],
+        &["scope", "cgroup_identity"],
     );
     segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
         let membership = timestamp(&row, "ts").and_then(|ts| {
@@ -442,19 +468,39 @@ fn read_cgroup_io(
         if !member_row(&row, membership, path) {
             return true;
         }
-        let Some(ts) = timestamp(&row, "ts") else {
-            return true;
-        };
-        // One cgroup has a row per device; the lane is the sum over devices.
-        if let Some(read) = number(&row, "rbytes") {
-            add(&mut counters.cg_io_read, ts, read);
-        }
-        if let Some(written) = number(&row, "wbytes") {
-            add(&mut counters.cg_io_write, ts, written);
-        }
+        record_cgroup_io(counters, &row);
         true
     })?;
     Ok(())
+}
+
+fn record_cgroup_io(counters: &mut Counters, row: &Row) {
+    let Some(ts) = timestamp(row, "ts") else {
+        return;
+    };
+    let Some(device) = integer(row, "major").zip(integer(row, "minor")) else {
+        return;
+    };
+    let Some(identity) =
+        string_id(row, "cgroup_identity").or_else(|| string_id(row, "cgroup_path"))
+    else {
+        return;
+    };
+    if !counters
+        .cg_io_devices
+        .entry(ts)
+        .or_default()
+        .insert((identity, device.0, device.1))
+    {
+        return;
+    }
+    // One cgroup has a row per device; the lane is the sum over devices.
+    if let Some(read) = number(row, "rbytes") {
+        add(&mut counters.cg_io_read, ts, read);
+    }
+    if let Some(written) = number(row, "wbytes") {
+        add(&mut counters.cg_io_write, ts, written);
+    }
 }
 
 fn read_cgroup_pids(
@@ -543,6 +589,7 @@ fn read_cpu(
             return true;
         }
         if let Some(busy) = cpu_busy_ticks(&row) {
+            facts.cpu_samples.insert(ts);
             counters.busy_ticks.insert(ts, busy);
         }
         true
@@ -829,17 +876,22 @@ fn current_points(
 
 fn points(counters: &Counters, ticks_per_second: i64, cpu_count: i64) -> Vec<LanePoint> {
     let mut out = Vec::new();
-    if ticks_per_second > 0 && cpu_count > 0 {
-        #[expect(clippy::cast_precision_loss, reason = "core counts are small")]
-        let capacity = (ticks_per_second * cpu_count) as f64;
-        let busy = rate(&counters.busy_ticks, |value, seconds| {
-            value / seconds / capacity * 100.0
-        });
-        for (ts, value) in busy {
+    for (ts, value) in rate(&counters.busy_ticks, |value, seconds| value / seconds) {
+        let (ticks, cores) = counters
+            .cpu_units
+            .get(&ts)
+            .copied()
+            .unwrap_or((ticks_per_second, cpu_count));
+        if ticks > 0 && cores > 0 {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "core counts and clock rates are small"
+            )]
+            let capacity = (ticks * cores) as f64;
             out.push(LanePoint {
                 key: "cpu_busy",
                 ts,
-                value,
+                value: value.map(|value| value / capacity * 100.0),
             });
         }
     }

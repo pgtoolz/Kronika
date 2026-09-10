@@ -94,6 +94,7 @@ pub(crate) fn prepare(
     if request.part == HourPart::Lanes {
         let expected = request.segments.as_deref().ok_or(QueryError::BadCursor)?;
         pin_segments(dataset.as_ref(), &mut segments, expected, request.active)?;
+        segments.sort_by_key(DatasetSegment::min_ts);
     }
     let shape = format!(
         "window={window:?};hours={hours:?};series={:?};part={:?};segments={:?};active={:?};sources={configured_sources};demo={synthetic_demo}",
@@ -287,7 +288,7 @@ impl PreparedHour {
                 .stream(sink)?;
         }
         let mut lane_state = lanes::State::default();
-        for segment in &segments {
+        for (index, segment) in segments.iter().enumerate() {
             if sink.cancelled() {
                 return Ok(());
             }
@@ -307,6 +308,7 @@ impl PreparedHour {
                     segment,
                     window,
                     &mut lane_state,
+                    segments.get(index + 1).map(DatasetSegment::min_ts),
                     part == HourPart::Lanes,
                     sink,
                 )?
@@ -484,11 +486,12 @@ fn emit_lanes(
     descriptor: &DatasetSegment,
     window: Window,
     state: &mut lanes::State,
+    next_min_ts: Option<i64>,
     include_context: bool,
     sink: &mut dyn QuerySink,
 ) -> Result<bool, QueryError> {
     let segment = dataset.open(descriptor)?;
-    let (points, facts) = lanes::collect(&segment, window, state)?;
+    let (points, facts) = lanes::collect(&segment, window, state, next_min_ts)?;
     if include_context && !sink.record(record(json!({
         "record": "lane_context",
         "segment_id": descriptor.id().to_string(),

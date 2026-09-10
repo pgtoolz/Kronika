@@ -437,6 +437,16 @@ pub(crate) fn log_journal_append(
     );
 }
 
+/// Cumulative process CPU time in clock ticks, available only in local mode.
+pub(crate) fn process_cpu_ticks() -> Option<u64> {
+    if !PROCESS_DIAGNOSTICS.load(Ordering::Relaxed) {
+        return None;
+    }
+    let text = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let stat = kronika_source_os::proc::process::parse_stat(&text).ok()?;
+    u64::try_from(stat.utime.checked_add(stat.stime)?).ok()
+}
+
 /// Peak resident size in local mode, kibibytes.
 pub(crate) fn peak_rss_kib() -> Option<u64> {
     if !PROCESS_DIAGNOSTICS.load(Ordering::Relaxed) {

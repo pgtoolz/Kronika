@@ -286,3 +286,7 @@ segment is nonempty. `-h`, `--help` and `--version` exit before
 configuration or storage access. Readiness and segment paths go to stdout;
 structured logs go to stderr. In local mode, each `segment_write_finish` records `rss_kib`,
 the peak physical memory occupied by the process in KiB.
+
+In local mode, `cgroup_discovery_finish` reports group/device counts, `elapsed_us`,
+process CPU `cpu_ticks` during acquisition and writing, and lifetime peak `rss_kib`.
+CPU ticks use the recorded `clock_ticks_per_sec`; unavailable readings stay absent.

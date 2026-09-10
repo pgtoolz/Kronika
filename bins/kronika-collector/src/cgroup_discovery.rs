@@ -28,7 +28,7 @@ use kronika_writer::{Interner, Journal, SectionBuffers};
 
 use crate::buffering::buffer_row;
 use crate::config::Config;
-use crate::logging::{LogLevel, field, log_event, peak_rss_kib};
+use crate::logging::{LogLevel, field, log_event, peak_rss_kib, process_cpu_ticks};
 use crate::scheduler::Scheduler;
 use crate::segments::{SegmentState, append_window_and_maybe_close, encode_window};
 use crate::service_sections::push_instance_metadata;
@@ -102,6 +102,7 @@ pub(crate) fn run(
         return Ok(CgroupPass::default());
     }
     let started = Instant::now();
+    let cpu_started = process_cpu_ticks();
     let selected = if in_container {
         cgroup::select_ancestor_context(fs, sys, ts).unwrap_or_else(|error| {
             log_error(&error);
@@ -179,19 +180,23 @@ pub(crate) fn run(
         Err(error) => log_error(&error),
     }
     appender.flush(&mut pass)?;
-    log_finish(&pass, started.elapsed().as_micros());
+    let cpu_ticks = process_cpu_ticks()
+        .zip(cpu_started)
+        .and_then(|(end, start)| end.checked_sub(start));
+    log_finish(&pass, started.elapsed().as_micros(), cpu_ticks);
     if let Some(error) = &pass.stats.first_error {
         log_error(&io::Error::other(error.clone()));
     }
     Ok(pass)
 }
 
-fn log_finish(pass: &CgroupPass, elapsed_us: u128) {
+fn log_finish(pass: &CgroupPass, elapsed_us: u128, cpu_ticks: Option<u64>) {
     log_event(
         LogLevel::Info,
         "cgroup_discovery_finish",
         &[
             field("elapsed_us", elapsed_us),
+            field("cpu_ticks", cpu_ticks),
             field("rss_kib", peak_rss_kib()),
             field("groups", pass.stats.groups),
             field("io_rows", pass.stats.io_rows),
@@ -273,11 +278,13 @@ impl Appender<'_> {
                     open_ts,
                 )?;
             }
-            if self.in_container
-                && (fresh || self.portion.groups.iter().any(|(_, primary)| *primary))
-            {
+            let mut pending_context = None;
+            if self.in_container {
                 let context = context_section(self.segment.interner_mut(), &pass.selected)?;
-                buffer_row(&mut buffers, context)?;
+                if self.segment.cgroup_context() != Some(&context) {
+                    buffer_row(&mut buffers, context)?;
+                    pending_context = Some(context);
+                }
             }
             let includes_settings =
                 self.segment.needs_pg_settings() && !self.opening_settings.is_empty();
@@ -327,6 +334,10 @@ impl Appender<'_> {
             }
             if includes_settings && !self.segment.is_empty() {
                 self.segment.mark_pg_settings_present();
+            }
+            if !self.segment.is_empty() {
+                self.segment
+                    .mark_cgroup_context_recorded(pending_context.as_ref());
             }
             pass.appended = true;
             self.portion.clear();

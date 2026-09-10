@@ -32,6 +32,7 @@ mod service_sections;
 use anyhow::{Context, Result};
 use config::Config;
 use kronika_layout::{DataRoot, LayoutLimits, TemporaryKind, WriterOwner};
+use kronika_registry::os_cgroup_context::OsCgroupContextV2;
 use kronika_source_os::proc::process::ProcessIoCredentials;
 use kronika_source_os::{OsScope, ProcFs, detect_container};
 use kronika_source_pg::query::BatchWrite;
@@ -430,6 +431,7 @@ struct PgPendingOutcome {
 struct BufferedWindow {
     buffers: SectionBuffers,
     pending_users: Vec<(u8, u32)>,
+    pending_cgroup_context: Option<OsCgroupContextV2>,
 }
 
 /// Retain one `PostgreSQL` batch through a pre-append close and encode it once
@@ -525,6 +527,7 @@ fn append_pending_pg_batch(
         }
         if !segment.is_empty() {
             segment.mark_users_recorded(&buffered.pending_users);
+            segment.mark_cgroup_context_recorded(buffered.pending_cgroup_context.as_ref());
         }
         let frame_bytes = encoded_bytes
             .saturating_add(u64::try_from(kronika_format::FRAME_HEADER_LEN).unwrap_or(u64::MAX));
@@ -576,6 +579,7 @@ fn buffer_pg_batch(
 ) -> std::result::Result<BufferedWindow, ()> {
     let mut buffers = SectionBuffers::new();
     let mut pending_users = Vec::new();
+    let mut pending_cgroup_context = None;
     if segment.is_empty() {
         push_instance_metadata(
             &mut buffers,
@@ -597,7 +601,7 @@ fn buffer_pg_batch(
         && let Some(process_io) = process_io.as_mut()
     {
         let fs = ProcFs::from_env();
-        let os = {
+        let mut os = {
             let (interner, users) = segment.os_state_mut();
             collect_os_sources(
                 &fs,
@@ -611,6 +615,7 @@ fn buffer_pg_batch(
                 cgroup_pass,
             )
         };
+        pending_cgroup_context = os.deduplicate_context(segment.cgroup_context());
         pending_users.extend_from_slice(os.pending_users());
         push_os_sources(&mut buffers, &os).map_err(|err| {
             log_buffer_failure(&err);
@@ -622,6 +627,7 @@ fn buffer_pg_batch(
     Ok(BufferedWindow {
         buffers,
         pending_users,
+        pending_cgroup_context,
     })
 }
 
@@ -815,6 +821,7 @@ fn append_pending_window(
                 }
                 if !segment.is_empty() {
                     segment.mark_users_recorded(&buffered.pending_users);
+                    segment.mark_cgroup_context_recorded(buffered.pending_cgroup_context.as_ref());
                 }
                 outcome.accepted = true;
                 outcome.appended = true;
@@ -881,7 +888,7 @@ fn buffer_window(
         return Err(BufferFailure);
     }
 
-    let os = process_io.as_mut().map(|process_io| {
+    let mut os = process_io.as_mut().map(|process_io| {
         let fs = ProcFs::from_env();
         let (interner, users) = segment.os_state_mut();
         collect_os_sources(
@@ -896,6 +903,9 @@ fn buffer_window(
             cgroup_pass,
         )
     });
+    let pending_cgroup_context = os
+        .as_mut()
+        .and_then(|os| os.deduplicate_context(segment.cgroup_context()));
     let settings = if segment.needs_pg_settings() {
         opening_settings
     } else {
@@ -916,6 +926,7 @@ fn buffer_window(
     }
     Ok(Some(BufferedWindow {
         buffers,
+        pending_cgroup_context,
         pending_users: os
             .as_ref()
             .map_or_else(Vec::new, |os| os.pending_users().to_vec()),

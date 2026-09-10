@@ -291,3 +291,8 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika /usr/local/bin/kronika-collector
 в стандартный вывод stdout, сообщения о работе — в stderr. В режиме `local` при каждой записи
 сегмента `segment_write_finish` содержит `rss_kib` — пиковый объём физической
 памяти, занятой процессом, в KiB.
+
+В режиме `local` строка `cgroup_discovery_finish` содержит число групп и устройств,
+время `elapsed_us`, затраты CPU процесса `cpu_ticks` за сбор и запись и пиковый RSS
+за время работы процесса `rss_kib`. Частота тиков записана в `clock_ticks_per_sec`;
+непрочитанные значения остаются отсутствующими.

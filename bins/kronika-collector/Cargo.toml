@@ -26,6 +26,10 @@ tokio-postgres = "0.7.18"
 tikv-jemallocator = { version = "0.6.1", default-features = false, features = ["override_allocator_on_supported_platforms"] }
 
 [dev-dependencies]
+kronika-store = { path = "../../crates/kronika-store" }
+serde_json = "1"
+kronika-index = { path = "../../crates/kronika-index" }
+kronika-query = { path = "../../crates/kronika-query" }
 kronika-reader = { path = "../../crates/kronika-reader" }
 tempfile = "3"
 

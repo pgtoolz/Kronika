@@ -5,6 +5,7 @@ use crate::logging::{
 };
 use anyhow::{Context, Result};
 use kronika_layout::{FileKind, SegmentAddress, SegmentId, WriterOwner};
+use kronika_registry::os_cgroup_context::OsCgroupContextV2;
 use kronika_writer::{
     FlushedPart, Interner, Journal, JournalConfig, JournalError, SectionBuffers, dict,
     write_segment,
@@ -61,6 +62,7 @@ pub(crate) struct SegmentState {
     interner: Interner,
     users: UserReferences,
     pg_settings_present: bool,
+    cgroup_context: Option<OsCgroupContextV2>,
 }
 
 impl Default for SegmentState {
@@ -71,6 +73,7 @@ impl Default for SegmentState {
             interner: Interner::new(kronika_format::DictLimits::default()),
             users: UserReferences::default(),
             pg_settings_present: false,
+            cgroup_context: None,
         }
     }
 }
@@ -110,6 +113,16 @@ impl SegmentState {
 
     pub(crate) const fn mark_pg_settings_present(&mut self) {
         self.pg_settings_present = true;
+    }
+
+    pub(crate) const fn cgroup_context(&self) -> Option<&OsCgroupContextV2> {
+        self.cgroup_context.as_ref()
+    }
+
+    pub(crate) const fn mark_cgroup_context_recorded(&mut self, row: Option<&OsCgroupContextV2>) {
+        if let Some(row) = row {
+            self.cgroup_context = Some(*row);
+        }
     }
 
     /// Register the appended window; the first one opens the segment.

@@ -52,6 +52,7 @@ fn cgroup_discovery_costs(world: &mut BddWorld) -> Result<()> {
             ("io_rows", "nonnegative"),
             ("metric_files_read", "positive"),
             ("elapsed_us", "positive"),
+            ("cpu_ticks", "nonnegative"),
             ("rss_kib", "positive"),
             ("peak_groups", "positive"),
             ("peak_io_rows", "nonnegative"),
