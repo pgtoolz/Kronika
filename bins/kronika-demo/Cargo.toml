@@ -10,8 +10,8 @@ repository.workspace = true
 
 [dependencies]
 anyhow = "1"
-kronika-format = { version = "1.0.1", path = "../../crates/kronika-format" }
-kronika-registry = { version = "1.0.1", path = "../../crates/kronika-registry" }
+kronika-format = { version = "1.0.2", path = "../../crates/kronika-format" }
+kronika-registry = { version = "1.0.2", path = "../../crates/kronika-registry" }
 nix = { version = "0.29", features = ["signal"] }
 rustix = { version = "1", features = ["fs", "param"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }

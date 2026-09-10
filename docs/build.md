@@ -19,12 +19,9 @@ from source using the instructions below.
 With rustup and the build tools installed, clone the repository and enter it:
 
 ```sh
-git clone --branch feature/managed-postgresql-cgroups https://github.com/pgtoolz/Kronika.git
+git clone https://github.com/pgtoolz/Kronika.git
 cd Kronika
 ```
-
-This branch includes PostgreSQL-only collection and TLS; the published
-`v1.0.1` release does not include these features.
 
 Choose the build command for your machine. On x86-64 Linux:
 

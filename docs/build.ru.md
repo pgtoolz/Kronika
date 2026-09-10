@@ -22,12 +22,9 @@
 и перейдите в него:
 
 ```sh
-git clone --branch feature/managed-postgresql-cgroups https://github.com/pgtoolz/Kronika.git
+git clone https://github.com/pgtoolz/Kronika.git
 cd Kronika
 ```
-
-Эта ветка содержит режим сбора только PostgreSQL и TLS; в опубликованной
-версии `v1.0.1` этих возможностей нет.
 
 Выберите команду сборки для своей машины. Для Linux x86-64:
 

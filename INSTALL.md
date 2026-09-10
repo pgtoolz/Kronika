@@ -6,13 +6,13 @@ Use `kronika-collector` to record your machine and `kronika-web` to view its
 history in a browser. The archive also includes `kronika-dump` to inspect or
 extract part of a recording and `kronika-report` to create an HTML report.
 
-Steps 1–2 install the published archive. To compile the programs yourself, use
+Steps 1–2 install the binary archive. To compile the programs yourself, use
 the [source-build guide](docs/build.md), then return to [collector startup](#3-start-collector).
 PostgreSQL collection needs a connection with monitoring permissions.
 
 ## 1. Download and extract
 
-[The latest release](https://github.com/pgtoolz/Kronika/releases/latest)
+[Release 1.0.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.2)
 provides archives and `.tar.gz.sha256` checksum files. Check your machine's
 architecture with `uname -m`:
 
@@ -26,7 +26,7 @@ Download, verify and extract the archive. For ARM64, change the first line to
 
 ```sh
 target=x86_64-unknown-linux-musl
-version=1.0.1
+version=1.0.2
 archive="kronika-$version-$target.tar.gz"
 release_url="https://github.com/pgtoolz/Kronika/releases/download/v$version"
 curl -fLO "$release_url/$archive"
@@ -115,8 +115,6 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 | Log paths | In `local` mode, `pg_current_logfile()` discovers readable local files; `KRONIKA_PG_LOGS` adds paths/globs. In `postgresql` mode, only explicit `KRONIKA_PG_LOGS` files are read. No remote file download. PgBouncer log settings apply only to `local`. |
 
 ### PostgreSQL only — local or remote
-
-PostgreSQL-only collection and TLS below require a [build from this source revision](docs/build.md); the published 1.0.1 archives do not include them.
 
 PostgreSQL-only collection does not need sudo.
 

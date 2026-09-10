@@ -4,7 +4,7 @@
 
 ## Релиз
 
-[Текущий релиз](https://github.com/pgtoolz/Kronika/releases/latest)
+[Релиз 1.0.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.2)
 содержит четыре программы для Linux x86-64 и ARM64.
 
 <a id="download"></a>
@@ -12,12 +12,12 @@
 
 | Архитектура | Архив | Контрольная сумма |
 | --- | --- | --- |
-| x86-64 | [kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz.sha256) |
-| ARM64 | [kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz.sha256) |
+| x86-64 | [kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz.sha256) |
+| ARM64 | [kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz.sha256) |
 
 Выполните [команды скачивания и установки](../INSTALL.ru.md#1-скачивание-и-распаковка).
-[HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-v1.0.1.html)
-работает без сети; его также можно [открыть в браузере](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html).
+[HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-v1.0.2.html)
+можно открыть без сети или [в браузере](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html).
 
 ## Состав и идентификация
 

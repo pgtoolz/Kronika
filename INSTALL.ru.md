@@ -7,14 +7,14 @@
 В архиве также есть `kronika-dump` для чтения и вырезания части записи и
 `kronika-report` для создания HTML-отчёта.
 
-Шаги 1–2 устанавливают опубликованный архив. Чтобы скомпилировать программы
+Шаги 1–2 устанавливают готовый архив. Чтобы скомпилировать программы
 самостоятельно, используйте [инструкцию сборки](docs/build.ru.md), затем перейдите
 к [запуску сборщика](#3-запуск-сборщика). Для сбора PostgreSQL понадобится
 строка подключения с правами мониторинга.
 
 ## 1. Скачивание и распаковка
 
-В [текущем релизе](https://github.com/pgtoolz/Kronika/releases/latest)
+В [релизе 1.0.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.2)
 доступны архивы и файлы контрольных сумм `.tar.gz.sha256`.
 Команда `uname -m` покажет архитектуру вашей машины:
 
@@ -28,7 +28,7 @@
 
 ```sh
 target=x86_64-unknown-linux-musl
-version=1.0.1
+version=1.0.2
 archive="kronika-$version-$target.tar.gz"
 release_url="https://github.com/pgtoolz/Kronika/releases/download/v$version"
 curl -fLO "$release_url/$archive"
@@ -121,8 +121,6 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 | Журналы | В режиме `local` `pg_current_logfile()` находит доступные локальные файлы; `KRONIKA_PG_LOGS` добавляет пути/шаблоны. В режиме `postgresql` читаются только явно заданные файлы `KRONIKA_PG_LOGS`. Удалённые файлы не скачиваются. Настройки журналов PgBouncer действуют только в `local`. |
 
 ### Только PostgreSQL — локальный или удалённый сервер
-
-Для сбора только PostgreSQL и TLS ниже нужна [сборка из этой версии исходников](docs/build.ru.md); в опубликованных архивах 1.0.1 этих возможностей нет.
 
 Для сбора только PostgreSQL sudo не нужен.
 

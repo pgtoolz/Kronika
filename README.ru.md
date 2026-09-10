@@ -11,15 +11,15 @@ Linux либо записывает только PostgreSQL с локально�
 ![Использование CPU и значения показателей процессов за записанный час](docs/images/processes.png)
 
 [Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/) ·
-[Скачать HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-v1.0.1.html).
+[Скачать HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-v1.0.2.html).
 
 Запись за 5 сентября 2026 года, 19:00–20:00 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=host).
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=host).
 
 ## Установка и запуск
 
-Скачайте Kronika для [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz)
-или [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz).
+Скачайте Kronika для [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz)
+или [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz).
 Проверьте и установите архив по [инструкции](INSTALL.ru.md)
 или [соберите из исходников](docs/build.ru.md). Архив содержит `kronika-collector`,
 `kronika-web`, `kronika-dump` и `kronika-report`.
@@ -54,7 +54,6 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ### Только PostgreSQL — локальный или удалённый сервер
 
-Для сбора только PostgreSQL и TLS ниже нужна [сборка из этой версии исходников](docs/build.ru.md); в опубликованных архивах 1.0.1 этих возможностей нет.
 Запустите сборщик на машине, откуда доступен сервер, с каталогом записи в домашней папке.
 
 Для сбора только PostgreSQL sudo не нужен.
