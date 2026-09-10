@@ -35,6 +35,33 @@ fn line_with_fields(world: &mut BddWorld, action: String, step: &Step) -> Result
     Ok(())
 }
 
+#[then("the log reports measured cgroup discovery costs")]
+fn cgroup_discovery_costs(world: &mut BddWorld) -> Result<()> {
+    let text = log(world)?;
+    let line = text
+        .lines()
+        .find(|line| {
+            line.split_whitespace()
+                .any(|field| field == "action=cgroup_discovery_finish")
+        })
+        .with_context(|| format!("no cgroup_discovery_finish line in:\n{text}"))?;
+    validate_integer_fields(
+        line,
+        &[
+            ("groups", "positive"),
+            ("io_rows", "nonnegative"),
+            ("metric_files_read", "positive"),
+            ("elapsed_us", "positive"),
+            ("rss_kib", "positive"),
+            ("peak_groups", "positive"),
+            ("peak_io_rows", "nonnegative"),
+            ("peak_string_bytes", "positive"),
+        ],
+    )?;
+    println!("cgroup_discovery_measurement {line}");
+    Ok(())
+}
+
 #[then("the log reports these collections as degraded")]
 fn degraded_collections(world: &mut BddWorld, step: &Step) -> Result<()> {
     let text = log(world)?;

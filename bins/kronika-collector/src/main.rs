@@ -17,6 +17,7 @@ static GLOBAL_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemall
 
 mod buffering;
 mod capacity;
+mod cgroup_discovery;
 mod config;
 mod help;
 mod log_sources;
@@ -254,6 +255,28 @@ async fn run_collector(config: Config) -> Result<()> {
                 run_rotation(&mut rotation, &writer_owner, &journal, &written_this_tick);
                 continue;
             }
+            let mut cgroup_pass = if config.mode.collect_os() && due.has(SourceKind::OsCgroup) {
+                let fs = ProcFs::from_env();
+                let sys = kronika_source_os::SysFs::from_env();
+                let ts = unix_now_us()?;
+                Some(cgroup_discovery::run(
+                    &fs,
+                    &sys,
+                    &config,
+                    in_container,
+                    &mut journal,
+                    &writer_owner,
+                    &mut segment,
+                    &mut sched,
+                    ts,
+                    pg.last_settings().as_deref().unwrap_or(&[]),
+                )?)
+            } else {
+                None
+            };
+            if let Some(pass) = cgroup_pass.as_mut() {
+                written_this_tick.append(&mut pass.written);
+            }
             logs.rescan(&mut |observation| pg_telemetry.observe(observation))
                 .await;
             // PostgreSQL batches reach the WAL before the query stream fetches
@@ -276,6 +299,7 @@ async fn run_collector(config: Config) -> Result<()> {
                     &mut segment,
                     &mut sched,
                     &mut pg_telemetry,
+                    cgroup_pass.as_ref(),
                 )),
                 shutdown,
             )
@@ -303,7 +327,8 @@ async fn run_collector(config: Config) -> Result<()> {
                 &mut segment,
                 &mut sched,
                 &mut logs,
-                pg_outcome.appended,
+                pg_outcome.appended || cgroup_pass.as_ref().is_some_and(|pass| pass.appended),
+                cgroup_pass.as_ref(),
             )?);
             stop_if_persistence_unhealthy(&journal)?;
             run_rotation(&mut rotation, &writer_owner, &journal, &written_this_tick);
@@ -357,6 +382,7 @@ async fn run_pg_collection_cycle(
     segment: &mut SegmentState,
     sched: &mut Scheduler,
     telemetry: &mut PgTelemetry,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> Result<PgCollectionOutcome> {
     let mut outcome = PgCollectionOutcome::default();
     let mut last_ts = None;
@@ -380,6 +406,7 @@ async fn run_pg_collection_cycle(
                     process_io,
                     segment,
                     sched,
+                    cgroup_pass,
                 )?;
                 outcome.written.extend(admitted.written);
                 outcome.appended = true;
@@ -422,6 +449,7 @@ fn append_pending_pg_batch(
     process_io: &mut Option<ProcessIoCredentials>,
     segment: &mut SegmentState,
     sched: &mut Scheduler,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> std::result::Result<PgPendingOutcome, PgAppendError> {
     let mut written = Vec::new();
     let mut encode_elapsed = Duration::ZERO;
@@ -441,6 +469,7 @@ fn append_pending_pg_batch(
             in_container,
             ts,
             process_io,
+            cgroup_pass,
         )
         .map_err(|()| {
             PgAppendError::Fatal(anyhow::anyhow!(
@@ -543,6 +572,7 @@ fn buffer_pg_batch(
     in_container: bool,
     ts: i64,
     process_io: &mut Option<ProcessIoCredentials>,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> std::result::Result<BufferedWindow, ()> {
     let mut buffers = SectionBuffers::new();
     let mut pending_users = Vec::new();
@@ -578,6 +608,7 @@ fn buffer_pg_batch(
                 ts,
                 in_container,
                 due,
+                cgroup_pass,
             )
         };
         pending_users.extend_from_slice(os.pending_users());
@@ -613,6 +644,7 @@ fn run_collection_cycle(
     sched: &mut Scheduler,
     logs: &mut LogSources,
     already_appended: bool,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> Result<Vec<PathBuf>> {
     let Some(parse_now) = collection_timestamp() else {
         return Ok(Vec::new());
@@ -644,6 +676,7 @@ fn run_collection_cycle(
             process_io,
             segment,
             sched,
+            cgroup_pass,
         )?;
         written.extend(outcome.written);
         appended |= outcome.appended;
@@ -668,6 +701,7 @@ fn run_collection_cycle(
             process_io,
             segment,
             sched,
+            cgroup_pass,
         )?;
         written.extend(outcome.written);
         appended |= outcome.appended;
@@ -706,6 +740,7 @@ fn append_pending_window(
     process_io: &mut Option<ProcessIoCredentials>,
     segment: &mut SegmentState,
     sched: &mut Scheduler,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> Result<PendingWindowOutcome> {
     let mut outcome = PendingWindowOutcome::default();
     let mut attempt_due = due_for_window(segment, due, sched);
@@ -721,6 +756,7 @@ fn append_pending_window(
             in_container,
             ts,
             process_io,
+            cgroup_pass,
         ) {
             Ok(Some(buffered)) => buffered,
             Ok(None) => {
@@ -829,6 +865,7 @@ fn buffer_window(
     in_container: bool,
     ts: i64,
     process_io: &mut Option<ProcessIoCredentials>,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> std::result::Result<Option<BufferedWindow>, BufferFailure> {
     let mut buffers = SectionBuffers::new();
     if segment.is_empty()
@@ -856,6 +893,7 @@ fn buffer_window(
             ts,
             in_container,
             due,
+            cgroup_pass,
         )
     });
     let settings = if segment.needs_pg_settings() {

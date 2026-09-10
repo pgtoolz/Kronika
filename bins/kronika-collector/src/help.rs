@@ -109,7 +109,7 @@ OPTIONAL COLLECTION INTERVALS (nonnegative whole numbers of seconds)
   KRONIKA_OS_MOUNTTOPO_INTERVAL_S     default 60; mounts, capacity, device topology
   KRONIKA_OS_PROCESS_INTERVAL_S       default 5; process counters
   KRONIKA_OS_PROCESS_STATUS_INTERVAL_S default 30; process status details
-  KRONIKA_OS_CGROUP_INTERVAL_S        default 30; highest accessible cgroup v2 ancestor
+  KRONIKA_OS_CGROUP_INTERVAL_S        default 30; all visible accessible cgroup v2 groups
   KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S default 30; process-to-cgroup v2 mappings
   KRONIKA_LOG_INTERVAL_S              default 10; configured PostgreSQL/PgBouncer logs
   KRONIKA_PG_INTERVAL_S               default 30; PostgreSQL metrics and settings

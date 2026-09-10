@@ -10,7 +10,7 @@ Scope identifies whether a row describes the machine, a container or its surroun
 
 | Recorded fact | Meaning and use |
 |---|---|
-| `instance_metadata.environment` | Collector's recorded machine/container environment. It controls whether the container resource rows and cgroup collection apply. A VM belongs to machine. |
+| `instance_metadata.environment` | Collector's recorded machine/container environment. It selects the existing primary resource and PSI source; directory discovery also runs on machines. A VM belongs to machine. |
 | OS `scope` | `0`: host; `1`: legacy pod; `2`: pod network namespace; `3`: legacy container; `4`: group without an inferred host/pod label. The selected path identifies new cgroup recordings. |
 | Host CPU, memory, pressure, block devices | Kernel values visible through configured procfs/sysfs roots. Container recordings retain host resource context where those files expose it. |
 | Process table | Live PIDs visible through the configured procfs root; PID is numeric identity within the selected hour. |
@@ -18,7 +18,7 @@ Scope identifies whether a row describes the machine, a container or its surroun
 | Cgroup resource lanes | Highest accessible cgroup v2 ancestor. Counters and capacity use that recorded group and identity. |
 | Filesystems | Data mounts visible in the collector's mount namespace, with capacity from `statvfs` on the visible mount path. |
 
-Linux collection is disabled in `KRONIKA_COLLECTOR_MODE=postgresql`. In `local` mode, machine/VM records have no cgroup workload rows. Container collection walks upward from collector membership to the highest visible, readable ancestor within a compatible cgroup v2 mount. It does not scan siblings or require direct processes in the selected parent. See [container cgroups](#container-cgroups).
+Linux collection is disabled in `KRONIKA_COLLECTOR_MODE=postgresql`. In `local` mode, machines, VMs and containers record all visible, accessible cgroup v2 directories. The existing container resource lanes use the highest accessible ancestor of collector membership. See [cgroup collection](#container-cgroups).
 
 ## Processes
 
@@ -184,7 +184,38 @@ RX means received traffic; TX means transmitted traffic. The totals cover the re
 
 The aggregate sums each timestamp's recorded counters before differentiation. Link speed does not normalize the RX/TX values to percentages. Sources: [network parser](../crates/kronika-source-os/src/proc/net_dev.rs), [network aggregate charts](../bins/kronika-web/ui/src/system-view.tsx), [USE network lanes](../crates/kronika-query/src/hour/lanes.rs).
 
-## Container cgroups
+<a id="container-cgroups"></a>
+
+## Cgroup v2 resources
+
+### Recorded groups
+
+The cgroup pass discovers directories and reads their metrics at startup and
+every 30 s by default. It starts at exposed cgroup2 mounts, including mounts
+outside `/sys/fs/cgroup`, and includes empty, intermediate and threaded groups.
+Mount aliases are read once; symlinks are not followed. Hidden namespaces stay
+inaccessible. A group can appear and disappear between passes. The pass is not
+atomic; completed portions remain readable while later groups are collected.
+
+| Section | Recorded values |
+|---|---|
+| `os_cgroup_v2_group` | Path, directory identity, exposed mount root, exact known parent identity, `memory_localevents` and `pids_localevents` mount flags; present even without resource files |
+| `os_cgroup_v2_cpu` | Usage/user/system and throttled time in µs; periods/throttled periods; local quota/period and effective cpuset CPU count |
+| `os_cgroup_v2_memory` | Current/max/high and anon/file/kernel/slab bytes; ordinary low/high/max/oom/oom_kill events; separate local high/max/oom/oom_kill/oom_group_kill events |
+| `os_cgroup_v2_pids` | Current threads, local limit, failure `max`; event source `0` unknown, `1` `pids.events.local`, `2` `pids.events` |
+| `os_cgroup_v2_io` | Each group's device `major:minor`, rbytes/wbytes/rios/wios |
+
+Absent or invalid values remain null. Literal `max` records an unlimited limit,
+separately from a missing value. Ordinary memory events retain their mount mode.
+An ordinary `pids.events` source does not by itself identify a local limiter;
+its interpretation depends on kernel and mount semantics. Parent counters may
+include children, and devices may be stacked: neither set is added together.
+A recreated directory starts a separate counter history.
+
+Typed rows are appended in bounded portions with the same observation timestamp;
+WAL and sealed segments retain every portion. Container resource lanes use the selected context below. PSI has one primary source: host on a machine, the
+selected ancestor in a container. Available cgroup CPU `full` fields are recorded;
+system CPU `full` remains undefined.
 
 ### Capacity and membership
 

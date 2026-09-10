@@ -93,26 +93,5 @@ fn push_cgroup_sources(buffers: &mut SectionBuffers, os: &OsSources) -> Result<(
     if let Some(row) = os.cgroup_context {
         buffer_row(buffers, row)?;
     }
-    for row in &os.cgroup_cpu {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cgroup_ancestor_cpu {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cgroup_memory {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cgroup_ancestor_memory {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cgroup_io {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cgroup_ancestor_io {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cgroup_pids {
-        buffer_row(buffers, *row)?;
-    }
     Ok(())
 }

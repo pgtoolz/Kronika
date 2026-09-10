@@ -6,17 +6,13 @@ use kronika_layout::{DataRoot, LayoutLimits, WriterOwner};
 use kronika_reader::{Cell, Reader, Resolved, Row, SegmentKind};
 use kronika_registry::os_block_topology::OsBlockTopology;
 use kronika_registry::os_cgroup_context::OsCgroupContextV2;
-use kronika_registry::os_cgroup_cpu::OsCgroupCpu;
-use kronika_registry::os_cgroup_io::OsCgroupIo;
-use kronika_registry::os_cgroup_memory::OsCgroupMemory;
-use kronika_registry::os_cgroup_pids::OsCgroupPids;
 use kronika_registry::os_cpufreq::{OsCpufreq, OsCpufreqPolicy};
 use kronika_registry::os_mountinfo::OsMountinfo;
 use kronika_registry::{DICT_STRINGS_TYPE_ID, PgWalStorage, StrId, Ts, section_name};
 use kronika_source_os::PasswdSnapshot;
 use kronika_source_os::passwd::MAX_PASSWD_BYTES;
 use kronika_source_os::proc::process::ProcessIoCredentials;
-use kronika_source_os::{SysFs, block_topology, cgroup, cpufreq};
+use kronika_source_os::{SysFs, block_topology, cpufreq};
 use kronika_source_pg::activity::{ActivityRow, ActivityVersion};
 use kronika_source_pg::query::{BATCH_LOGICAL_BYTES, BATCH_ROWS};
 use kronika_source_pg::settings::SettingsRow;
@@ -50,16 +46,6 @@ const PG_STORE_PLANS_VADV_TYPE_ID: u32 = 1_004_001;
 const PG_WAL_STORAGE_TYPE_ID: u32 = 1_020_001;
 const PG_STAT_ACTIVITY_V3_TYPE_ID: u32 = 1_001_004;
 const CGROUP_CONTEXT_TYPE_ID: u32 = 1_205_002;
-const CGROUP_CPU_TYPE_ID: u32 = 1_201_001;
-const CGROUP_MEMORY_TYPE_ID: u32 = 1_202_001;
-const CGROUP_IO_TYPE_ID: u32 = 1_203_002;
-const CGROUP_PIDS_TYPE_ID: u32 = 1_204_001;
-const CGROUP_SNAPSHOTS_PER_HOUR: usize = 120;
-const CGROUP_CANDIDATE_COUNT: usize = cgroup::MAX_CGROUP_CANDIDATES;
-const CGROUP_DEVICES_PER_CANDIDATE: usize = cgroup::MAX_CGROUP_IO_ROWS / CGROUP_CANDIDATE_COUNT;
-const CGROUP_COST_CHILD_ENV: &str = "KRONIKA_CGROUP_COST_CHILD";
-const CGROUP_COST_TEST: &str =
-    "tests::zms::bounded_cgroup_hour_reports_collection_and_production_writer_costs";
 const CPUFREQ_POLICY_TYPE_ID: u32 = 1_121_001;
 const CPUFREQ_TYPE_ID: u32 = 1_122_001;
 const MOUNTINFO_TYPE_ID: u32 = 1_112_002;
@@ -551,6 +537,7 @@ fn statement_sql_timestamp_survives_source_batches_in_one_active_segment() {
         &mut process_io,
         &mut segment,
         &mut scheduler,
+        None,
     )
     .expect("append the first natural SQL timestamp batch");
 
@@ -584,6 +571,7 @@ fn statement_sql_timestamp_survives_source_batches_in_one_active_segment() {
         &mut process_io,
         &mut segment,
         &mut scheduler,
+        None,
     )
     .expect("append the remaining natural SQL timestamp row");
     assert!(outcome.written.is_empty());
@@ -2290,325 +2278,6 @@ fn write_block_topology_fixture(root: &Path, partitions: usize) {
         )
         .expect("link partition device");
     }
-}
-
-fn write_cgroup_cost_fixture(root: &Path) -> (SysFs, Vec<String>) {
-    use std::fmt::Write as _;
-
-    let cgroup_root = root.join("fs/cgroup");
-    std::fs::create_dir_all(&cgroup_root).expect("create cgroup cost root");
-    std::fs::write(
-        cgroup_root.join("cgroup.controllers"),
-        "cpu memory io pids\n",
-    )
-    .expect("write cgroup cost controllers");
-    let mut memberships = Vec::with_capacity(CGROUP_CANDIDATE_COUNT);
-    for candidate in 0..CGROUP_CANDIDATE_COUNT {
-        let path = format!(
-            "/kubepods.slice/kubepods-burstable.slice/pod-{candidate:04}/container-{candidate:04}"
-        );
-        memberships.push(format!("0::{path}\n"));
-        let workload = cgroup_root.join(path.trim_start_matches('/'));
-        std::fs::create_dir_all(&workload).expect("create cgroup cost workload");
-        std::fs::write(
-            workload.join("cpu.stat"),
-            "usage_usec 100\nuser_usec 60\nsystem_usec 30\nnr_throttled 2\nthrottled_usec 5\n",
-        )
-        .expect("write cgroup cost cpu.stat");
-        std::fs::write(workload.join("cpu.max"), "200000 100000\n")
-            .expect("write cgroup cost cpu.max");
-        std::fs::write(workload.join("memory.current"), "536870912\n")
-            .expect("write cgroup cost memory.current");
-        std::fs::write(workload.join("memory.max"), "1073741824\n")
-            .expect("write cgroup cost memory.max");
-        std::fs::write(
-            workload.join("memory.stat"),
-            "anon 268435456\nfile 134217728\nkernel 67108864\nslab 33554432\n",
-        )
-        .expect("write cgroup cost memory.stat");
-        std::fs::write(
-            workload.join("memory.events"),
-            "low 0\nhigh 1\nmax 2\noom 0\noom_kill 0\n",
-        )
-        .expect("write cgroup cost memory.events");
-        std::fs::write(workload.join("pids.current"), "16\n")
-            .expect("write cgroup cost pids.current");
-        std::fs::write(workload.join("pids.max"), "256\n").expect("write cgroup cost pids.max");
-        let mut io_stat = String::new();
-        for device in 0..CGROUP_DEVICES_PER_CANDIDATE {
-            let minor = candidate
-                .saturating_mul(CGROUP_DEVICES_PER_CANDIDATE)
-                .saturating_add(device);
-            writeln!(io_stat, "8:{minor} rbytes=1000 wbytes=2000 rios=10 wios=20")
-                .expect("write cgroup cost I/O fixture");
-        }
-        std::fs::write(workload.join("io.stat"), io_stat).expect("write cgroup cost io.stat");
-    }
-    (SysFs::new(root.to_path_buf()), memberships)
-}
-
-#[test]
-#[allow(
-    clippy::too_many_lines,
-    reason = "the bounded cgroup acceptance artifact measures exact cgroupfs reads and the production WAL/ZMS path together"
-)]
-fn bounded_cgroup_hour_reports_collection_and_production_writer_costs() {
-    if std::env::var_os(CGROUP_COST_CHILD_ENV).is_none() {
-        let executable = std::env::current_exe().expect("locate collector test binary");
-        let output = std::process::Command::new(executable)
-            .args([
-                "--exact",
-                CGROUP_COST_TEST,
-                "--nocapture",
-                "--test-threads=1",
-            ])
-            .env(CGROUP_COST_CHILD_ENV, "1")
-            .output()
-            .expect("run isolated cgroup cost child");
-        print!("{}", String::from_utf8_lossy(&output.stdout));
-        eprint!("{}", String::from_utf8_lossy(&output.stderr));
-        assert!(
-            output.status.success(),
-            "isolated cgroup cost child exited with {}",
-            output.status
-        );
-        return;
-    }
-
-    let sysfs = tempfile::tempdir().expect("create cgroup cost sysfs fixture");
-    let (sys, memberships) = write_cgroup_cost_fixture(sysfs.path());
-    let collection_cpu_before = self_cpu_ticks();
-    let collection_started = std::time::Instant::now();
-    for sample in 0..CGROUP_SNAPSHOTS_PER_HOUR {
-        let rows = cgroup::collect_workload_memberships(
-            memberships.iter().map(String::as_str),
-            &sys,
-            i64::try_from(sample).expect("sample count fits i64"),
-        )
-        .expect("collect bounded cgroup fixture");
-        assert_eq!(rows.cpu.len(), CGROUP_CANDIDATE_COUNT);
-        assert_eq!(rows.memory.len(), CGROUP_CANDIDATE_COUNT);
-        assert_eq!(rows.pids.len(), CGROUP_CANDIDATE_COUNT);
-        assert_eq!(rows.io.len(), cgroup::MAX_CGROUP_IO_ROWS);
-        assert!(!rows.io_omitted);
-    }
-    let collection_elapsed_us =
-        u64::try_from(collection_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-    let collection_cpu_ticks = self_cpu_ticks().saturating_sub(collection_cpu_before);
-    let collection_rss_kib = peak_rss_kib().unwrap_or_default();
-    assert!(collection_rss_kib > 0);
-
-    let directory = tempfile::tempdir().expect("create cgroup cost directory");
-    let writer = owner(directory.path());
-    let mut journal =
-        Journal::open(&writer, JournalConfig::default()).expect("open cgroup cost journal");
-    let config = config(directory.path(), u64::MAX);
-    let mut segment = SegmentState::default();
-    let writer_cpu_before = self_cpu_ticks();
-    let writer_started = std::time::Instant::now();
-    let mut raw_section_bytes = BTreeMap::<u32, u64>::new();
-    let mut raw_wal_bytes = 0_u64;
-    let mut completed_paths = Vec::new();
-    for sample in 0..CGROUP_SNAPSHOTS_PER_HOUR {
-        let sample_i64 = i64::try_from(sample).expect("sample count fits i64");
-        let ts = BASE_TS.saturating_add(sample_i64.saturating_mul(30_000_000));
-        let mut cpu = Vec::with_capacity(CGROUP_CANDIDATE_COUNT);
-        let mut memory = Vec::with_capacity(CGROUP_CANDIDATE_COUNT);
-        let mut io = Vec::with_capacity(cgroup::MAX_CGROUP_IO_ROWS);
-        let mut pids = Vec::with_capacity(CGROUP_CANDIDATE_COUNT);
-        for candidate in 0..CGROUP_CANDIDATE_COUNT {
-            let path = format!(
-                "/kubepods.slice/kubepods-burstable.slice/pod-{candidate:04}/container-{candidate:04}"
-            );
-            let path = segment
-                .interner_mut()
-                .intern(path.as_bytes())
-                .map(|id| StrId(id.get()))
-                .expect("intern cgroup cost path");
-            let candidate_i64 = i64::try_from(candidate).expect("candidate count fits i64");
-            let counter = sample_i64
-                .saturating_mul(10_000)
-                .saturating_add(candidate_i64);
-            cpu.push(OsCgroupCpu {
-                ts: Ts(ts),
-                cgroup_path: path,
-                usage_usec: counter,
-                user_usec: counter.saturating_mul(3) / 5,
-                system_usec: counter.saturating_mul(3) / 10,
-                throttled_usec: counter / 100,
-                nr_throttled: counter / 1000,
-                quota_usec: 200_000,
-                period_usec: 100_000,
-                scope: 0,
-            });
-            memory.push(OsCgroupMemory {
-                ts: Ts(ts),
-                cgroup_path: path,
-                current: 536_870_912_i64.saturating_add(candidate_i64),
-                max: Some(1_073_741_824),
-                anon: 268_435_456,
-                file: 134_217_728,
-                kernel: 67_108_864,
-                slab: 33_554_432,
-                low_events: 0,
-                high_events: sample_i64,
-                max_events: sample_i64 / 2,
-                oom_events: 0,
-                oom_kill: 0,
-                scope: 0,
-            });
-            pids.push(OsCgroupPids {
-                ts: Ts(ts),
-                cgroup_path: path,
-                current: 16,
-                max: Some(256),
-                scope: 0,
-            });
-            for device in 0..CGROUP_DEVICES_PER_CANDIDATE {
-                let minor = candidate
-                    .saturating_mul(CGROUP_DEVICES_PER_CANDIDATE)
-                    .saturating_add(device);
-                io.push(OsCgroupIo {
-                    ts: Ts(ts),
-                    cgroup_path: path,
-                    major: 8,
-                    minor: u32::try_from(minor).expect("device count fits u32"),
-                    rbytes: Some(counter.saturating_mul(1000)),
-                    wbytes: Some(counter.saturating_mul(2000)),
-                    rios: Some(counter.saturating_mul(10)),
-                    wios: Some(counter.saturating_mul(20)),
-                    scope: 0,
-                });
-            }
-        }
-        let mut buffers = SectionBuffers::new();
-        push_os_sources(
-            &mut buffers,
-            &OsSources::cgroups_only(cpu, memory, io, pids),
-        )
-        .expect("buffer cgroup rows");
-        let flushed = encode_window(buffers, segment.interner()).expect("encode cgroup window");
-        for section in &flushed.summary.sections {
-            let total = raw_section_bytes.entry(section.type_id).or_default();
-            *total = total.saturating_add(u64::try_from(section.body_bytes).unwrap_or(u64::MAX));
-        }
-        raw_wal_bytes = raw_wal_bytes
-            .saturating_add(u64::try_from(flushed.summary.part_bytes).unwrap_or(u64::MAX))
-            .saturating_add(u64::try_from(FRAME_HEADER_LEN).unwrap_or(u64::MAX));
-        let forced = sample % 60 == 59;
-        let completed = append_window_and_maybe_close(
-            &mut journal,
-            &writer,
-            &config,
-            &mut segment,
-            ts,
-            forced,
-            &flushed,
-        )
-        .expect("append cgroup window");
-        if forced {
-            assert_eq!(completed.len(), 1);
-            completed_paths.push(completed[0].0.clone());
-        } else {
-            assert!(completed.is_empty());
-        }
-    }
-    assert_eq!(completed_paths.len(), 2);
-    let writer_elapsed_us = u64::try_from(writer_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-    let writer_cpu_ticks = self_cpu_ticks().saturating_sub(writer_cpu_before);
-    let writer_rss_kib = peak_rss_kib().unwrap_or_default();
-    let reader = Reader::open(directory.path()).expect("open cgroup reader");
-    let listing = reader.segments(..).expect("list cgroup segment");
-    assert_eq!(listing.segments.len(), 2);
-    let expected_candidates = CGROUP_CANDIDATE_COUNT * CGROUP_SNAPSHOTS_PER_HOUR;
-    let expected_io = cgroup::MAX_CGROUP_IO_ROWS * CGROUP_SNAPSHOTS_PER_HOUR;
-    let mut stored_rows = BTreeMap::<u32, usize>::new();
-    let mut section_bytes = 0_u64;
-    for reference in &listing.segments {
-        let stored = reader.open_segment(reference).expect("open cgroup segment");
-        for wanted in [
-            CGROUP_CPU_TYPE_ID,
-            CGROUP_MEMORY_TYPE_ID,
-            CGROUP_IO_TYPE_ID,
-            CGROUP_PIDS_TYPE_ID,
-        ] {
-            let rows = stored.rows(wanted).expect("read cgroup rows").len();
-            let total = stored_rows.entry(wanted).or_default();
-            *total = total.saturating_add(rows);
-            section_bytes = section_bytes.saturating_add(
-                stored
-                    .sections()
-                    .find(|(type_id, _)| *type_id == wanted)
-                    .map(|(_, section)| section.bytes)
-                    .expect("cgroup section catalogued"),
-            );
-        }
-    }
-    assert_eq!(
-        stored_rows.get(&CGROUP_CPU_TYPE_ID).copied(),
-        Some(expected_candidates)
-    );
-    assert_eq!(
-        stored_rows.get(&CGROUP_MEMORY_TYPE_ID).copied(),
-        Some(expected_candidates)
-    );
-    assert_eq!(
-        stored_rows.get(&CGROUP_PIDS_TYPE_ID).copied(),
-        Some(expected_candidates)
-    );
-    assert_eq!(
-        stored_rows.get(&CGROUP_IO_TYPE_ID).copied(),
-        Some(expected_io)
-    );
-    let zms_bytes = completed_paths
-        .iter()
-        .map(|path| std::fs::metadata(path).expect("stat cgroup segment").len())
-        .sum::<u64>();
-    let marginal_zms_bytes = section_bytes.saturating_add(
-        u64::try_from(completed_paths.len().saturating_mul(4)).unwrap_or(u64::MAX)
-            * u64::try_from(ENTRY_LEN).unwrap_or(0),
-    );
-    assert!(raw_wal_bytes < 64 * 1024 * 1024);
-    assert!(zms_bytes < 16 * 1024 * 1024);
-    assert!(writer_rss_kib > 0);
-    #[cfg(not(debug_assertions))]
-    assert!(writer_rss_kib <= 25_600);
-    println!(
-        "os_cgroup_cost environment=container candidates={} io_rows={} total_rows={} raw_wal_bytes={} cpu_raw_section_bytes={} memory_raw_section_bytes={} io_raw_section_bytes={} pids_raw_section_bytes={} zms_section_bytes={} marginal_zms_bytes={} zms_bytes={} machine_raw_wal_bytes=0 machine_marginal_zms_bytes=0 raw_wal_reduction_bytes={} marginal_zms_reduction_bytes={} collection_elapsed_us={} collection_cpu_ticks={} collection_peak_rss_kib={} writer_elapsed_us={} writer_cpu_ticks={} writer_peak_rss_kib={}",
-        expected_candidates,
-        expected_io,
-        expected_candidates
-            .saturating_mul(3)
-            .saturating_add(expected_io),
-        raw_wal_bytes,
-        raw_section_bytes
-            .get(&CGROUP_CPU_TYPE_ID)
-            .copied()
-            .unwrap_or_default(),
-        raw_section_bytes
-            .get(&CGROUP_MEMORY_TYPE_ID)
-            .copied()
-            .unwrap_or_default(),
-        raw_section_bytes
-            .get(&CGROUP_IO_TYPE_ID)
-            .copied()
-            .unwrap_or_default(),
-        raw_section_bytes
-            .get(&CGROUP_PIDS_TYPE_ID)
-            .copied()
-            .unwrap_or_default(),
-        section_bytes,
-        marginal_zms_bytes,
-        zms_bytes,
-        raw_wal_bytes,
-        marginal_zms_bytes,
-        collection_elapsed_us,
-        collection_cpu_ticks,
-        collection_rss_kib,
-        writer_elapsed_us,
-        writer_cpu_ticks,
-        writer_rss_kib,
-    );
 }
 
 #[test]

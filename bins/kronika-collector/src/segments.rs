@@ -313,6 +313,22 @@ pub(crate) fn append_window_and_maybe_close(
                 false,
             );
         }
+        Err(JournalError::TooManyParts { max }) if segment.first_id.is_some() => {
+            log_event(
+                LogLevel::Warn,
+                "journal_parts_full",
+                &[
+                    field("parts", journal.parts().len()),
+                    field("max_parts", max),
+                ],
+            );
+            finished.push((
+                close_open_segment(journal, owner, segment, "journal-full")
+                    .map_err(AppendWindowError::Close)?,
+                "journal-full",
+            ));
+            return Ok(finished);
+        }
         Err(JournalError::Full { len, max }) if segment.first_id.is_some() => {
             log_event(
                 LogLevel::Warn,

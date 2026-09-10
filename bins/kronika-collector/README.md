@@ -74,7 +74,7 @@ CPU, memory or I/O resources.
 | `KRONIKA_OS_MOUNTTOPO_INTERVAL_S` | 60 | Mounts, filesystem capacity and device topology. |
 | `KRONIKA_OS_PROCESS_INTERVAL_S` | 5 | Process counters. |
 | `KRONIKA_OS_PROCESS_STATUS_INTERVAL_S` | 30 | Process status details. |
-| `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 | Resource limits and use of the highest accessible cgroup v2 ancestor. |
+| `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 | Discover all accessible cgroup v2 groups and read their resource counters and limits. |
 | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 | Process-to-cgroup v2 mappings. |
 | `KRONIKA_LOG_INTERVAL_S` | 10 | Configured PostgreSQL/PgBouncer logs. |
 | `KRONIKA_PG_INTERVAL_S` | 30 | PostgreSQL metrics and settings. |
@@ -251,15 +251,19 @@ Sources: [source discovery](src/log_sources.rs), [SQL facts and path resolution]
 
 ## Linux collection
 
-Linux collection runs only in `local` mode. Machine/VM recordings have no
-workload cgroup rows. Cgroup collection requires cgroup v2. On v1-only systems,
-cgroup metrics and process mappings are unavailable; other enabled Linux and
-PostgreSQL sources continue. In a container, collector walks upward from its own
-membership to the highest visible, readable ancestor within the accessible
-mount. Counters describe that group, including its children. The selected
-path can represent a pod, another aggregate or only collector's own group;
-its path is shown without assuming a pod or PostgreSQL identity. Missing
-metrics remain unavailable. See the [Linux reference](../../docs/metrics-linux.md#container-cgroups).
+Linux collection runs only in `local` mode. On machines, VMs and containers,
+one pass discovers all visible, accessible cgroup v2 directories at startup
+and on `KRONIKA_OS_CGROUP_INTERVAL_S` (default 30 s). Empty and intermediate
+groups are included without requiring visible processes. Each group keeps its
+own path, identity and available CPU, memory, PIDs and per-device I/O values.
+Missing fields stay unknown; parent and child counters are not added together.
+
+The existing container resource context and PSI use the highest accessible
+ancestor of the collector. That group can include other containers; its path
+does not establish a pod or PostgreSQL identity. Machine PSI still uses the
+host source. On v1-only systems cgroup metrics and process mappings are
+unavailable; other enabled sources continue. See the
+[Linux reference](../../docs/metrics-linux.md#container-cgroups).
 
 Filesystem capacity is queried for `ext2`, `ext3`, `ext4`, `xfs`, `btrfs`,
 `f2fs`, `zfs`, `tmpfs` and `overlay`. Other types retain null capacity fields.

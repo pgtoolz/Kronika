@@ -1453,3 +1453,5 @@ fn a_workload_scope_hides_collector_statements_and_counts_them() {
     request.scope = StatementScope::Workload;
     assert_ne!(all, snapshot_binding(&request, None));
 }
+
+mod cgroup_discovery;

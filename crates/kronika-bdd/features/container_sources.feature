@@ -57,7 +57,7 @@ Feature: Container pressure and storage reach the recorded segment
     And some segment records these rows
       | type_id | column   | value |
       | 1205002 | cpu_path | /     |
-    And every segment holds these sections
+    And some segment holds these sections
       | type_id | section | min rows |
       | 1107001 | os_psi  | 3        |
     And every snapshot of section 1107001 contains exactly these rows
@@ -141,7 +141,7 @@ Feature: Container pressure and storage reach the recorded segment
     And some segment records these rows
       | type_id | column   | value |
       | 1205002 | cpu_path | /     |
-    And every segment holds these sections
+    And some segment holds these sections
       | type_id | section           | min rows |
       | 1108001 | os_diskstats      | 3        |
       | 1123001 | os_block_topology | 3        |

@@ -20,13 +20,13 @@ pub struct PsiRow {
     pub some_avg300: f64,
     /// Cumulative stall time (some), microseconds.
     pub some_total: i64,
-    /// Fraction of time tasks stalled (full) over the last 10 s. `None` for cpu.
+    /// Fraction of time tasks stalled (full) over the last 10 s. Undefined for system CPU; optional for cgroup CPU.
     pub full_avg10: Option<f64>,
-    /// Fraction of time tasks stalled (full) over the last 60 s. `None` for cpu.
+    /// Fraction of time tasks stalled (full) over the last 60 s. Undefined for system CPU; optional for cgroup CPU.
     pub full_avg60: Option<f64>,
-    /// Fraction of time tasks stalled (full) over the last 300 s. `None` for cpu.
+    /// Fraction of time tasks stalled (full) over the last 300 s. Undefined for system CPU; optional for cgroup CPU.
     pub full_avg300: Option<f64>,
-    /// Cumulative stall time (full), microseconds. `None` for cpu.
+    /// Cumulative stall time (full), microseconds. Undefined for system CPU; optional for cgroup CPU.
     pub full_total: Option<i64>,
 }
 
@@ -167,6 +167,7 @@ pub fn parse_pressure(
         ts,
         "/proc/pressure",
         ["cpu", "memory", "io"],
+        false,
     )
 }
 
@@ -177,11 +178,13 @@ pub(crate) fn parse_pressure_at(
     ts: i64,
     source: &str,
     files: [&str; 3],
+    cpu_full: bool,
 ) -> Result<Vec<PsiRow>, ParseError> {
     let mut rows = Vec::with_capacity(3);
 
     if let Some(content) = cpu {
-        rows.push(parse_resource(source, files[0], 0, content, false, ts)?);
+        let has_full = cpu_full && content.lines().any(|line| line.starts_with("full "));
+        rows.push(parse_resource(source, files[0], 0, content, has_full, ts)?);
     }
     if let Some(content) = memory {
         rows.push(parse_resource(source, files[1], 1, content, true, ts)?);
@@ -309,5 +312,32 @@ full avg10=0.05 avg60=0.02 avg300=0.01 total=20000\n";
         assert!((mem_section.full_avg10.unwrap() - 0.20).abs() < 1e-9);
         assert_eq!(mem_section.full_total, Some(100_000));
         assert_eq!(mem_section.scope, 0);
+    }
+}
+
+#[cfg(test)]
+mod cgroup_full_tests {
+    use super::{parse_pressure, parse_pressure_at};
+
+    #[test]
+    fn cpu_full_is_recorded_only_for_cgroup_and_remains_optional() {
+        let some = "some avg10=1.00 avg60=2.00 avg300=3.00 total=40\n";
+        let both = format!("{some}full avg10=0.50 avg60=1.50 avg300=2.50 total=20\n");
+        let host = parse_pressure(Some(&both), None, None, 1).unwrap();
+        assert_eq!(host[0].full_total, None);
+        for (text, expected) in [(both.as_str(), Some(20)), (some, None)] {
+            let rows = parse_pressure_at(
+                Some(text),
+                None,
+                None,
+                1,
+                "/visible",
+                ["cpu.pressure", "memory.pressure", "io.pressure"],
+                true,
+            )
+            .unwrap();
+            assert_eq!(rows[0].full_total, expected);
+            assert_eq!(rows[0].some_total, 40);
+        }
     }
 }

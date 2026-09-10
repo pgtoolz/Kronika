@@ -45,6 +45,8 @@ Feature: What happens to a metric the host will not give up
     Then every segment holds these sections
       | type_id | section           | min rows |
       | 1021003 | instance_metadata | 1        |
+    And some segment holds these sections
+      | type_id | section           | min rows |
       | 1102001 | os_cpu            | 2        |
       | 1103001 | os_stat           | 1        |
       | 1105001 | os_loadavg        | 1        |

@@ -195,6 +195,7 @@ fn collect_os_sources_no_diskstats_on_mount_topo_only_tick() {
         0,
         false,
         &due,
+        None,
     );
 
     assert!(
@@ -230,11 +231,11 @@ fn container_diskstats_keep_mounted_and_charged_devices_only() {
 }
 
 #[test]
-fn cgroup_metrics_follow_the_recorded_container_environment() {
+fn cgroup_metrics_are_scheduled_on_machines_and_containers() {
     use crate::os_sources::collects_cgroup_metrics;
 
     let due = DueSet::for_test(vec![SourceKind::OsCgroup]);
-    assert!(!collects_cgroup_metrics(false, &due));
+    assert!(collects_cgroup_metrics(false, &due));
     assert!(collects_cgroup_metrics(true, &due));
     assert!(!collects_cgroup_metrics(
         true,

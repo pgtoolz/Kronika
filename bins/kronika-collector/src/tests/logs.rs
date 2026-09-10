@@ -166,6 +166,7 @@ fn assert_retained_batch_moves_to_fresh_segment() {
         &mut process_io,
         &mut segment,
         &mut scheduler,
+        None,
     )
     .expect("retain and append log batch");
 
@@ -249,6 +250,7 @@ fn a_fresh_log_window_append_failure_is_fatal() {
         &mut process_io,
         &mut segment,
         &mut scheduler,
+        None,
     ) {
         Err(error) => error,
         Ok(_outcome) => {
@@ -303,6 +305,7 @@ fn assert_pg_batch_moves_to_fresh_segment() {
         &mut process_io,
         &mut segment,
         &mut scheduler,
+        None,
     )
     .expect("retain and append PostgreSQL batch");
 
@@ -360,6 +363,7 @@ fn postgres_batch_is_not_repeated_in_incremental_log_windows() {
         &mut process_io,
         &mut segment,
         &mut scheduler,
+        None,
     )
     .expect("append PostgreSQL batch");
     for ts in [201, 202] {
@@ -375,6 +379,7 @@ fn postgres_batch_is_not_repeated_in_incremental_log_windows() {
             &mut process_io,
             &mut segment,
             &mut scheduler,
+            None,
         )
         .expect("append incremental log batch");
         assert!(outcome.accepted);
@@ -437,6 +442,7 @@ fn cached_settings_are_added_once_when_logs_open_a_segment() {
             &mut process_io,
             &mut segment,
             &mut scheduler,
+            None,
         )
         .expect("append log window");
         assert!(outcome.accepted);
@@ -485,6 +491,7 @@ fn postgresql_mode_normal_and_deferred_windows_encode_no_linux_identity_or_rows(
                 &mut process_io,
                 &mut segment,
                 &mut scheduler,
+                None,
             )
             .expect("append forced opening window without Linux");
         }
@@ -499,6 +506,7 @@ fn postgresql_mode_normal_and_deferred_windows_encode_no_linux_identity_or_rows(
             &mut process_io,
             &mut segment,
             &mut scheduler,
+            None,
         )
         .expect("append a retained PostgreSQL batch without Linux");
         assert!(

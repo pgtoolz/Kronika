@@ -6,11 +6,7 @@ use crate::scheduler::{DueSet, SourceKind};
 use anyhow::Result;
 use kronika_registry::os_block_topology::OsBlockTopology;
 use kronika_registry::os_cgroup_context::OsCgroupContextV2;
-use kronika_registry::os_cgroup_cpu::{OsCgroupCpu, OsCgroupCpuV3};
-use kronika_registry::os_cgroup_io::{OsCgroupIo, OsCgroupIoV2};
 use kronika_registry::os_cgroup_mapping::OsCgroupMapping;
-use kronika_registry::os_cgroup_memory::{OsCgroupMemory, OsCgroupMemoryV3};
-use kronika_registry::os_cgroup_pids::OsCgroupPids;
 use kronika_registry::os_cpu::OsCpu;
 use kronika_registry::os_cpufreq::{OsCpufreq, OsCpufreqPolicy};
 use kronika_registry::os_diskstats::OsDiskstats;
@@ -101,13 +97,6 @@ pub(crate) struct OsSources {
     process_status: Vec<OsProcessStatus>,
     cgroup_mapping: Vec<OsCgroupMapping>,
     cgroup_context: Option<OsCgroupContextV2>,
-    cgroup_cpu: Vec<OsCgroupCpu>,
-    cgroup_ancestor_cpu: Vec<OsCgroupCpuV3>,
-    cgroup_memory: Vec<OsCgroupMemory>,
-    cgroup_ancestor_memory: Vec<OsCgroupMemoryV3>,
-    cgroup_io: Vec<OsCgroupIo>,
-    cgroup_ancestor_io: Vec<OsCgroupIoV2>,
-    cgroup_pids: Vec<OsCgroupPids>,
 }
 
 impl OsSources {
@@ -141,13 +130,6 @@ impl OsSources {
             process_status: Vec::new(),
             cgroup_mapping: Vec::new(),
             cgroup_context: None,
-            cgroup_cpu: Vec::new(),
-            cgroup_ancestor_cpu: Vec::new(),
-            cgroup_memory: Vec::new(),
-            cgroup_ancestor_memory: Vec::new(),
-            cgroup_io: Vec::new(),
-            cgroup_ancestor_io: Vec::new(),
-            cgroup_pids: Vec::new(),
         }
     }
 
@@ -195,21 +177,6 @@ impl OsSources {
     pub(crate) fn users_only(users: Vec<OsUser>) -> Self {
         let mut sources = Self::empty();
         sources.users = users;
-        sources
-    }
-
-    #[cfg(test)]
-    pub(crate) fn cgroups_only(
-        cpu: Vec<OsCgroupCpu>,
-        memory: Vec<OsCgroupMemory>,
-        io: Vec<OsCgroupIo>,
-        pids: Vec<OsCgroupPids>,
-    ) -> Self {
-        let mut sources = Self::empty();
-        sources.cgroup_cpu = cpu;
-        sources.cgroup_memory = memory;
-        sources.cgroup_io = io;
-        sources.cgroup_pids = pids;
         sources
     }
 }
@@ -265,8 +232,9 @@ pub(crate) fn collect_os_sources(
     ts: i64,
     in_container: bool,
     due: &DueSet,
+    cgroup_pass: Option<&crate::cgroup_discovery::CgroupPass>,
 ) -> OsSources {
-    let cgroup_due = in_container && due.has(SourceKind::OsCgroup);
+    let cgroup_due = due.has(SourceKind::OsCgroup);
     if !due.has(SourceKind::OsCore)
         && !due.has(SourceKind::OsMountTopo)
         && !due.has(SourceKind::OsProcesses)
@@ -281,6 +249,9 @@ pub(crate) fn collect_os_sources(
 
     let sys = SysFs::from_env();
     let selected = in_container.then(|| {
+        if let Some(pass) = cgroup_pass {
+            return pass.selected.clone();
+        }
         cgroup::collect_ancestor_context(fs, &sys, ts).unwrap_or_else(|err| {
             log_degraded(1_205_002, "cgroup/context", &err);
             cgroup::AncestorContext {
@@ -321,7 +292,9 @@ pub(crate) fn collect_os_sources(
     // the whole node.
     let kept = (in_container && device_tick).then(|| {
         let mut devices = container_device_set(&mounts);
-        if let Some(selected) = &selected {
+        if let Some(pass) = cgroup_pass {
+            devices.extend(pass.charged_devices.iter().copied());
+        } else if let Some(selected) = &selected {
             devices.extend(cgroup::charged_ancestor_devices(&sys, selected));
         }
         devices
@@ -354,7 +327,6 @@ pub(crate) fn collect_os_sources(
     cpufreq::collect_cpufreq(&sys, interner, scope, ts, due, &mut os);
 
     let entity_scope = os_entity_scope(in_container);
-    let mut process_memberships = cgroup_due.then(|| cgroup::WorkloadMemberships::new(&sys));
     process::collect_process_sections(
         fs,
         process_io,
@@ -363,22 +335,8 @@ pub(crate) fn collect_os_sources(
         entity_scope,
         ts,
         due,
-        process_memberships.as_mut(),
         &mut os,
     );
-    if let (Some(process_memberships), Some(selected)) = (process_memberships, selected.as_ref()) {
-        cgroups::collect_cgroup_sections(
-            &sys,
-            interner,
-            entity_scope,
-            ts,
-            fs,
-            due,
-            process_memberships,
-            selected,
-            &mut os,
-        );
-    }
 
     os
 }
@@ -395,7 +353,8 @@ const fn os_entity_scope(in_container: bool) -> u8 {
 
 #[cfg(test)]
 pub(crate) fn collects_cgroup_metrics(in_container: bool, due: &DueSet) -> bool {
-    in_container && due.has(SourceKind::OsCgroup)
+    let _ = in_container;
+    due.has(SourceKind::OsCgroup)
 }
 
 #[cfg(test)]

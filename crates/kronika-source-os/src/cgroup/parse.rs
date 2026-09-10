@@ -1,7 +1,7 @@
 //! Parsers for cgroup controller files.
 
 use super::DEFAULT_CPU_PERIOD_USEC;
-use super::model::{CgroupCpuRow, CgroupIoRow, CgroupMemoryRow};
+use super::model::{CgroupCpuRow, CgroupIoRow};
 
 /// Parse cgroup v2 `cpu.max`.
 #[must_use]
@@ -43,31 +43,6 @@ pub fn parse_cpu_stat(content: &str, ts: i64, cgroup_path: &str) -> CgroupCpuRow
         }
     }
     row
-}
-
-pub(super) fn parse_memory_stat_v2(content: &str, row: &mut CgroupMemoryRow) {
-    for (key, value) in key_value_lines(content) {
-        match key {
-            "anon" => row.anon = value,
-            "file" => row.file = value,
-            "kernel" => row.kernel = value,
-            "slab" => row.slab = value,
-            _ => {}
-        }
-    }
-}
-
-pub(super) fn parse_memory_events(content: &str, row: &mut CgroupMemoryRow) {
-    for (key, value) in key_value_lines(content) {
-        match key {
-            "low" => row.low_events = value,
-            "high" => row.high_events = value,
-            "max" => row.max_events = value,
-            "oom" => row.oom_events = value,
-            "oom_kill" => row.oom_kill = value,
-            _ => {}
-        }
-    }
 }
 
 /// Parse cgroup v2 `io.stat`.
@@ -141,15 +116,6 @@ fn key_value_lines(content: &str) -> impl Iterator<Item = (&str, i64)> {
         let mut fields = line.split_whitespace();
         Some((fields.next()?, fields.next()?.parse().unwrap_or(0)))
     })
-}
-
-pub(super) fn parse_optional_max(content: &str) -> Option<i64> {
-    let trimmed = content.trim();
-    if trimmed == "max" {
-        None
-    } else {
-        parse_i64(trimmed)
-    }
 }
 
 pub(super) fn parse_i64(content: &str) -> Option<i64> {

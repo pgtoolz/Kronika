@@ -20,10 +20,18 @@ pub struct SelectedCgroup {
     pub root: String,
     /// Directory and bound hierarchy identity for counter continuity.
     pub identity: String,
-    base: String,
+    pub(super) base: String,
 }
 
 impl SelectedCgroup {
+    /// Match the opened directory across equivalent mount aliases, without a file read.
+    #[must_use]
+    pub fn matches_group(&self, group: &super::discovery::DiscoveredGroup) -> bool {
+        let mut fields = self.identity.rsplit(':');
+        fields.next().and_then(|value| value.parse::<u64>().ok()) == Some(group.inode)
+            && fields.next().and_then(|value| value.parse::<u64>().ok()) == Some(group.device)
+    }
+
     fn relative(&self, path: &str, file: &str) -> String {
         let path = path.trim_matches('/');
         if path.is_empty() {
@@ -33,7 +41,7 @@ impl SelectedCgroup {
         }
     }
 
-    fn is_current(&self, sys: &SysFs) -> bool {
+    pub(super) fn is_current(&self, sys: &SysFs) -> bool {
         let relative = format!("{}/{}", self.base, self.path.trim_start_matches('/'));
         let Ok(path) = sys.canonical_path(&relative) else {
             return false;
@@ -59,9 +67,12 @@ pub struct AncestorContext {
 }
 
 #[derive(Clone)]
-struct Mount {
-    base: String,
-    root: String,
+pub(super) struct Mount {
+    pub(super) base: String,
+    pub(super) point: std::path::PathBuf,
+    pub(super) root: String,
+    pub(super) memory_localevents: bool,
+    pub(super) pids_localevents: bool,
 }
 
 /// Select the highest readable cgroup v2 ancestor of the collector.
@@ -70,6 +81,33 @@ struct Mount {
 /// Unreadable membership or mount information returns an error. Invalid or
 /// unsupported unified membership leaves the context empty.
 pub fn collect_ancestor_context(
+    procfs: &ProcFs,
+    sys: &SysFs,
+    ts: i64,
+) -> io::Result<AncestorContext> {
+    let mut out = select_ancestor_context(procfs, sys, ts)?;
+    if let Some(group) = &out.group {
+        out.context.cgroup_version = 2;
+        out.context.cpu_path = Some(group.path.clone());
+        out.context.memory_path = Some(group.path.clone());
+        out.context.io_path = Some(group.path.clone());
+        out.context.cpuset_cpus = group
+            .read(sys, "cpuset.cpus.effective")
+            .and_then(|value| super::parse_cpuset_count(&value));
+        if let Some((quota, period)) = observed_cpu_limit(sys, group) {
+            out.context.effective_cpu_quota_usec = Some(quota);
+            out.context.effective_cpu_period_usec = Some(period);
+        }
+        out.context.effective_memory_max = effective_memory(sys, group);
+    }
+    Ok(out)
+}
+
+/// Select the primary directory without opening its resource files.
+///
+/// # Errors
+/// Returns unreadable membership or mount information errors.
+pub fn select_ancestor_context(
     procfs: &ProcFs,
     sys: &SysFs,
     ts: i64,
@@ -92,41 +130,15 @@ pub fn collect_ancestor_context(
         out.context.cpu_path = Some(group.path.clone());
         out.context.memory_path = Some(group.path.clone());
         out.context.io_path = Some(group.path.clone());
-        out.context.cpuset_cpus = group
-            .read(sys, "cpuset.cpus.effective")
-            .and_then(|value| super::parse_cpuset_count(&value));
-        if let Some((quota, period)) = observed_cpu_limit(sys, group) {
-            out.context.effective_cpu_quota_usec = Some(quota);
-            out.context.effective_cpu_period_usec = Some(period);
-        }
-        out.context.effective_memory_max = effective_memory(sys, group);
     }
     Ok(out)
 }
 
-fn mounts(procfs: &ProcFs, sys: &SysFs) -> io::Result<Vec<Mount>> {
+pub(super) fn mounts(procfs: &ProcFs, sys: &SysFs) -> io::Result<Vec<Mount>> {
     let boundary = sys.canonical_path("fs/cgroup")?;
-    let content = procfs.read_raw("self/mountinfo")?;
     let mut out = Vec::new();
-    for line in content.lines() {
-        let Some((left, right)) = line.split_once(" - ") else {
-            continue;
-        };
-        let fields = left.split_whitespace().collect::<Vec<_>>();
-        let tail = right.split_whitespace().collect::<Vec<_>>();
-        if fields.len() < 5 || tail.len() < 3 {
-            continue;
-        }
-        if tail[0] != "cgroup2" {
-            continue;
-        }
-        let Some(point) = unescape_mount(fields[4]) else {
-            continue;
-        };
-        let Some(root) = unescape_mount(fields[3]) else {
-            continue;
-        };
-        let Ok(point) = std::fs::canonicalize(point) else {
+    for mut mount in exposed_mounts(procfs)? {
+        let Ok(point) = std::fs::canonicalize(&mount.point) else {
             continue;
         };
         let Ok(relative) = point.strip_prefix(&boundary) else {
@@ -135,15 +147,50 @@ fn mounts(procfs: &ProcFs, sys: &SysFs) -> io::Result<Vec<Mount>> {
         let Some(relative) = relative.to_str() else {
             continue;
         };
-        if normalize_self_cgroup_path(&root).is_none() {
-            continue;
-        }
-        let base = if relative.is_empty() {
+        mount.base = if relative.is_empty() {
             "fs/cgroup".to_owned()
         } else {
             format!("fs/cgroup/{relative}")
         };
-        out.push(Mount { base, root });
+        out.push(mount);
+    }
+    Ok(out)
+}
+
+pub(super) fn exposed_mounts(procfs: &ProcFs) -> io::Result<Vec<Mount>> {
+    let content = procfs.read_raw("self/mountinfo")?;
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let Some((left, right)) = line.split_once(" - ") else {
+            continue;
+        };
+        let fields = left.split_whitespace().collect::<Vec<_>>();
+        let tail = right.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 5 || tail.len() < 3 || tail[0] != "cgroup2" {
+            continue;
+        }
+        let Some(point) = unescape_mount(fields[4]) else {
+            continue;
+        };
+        let Some(root) = unescape_mount(fields[3]) else {
+            continue;
+        };
+        if !std::path::Path::new(&point).is_absolute()
+            || normalize_self_cgroup_path(&root).is_none()
+        {
+            continue;
+        }
+        out.push(Mount {
+            base: point.clone(),
+            point: std::path::PathBuf::from(point),
+            root,
+            memory_localevents: tail[2]
+                .split(',')
+                .any(|option| option == "memory_localevents"),
+            pids_localevents: tail[2]
+                .split(',')
+                .any(|option| option == "pids_localevents"),
+        });
     }
     Ok(out)
 }
@@ -218,7 +265,7 @@ fn select_mount(sys: &SysFs, mounts: &[Mount], own: &str) -> Option<SelectedCgro
     matching.into_iter().next().map(|(_, group)| group)
 }
 
-fn directory_identity(base: &str, root: &str, metadata: &std::fs::Metadata) -> String {
+pub(super) fn directory_identity(base: &str, root: &str, metadata: &std::fs::Metadata) -> String {
     format!("{base}:{root}:{}:{}", metadata.dev(), metadata.ino())
 }
 
@@ -468,6 +515,7 @@ pub fn collect_ancestor_pressure(
         ts,
         &group.path,
         ["cpu.pressure", "memory.pressure", "io.pressure"],
+        true,
     )
 }
 
@@ -480,22 +528,12 @@ pub fn charged_ancestor_devices(sys: &SysFs, selected: &AncestorContext) -> Vec<
     if !group.is_current(sys) {
         return Vec::new();
     }
-    let Some(content) = group.read(sys, "io.stat") else {
-        return Vec::new();
-    };
-    if !group.is_current(sys) {
-        return Vec::new();
+    let devices = super::discovery::charged_devices(sys, group).unwrap_or_default();
+    if group.is_current(sys) {
+        devices
+    } else {
+        Vec::new()
     }
-    parse_io_stat_bounded(&content, 0, &group.path, MAX_CGROUP_IO_ROWS)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|row| {
-            Some((
-                i32::try_from(row.major).ok()?,
-                i32::try_from(row.minor).ok()?,
-            ))
-        })
-        .collect()
 }
 
 #[cfg(test)]
