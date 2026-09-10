@@ -27,8 +27,8 @@ wasm-bindgen создаёт вариант для платформы `web`. Ск
 сетевого загрузчика. Отчёт компилирует встроенные байты в `WebAssembly.Module`
 и передаёт его в `initEmbedded`, который асинхронно создаёт исполняемый экземпляр.
 
-Размер WebAssembly — 9 993 694 байт, gzip — 2 410 598 байт, SHA-256 gzip:
-`aa890cfe9af43f99cf64a83d9f9fd49111bad787249a4da0f10cd8aa337b08c4`.
+Размер WebAssembly — 10 025 292 байт, gzip — 2 424 756 байт, SHA-256 gzip:
+`8e10068cc9c6bbd49696460f38132914b6e1fef36a32e268761cc78700b390b6`.
 Размер связующего JavaScript — 3 885 байт, SHA-256:
 `4635ae734e8c1e1aeb463ae1096f4fdc2a65d98e715b55cee9fe46956f29cba8`.
 
