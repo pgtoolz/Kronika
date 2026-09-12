@@ -320,6 +320,8 @@ fn cgroup_interval_deltas_keep_null_reset_zero_and_pid_source_boundaries() {
         ] {
             let mut request = snapshot_request(section, &[field]);
             request.at = at;
+            request.page_size = Some(1);
+            request.by = vec![format!("derived.{field}")];
             let records = snapshot_records(&payload, request);
             assert_eq!(
                 rows(&records)[0]["values"][0],
@@ -334,5 +336,117 @@ fn cgroup_interval_deltas_keep_null_reset_zero_and_pid_source_boundaries() {
     assert!(
         rows(&records)[0]["values"][0].is_null(),
         "changed events interface is a different counter history"
+    );
+}
+
+#[test]
+fn cgroup_family_is_selected_before_valid_missing_label_filter() {
+    use kronika_registry::os_cgroup_pids::OsCgroupPids;
+    use kronika_registry::os_cgroup_v2_pids::OsCgroupV2Pids;
+    let payload = fixture_payload(|interner, buffers| {
+        let path = StrId(interner.intern(b"/work").expect("path").get());
+        buffers
+            .push(OsCgroupV2Pids {
+                ts: Ts(100),
+                cgroup_path: path,
+                cgroup_identity: path,
+                current: Some(3),
+                max: None,
+                max_unlimited: Some(true),
+                failure_max: Some(5),
+                events_source: 1,
+            })
+            .expect("new older observation");
+        buffers
+            .push(OsCgroupPids {
+                ts: Ts(200),
+                cgroup_path: path,
+                current: 4,
+                max: None,
+                scope: 1,
+            })
+            .expect("legacy newer observation without events source");
+    });
+    for page_size in [None, Some(1)] {
+        let mut request = snapshot_request("os_cgroup_v2_pids", &["current", "events_source"]);
+        request.page_size = page_size;
+        request.filters.push(Filter {
+            column: "events_source".to_owned(),
+            value: "1".to_owned(),
+        });
+        request.at = 100;
+        let before = snapshot_records(&payload, request.clone());
+        assert_eq!(rows(&before).len(), 1);
+        assert_eq!(rows(&before)[0]["type_id"], "1209001");
+        request.at = 200;
+        let after = snapshot_records(&payload, request);
+        assert!(
+            rows(&after).is_empty(),
+            "newer nonmatching family must not revive the old observation"
+        );
+        if page_size.is_some() {
+            let page = after
+                .iter()
+                .find(|record| record["record"] == "snapshot_page")
+                .expect("page");
+            assert_eq!(page["eligible"], "0");
+            assert_eq!(page["to"], "200");
+        }
+    }
+}
+
+#[test]
+fn cgroup_interval_sort_orders_actual_deltas_across_different_elapsed_intervals() {
+    use kronika_registry::os_cgroup_cpu::OsCgroupCpuV3;
+    let payload = fixture_payload(|interner, buffers| {
+        let path_a = StrId(interner.intern(b"/long-interval").expect("path").get());
+        let path_b = StrId(interner.intern(b"/short-interval").expect("path").get());
+        for (ts, value) in [(50, 0), (200, 60)] {
+            let mut cpu = legacy_cpu(ts, path_a, 0);
+            cpu.throttled_usec = value;
+            buffers.push(cpu).expect("long interval CPU");
+        }
+        for (ts, value) in [(100, 0), (200, 50)] {
+            buffers
+                .push(OsCgroupCpuV3 {
+                    ts: Ts(ts),
+                    cgroup_path: path_b,
+                    cgroup_identity: path_b,
+                    usage_usec: 0,
+                    user_usec: 0,
+                    system_usec: 0,
+                    throttled_usec: Some(value),
+                    nr_throttled: Some(0),
+                    quota_usec: Some(-1),
+                    period_usec: Some(100_000),
+                    scope: 1,
+                })
+                .expect("short interval CPU");
+        }
+    });
+    let mut request = snapshot_request(
+        "os_cgroup_v2_cpu",
+        &["cgroup_path", "throttled_interval", "throttled_usec"],
+    );
+    request.page_size = Some(1);
+    request.by = vec!["derived.throttled_interval".to_owned()];
+    let first = snapshot_records(&payload, request.clone());
+    assert_eq!(rows(&first)[0]["values"][0], "/long-interval");
+    assert_eq!(rows(&first)[0]["values"][1], "60");
+    let page = first
+        .iter()
+        .find(|record| record["record"] == "snapshot_page")
+        .expect("page");
+    request.cursor = page["next_cursor"].as_str().map(str::to_owned);
+    let second = snapshot_records(&payload, request.clone());
+    assert_eq!(rows(&second)[0]["values"][0], "/short-interval");
+    assert_eq!(rows(&second)[0]["values"][1], "50");
+    request.cursor = None;
+    request.by = vec!["throttled_usec".to_owned()];
+    let rate_order = snapshot_records(&payload, request);
+    assert_eq!(
+        rows(&rate_order)[0]["values"][0],
+        "/short-interval",
+        "rate order differs from interval order"
     );
 }

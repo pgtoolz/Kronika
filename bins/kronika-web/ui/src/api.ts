@@ -71,6 +71,7 @@ export interface DataRow {
   readonly timestamp: number
   readonly values: Readonly<Record<string, Cell>>
   readonly relation?: RelationRow
+  readonly breakBefore?: boolean
 }
 
 export interface Point {
@@ -851,6 +852,7 @@ function laneRow(
     ordinal: requiredText(record.ordinal, "row ordinal"),
     timestamp: integer(record.timestamp, "row timestamp"),
     values: rowValues(layout.columns, values),
+    ...(record.break_before === true ? { breakBefore: true } : {}),
   }
 }
 
@@ -1280,7 +1282,9 @@ export async function loadSnapshot(
         throw new Error(`row for layout ${typeId} arrived before its layout`)
       }
       const { columns, logicalName } = layout
-      const requestedName = requests.find((request) => matchesSnapshotSection(request.section, logicalName))?.section ?? logicalName
+      const requestedName = requests.find((request) => request.section === logicalName)?.section
+        ?? requests.find((request) => matchesSnapshotSection(request.section, logicalName))?.section
+        ?? logicalName
       const rows = grouped[requestedName] ?? []
       rows.push({
         segmentId: requiredText(record.segment_id, "row segment id"),

@@ -132,7 +132,7 @@ compare(
 
 
 if (collectionArgument) {
-  for (const name of ["postgresql-unknown", "postgresql-explicit", "selected-cgroup", "separated-controllers", "all-cgroups"]) {
+  for (const name of ["postgresql-unknown", "postgresql-explicit", "selected-cgroup", "separated-controllers", "all-cgroups", "all-cgroups-machine"]) {
     session.free();
     nativeFixtureDirectory = resolve(collectionArgument, name);
     const [fixtureZms, fixtureIdx, sourceText, html] = await Promise.all([
@@ -171,16 +171,26 @@ if (collectionArgument) {
       const row = metadata.find(row => row.record === "row");
       assert.deepEqual(row.values, [null, false, false]);
     } else {
-      if (name === "all-cgroups") {
+      if (name.startsWith("all-cgroups")) {
         const at = "1709164805000000";
         for (const [resource, field] of [["cpu", "usage_usec"], ["memory", "current"], ["pids", "current"], ["io", "rbytes"]]) {
           const path = `/api/segments/${SEGMENT_ID}/snapshot`;
           const query = new URLSearchParams({ at, section: `os_cgroup_v2_${resource}`, by: field, direction: "desc", page_size: "20" });
           query.append("field", "cgroup_path");
           query.append("field", field);
-          const first = records(compare(`all-groups-${resource}-first-page`, path, query.toString()));
+          query.append("field", "cgroup_identity");
+          if (resource === "io") {
+            query.append("field", "major");
+            query.append("field", "minor");
+          } else if (resource === "pids") {
+            query.append("field", "events_source");
+          }
+          const first = records(compare(`${name}-${resource}-first-page`, path, query.toString()));
           const firstRows = first.filter(row => row.record === "row");
           assert.equal(firstRows.length, 20);
+          const identity = row => JSON.stringify([row.type_id, row.values[0], ...row.values.slice(2)]);
+          const firstIdentities = new Set(firstRows.map(identity));
+          assert.equal(firstIdentities.size, 20, `${resource}: no duplicate identities in first page`);
           if (resource === "cpu" || resource === "io") {
             assert.equal(firstRows[0].values[0], "/visible/jobs/worker-258", "rate ordering differs from lifetime-counter ordering");
             assert.equal(Number(firstRows[0].values[1]), resource === "cpu" ? 2_630_000 : 4_688_183_296);
@@ -188,15 +198,30 @@ if (collectionArgument) {
           const cursor = first.find(row => row.record === "snapshot_page")?.next_cursor;
           assert.equal(typeof cursor, "string", `${resource}: populated table has another page`);
           query.set("cursor", cursor);
-          assert.equal(records(compare(`all-groups-${resource}-next-page`, path, query.toString())).filter(row => row.record === "row").length, 20);
+          const secondRows = records(compare(`${name}-${resource}-next-page`, path, query.toString())).filter(row => row.record === "row");
+          assert.equal(secondRows.length, 20);
+          const secondIdentities = new Set(secondRows.map(identity));
+          assert.equal(secondIdentities.size, 20, `${resource}: no duplicate identities in second page`);
+          assert.ok(secondRows.every(row => !firstIdentities.has(identity(row))), `${resource}: pages have disjoint exact identities`);
           query.delete("cursor");
-          query.set("search", 'path:"/visible/jobs/worker-258"');
-          const found = records(compare(`all-groups-${resource}-path-search`, path, query.toString())).filter(row => row.record === "row");
+          const searchedPath = "/visible/jobs/worker-010";
+          assert.ok(firstRows.every(row => row.values[0] !== searchedPath), `${resource}: search target was not on first page`);
+          query.set("search", `path:"${searchedPath}"`);
+          const found = records(compare(`${name}-${resource}-path-search`, path, query.toString())).filter(row => row.record === "row");
           assert.equal(found.length, resource === "io" ? 2 : 1);
-          assert.ok(found.every(row => row.values[0] === "/visible/jobs/worker-258"));
+          assert.ok(found.every(row => row.values[0] === searchedPath));
+          assert.equal(new Set(found.map(identity)).size, found.length);
+          if (resource === "io") {
+            assert.deepEqual(new Set(found.map(row => JSON.stringify(row.values.slice(3).map(Number)))), new Set(["[8,0]", "[8,16]"]));
+          }
         }
-        const partial = records(compare("all-groups-partial-observation", `/api/segments/${SEGMENT_ID}/snapshot`, "at=1709164803000000&section=os_cgroup_v2_cpu&field=cgroup_path"));
+        const partial = records(compare(`${name}-partial-observation`, `/api/segments/${SEGMENT_ID}/snapshot`, "at=1709164803000000&section=os_cgroup_v2_cpu&field=cgroup_path"));
         assert.equal(partial.filter(row => row.record === "row").length, 262);
+        const selectedHistory = new URLSearchParams({ from: String(SEGMENT_ID), to: at, section: "os_cgroup_v2_cpu", type_id: "1207001", field: "usage_usec", "where.cgroup_path": "/visible/jobs/worker-258", "where.cgroup_identity": "directory:group-262" });
+        const historyRows = records(compare(`${name}-selected-history-boundary`, "/api/hour", selectedHistory.toString())).filter(row => row.record === "row");
+        assert.equal(historyRows.length, 5);
+        assert.equal(historyRows.find(row => row.timestamp === "1709164804000000")?.break_before, true, "missing predecessor is retained through the native/WASM history transport");
+        assert.equal(historyRows.find(row => row.timestamp === "1709164805000000")?.break_before, undefined, "the next valid interval remains continuous");
       }
       if (name === "selected-cgroup") {
         for (const section of ["group", "cpu", "memory", "pids", "io"]) {
@@ -209,6 +234,13 @@ if (collectionArgument) {
         assert.deepEqual(oom.map(row => row.value), [null, 0, 0, 0, 1, null], "memory continuity survives a CPU identity change but ends on memory replacement");
       }
       const shares = hour.filter(row => row.record === "lane" && row.lane === "cg_cpu_share");
+      if (name === "all-cgroups-machine") {
+        assert.equal(context.environment, 0);
+        assert.deepEqual(shares, [], "machine fixture does not acquire a selected-container overview");
+        const old = records(compare(`${name}-no-primary-companion`, "/api/hour", `from=${SEGMENT_ID}&to=1709164805000000&section=os_cgroup_cpu`));
+        assert.equal(old.some(row => row.record === "row"), false);
+        continue;
+      }
       assert.deepEqual(shares.map(row => row.value), [null, 100, 75, null, null, 50]);
       const history = records(compare(`${name}-counter-history`, "/api/hour", `from=${SEGMENT_ID}&to=1709164805000000&section=os_cgroup_cpu&field=usage_usec`));
       const reset = history.find(row => row.record === "row" && row.timestamp === "1709164804000000");

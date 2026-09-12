@@ -146,6 +146,7 @@ struct PageOrder {
 
 #[derive(Clone)]
 enum PageOrderKind {
+    CounterDelta(&'static str),
     Column(&'static str),
     CounterRatio {
         numerator: Vec<&'static str>,
@@ -984,7 +985,7 @@ fn section_plans(
 impl PageOrder {
     fn columns(&self) -> Vec<&'static str> {
         match &self.kind {
-            PageOrderKind::Column(column) => vec![*column],
+            PageOrderKind::Column(column) | PageOrderKind::CounterDelta(column) => vec![*column],
             PageOrderKind::CounterRatio {
                 numerator,
                 denominator,
@@ -1009,6 +1010,7 @@ impl PageOrder {
                 Some(*column)
             }
             PageOrderKind::Column(_)
+            | PageOrderKind::CounterDelta(_)
             | PageOrderKind::CounterRatio { .. }
             | PageOrderKind::ValueRatio { .. } => None,
         }
@@ -2287,7 +2289,7 @@ impl PreparedSnapshot {
         let mut contexts = Vec::with_capacity(section.plans.len());
         let mut facts = HashMap::new();
         for (layout_index, plan) in section.plans.iter().enumerate() {
-            if !plan.applies() || cancelled() {
+            if (!plan.applies() && cgroup::legacy(&section.logical_name).is_none()) || cancelled() {
                 continue;
             }
             let Some(timestamp) = plan.timestamp else {
@@ -3719,6 +3721,14 @@ fn page_order_value(
         return None;
     }
     match &order.kind {
+        PageOrderKind::CounterDelta(column) => {
+            let _elapsed = context.elapsed_for(row)?;
+            let before = context.predecessor(row, identity)?;
+            match counter_delta(row.get(column)?, before.get(column)?)? {
+                OrderedNumber::Integer(delta) => Some(PageOrderValue::Integer(delta)),
+                OrderedNumber::Float(delta) => Some(PageOrderValue::Float(delta)),
+            }
+        }
         PageOrderKind::Column(column) => {
             column_order_value(context, row, identity, dictionary, column)
         }
@@ -4877,8 +4887,11 @@ fn preceding(
     let layouts = sections
         .iter()
         .filter(|section| SnapshotViewSpec::for_logical_name(&section.logical_name).is_none())
-        .flat_map(|section| section.plans.iter())
-        .filter(|plan| plan.applies())
+        .flat_map(|section| {
+            section.plans.iter().filter(move |plan| {
+                plan.applies() || cgroup::legacy(&section.logical_name).is_some()
+            })
+        })
         .filter_map(|plan| plan.timestamp.map(|timestamp| (plan.type_id, timestamp)))
         .collect::<BTreeMap<_, _>>();
     if layouts.is_empty() {

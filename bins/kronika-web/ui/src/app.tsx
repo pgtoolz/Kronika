@@ -1081,7 +1081,7 @@ function App({ locale, onLocale, t }: {
     if (visibleSource === "events") setSelectedFinding(null)
   }
   const openChart = () => setInspectorPanel("chart")
-  const openPortalDetail = useCallback(() => setInspectorPanel("detail"), [])
+  const openPortalDetail = useCallback(() => setInspectorPanel((current) => current ?? "detail"), [])
   const selectDetailKey = useCallback((key: string | null) => {
     setSelectedKey(key)
     if (key !== null) setInspectorPanel("detail")

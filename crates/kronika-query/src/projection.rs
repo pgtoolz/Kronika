@@ -295,6 +295,11 @@ pub(crate) fn validate_row_dictionary(
 }
 
 impl Plan {
+    /// Retain the recorded layout for sample selection while excluding its rows.
+    pub(crate) const fn exclude_rows(&mut self) {
+        self.matches_none = true;
+    }
+
     /// Whether this physical layout can satisfy every typed filter.
     #[must_use]
     pub const fn applies(&self) -> bool {

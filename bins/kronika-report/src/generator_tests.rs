@@ -292,6 +292,12 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
         ("selected-cgroup", Collection::Cgroup, SOURCE_OS, None),
         ("all-cgroups", Collection::AllCgroups, SOURCE_OS, None),
         (
+            "all-cgroups-machine",
+            Collection::AllCgroupsMachine,
+            SOURCE_OS,
+            None,
+        ),
+        (
             "separated-controllers",
             Collection::SeparatedControllers,
             SOURCE_OS,
@@ -384,7 +390,10 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
             assert_eq!(pg, Some(vec![expected]));
             assert_eq!(overall, pg);
         }
-        if matches!(collection, Collection::AllCgroups) {
+        if matches!(
+            collection,
+            Collection::AllCgroups | Collection::AllCgroupsMachine
+        ) {
             let segment = reader
                 .open_segment(&resources.resources[0])
                 .expect("all-group segment");
@@ -398,6 +407,11 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
                 );
             }
             assert_all_group_snapshots(&engine);
+            if matches!(collection, Collection::AllCgroupsMachine) {
+                assert_eq!(context["environment"], 0);
+                assert!(segment.rows_of(1_205_002).is_none());
+                assert!(segment.rows_of(1_201_003).is_none());
+            }
         }
         if matches!(collection, Collection::SeparatedControllers) {
             let oom = values

@@ -42,18 +42,26 @@ pub(super) fn plans(segment: &Segment, request: &DataRequest) -> Result<Vec<Plan
             .iter()
             .filter(|layout| logical_section_name(layout.type_id.get()) == Some(name))
             .collect::<Vec<_>>();
-        if request.filters.iter().any(|filter| {
+        let missing_filter = request.filters.iter().any(|filter| {
             known
                 .iter()
                 .all(|layout| layout.column(&filter.column).is_none())
-        }) {
-            continue;
-        }
+        });
+        physical.filters.retain(|filter| {
+            known
+                .iter()
+                .any(|layout| layout.column(&filter.column).is_some())
+        });
         physical
             .fields
             .retain(|field| known.iter().any(|layout| layout.column(field).is_some()));
         match crate::projection::plans(segment, &physical, true) {
             Ok(mut selected) => {
+                if missing_filter {
+                    for plan in &mut selected {
+                        plan.exclude_rows();
+                    }
+                }
                 if !request.fields.is_empty() {
                     for plan in &mut selected {
                         plan.retain_output_fields(&request.fields);
@@ -182,6 +190,19 @@ pub(super) fn retain_family(contexts: &mut Vec<PageContext<'_>>, name: &str) {
 }
 
 pub(super) fn page_order(name: &str, plan: &Plan, token: &str) -> Option<PageOrder> {
+    let interval = match (name, token) {
+        ("os_cgroup_v2_cpu", "derived.throttled_interval") => Some("throttled_interval"),
+        ("os_cgroup_v2_memory", "derived.local_oom_kill_delta") => Some("local_oom_kill_delta"),
+        ("os_cgroup_v2_pids", "derived.failure_max_delta") => Some("failure_max_delta"),
+        _ => None,
+    };
+    if let Some(name) = interval {
+        let column = interval_column(name)?;
+        return plan.contract.column(column).map(|_| PageOrder {
+            name,
+            kind: PageOrderKind::CounterDelta(column),
+        });
+    }
     if name != "os_cgroup_v2_cpu" {
         return None;
     }
@@ -246,12 +267,7 @@ pub(super) fn virtual_value(
     row: &Row,
     before: Option<&CounterReadings>,
 ) -> Option<Value> {
-    let interval_column = match name {
-        "throttled_interval" => Some("throttled_usec"),
-        "local_oom_kill_delta" => Some("local_oom_kill"),
-        "failure_max_delta" => Some("failure_max"),
-        _ => None,
-    };
+    let interval_column = interval_column(name);
     if let Some(column) = interval_column {
         return Some(
             before
@@ -291,4 +307,13 @@ pub(super) fn virtual_value(
             .filter(|value| value.is_finite())
             .map_or(Value::Null, |value| json!(value)),
     )
+}
+
+fn interval_column(name: &str) -> Option<&'static str> {
+    match name {
+        "throttled_interval" => Some("throttled_usec"),
+        "local_oom_kill_delta" => Some("local_oom_kill"),
+        "failure_max_delta" => Some("failure_max"),
+        _ => None,
+    }
 }

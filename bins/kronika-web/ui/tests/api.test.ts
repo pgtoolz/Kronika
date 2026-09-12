@@ -1870,7 +1870,7 @@ test("cgroup Inspector history filters raw identity and keeps same-group rates a
           ...samples.filter((row) => identity === null || row.identity === identity).flatMap((row) => [
             { record: "series_segment", segment: { id: row.segment } },
             { record: "row", type_id: typeId, ordinal: "0", timestamp: String(row.timestamp),
-              values: ["/group", row.identity, String(row.usage)] },
+              values: ["/group", row.identity, String(row.usage)], break_before: row.segment === "first" },
           ]),
         ])
       }
@@ -1878,6 +1878,8 @@ test("cgroup Inspector history filters raw identity and keeps same-group rates a
       assert.equal(requests, 1)
       if (typeId === "1201003") {
         assert.deepEqual(rows.map((row) => row.segmentId), ["first", "second"])
+        assert.equal(rows[0].breakBefore, true)
+        assert.equal(rows[1].breakBefore, undefined)
         assert.deepEqual(column.points(rows).map((point) => point.value), [null, 1])
       } else {
         assert.equal(rows.length, 3, "legacy path-only history retains its pre-PR generic behavior")
@@ -1898,4 +1900,24 @@ test("all-group resource requests retain legacy-only recorded hours without an e
   assert.equal(groups.length, 1)
   assert.deepEqual(groups[0].requests, [request])
   assert.equal(groups[0].anchor.id, "100")
+})
+
+
+test("simultaneous old and all-group snapshots route exact section names before aliases in either request order", async () => {
+  const api = await bundledApi()
+  Reflect.deleteProperty(globalThis, "__KRONIKA_REAL_HOUR__")
+  const oldFetch = globalThis.fetch
+  globalThis.fetch = async () => ndjson([
+    { record: "layout", layout: { type_id: "1201001", logical_name: "os_cgroup_cpu", columns: [{ name: "cgroup_path" }, { name: "usage_usec" }] } },
+    { record: "row", segment_id: "77", type_id: "1201001", ordinal: "0", timestamp: String(START), values: ["/selected", "1000000"] },
+    { record: "layout", layout: { type_id: "1207001", logical_name: "os_cgroup_v2_cpu", columns: [{ name: "cgroup_path" }, { name: "usage_usec" }] } },
+    { record: "row", segment_id: "77", type_id: "1207001", ordinal: "0", timestamp: String(START), values: ["/all/child", "2000000"] },
+  ])
+  try {
+    for (const sections of [["os_cgroup_v2_cpu", "os_cgroup_cpu"], ["os_cgroup_cpu", "os_cgroup_v2_cpu"]]) {
+      const result = await api.loadSnapshot("77", START, sections, new AbortController().signal)
+      assert.deepEqual(result.sections.os_cgroup_cpu?.map((row) => [row.typeId, row.values.cgroup_path]), [["1201001", "/selected"]])
+      assert.deepEqual(result.sections.os_cgroup_v2_cpu?.map((row) => [row.typeId, row.values.cgroup_path]), [["1207001", "/all/child"]])
+    }
+  } finally { globalThis.fetch = oldFetch }
 })

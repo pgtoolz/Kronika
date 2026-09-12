@@ -7,10 +7,11 @@ import { importModule, registryPlugin } from "./import-module.mjs"
 import { parseDictionary, validateDictionaries } from "../scripts/i18n.mjs"
 
 const helpers = await importModule(
-  'export { localizedSystemColumns, CGROUP_TABLE_COLUMNS, cgroupTableSection, cgroupTableRequest, cgroupSelectionRequest, cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"',
+  'export { entityMetricUnit, entityMetricValue, localizedSystemColumns, CGROUP_TABLE_COLUMNS, cgroupTableSection, cgroupTableRequest, cgroupSelectionRequest, cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"; export { cellAriaValue } from "../src/entity-table.tsx"',
   { plugins: [registryPlugin([
     { typeId: "1202003", logicalName: "os_cgroup_memory", identity: ["cgroup_path", "cgroup_identity"], columns: ["ts", "cgroup_path", "cgroup_identity", "max", "max_unlimited"] },
     { typeId: "1202001", logicalName: "os_cgroup_memory", identity: ["cgroup_path"], columns: ["ts", "cgroup_path", "max"] },
+    { typeId: "1201001", logicalName: "os_cgroup_cpu", identity: ["cgroup_path"], columns: ["ts", "cgroup_path", "scope", "usage_usec", "quota_usec", "period_usec"] },
     { typeId: "1207001", logicalName: "os_cgroup_v2_cpu", identity: ["cgroup_path", "cgroup_identity"], columns: ["ts", "cgroup_path", "cgroup_identity", "usage_usec", "quota_usec", "period_usec", "cpuset_cpus"] },
     { typeId: "1108001", logicalName: "os_diskstats", identity: ["major", "minor"], columns: ["ts", "major", "minor", "device", "io_in_progress"] },
     { typeId: "1112002", logicalName: "os_mountinfo", identity: ["major", "minor", "mount_point"], columns: ["ts", "major", "minor", "mount_point", "root", "fstype", "source", "is_k8s_infra", "total_bytes", "free_bytes", "total_inodes", "available_inodes", "scope"] },
@@ -777,4 +778,72 @@ test("cgroup I/O history differences exact large counters before conversion", ()
     { segmentId: "two", timestamp: 3000000, values: { rbytes: "0" } },
   ])
   assert.deepEqual(points.map(({ value }) => value), [null, 1, null])
+})
+
+
+test("CPU quota renders the encoded unlimited sentinel without treating unknown as unlimited", () => {
+  const columns = helpers.localizedSystemColumns(helpers.CGROUP_TABLE_COLUMNS.os_cgroup_v2_cpu, "os_cgroup_v2_cpu", "en", (key) => key)
+  const quota = columns.find((column) => column.field === "cgroup_quota")
+  for (const stored of [-1, "-1"]) assert.equal(quota.renderNull({ typeId: "1207001", values: { quota_usec: stored } }).props.children, "system.cgroups.pids_unlimited")
+  for (const stored of [null, undefined, "0"]) assert.equal(quota.renderNull({ typeId: "1207001", values: { quota_usec: stored } }).props.children, "system.cgroups.pids_unavailable")
+})
+
+test("legacy CPU receives only its matching recorded context cpuset", () => {
+  const row = (typeId, path, scope, cpuset = undefined) => ({ typeId, logicalName: "os_cgroup_v2_cpu", timestamp: 20, segmentId: "s", ordinal: path, values: { cgroup_path: path, scope, cpuset_cpus: cpuset, usage_usec: 500000, quota_usec: "-1", period_usec: "100000" } })
+  const contexts = [
+    { timestamp: 10, values: { cpu_path: "/selected", scope: 3, cpuset_cpus: 8 } },
+    { timestamp: 30, values: { cpu_path: "/selected", scope: 3, cpuset_cpus: 2 } },
+  ]
+  const rows = [row("1201001", "/selected", 3), row("1201001", "/other", 3), row("1201001", "/selected", 0), row("1207001", "/selected", 3, null), row("1207001", "/selected", 3, 4)]
+  const result = helpers.systemEntityRows({ sections: { os_cgroup_v2_cpu: rows, os_cgroup_context: contexts } }, "os_cgroup_v2_cpu", 40)
+  assert.deepEqual(result.map((row) => row.values.cpuset_cpus), [8, null, null, null, 4])
+  assert.deepEqual(result.map((row) => row.values.cgroup_used_cores), [0.5, 0.5, 0.5, 0.5, 0.5])
+})
+
+test("default interval columns request interval ordering rather than counter rate ordering", () => {
+  for (const [resource, field] of [["cpu", "throttled_interval"], ["memory", "local_oom_kill_delta"], ["pids", "failure_max_delta"]]) {
+    assert.deepEqual(helpers.cgroupTableRequest(`os_cgroup_v2_${resource}`).order[field], [`derived.${field}`])
+  }
+})
+
+
+test("cgroup interval histories honor hidden family/source boundaries and retain later valid intervals", () => {
+  const cases = [
+    ["os_cgroup_v2_cpu", "throttled_interval", "throttled_usec"],
+    ["os_cgroup_v2_memory", "local_oom_kill_delta", "local_oom_kill"],
+    ["os_cgroup_v2_pids", "failure_max_delta", "failure_max"],
+  ]
+  for (const [section, field, raw] of cases) {
+    const column = helpers.CGROUP_TABLE_COLUMNS[section].find((candidate) => candidate.field === field)
+    const rows = [
+      { segmentId: "first", timestamp: 50, values: { [raw]: "1" } },
+      { segmentId: "second", timestamp: 150, breakBefore: true, values: { [raw]: "20" } },
+      { segmentId: "second", timestamp: 200, values: { [raw]: "25" } },
+      { segmentId: "third", timestamp: 250, values: { [raw]: "30" } },
+      { segmentId: "third", timestamp: 350, breakBefore: true, values: { [raw]: "40" } },
+      { segmentId: "fourth", timestamp: 400, values: { [raw]: "40" } },
+    ]
+    assert.deepEqual(column.points(rows).map(({ value }) => value), [null, null, 5, 5, null, 0], field)
+  }
+})
+
+
+test("entity history and table share localized rate units without adding rates to interval deltas", async () => {
+  for (const locale of ["en", "ru"]) {
+    const dictionary = parseDictionary(await readFile(new URL(`../i18n/${locale}.yaml`, import.meta.url), "utf8"), `${locale}.yaml`)
+    const t = (key) => dictionary[key]
+    for (const [kind, reading] of [["bytes", 20_000_000], ["microseconds", 2500], ["number", 3]]) {
+      const column = { field: "counter", kind, rate: true }
+      const metadata = { class: "cumulative", unit: kind === "bytes" ? "bytes" : "count" }
+      const formatted = helpers.entityMetricValue(reading, locale, column, metadata, t)
+      assert.equal(formatted, helpers.cellAriaValue(reading, column, locale, t))
+      assert.ok(formatted.endsWith(t("unit.per_second")))
+    }
+    const interval = { field: "throttled_interval", kind: "microseconds" }
+    const formatted = helpers.entityMetricValue(2500, locale, interval, null, t)
+    assert.equal(formatted, helpers.cellAriaValue(2500, interval, locale, t))
+    assert.equal(formatted.endsWith(t("unit.per_second")), false)
+    assert.equal(helpers.entityMetricUnit(interval, locale, null, t), "")
+    assert.equal(helpers.entityMetricUnit({ ...interval, rate: true }, locale, null, t), t("unit.per_second"))
+  }
 })

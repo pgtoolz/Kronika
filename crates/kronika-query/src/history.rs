@@ -93,8 +93,15 @@ impl PreparedHistory {
         if let Some(health) = self.health {
             return self.stream_health(health, sink);
         }
-        stream_plans(&self.segment, &self.logical_name, &self.plans, None, sink)
-            .map(|_connected| ())
+        stream_plans(
+            &self.segment,
+            &self.logical_name,
+            &self.plans,
+            None,
+            None,
+            sink,
+        )
+        .map(|_connected| ())
     }
 
     fn stream_health(&self, plan: HealthPlan, sink: &mut dyn QuerySink) -> Result<(), QueryError> {
@@ -203,6 +210,7 @@ fn emit_chunk(
     segment: &Segment,
     plan: &Plan,
     rows: &mut Vec<(u64, Row)>,
+    breaks: Option<&BTreeSet<(u32, i64)>>,
     sink: &mut dyn QuerySink,
 ) -> Result<bool, QueryError> {
     if sink.cancelled() {
@@ -240,14 +248,24 @@ fn emit_chunk(
                     .map_or(Ok(Value::Null), |value| cell(value, &dictionary))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if !sink.record(record(json!({
+        let mut value = json!({
             "record": "row",
             "type_id": plan.type_id.to_string(),
             "ordinal": ordinal.to_string(),
             "timestamp": timestamp,
             "identity": identity,
             "values": values,
-        }))?) {
+        });
+        if breaks.is_some_and(|breaks| {
+            plan.timestamp
+                .and_then(|column| row.get(column))
+                .is_some_and(
+                    |cell| matches!(cell, Cell::Ts(at) if breaks.contains(&(plan.type_id, *at))),
+                )
+        }) {
+            value["break_before"] = json!(true);
+        }
+        if !sink.record(record(value)?) {
             return Ok(false);
         }
     }
@@ -259,6 +277,7 @@ pub(crate) fn stream_plans(
     logical_name: &str,
     plans: &[Plan],
     window: Option<Window>,
+    breaks: Option<&BTreeSet<(u32, i64)>>,
     sink: &mut dyn QuerySink,
 ) -> Result<bool, QueryError> {
     for plan in plans {
@@ -309,7 +328,7 @@ pub(crate) fn stream_plans(
                 if chunk.len() < ROW_CHUNK_ROWS {
                     return true;
                 }
-                match emit_chunk(segment, plan, &mut chunk, sink) {
+                match emit_chunk(segment, plan, &mut chunk, breaks, sink) {
                     Ok(still_connected) => connected = still_connected,
                     Err(error) => failure = Some(error),
                 }
@@ -317,7 +336,7 @@ pub(crate) fn stream_plans(
             },
         )?;
         if failure.is_none() && connected && !chunk.is_empty() {
-            match emit_chunk(segment, plan, &mut chunk, sink) {
+            match emit_chunk(segment, plan, &mut chunk, breaks, sink) {
                 Ok(still_connected) => connected = still_connected,
                 Err(error) => failure = Some(error),
             }

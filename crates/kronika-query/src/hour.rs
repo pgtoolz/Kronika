@@ -19,6 +19,7 @@ use crate::{
     SegmentBounds, SegmentRequest, SegmentSelection, Window,
 };
 
+mod cgroup;
 mod lanes;
 mod postgres_summary;
 pub(crate) mod process_summary;
@@ -272,9 +273,10 @@ impl PreparedHour {
                 let segments = process_summary::with_predecessors(&listed, segments);
                 return process_summary::stream(dataset.as_ref(), &segments, window, &series, sink);
             }
+            let breaks = cgroup::breaks(dataset.as_ref(), &segments, window, &series, sink)?;
             for segment in &segments {
                 if sink.cancelled()
-                    || !emit_series(dataset.as_ref(), segment, window, &series, sink)?
+                    || !emit_series(dataset.as_ref(), segment, window, &series, &breaks, sink)?
                 {
                     return Ok(());
                 }
@@ -453,6 +455,7 @@ fn emit_series(
     descriptor: &DatasetSegment,
     window: Window,
     series: &HourSeriesRequest,
+    breaks: &std::collections::BTreeSet<(u32, i64)>,
     sink: &mut dyn QuerySink,
 ) -> Result<bool, QueryError> {
     let segment = dataset.open(descriptor)?;
@@ -474,7 +477,14 @@ fn emit_series(
             }))?) {
                 return Ok(false);
             }
-            stream_plans(&segment, &series.section, &plans, Some(window), sink)
+            stream_plans(
+                &segment,
+                &series.section,
+                &plans,
+                Some(window),
+                Some(breaks),
+                sink,
+            )
         }
         Err(QueryError::NoSuchSection) => Ok(true),
         Err(error) => Err(error),

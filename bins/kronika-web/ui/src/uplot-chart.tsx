@@ -586,6 +586,17 @@ function chartPartitionRange(
   return scaleRange(partition.scale, grouped)
 }
 
+export function axisLabelWidth(context: Pick<CanvasRenderingContext2D, "font" | "measureText">, font: string, values: uPlot.Axis.StaticValues | null): number {
+  const previousFont = context.font
+  context.font = font
+  let width = 0
+  for (const value of values ?? []) {
+    if (value !== null) width = Math.max(width, context.measureText(String(value)).width)
+  }
+  context.font = previousFont
+  return Math.ceil(width)
+}
+
 function chartOptions(
   topology: ChartTopology,
   runtime: { readonly current: ChartRuntimeState },
@@ -690,7 +701,7 @@ function chartOptions(
       { scale: "x", side: 2, size: compact ? 18 : 30, gap: compact ? 2 : 4, ticks: { size: compact ? 4 : 6, stroke: color("--color-line3") }, font: axisFont, space: (_chart, _axis, _scale, _increment, space) => Math.max(compact ? 62 : 84, space), stroke: color("--color-fg3"), grid: { show: false }, values: (_chart, splits) => splits.map((timestamp) => timestamp > end ? "" : axisTimeLabel(timestamp, runtime.current.time)) },
       ...topology.partitions.map(({ key, seriesIndices }, axisIndex) => {
         const initialLine = series[seriesIndices[0]!]!
-        return { ...(!compact && initialLine.unit !== "" && initialLine.tickAxis !== "duration" ? { label: () => runtime.current.series[seriesIndices[0]!]?.unit ?? "" } : {}), font: axisFont, gap: compact ? 2 : 4, ticks: { size: compact ? 4 : 6, stroke: color("--color-line3") }, scale: key, side: axisIndex % 2 === 0 ? 3 : 1, size: compact ? 46 : 70, stroke: color("--color-fg3"), grid: { stroke: axisIndex === 0 ? color("--color-line") : "transparent" }, values: (_chart: uPlot, splits: number[]) => {
+        return { ...(!compact && initialLine.unit !== "" && initialLine.tickAxis !== "duration" ? { label: () => runtime.current.series[seriesIndices[0]!]?.unit ?? "" } : {}), font: axisFont, gap: compact ? 2 : 4, ticks: { size: compact ? 4 : 6, stroke: color("--color-line3") }, scale: key, side: axisIndex % 2 === 0 ? 3 : 1, size: (chart: uPlot, values: uPlot.Axis.StaticValues | null) => Math.max(compact ? 46 : 70, axisLabelWidth(chart.ctx, axisFont, values) + (compact ? 4 : 6) + 2 * (compact ? 2 : 4)), stroke: color("--color-fg3"), grid: { stroke: axisIndex === 0 ? color("--color-line") : "transparent" }, values: (_chart: uPlot, splits: number[]) => {
           const { locale, series: latestSeries } = runtime.current
           const line = latestSeries[seriesIndices[0]!]!
           const unit = line.unit

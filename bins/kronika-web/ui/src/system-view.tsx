@@ -333,6 +333,7 @@ export function cgroupTableRequest(section: string): SectionRequest {
     order: {
       tasks_current: ["current"], tasks_max: ["max"], cgroup_path: ["cgroup_path"], cgroup_used_cores: ["usage_usec"], cgroup_user_cores: ["user_usec"], cgroup_system_cores: ["system_usec"],
       cgroup_quota: ["derived.quota_cores"], cpuset_cpus: ["cpuset_cpus"], throttled_period_ratio: ["derived.throttled_period_ratio"],
+      throttled_interval: ["derived.throttled_interval"], local_oom_kill_delta: ["derived.local_oom_kill_delta"], failure_max_delta: ["derived.failure_max_delta"],
       ...Object.fromEntries(["current", "max", "high", "local_oom_kill", "failure_max", "rbytes", "wbytes", "rios", "wios", "throttled_usec"].map((field) => [field, [field]])),
     },
   }
@@ -1062,7 +1063,7 @@ function SystemEntityPanel({
             cursor={cursor}
             durationAxis={selectedColumn.kind === "milliseconds" || selectedColumn.kind === "duration" || selectedColumn.kind === "microseconds"}
             empty={t("history.empty")}
-            format={(reading, place) => entityMetricValue(reading, place, selectedColumn, chartMetadata)}
+            format={(reading, place) => entityMetricValue(reading, place, selectedColumn, chartMetadata, t)}
             helpKey={selectedColumn.help ?? "chart.metric.help"}
             hour={hour}
             labelKey={selectedColumn.label}
@@ -1072,7 +1073,7 @@ function SystemEntityPanel({
             scale={selectedColumn.kind === "percent" ? "percent" : "nonnegative"}
             status={history.status}
             t={t}
-            unit={entityMetricUnit(selectedColumn, locale, chartMetadata)}
+            unit={entityMetricUnit(selectedColumn, locale, chartMetadata, t)}
           />}
       </section></InspectorChartPortal>
     </aside></InspectorPortal>}
@@ -1180,8 +1181,8 @@ function physicalField(column: EntityColumn, typeId: string): string {
   return column.physicalField?.[typeId] ?? column.field
 }
 
-function entityMetricUnit(column: SystemEntityColumn, locale: Locale, metadata: RegistryColumn | null): string {
-  const perSecond = metadata?.class === "cumulative" || column.rate === true ? "/s" : ""
+export function entityMetricUnit(column: SystemEntityColumn, locale: Locale, metadata: RegistryColumn | null, t: Translate): string {
+  const perSecond = metadata?.class === "cumulative" || column.rate === true ? t("unit.per_second") : ""
   if (column.kind === "cores") return "cores"
   if (column.field === "speed_mbit") return "Mbit/s"
   if (column.field === "mhz_max") return "MHz"
@@ -1189,11 +1190,11 @@ function entityMetricUnit(column: SystemEntityColumn, locale: Locale, metadata: 
   if (column.kind === "milliseconds" || column.kind === "duration" || column.kind === "microseconds") return perSecond
   if (column.kind === "percent") return "%"
   if (metadata?.unit === "sectors") return `${locale === "ru" ? "секторы" : "sectors"}${perSecond}`
-  return metadata?.class === "cumulative" ? (locale === "ru" ? "1/с" : "1/s") : (locale === "ru" ? "количество" : "count")
+  return metadata?.class === "cumulative" ? `1${perSecond}` : (locale === "ru" ? "количество" : "count")
 }
 
-function entityMetricValue(reading: number, locale: Locale, column: SystemEntityColumn, metadata: RegistryColumn | null): string {
-  const suffix = metadata?.class === "cumulative" || column.rate === true ? "/s" : ""
+export function entityMetricValue(reading: number, locale: Locale, column: SystemEntityColumn, metadata: RegistryColumn | null, t: Translate): string {
+  const suffix = metadata?.class === "cumulative" || column.rate === true ? t("unit.per_second") : ""
   if (column.kind === "cores") return humanCores(reading, locale)
   if (column.field === "speed_mbit") return measure(reading, locale, " Mbit/s")
   if (column.field === "mhz_max") return measure(reading, locale, " MHz")
@@ -1623,6 +1624,7 @@ function cgroupOtherCpuPoints(rows: readonly DataRow[]): readonly ChartPoint[] {
 function exactDeltaPoints(rows: readonly DataRow[], fields: readonly string[], output: (deltas: readonly bigint[], elapsedUsec: number) => number | null): readonly ChartPoint[] {
   let previous: { readonly at: number; readonly values: readonly bigint[] } | null = null
   return rows.slice().sort((left, right) => left.timestamp - right.timestamp || left.segmentId.localeCompare(right.segmentId)).map((row) => {
+    if (row.breakBefore === true) previous = null
     const values = fields.map((field) => exactInteger(row, field))
     const elapsed = previous === null ? 0 : row.timestamp - previous.at
     const deltas = previous === null || values.some((stored) => stored === null)
@@ -1756,6 +1758,13 @@ export function systemEntityRows(data: HourData, section: string, cursor: number
       values.cgroup_quota = quota !== null && quota > 0 ? quota : null
       const throttle = asNumber(value(row, "throttled_period_ratio"))
       values.throttled_period_ratio = throttle === null ? null : throttle * 100
+      if (registry.find((layout) => layout.typeId === row.typeId)?.logicalName === "os_cgroup_cpu") {
+        const path = rawText(value(row, "cgroup_path"))
+        const scope = rawText(value(row, "scope"))
+        const context = path === null || scope === null ? null : snapshot(sectionRows(data, "os_cgroup_context"), row.timestamp).find((candidate) => rawText(value(candidate, "cpu_path")) === path && rawText(value(candidate, "scope")) === scope) ?? null
+        const cpuset = asNumber(value(context, "cpuset_cpus"))
+        values.cpuset_cpus = cpuset !== null && cpuset > 0 ? cpuset : null
+      }
     }
     if (section.endsWith("pids")) {
       values.tasks_current = value(row, "current")
@@ -1891,7 +1900,7 @@ export function localizedSystemColumns(columns: readonly SystemEntityColumn[], s
   if (section.startsWith("os_cgroup_v2_")) return columns.map((column) => {
     if (["max", "high", "tasks_max", "cgroup_quota"].includes(column.field)) return {
       ...column,
-      renderNull: (row: DataRow) => <span>{(column.field === "cgroup_quota" ? value(row, "quota_usec") === -1 : (value(row, `${column.field === "tasks_max" ? "max" : column.field}_unlimited`) === true || (!registry.find((layout) => layout.typeId === row.typeId)?.columns.includes("max_unlimited") && ["max", "tasks_max"].includes(column.field) && Object.hasOwn(row.values, "max")))) ? t("system.cgroups.pids_unlimited") : t("system.cgroups.pids_unavailable")}</span>,
+      renderNull: (row: DataRow) => <span>{(column.field === "cgroup_quota" ? asNumber(value(row, "quota_usec")) === -1 : (value(row, `${column.field === "tasks_max" ? "max" : column.field}_unlimited`) === true || (!registry.find((layout) => layout.typeId === row.typeId)?.columns.includes("max_unlimited") && ["max", "tasks_max"].includes(column.field) && Object.hasOwn(row.values, "max")))) ? t("system.cgroups.pids_unlimited") : t("system.cgroups.pids_unavailable")}</span>,
     }
     if (column.field === "events_source") return { ...column, render: (row: DataRow) => value(row, "events_source") === 1 ? "pids.events.local" : value(row, "events_source") === 2 ? "pids.events" : "—" }
     return column

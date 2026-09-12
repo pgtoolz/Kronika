@@ -22,6 +22,7 @@ pub(super) enum Collection {
     Cgroup,
     SeparatedControllers,
     AllCgroups,
+    AllCgroupsMachine,
 }
 
 #[expect(
@@ -66,7 +67,10 @@ pub(super) fn encoded(collection: Collection) -> Vec<u8> {
             ts: Ts(START),
             hostname: os.then_some(label),
             kernel_version: os.then_some(label),
-            environment: os.then_some(1),
+            environment: os.then_some(u8::from(!matches!(
+                collection,
+                Collection::AllCgroupsMachine
+            ))),
             clock_ticks_per_sec: os.then_some(100),
             page_size_bytes: os.then_some(4096),
             boot_id: os.then_some(label),
@@ -77,13 +81,17 @@ pub(super) fn encoded(collection: Collection) -> Vec<u8> {
             postgresql_interval_seconds: 30,
             postgresql_effective_cpus: match collection {
                 Collection::Postgresql(capacity) => capacity,
-                Collection::Cgroup | Collection::SeparatedControllers | Collection::AllCgroups => {
-                    None
-                }
+                Collection::Cgroup
+                | Collection::SeparatedControllers
+                | Collection::AllCgroups
+                | Collection::AllCgroupsMachine => None,
             },
         })
         .expect("metadata");
     match collection {
+        Collection::AllCgroupsMachine => {
+            all_groups::push(&mut buffers, &mut interner, label, first, second);
+        }
         Collection::Postgresql(_) => {
             for pid in 1..=5 {
                 buffers
