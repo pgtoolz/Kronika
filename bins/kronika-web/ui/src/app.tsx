@@ -218,7 +218,7 @@ function App({ locale, onLocale, t }: {
   const opened = useRef(readAddress(window.location.search))
   const [reportRange] = useState(() => KRONIKA_REPORT ? reportVisibleRange() : null)
   const initialAt = reportVisibleAt(opened.current.at, reportRange)
-  const replaceReportAddress = useRef(KRONIKA_REPORT)
+  const replaceReportAddress = useRef(true)
   const [cursor, setCursor] = useState(0)
   const cursorClock = useRef<HTMLSpanElement>(null)
   const cursorClockPreview = useRef<number | null>(null)
@@ -912,7 +912,7 @@ function App({ locale, onLocale, t }: {
   }), [activeRelation, activeRelationLens, cursor, find, inspectorPanel, lens, order, pgSection, planLens, relationFilters, relationLevel, relationSelectedKey, selectedKey, source, statementLens, systemMetric])
   const steps = useRef<string | null>(null)
   useEffect(() => {
-    if (KRONIKA_REPORT && loading) return
+    if (loading) return
     const destination = historyAddress(address, window.location.pathname)
     const replace = replaceReportAddress.current
     replaceReportAddress.current = false
