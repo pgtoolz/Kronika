@@ -74,9 +74,6 @@ pub fn plans(
         .iter()
         .map(|(type_id, _section)| contract(*type_id).ok_or(QueryError::NoSuchSection))
         .collect::<Result<_, _>>()?;
-    // Names are validated against every registered layout of the section, not
-    // only the recorded ones: a column an older server never had is answered
-    // as unavailable, exactly as in a segment mixing old and new layouts.
     let known: Vec<&'static TypeContract> = registry()
         .iter()
         .filter(|candidate| {

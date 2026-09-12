@@ -560,7 +560,6 @@ function VacuumView({ cursor, data, historyRevision, hour, locale, onCursor, onO
 }) {
   const time = useDisplayTime()
   // Omit fields so each segment returns its own physical layout.
-  // Requesting a cross-version union would reject layout-absent columns.
   const hourRows = useHistoryRequest(String(hour), historyRevision,
     (signal) => loadSeries(hour, "pg_stat_progress_vacuum", {}, [], signal))
   const vacuumRequestPhase = hourRows.status === "loading" ? "pending" : hourRows.status

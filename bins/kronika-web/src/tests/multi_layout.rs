@@ -159,9 +159,6 @@ fn stream(prepared: Prepared) -> Vec<Value> {
 
 #[test]
 fn a_field_no_recorded_layout_carries_is_reported_unavailable() {
-    // A PostgreSQL major that predates the column records only the older
-    // layout; the request still answers, as it does when a newer layout
-    // shares the hour, and the layout advertises the field as unavailable.
     let directory = finished_single_layout_segment();
     let history =
         format!("/api/segments/{SEGMENT_ID}/sections/pg_stat_database/history?field={FIELD}");

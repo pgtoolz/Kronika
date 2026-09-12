@@ -130,9 +130,6 @@ const LAYOUT_KINDS: Readonly<Record<string, LayoutKind>> = {
 
 const REGISTRY_BY_TYPE_ID = new Map(registry.map((layout) => [layout.typeId, layout]))
 
-// Only cuts the recorded layouts can answer are offered: a renamed fact is
-// requested under every recorded name, a cut no layout carries is dropped
-// rather than shown as "no activity". Unknown layouts keep the declared cuts.
 export function cutsForLayouts(cuts: readonly ActivityCut[], typeIds: readonly string[]): readonly ActivityCut[] {
   const recorded = typeIds.flatMap((typeId) => REGISTRY_BY_TYPE_ID.get(typeId)?.columns ?? [])
   if (recorded.length === 0) return cuts

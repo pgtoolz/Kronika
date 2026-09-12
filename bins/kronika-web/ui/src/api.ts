@@ -243,7 +243,7 @@ export interface TimelineData {
   readonly syntheticDemo?: boolean
   readonly postgresqlConfigured?: boolean
   readonly postgresqlPresent?: boolean
-  // The serving build, from the catalog record; absent from older servers.
+  // Server version; absent from older servers.
   readonly kronikaVersion?: string
 }
 
@@ -921,7 +921,6 @@ export function segmentBoundAt(segments: readonly SegmentBound[], at: number): S
     ?? newestSegment(segments.filter((segment) => segment.maxTs <= at))
 }
 
-// Physical layouts the hour's segments recorded for one logical section.
 export function recordedLayouts(segments: readonly SegmentBound[], logicalName: string): readonly string[] {
   return unique(segments.flatMap((segment) => segment.sections
     .filter((section) => section.logicalName === logicalName)
@@ -1333,10 +1332,7 @@ export async function loadSnapshotGroups(
   return snapshots.reduce((current, incoming) => mergeSnapshotData(current, incoming), emptyHour())
 }
 
-// The recorded plans matching a statement's identity expression, from the
-// newest snapshot at or before the moment. One page is the whole answer: a
-// statement with more distinct plans than the page holds is itself the story,
-// and the Plans view shows the rest.
+// Fetch one page at or before the cursor; the Plans view shows the rest.
 export async function loadRelatedPlanRows(
   segments: readonly SegmentBound[],
   at: number,

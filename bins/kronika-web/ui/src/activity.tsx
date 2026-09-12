@@ -43,8 +43,7 @@ function useHeatmapView(
   scope: StatementScope,
 ): HeatmapState {
   const [state, setState] = useState<HeatmapState>({ loading: true, error: false, view: null, viewCut: null })
-  // Cuts are re-derived on every hour refresh; the request keys on the cut's
-  // content, not its identity, so an equal cut does not re-scan the hour.
+  // Compare cut contents: refreshes recreate cut objects.
   const cutId = cut.id
   const fieldsKey = cut.fields.join(",")
   useEffect(() => {
@@ -112,8 +111,7 @@ function ActivityLedger({ columns, cursor, cuts, defaultCut, drill, group, headi
   const [chosen, setChosen] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
   const cut = cuts.find((candidate) => candidate.id === cutId) ?? cuts[0] as ActivityCut
-  // A chosen cut the layouts cannot answer falls back to the first offered one;
-  // the selection follows so a later hour does not silently switch back.
+  // Persist the fallback so later hours do not restore the previous selection.
   useEffect(() => { if (cut.id !== cutId) setCutId(cut.id) }, [cut.id, cutId])
   const state = useHeatmapView(section, columns, group, hour, cut, top, revision, open, scope)
   const view = useMemo(() => {
@@ -122,12 +120,8 @@ function ActivityLedger({ columns, cursor, cuts, defaultCut, drill, group, headi
   }, [maximized, state.view])
   useEffect(() => setChosen(null), [hour, section])
 
-  // A drill filters the table below the ledger, which a full-screen ledger
-  // covers; it steps back so the filtered rows are the next thing seen.
-  // A row that recorded nothing at the cursor would filter to an empty
-  // table, which reads as a wrong filter rather than a wrong moment; the
-  // cursor then moves to the row's own peak — the same instant clicking
-  // that cell sets. A row alive at the cursor leaves the cursor alone.
+  // Exit full screen to reveal the filtered table; use the row's peak when
+  // it has no data at the cursor.
   const choose = drill === undefined ? undefined : (row: HeatmapViewRow) => {
     setChosen(rowKey(row))
     setMaximized(false)
@@ -346,7 +340,6 @@ export function RelationsActivity({ blockSize, cursor, hour, layouts, level, loc
   readonly t: Translate
 }) {
   const indexes = section === "pg_stat_user_indexes"
-  // Match the grouping selected for the relation table.
   const group = level === "object" ? undefined : RELATION_GROUPS[level]
   const drill = (row: HeatmapViewRow) => {
     const name = level === "object" ? labelText(row, indexes ? "indexrelname" : "relname") : row.identity[row.identity.length - 1]
