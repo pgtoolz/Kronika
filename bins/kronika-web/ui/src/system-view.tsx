@@ -932,7 +932,7 @@ function SystemEntityPanel({
   const selectedLookup = useHistoryRequest(lookupKey, historyRevision, lookupKey === null || selectedRequest === null || segmentId === undefined ? null : (signal) => loadSelectedCgroupRow(segmentId, cursor, section, selectedRequest, signal))
   const selectedRow = pageSelectedRow ?? selectedLookup.value
   const groupIdentity = selectedRow === null ? null : rawText(value(selectedRow, "cgroup_identity"))
-  const groupKey = !cgroupTable || selectedRow === null || groupIdentity === null ? null : JSON.stringify([selectedRow.segmentId, selectedRow.timestamp, groupIdentity])
+  const groupKey = !cgroupTable || selectedRow === null || groupIdentity === null || registry.find((layout) => layout.typeId === selectedRow.typeId)?.logicalName !== section ? null : JSON.stringify([selectedRow.segmentId, selectedRow.timestamp, groupIdentity])
   const groupFacts = useHistoryRequest(groupKey, historyRevision, groupKey === null || selectedRow === null || groupIdentity === null ? null : async (signal) => {
     const groupData = await loadSnapshot(selectedRow.segmentId, selectedRow.timestamp, [{ section: "os_cgroup_v2_group", pageSize: 1 }], signal, undefined, { filters: { cgroup_identity: groupIdentity } })
     const group = groupData.sections.os_cgroup_v2_group?.find((row) => row.timestamp === selectedRow.timestamp) ?? null
