@@ -1,5 +1,6 @@
 import { registry } from "kronika:registry"
 
+import type { ActivityCut } from "./activity-cuts"
 import type { Cell, DataRow } from "./api"
 
 export const PG_STAT_STATEMENTS_TYPE_IDS = [
@@ -128,6 +129,22 @@ const LAYOUT_KINDS: Readonly<Record<string, LayoutKind>> = {
 }
 
 const REGISTRY_BY_TYPE_ID = new Map(registry.map((layout) => [layout.typeId, layout]))
+
+export function cutsForLayouts(cuts: readonly ActivityCut[], typeIds: readonly string[]): readonly ActivityCut[] {
+  const recorded = typeIds.flatMap((typeId) => REGISTRY_BY_TYPE_ID.get(typeId)?.columns ?? [])
+  if (recorded.length === 0) return cuts
+  const columns = new Set(recorded)
+  const offered = cuts.flatMap((cut) => {
+    const fields: string[] = []
+    for (const field of cut.fields) {
+      const names = [field, cut.renamed?.[field]].filter((name): name is string => name !== undefined && columns.has(name))
+      if (names.length === 0) return []
+      fields.push(...names)
+    }
+    return [{ ...cut, fields }]
+  })
+  return offered.length === 0 ? cuts : offered
+}
 
 export interface PostgresLayout {
   readonly typeId: string

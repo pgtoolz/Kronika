@@ -1076,6 +1076,7 @@ test("timeline source presence does not trust a straddling segment inventory", a
     { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
     {
       record: "catalog", from: String(START), to: String(START + 3_600_000_000 - 1), demo: "synthetic",
+      kronika_version: "9.9.9",
       source_families: [{ name: "postgresql", configured: false, present: true, metrics_present: false }],
     },
     {
@@ -1089,6 +1090,34 @@ test("timeline source presence does not trust a straddling segment inventory", a
     assert.equal(timeline.postgresqlConfigured, false)
     assert.equal(timeline.postgresqlPresent, false)
     assert.equal(timeline.syntheticDemo, true)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("the timeline carries the serving version and the layouts each section recorded", async () => {
+  const api = await bundledApi()
+  Reflect.deleteProperty(globalThis, "__KRONIKA_REAL_HOUR__")
+  const originalFetch = globalThis.fetch
+  const segment = (id: string, sections: readonly { logical_name: string | null; type_id: string }[]) => ({
+    record: "finished_segment", id, min_ts: String(START + 1), max_ts: String(START + 2), sections,
+  })
+  globalThis.fetch = async () => ndjson([
+    { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
+    { record: "catalog", from: String(START), to: String(START + 3_600_000_000 - 1), demo: null, kronika_version: "9.9.9", source_families: [] },
+    segment("segment-a", [{ logical_name: "pg_stat_statements", type_id: "1002001" }, { logical_name: null, type_id: "3001001" }]),
+    segment("segment-b", [{ logical_name: "pg_stat_statements", type_id: "1002001" }, { logical_name: "pg_stat_statements", type_id: "1002003" }]),
+  ])
+  try {
+    const timeline = await api.loadTimeline(START, new AbortController().signal)
+    assert.equal(timeline.kronikaVersion, "9.9.9")
+    assert.deepEqual(api.recordedLayouts(timeline.segments, "pg_stat_statements"), ["1002001", "1002003"])
+    assert.deepEqual(api.recordedLayouts(timeline.segments, "pg_stat_database"), [])
+    globalThis.fetch = async () => ndjson([
+      { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
+      { record: "catalog", from: String(START), to: String(START + 3_600_000_000 - 1), demo: null, source_families: [] },
+    ])
+    assert.equal("kronikaVersion" in await api.loadTimeline(START, new AbortController().signal), false, "an older server leaves the version absent")
   } finally {
     globalThis.fetch = originalFetch
   }

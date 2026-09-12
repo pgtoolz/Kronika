@@ -3,7 +3,9 @@
 use std::collections::{HashSet, hash_map::RandomState};
 
 use kronika_reader::{Cell, Dictionary, Resolved, Row, Segment, StrId};
-use kronika_registry::{ColumnClass, ColumnType, TypeContract, contract};
+use kronika_registry::{
+    ColumnClass, ColumnType, TypeContract, contract, logical_section_name, registry,
+};
 
 use crate::request::{DataRequest, Filter};
 use crate::{DatasetSegment, QueryError};
@@ -72,8 +74,14 @@ pub fn plans(
         .iter()
         .map(|(type_id, _section)| contract(*type_id).ok_or(QueryError::NoSuchSection))
         .collect::<Result<_, _>>()?;
-    let output_names = output_names(&contracts, &request.fields)?;
-    validate_filter_names(&contracts, &request.filters)?;
+    let known: Vec<&'static TypeContract> = registry()
+        .iter()
+        .filter(|candidate| {
+            logical_section_name(candidate.type_id.get()) == Some(request.segment.section.as_str())
+        })
+        .collect();
+    let output_names = output_names(&contracts, &known, &request.fields)?;
+    validate_filters(&known, &request.filters)?;
 
     layouts
         .into_iter()
@@ -162,16 +170,16 @@ fn projection(
     projection
 }
 
+/// Requested names must exist in some `known` layout of the section; the
+/// default projection is the stable union over the `recorded` layouts only.
 fn output_names(
-    contracts: &[&'static TypeContract],
+    recorded: &[&'static TypeContract],
+    known: &[&'static TypeContract],
     requested: &[String],
 ) -> Result<Vec<String>, QueryError> {
     if !requested.is_empty() {
         for name in requested {
-            if !contracts
-                .iter()
-                .any(|contract| contract.column(name).is_some())
-            {
+            if !known.iter().any(|contract| contract.column(name).is_some()) {
                 return Err(QueryError::NoSuchColumn(name.clone()));
             }
         }
@@ -180,7 +188,7 @@ fn output_names(
 
     let mut names = Vec::new();
     let mut seen = HashSet::new();
-    for contract in contracts {
+    for contract in recorded {
         for column in contract.columns {
             if seen.insert(column.name) {
                 names.push(column.name.to_owned());
@@ -190,15 +198,15 @@ fn output_names(
     Ok(names)
 }
 
-fn validate_filter_names(
-    contracts: &[&'static TypeContract],
-    filters: &[Filter],
-) -> Result<(), QueryError> {
+/// Filters are typed against every `known` layout, so the error does not depend
+/// on what the segment recorded; a recorded layout without the column matches
+/// nothing.
+fn validate_filters(known: &[&'static TypeContract], filters: &[Filter]) -> Result<(), QueryError> {
     for filter in filters {
-        if !contracts
-            .iter()
-            .any(|contract| contract.column(&filter.column).is_some())
-        {
+        let carried = known.iter().try_fold(false, |seen, contract| {
+            typed_filter(contract, filter).map(|typed| seen | typed.is_some())
+        })?;
+        if !carried {
             return Err(QueryError::NoSuchColumn(filter.column.clone()));
         }
     }

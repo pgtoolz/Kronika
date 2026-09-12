@@ -3,6 +3,8 @@
 export interface ActivityCut {
   readonly id: string
   readonly fields: readonly string[]
+  // The column an older physical layout recorded the same fact under.
+  readonly renamed?: Readonly<Record<string, string>>
   readonly kind: "milliseconds" | "seconds" | "microseconds" | "nanoseconds" | "count" | "bytes"
   readonly scaleBy?: "block_size" | "clock_ticks" | "kib"
 }
@@ -28,7 +30,8 @@ export function cutScale(cut: ActivityCut, scales: ActivityScales): { readonly s
 }
 
 export const STATEMENT_CUTS: readonly ActivityCut[] = [
-  { id: "exec_time", fields: ["total_exec_time"], kind: "milliseconds" },
+  // pg_stat_statements before 1.8 (PostgreSQL 13) recorded execution time as total_time.
+  { id: "exec_time", fields: ["total_exec_time"], renamed: { total_exec_time: "total_time" }, kind: "milliseconds" },
   { id: "calls", fields: ["calls"], kind: "count" },
   { id: "rows", fields: ["rows"], kind: "count" },
   { id: "shared_read", fields: ["shared_blks_read"], kind: "bytes", scaleBy: "block_size" },
