@@ -245,6 +245,8 @@ export interface TimelineData {
   readonly syntheticDemo?: boolean
   readonly postgresqlConfigured?: boolean
   readonly postgresqlPresent?: boolean
+  // Server version; absent from older servers.
+  readonly kronikaVersion?: string
 }
 
 export interface TimelineRange {
@@ -429,6 +431,7 @@ export async function loadTimeline(
     syntheticDemo: catalog?.demo === "synthetic",
     postgresqlConfigured: sourceConfigured(catalog, "postgresql"),
     postgresqlPresent: sourceMetricsPresent(catalog, "postgresql"),
+    ...(typeof catalog?.["kronika_version"] === "string" ? { kronikaVersion: catalog["kronika_version"] } : {}),
   }
 }
 
@@ -922,6 +925,12 @@ export function segmentBoundAt(segments: readonly SegmentBound[], at: number): S
     ?? newestSegment(segments.filter((segment) => segment.maxTs <= at))
 }
 
+export function recordedLayouts(segments: readonly SegmentBound[], logicalName: string): readonly string[] {
+  return unique(segments.flatMap((segment) => segment.sections
+    .filter((section) => section.logicalName === logicalName)
+    .map((section) => section.typeId)))
+}
+
 export function snapshotRequestGroups(
   segments: readonly SegmentBound[],
   at: number,
@@ -1327,10 +1336,7 @@ export async function loadSnapshotGroups(
   return snapshots.reduce((current, incoming) => mergeSnapshotData(current, incoming), emptyHour())
 }
 
-// The recorded plans matching a statement's identity expression, from the
-// newest snapshot at or before the moment. One page is the whole answer: a
-// statement with more distinct plans than the page holds is itself the story,
-// and the Plans view shows the rest.
+// Fetch one page at or before the cursor; the Plans view shows the rest.
 export async function loadRelatedPlanRows(
   segments: readonly SegmentBound[],
   at: number,

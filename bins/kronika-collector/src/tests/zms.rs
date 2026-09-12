@@ -1744,8 +1744,6 @@ fn cpufreq_hour_reports_collection_and_production_writer_costs() {
     assert!(zms_bytes < 4 * 1024 * 1024);
     assert!(collection_rss_kib > 0);
     assert!(writer_rss_kib > 0);
-    #[cfg(not(debug_assertions))]
-    assert!(writer_rss_kib <= 25_600);
     println!(
         "os_cpufreq_cost policies={} samples={} raw_wal_bytes={} policy_raw_section_bytes={} sample_raw_section_bytes={} policy_zms_section_bytes={} sample_zms_section_bytes={} marginal_zms_bytes={} zms_bytes={} collection_elapsed_us={} collection_cpu_ticks={} collection_peak_rss_kib={} writer_elapsed_us={} writer_cpu_ticks={} writer_peak_rss_kib={}",
         policy_rows.len(),

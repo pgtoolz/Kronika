@@ -117,7 +117,9 @@ fn catalog_records_are_exact_and_storage_neutral() {
         records.0,
         [
             concat!(
-                "{\"demo\":null,\"from\":\"10\",\"record\":\"catalog\",",
+                "{\"demo\":null,\"from\":\"10\",\"kronika_version\":\"",
+                env!("CARGO_PKG_VERSION"),
+                "\",\"record\":\"catalog\",",
                 "\"source_families\":[{\"configured\":true,\"metrics_present\":true,",
                 "\"name\":\"os\",\"present\":true},{\"configured\":true,",
                 "\"metrics_present\":false,\"name\":\"postgresql\",",

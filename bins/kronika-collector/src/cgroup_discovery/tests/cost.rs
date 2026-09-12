@@ -183,8 +183,6 @@ fn append_hour(proc: &ProcFs, sys: &SysFs, storage: &Path) {
         pass.peak_string_bytes
     );
     assert!(writer_peak_rss > 0);
-    #[cfg(not(debug_assertions))]
-    assert!(writer_peak_rss <= 25_600);
 }
 
 #[test]

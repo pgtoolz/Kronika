@@ -35,7 +35,7 @@ plus final segment writing. Reader/dictionary validation runs after this timed
 writer block. The 100 Hz clock describes the separate process CPU-time counter;
 it does not set the resolution of `Instant` elapsed measurements.
 
-RSS is the process memory resident in physical RAM. The peak here belongs to the whole test process, including the test harness, memory kept by the allocator after earlier cases, and the Parquet writer. The design budget of 25,600 KiB is a target for collector RSS, not an enforced runtime memory limit.
+RSS is the process memory resident in physical RAM. The peak here belongs to the whole test process, including the test harness, memory kept by the allocator after earlier cases, and the Parquet writer.
 
 The test asserts one row per recorded UID, no row for an unresolved UID, and
 rejection of an oversized passwd source. A malformed passwd line can coexist

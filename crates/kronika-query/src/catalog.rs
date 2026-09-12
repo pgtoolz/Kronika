@@ -149,6 +149,7 @@ impl PreparedCatalog {
                 "from": self.window.from.map(|value| value.to_string()),
                 "to": self.window.to.map(|value| value.to_string()),
                 "demo": self.synthetic_demo.then_some("synthetic"),
+                "kronika_version": env!("CARGO_PKG_VERSION"),
                 "source_families": source_family_values(
                     self.configured_sources,
                     present_sources,
