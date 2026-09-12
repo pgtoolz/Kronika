@@ -1,5 +1,3 @@
-//! Offline acquisition and production append costs for the prior 512-leaf fixture.
-
 use super::*;
 
 const SAMPLES: usize = 120;

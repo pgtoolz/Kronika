@@ -213,7 +213,6 @@ const LEDGER_SECTION: Readonly<Record<LedgerKey, string>> = {
   cgroup_io: "os_cgroup_io",
   cgroup_pids: "os_cgroup_pids",
 }
-// The container rows in ledger order; each discloses its own cgroup table.
 const CONTAINER_KEYS: readonly UseResourceKey[] = ["cgroup_cpu", "cgroup_memory", "cgroup_io", "cgroup_pids"]
 const LEDGER_MODES: Partial<Readonly<Record<LedgerKey, readonly HostMode[]>>> = {
   cpu: ["topology"],

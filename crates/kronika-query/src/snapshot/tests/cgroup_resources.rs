@@ -119,9 +119,12 @@ fn cgroup_page_sorts_rates_before_paging_and_searches_all_paths() {
     let second = snapshot_records(&payload, request.clone());
     assert_eq!(rows(&second)[0]["values"][0], "/work/c");
     request.cursor = None;
-    request.search = Some("path:a".to_owned());
-    let searched = snapshot_records(&payload, request);
-    assert_eq!(rows(&searched)[0]["values"][0], "/work/a");
+    for search in ["/work/a", "text:/work/a", "q:/work/a", "path:/work/a"] {
+        request.search = Some(search.to_owned());
+        let searched = snapshot_records(&payload, request.clone());
+        assert_eq!(rows(&searched).len(), 1);
+        assert_eq!(rows(&searched)[0]["values"][0], "/work/a");
+    }
 }
 
 #[test]
@@ -194,6 +197,14 @@ fn legacy_only_alias_and_return_from_new_family_are_not_joined() {
     );
     assert_eq!(rows(&records)[0]["values"][0], 10_000.0);
     assert!(rows(&records)[0]["values"][1].is_null());
+    for search in ["/old", "text:/old", "q:/old", "path:/old"] {
+        let mut request = snapshot_request("os_cgroup_v2_cpu", &["cgroup_path"]);
+        request.search = Some(search.to_owned());
+        let records = snapshot_records(&old_only, request);
+        assert_eq!(rows(&records).len(), 1);
+        assert_eq!(rows(&records)[0]["type_id"], "1201001");
+        assert_eq!(rows(&records)[0]["values"][0], "/old");
+    }
 }
 
 #[test]

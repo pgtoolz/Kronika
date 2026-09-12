@@ -8,12 +8,8 @@
 //!
 //! Collection is intentionally partial under races and permission limits:
 //! disappearing processes and unreadable optional files become missing fields
-//! or per-source diagnostics in the collector. Directory cardinality, cgroup
-//! depth, disk count, and process count are bounded by the caller. Fixture root
-//! overrides exist for BDD; production defaults are `/proc` and `/sys`.
-//!
-//! The crate is Linux-specific and does not own scheduling, interning, segment
-//! state, or HTTP serialization.
+//! or per-source diagnostics in the collector. Fixture root overrides exist for
+//! BDD; production defaults are `/proc` and `/sys`.
 
 pub mod block_topology;
 pub mod cgroup;

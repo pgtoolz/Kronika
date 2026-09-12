@@ -179,8 +179,14 @@ if (collectionArgument) {
         assert.equal(selected.length, 1);
         assert.equal(selected[0].type_id, "1201003");
         assert.deepEqual(selected[0].values, ["/legacy-selected", "directory:selected", 1_000_000, 2]);
-        query.set("search", "path:legacy-earlier");
-        assert.equal(records(compare(`${name}-excluded-selected`, path, query.toString())).filter(row => row.record === "row").length, 0);
+        for (const prefix of ["", "text:", "q:", "path:"]) {
+          query.set("search", `${prefix}legacy-selected`);
+          const matching = records(compare(`${name}-${prefix || "plain"}-selected-search`, path, query.toString())).filter(row => row.record === "row");
+          assert.deepEqual(matching, selected, "search aliases retain the same physical legacy row");
+          query.set("search", `${prefix}legacy-earlier`);
+          const excluded = records(compare(`${name}-${prefix || "plain"}-excluded-selected`, path, query.toString())).filter(row => row.record === "row");
+          assert.equal(excluded.length, 0, "search does not revive an earlier legacy observation");
+        }
         const contextQuery = new URLSearchParams({ at: "1709164805000000", section: "os_cgroup_context", "where.cpu_path": "/legacy-selected", "where.cpu_identity": "directory:selected", "where.scope": "4" });
         for (const field of ["cpuset_cpus", "cpu_path", "cpu_identity"]) contextQuery.append("field", field);
         const selectedContext = records(compare(`${name}-selected-cpuset`, path, contextQuery.toString())).filter(row => row.record === "row");
@@ -228,6 +234,11 @@ if (collectionArgument) {
           assert.equal(found.length, resource === "io" ? 2 : 1);
           assert.ok(found.every(row => row.values[0] === searchedPath));
           assert.equal(new Set(found.map(identity)).size, found.length);
+          for (const prefix of ["", "text:", "q:"]) {
+            query.set("search", `${prefix}worker-010`);
+            const matching = records(compare(`${name}-${resource}-${prefix || "plain"}-search`, path, query.toString())).filter(row => row.record === "row");
+            assert.deepEqual(matching, found, `${resource}: plain, text, q and path searches return the same full-dataset rows`);
+          }
           if (resource === "io") {
             assert.deepEqual(new Set(found.map(row => JSON.stringify(row.values.slice(3).map(Number)))), new Set(["[8,0]", "[8,16]"]));
           }

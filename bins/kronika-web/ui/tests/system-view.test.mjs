@@ -628,10 +628,7 @@ test("the committed hour supplies only honest System metrics with complete histo
 
   const available = helpers.SYSTEM_METRICS.map((metric) => ({ metric, points: helpers.metricPoints(hour, metric) }))
     .filter(({ points }) => points.some((point) => point.value !== null && Number.isFinite(point.value)))
-  // The health card left with its duplicate; the fixture's own metrics remain.
   assert.ok(available.length >= 6, `available metrics: ${available.length}`)
-  // A resource owns its metrics now: load rides with the CPU, PSI with the
-  // resource it presses on.
   assert.deepEqual([...new Set(available.map(({ metric }) => metric.group))].sort(), ["cpu", "memory", "storage"])
 
   // Health is read from the top bar and the timeline lane; a metric card here
@@ -645,24 +642,17 @@ test("System is one ledger: rows expand in place and the chart lives on the page
     readFile(new URL("../src/system-view.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
   ])
-  // One operator question at a time inside a row: cgroup accounting stays
-  // dedicated, and Disk separates device I/O, filesystems and topology.
   assert.match(source, /disk: \["io", "filesystems", "topology"\]/)
-  // The container rail is the collector cgroup's own lanes, never a filter that leaves host lanes behind.
+  // Container timelines use the selected ancestor's recorded lanes.
   assert.match(source, /<Timeline cursor=\{cursor\} environment=\{environment\}/)
   assert.doesNotMatch(source, /lane\.startsWith\("pg_"\)/)
   assert.match(source, /EXACT_TIMELINE_METRIC_LANES[^\n]+\["cpu_busy", "cpu_stall", "memory"\]/)
   assert.doesNotMatch(source, /function groupLane/)
   assert.doesNotMatch(source, /function timelineLane/)
   assert.match(source, /if \(section === "storage"\)[\s\S]*mode === "filesystems"[\s\S]*\["os_mountinfo"\]/)
-  // The container scope is four real USE rows: each discloses its own cgroup
-  // table, CPU and I/O carry the cgroup activity ledgers, and nothing is
-  // force-opened or drawn as a card strip above the ledger.
   assert.match(source, /isContainerResource\(key\) \? \[sectionName\] : sectionEntities\(sectionName, mode\)/)
   assert.match(source, /onOpenRow=\{openRow\}/)
   assert.doesNotMatch(source, /ContainerCgroupOverview|cgroup-overview|openedContainer|afterCgroups/)
-  // The ledger is the page: expansion is disclosure, the group chart renders
-  // inline, and no machinery force-opens an Inspector to fake content.
   assert.match(source, /renderExpansion=\{renderExpansion\}/)
   assert.match(source, /<SystemGroupChart /)
   assert.doesNotMatch(source, /dismissedOverview|autoMetric|SystemDock|metric-choice|metric-grid/)

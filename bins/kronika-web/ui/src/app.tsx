@@ -406,10 +406,9 @@ function App({ locale, onLocale, t }: {
     ? undefined
     : initialPageOptions(denseRequest, pageContext, densePattern, relationFilters, denseRequest.section === "pg_stat_statements" ? statementScope.scope : undefined)
   const requestOrder = visibleSource === "processes" ? order ?? processTableDefaultOrder(lens) : order
-  const cgroupTargetGroups: readonly SnapshotRequestGroup[] = []
   const snapshotTarget = snapshotGroups.length === 0
     ? null
-    : snapshotTargetKey(snapshotGroups, cursor, cgroupTargetGroups, requestOrder, denseOptions)
+    : snapshotTargetKey(snapshotGroups, cursor, requestOrder, denseOptions)
   const retainsDenseRows = denseRequest !== undefined
     && currentSnapshot.cursor === cursor
     && currentSnapshot.denseSection === denseRequest.section
@@ -1241,7 +1240,6 @@ function initialPageOptions(
 function snapshotTargetKey(
   groups: readonly SnapshotRequestGroup[],
   cursor: number,
-  cgroupGroups: readonly SnapshotRequestGroup[],
   order: TableOrder | null,
   options: SnapshotOptions | undefined,
 ): string {
@@ -1256,7 +1254,6 @@ function snapshotTargetKey(
   return JSON.stringify([
     cursor,
     groups.map(keyed),
-    cgroupGroups.map(keyed),
     order === null ? null : [order.column, order.descending],
     options ?? null,
   ])

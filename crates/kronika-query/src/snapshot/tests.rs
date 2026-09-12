@@ -1457,5 +1457,6 @@ fn a_workload_scope_hides_collector_statements_and_counts_them() {
 mod cgroup_discovery;
 
 mod cgroup_resources;
+mod cgroup_search;
 
 mod cgroup_history;

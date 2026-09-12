@@ -9,7 +9,7 @@ use kronika_registry::{StrId, Ts};
 
 use super::model::{CgroupCpuRow, CgroupIoRow, CgroupMemoryRow, CgroupPidsRow};
 
-/// Convert selected ancestors to the new recorded context without changing V1.
+/// Build the selected-ancestor context; arrays use CPU, memory, I/O, PID order.
 #[must_use]
 pub const fn to_ancestor_context_section(
     selected: &super::AncestorContext,

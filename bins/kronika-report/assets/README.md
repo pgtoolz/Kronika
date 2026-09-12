@@ -27,8 +27,8 @@ The report compiles its embedded bytes and passes the resulting
 `WebAssembly.Module` to `initEmbedded`, which instantiates asynchronously.
 
 The raw generated WebAssembly is 10,198,201 bytes. Its committed gzip form is
-2,478,667 bytes with SHA-256
-`a34db2c06a1da9bdf6055797bf8d08f653684d3dd965eed28a83ddf52f00e98c`.
+2,478,660 bytes with SHA-256
+`d4c838debdf283f8e4ea5a4dadfb71f55953509aee8ef76e50d4fd71e6a158b3`.
 The 3,885-byte JavaScript binding has SHA-256
 `4635ae734e8c1e1aeb463ae1096f4fdc2a65d98e715b55cee9fe46956f29cba8`.
 

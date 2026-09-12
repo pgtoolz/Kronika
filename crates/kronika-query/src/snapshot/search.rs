@@ -2197,5 +2197,7 @@ const DATABASE_SEARCH_FIELDS: &[SearchField] = &[
     ),
 ];
 
-const CGROUP_SEARCH_FIELDS: &[SearchField] =
-    &[search_string("path", &["cgroup_path"], &["cgroup_path"])];
+const CGROUP_SEARCH_FIELDS: &[SearchField] = &[
+    search_string("text", &["q"], &["cgroup_path"]),
+    search_string("path", &["cgroup_path"], &["cgroup_path"]),
+];
