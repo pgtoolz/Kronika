@@ -4,7 +4,7 @@
 
 This reference maps recorded Linux measurements to their source files and read limits. Each data type occupies a section in a segment. OS type IDs occupy `1_100_001`–`1_299_999`; their exact fields are defined in the [registry](../../crates/kronika-registry/src/codec). Display calculations are explained in the [Linux reference](../metrics-linux.md). A cgroup is a Linux process group with shared resource accounting and limits.
 
-Each row carries `scope`, identifying the machine, pod or container whose resources it describes:
+Where present, `scope` identifies the machine, pod or container whose resources a row describes:
 
 | Code | Scope |
 | ---: | --- |
@@ -15,7 +15,7 @@ Each row carries `scope`, identifying the machine, pod or container whose resour
 | `4` | undetermined |
 
 CPU, memory, disks, mount points, and topology describe the node even when the
-collector runs inside a container. Network sections use `pod_net` in the collector's recorded container environment. Process rows use `container` inside a container and `host` otherwise. Workload cgroup sections are collected only in container environments.
+collector runs inside a container. Network sections use `pod_net` in the collector's recorded container environment. Process rows use `container` inside a container and `host` otherwise. Cgroup v2 discovery runs on machines and in containers; the selected ancestor rows serve the container resource charts.
 
 The filesystem roots are overridable with `KRONIKA_PROC_ROOT` (default
 `/proc`) and `KRONIKA_SYS_ROOT` (default `/sys`).
@@ -63,6 +63,11 @@ The filesystem roots are overridable with `KRONIKA_PROC_ROOT` (default
 | `1_204_001` | cgroup: pids | `snapshot_full` | `(cgroup_path, ts)` |
 | `1_205_001` | historical collector cgroup context | `snapshot_full` | `(ts)` |
 | `1_205_002` | selected ancestor context, identities and visible mount roots | `snapshot_full` | `(ts)` |
+| `1_206_001` | visible cgroup v2 directories, mount roots and parent identities | `snapshot_full` | `(cgroup_path, cgroup_identity, ts)` |
+| `1_207_001` | discovered cgroup v2 CPU accounting and limits | `snapshot_full` | `(cgroup_path, cgroup_identity, ts)` |
+| `1_208_001` | discovered cgroup v2 memory, limits and local/hierarchical events | `snapshot_full` | `(cgroup_path, cgroup_identity, ts)` |
+| `1_209_001` | discovered cgroup v2 threads, limits and event source | `snapshot_full` | `(cgroup_path, cgroup_identity, events_source, ts)` |
+| `1_210_001` | discovered cgroup v2 per-device I/O | `snapshot_full` | `(cgroup_path, cgroup_identity, major, minor, ts)` |
 
 Current collection requires cgroup v2. Without a visible v2 hierarchy, cgroup
 metrics and process mappings are unavailable; other enabled local sources continue.
@@ -79,17 +84,19 @@ cores. Limits describe the selected group and its readable ancestor constraints.
 Missing limits remain unknown; memory `max_unlimited` distinguishes a recorded
 unlimited value from a missing value. See the [Linux reference](../metrics-linux.md#container-cgroups).
 
-Separate workload rows use `1_201_001`, `1_202_001`, `1_203_002` and `1_204_001`.
-They cover unified cgroup v2 memberships named by live numeric `/proc/<pid>`
-entries, without scanning siblings. The primary group is recorded once.
-A tick accepts at most 512 distinct controller/path candidates and 512 KiB of
-candidate path bytes. Exceeding either ceiling omits all workload cgroup sections
-for that tick. More than 1,024 cgroup/device rows omits the complete workload I/O
-section while retaining the independently complete CPU, memory, and PIDs sections.
-Cgroup and process-to-cgroup collection each default to a 30-second cadence.
-The collector reuses the process pass's membership reads on that shared tick.
-Each valid per-device I/O counter is recorded independently; a missing byte or
-operation counter does not discard the other counters from that device row.
+All visible, readable cgroup v2 directories are recorded in `1_206_001`
+(`os_cgroup_v2_group`), with CPU, memory, threads and per-device I/O in
+`1_207_001`–`1_210_001`. Discovery includes empty and intermediate groups and
+visible cgroup2 mounts outside `/sys/fs/cgroup`, on machines and in containers.
+It runs at startup and every 30 seconds by default. Missing or invalid values
+remain null; an unlimited limit is recorded separately. Group and device
+counters can include descendants or lower layers and must not be added twice.
+See the [recorded fields and event scopes](../metrics-linux.md#container-cgroups).
+
+The built-in container charts use the selected ancestor rows described above,
+including `1_204_001` for its thread count. Earlier workload layouts remain
+readable. Each per-device I/O counter is independently optional.
+Process-to-cgroup mapping also defaults to 30 seconds.
 
 **Historical context `1_205_001`.** The following describes older recordings,
 including cgroup v1. It does not describe current ancestor selection.

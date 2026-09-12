@@ -2,9 +2,9 @@
 
 [Русская версия](INSTALL.ru.md) · [README](README.md)
 
-Use `kronika-collector` to record your machine and `kronika-web` to view its
-history in a browser. The archive also includes `kronika-dump` to inspect or
-extract part of a recording and `kronika-report` to create an HTML report.
+Use `kronika-collector` to record Linux or PostgreSQL metrics and `kronika-web`
+to view their history in a browser. The archive also includes `kronika-dump` to
+inspect or extract part of a recording and `kronika-report` to create an HTML report.
 
 Steps 1–2 install the binary archive. To compile the programs yourself, use
 the [source-build guide](docs/build.md), then return to [collector startup](#3-start-collector).

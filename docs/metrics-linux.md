@@ -230,8 +230,9 @@ substitute its child counters or host `/proc` values. A directory denied to the
 collector does not rule out another known accessible ancestor. Reads stay inside
 the visible mount and namespace; hidden parents cannot be read.
 
-A selected parent includes its children, including sidecars when the group is a
-pod. Parent counters are used once, without adding child counters. The visible
+The selected group includes its descendants, including sidecars when it is a pod.
+Which counters include descendants depends on the metric. Parent counters are
+used once, without adding child counters. The visible
 `/` is a mount/namespace boundary, not proof of a node or pod. Paths and identities
 show the actual observed group. Selecting an ancestor does not establish a common
 PID namespace or identify the PostgreSQL container.

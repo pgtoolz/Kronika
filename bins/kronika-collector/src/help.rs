@@ -13,7 +13,7 @@ EXAMPLES
   Linux recording:
     sudo env KRONIKA_STORAGE_DIR=/path/to/recording kronika-collector
 
-  PostgreSQL on the same Linux machine/VM, existing connection:
+  PostgreSQL on the same Linux machine/VM:
     sudo env KRONIKA_STORAGE_DIR=/path/to/recording \
       KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
       kronika-collector
@@ -34,7 +34,8 @@ OPTIONAL COLLECTION MODE
   KRONIKA_COLLECTOR_MODE   default local; local or postgresql
       local: Linux metrics and optional PostgreSQL on the recorded machine.
       postgresql: PostgreSQL only, local or remote; requires KRONIKA_PG_DSNS.
-      No local Linux, process, cgroup, or host identity reads. No root required.
+      In postgresql mode: no Linux, process, cgroup, or host identity reads.
+      No root required in postgresql mode.
       PgBouncer log settings are not accepted in postgresql mode.
 
 OPTIONAL POSTGRESQL AND LOG ENVIRONMENT (all unset by default)

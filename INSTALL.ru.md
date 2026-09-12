@@ -3,7 +3,7 @@
 [English version](INSTALL.md) · [README](README.ru.md)
 
 Для записи и просмотра истории нужны две программы: `kronika-collector`
-собирает данные о машине, а `kronika-web` показывает их в браузере.
+собирает метрики Linux или PostgreSQL, а `kronika-web` показывает их в браузере.
 В архиве также есть `kronika-dump` для чтения и вырезания части записи и
 `kronika-report` для создания HTML-отчёта.
 

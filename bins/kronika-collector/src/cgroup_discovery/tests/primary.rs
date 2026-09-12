@@ -136,8 +136,8 @@ fn sample(root: &Path, denied: bool, observation: i64, devices: u32) {
         ("pids.max", "32\n".to_owned()),
         ("pids.events.local", "max 0\n".to_owned()),
     ];
-    for (name, content) in contents {
-        write(root, &format!("{group}/{name}"), &content);
+    for (name, content) in &contents {
+        write(root, &format!("{group}/{name}"), content);
     }
     for resource in ["cpu", "memory", "io"] {
         write(
@@ -159,6 +159,16 @@ fn sample(root: &Path, denied: bool, observation: i64, devices: u32) {
         .expect("I/O row");
     }
     write(root, &format!("{group}/io.stat"), &io);
+    if denied {
+        for child in ["nested", "nested/deeper"] {
+            for (name, content) in &contents {
+                write(root, &format!("{group}/{child}/{name}"), content);
+            }
+            write(root, &format!("{group}/{child}/io.stat"), &io);
+            permissions(&root.join(format!("{group}/{child}")), 0o755);
+        }
+        permissions(&root.join(group), 0o755);
+    }
 }
 
 fn scenario(root: &Path, denied: bool) {
@@ -209,8 +219,11 @@ fn scenario(root: &Path, denied: bool) {
             Some(150_000)
         );
         assert_eq!(pass.selected.context.effective_memory_max, Some(1_000_000));
-        assert_eq!(pass.stats.groups, 1);
-        assert_eq!(pass.stats.io_rows, devices as usize);
+        assert_eq!(pass.stats.groups, if denied { 3 } else { 1 });
+        assert_eq!(
+            pass.stats.io_rows,
+            devices as usize * if denied { 3 } else { 1 }
+        );
         assert_eq!(pass.charged_devices.len(), devices as usize);
         if denied {
             assert!(pass.stats.skipped_directories > 0);
@@ -241,6 +254,9 @@ fn scenario(root: &Path, denied: bool) {
     let identity = selected_identity.expect("selected identity");
     check_sources(&storage, &identity);
     check_consumers(&storage, first, first + 30_000_000, devices);
+    if denied {
+        check_descendants(&storage, first, devices);
+    }
     eprintln!(
         "primary_context_fixture=EXECUTED uid={} denied_parent={} observations=2 devices={} closed_segments={written}",
         rustix::process::geteuid().as_raw(),
@@ -354,6 +370,73 @@ fn check_sources(storage: &Path, expected_identity: &str) {
             }
         }
     }
+}
+
+fn check_descendants(storage: &Path, first: i64, devices: u32) {
+    let reader = Reader::open(storage).expect("discovered descendants");
+    let mut counts = BTreeMap::<(u32, i64, String), usize>::new();
+    let mut identities = BTreeMap::new();
+    let mut parents = BTreeMap::new();
+    for unit in reader.segments(..).expect("segments").segments {
+        let segment = reader.open_segment(&unit).expect("recorded discovery");
+        for (type_id, field) in [
+            (1_206_001, None),
+            (1_207_001, Some("usage_usec")),
+            (1_208_001, Some("current")),
+            (1_209_001, Some("current")),
+            (1_210_001, Some("rbytes")),
+        ] {
+            if segment.rows_of(type_id).is_none() {
+                continue;
+            }
+            for row in segment.rows(type_id).expect("discovered resource rows") {
+                let Some(Cell::Ts(ts)) = row.get("ts") else {
+                    panic!("sample timestamp")
+                };
+                let observation = (*ts - first) / 30_000_000 + 1;
+                assert!((1..=2).contains(&observation));
+                let path = resolved(&segment, &row, "cgroup_path");
+                assert!(["/work", "/work/nested", "/work/nested/deeper"].contains(&path.as_str()));
+                *counts.entry((type_id, *ts, path.clone())).or_default() += 1;
+                if let Some(field) = field {
+                    let expected = match type_id {
+                        1_207_001 => observation * 1_000_000,
+                        1_209_001 => 3,
+                        _ => observation * 100,
+                    };
+                    assert_eq!(row.get(field), Some(&Cell::I64(expected)));
+                } else {
+                    identities.insert(
+                        (*ts, path.clone()),
+                        resolved(&segment, &row, "cgroup_identity"),
+                    );
+                    if path != "/work" {
+                        parents.insert((*ts, path), resolved(&segment, &row, "parent_identity"));
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(counts.len(), 5 * 3 * 2);
+    for ((type_id, _, _), count) in counts {
+        assert_eq!(
+            count,
+            if type_id == 1_210_001 {
+                devices as usize
+            } else {
+                1
+            }
+        );
+    }
+    for ((ts, path), parent) in parents {
+        assert_eq!(
+            parent,
+            identities[&(ts, path.rsplit_once('/').expect("parent path").0.to_owned())]
+        );
+    }
+    eprintln!(
+        "fallback_descendants=PASSED groups=3 observations=2 scalar_types=3 io_devices_per_group={devices} primary_once=true"
+    );
 }
 
 #[derive(Default)]

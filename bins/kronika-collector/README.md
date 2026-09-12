@@ -49,14 +49,14 @@ files hourly to include new indexes created by web.
 ### Collection mode
 
 `KRONIKA_COLLECTOR_MODE=local` is the default: Linux metrics and optional local
-PostgreSQL. PostgreSQL must share the recorded machine and PID namespace for
-process links. In containers, the collected cgroup can include other containers;
-it does not establish shared PostgreSQL processes or CPU capacity.
+PostgreSQL. Process links require PostgreSQL to run on the same machine and in
+the same PID namespace as the collector. In containers, the selected cgroup can
+include other containers; its metrics do not establish PostgreSQL process
+identity or CPU capacity.
 
-`KRONIKA_COLLECTOR_MODE=postgresql` records only PostgreSQL from a local or
-remote server. It does not read
-procfs/sysfs, host identity, Linux processes or cgroups. `KRONIKA_PG_DSNS` is
-required. Root access is unnecessary; the process needs network and storage
+`KRONIKA_COLLECTOR_MODE=postgresql` records only PostgreSQL data from a local or
+remote server. It does not read procfs/sysfs, host identity, Linux processes or
+cgroups. `KRONIKA_PG_DSNS` is required. Root access is unnecessary; the process needs network and storage
 access. Explicit `KRONIKA_PG_LOGS` paths are optional. PgBouncer log settings are
 not accepted in this mode. OS intervals do not apply.
 
@@ -220,8 +220,8 @@ timeouts, slow queries, fetch/encoding/WAL times, encoded/appended bytes and
 
 ## Log collection
 
-In `postgresql` mode, SQL paths are not opened locally. Only explicit
-`KRONIKA_PG_LOGS` paths are read; remote files are not downloaded.
+In `postgresql` mode, only log files explicitly listed in `KRONIKA_PG_LOGS`
+are read. Paths returned by SQL are not used; remote files are not downloaded.
 
 In `local` mode, for every `KRONIKA_PG_DSNS` entry, discovery reads `pg_current_logfile()`,
 `data_directory` and `log_line_prefix`. This runs even when `KRONIKA_PG_LOGS`

@@ -82,37 +82,26 @@ fn walk(
         .collect::<HashSet<_>>();
     let mut seen = HashSet::new();
     let mut stats = primary.stats.clone();
-    for mount in exposed {
-        let root = rustix::fs::open(&mount.point, directory_flags(), Mode::empty())
-            .map(File::from)
-            .map_err(io::Error::from);
+    let mut traverse = |root: io::Result<File>, path: String, mount: &Mount| -> io::Result<()> {
         let root = match root {
             Ok(root) => root,
             Err(error) => {
                 stats.directory_error(&mount.base, &error);
-                continue;
+                return Ok(());
             }
         };
         let root_device = match root.metadata() {
             Ok(metadata) => metadata.dev(),
             Err(error) => {
                 stats.directory_error(&mount.base, &error);
-                continue;
+                return Ok(());
             }
         };
         let Some(frame) = visit(
-            root,
-            "/".to_owned(),
-            None,
-            &mount,
-            ts,
-            &mut seen,
-            &mut stats,
-            primary,
-            &mut emit,
+            root, path, None, mount, ts, &mut seen, &mut stats, primary, &mut emit,
         )?
         else {
-            continue;
+            return Ok(());
         };
         let mut stack = vec![frame];
         while let Some(parent) = stack.last_mut() {
@@ -167,7 +156,7 @@ fn walk(
                 directory,
                 path,
                 parent_identity,
-                &mount,
+                mount,
                 ts,
                 &mut seen,
                 &mut stats,
@@ -177,19 +166,16 @@ fn walk(
                 stack.push(frame);
             }
         }
+        Ok(())
+    };
+    for mount in exposed {
+        let root = rustix::fs::open(&mount.point, directory_flags(), Mode::empty())
+            .map(File::from)
+            .map_err(io::Error::from);
+        traverse(root, "/".to_owned(), &mount)?;
     }
     if let Some((directory, path, mount)) = &primary.target {
-        drop(visit(
-            directory.try_clone()?,
-            path.clone(),
-            None,
-            mount,
-            ts,
-            &mut seen,
-            &mut stats,
-            primary,
-            &mut emit,
-        )?);
+        traverse(Ok(directory.try_clone()?), path.clone(), mount)?;
     }
     Ok(stats)
 }
@@ -275,13 +261,14 @@ fn visit(
     emit(DiscoveryRow::Group(&group))?;
     stats.groups += 1;
     read::io(&directory, &group, stats, emit)?;
-    let entries = match Dir::read_from(&directory) {
-        Ok(entries) => entries,
-        Err(error) => {
-            stats.directory_error(&path, &io::Error::from(error));
-            return Ok(None);
-        }
-    };
+    let entries =
+        match openat(&directory, c".", directory_flags(), Mode::empty()).and_then(Dir::new) {
+            Ok(entries) => entries,
+            Err(error) => {
+                stats.directory_error(&path, &io::Error::from(error));
+                return Ok(None);
+            }
+        };
     Ok(Some(Frame {
         directory,
         entries,
