@@ -132,7 +132,7 @@ compare(
 
 
 if (collectionArgument) {
-  for (const name of ["postgresql-unknown", "postgresql-explicit", "selected-cgroup", "separated-controllers"]) {
+  for (const name of ["postgresql-unknown", "postgresql-explicit", "selected-cgroup", "separated-controllers", "all-cgroups"]) {
     session.free();
     nativeFixtureDirectory = resolve(collectionArgument, name);
     const [fixtureZms, fixtureIdx, sourceText, html] = await Promise.all([
@@ -171,6 +171,33 @@ if (collectionArgument) {
       const row = metadata.find(row => row.record === "row");
       assert.deepEqual(row.values, [null, false, false]);
     } else {
+      if (name === "all-cgroups") {
+        const at = "1709164805000000";
+        for (const [resource, field] of [["cpu", "usage_usec"], ["memory", "current"], ["pids", "current"], ["io", "rbytes"]]) {
+          const path = `/api/segments/${SEGMENT_ID}/snapshot`;
+          const query = new URLSearchParams({ at, section: `os_cgroup_v2_${resource}`, by: field, direction: "desc", page_size: "20" });
+          query.append("field", "cgroup_path");
+          query.append("field", field);
+          const first = records(compare(`all-groups-${resource}-first-page`, path, query.toString()));
+          const firstRows = first.filter(row => row.record === "row");
+          assert.equal(firstRows.length, 20);
+          if (resource === "cpu" || resource === "io") {
+            assert.equal(firstRows[0].values[0], "/visible/jobs/worker-258", "rate ordering differs from lifetime-counter ordering");
+            assert.equal(Number(firstRows[0].values[1]), resource === "cpu" ? 2_630_000 : 4_688_183_296);
+          }
+          const cursor = first.find(row => row.record === "snapshot_page")?.next_cursor;
+          assert.equal(typeof cursor, "string", `${resource}: populated table has another page`);
+          query.set("cursor", cursor);
+          assert.equal(records(compare(`all-groups-${resource}-next-page`, path, query.toString())).filter(row => row.record === "row").length, 20);
+          query.delete("cursor");
+          query.set("search", 'path:"/visible/jobs/worker-258"');
+          const found = records(compare(`all-groups-${resource}-path-search`, path, query.toString())).filter(row => row.record === "row");
+          assert.equal(found.length, resource === "io" ? 2 : 1);
+          assert.ok(found.every(row => row.values[0] === "/visible/jobs/worker-258"));
+        }
+        const partial = records(compare("all-groups-partial-observation", `/api/segments/${SEGMENT_ID}/snapshot`, "at=1709164803000000&section=os_cgroup_v2_cpu&field=cgroup_path"));
+        assert.equal(partial.filter(row => row.record === "row").length, 262);
+      }
       if (name === "selected-cgroup") {
         for (const section of ["group", "cpu", "memory", "pids", "io"]) {
           const rows = records(compare(`discovered-${section}`, `/api/segments/${SEGMENT_ID}/sections/os_cgroup_v2_${section}/rows`, "")).filter(row => row.record === "row");

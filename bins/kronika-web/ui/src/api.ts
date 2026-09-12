@@ -931,6 +931,14 @@ export function recordedLayouts(segments: readonly SegmentBound[], logicalName: 
     .map((section) => section.typeId)))
 }
 
+export function cgroupLegacySection(section: string): string | null {
+  return /^os_cgroup_v2_(cpu|memory|io|pids)$/.test(section) ? section.replace("_v2_", "_") : null
+}
+
+function matchesSnapshotSection(requested: string, actual: string): boolean {
+  return requested === actual || cgroupLegacySection(requested) === actual
+}
+
 export function snapshotRequestGroups(
   segments: readonly SegmentBound[],
   at: number,
@@ -946,7 +954,7 @@ export function snapshotRequestGroups(
   }
   for (const request of requests) {
     const matching = eligible.flatMap((segment) => segment.sections
-      .filter((section) => section.logicalName === request.section && requestAcceptsLayout(request, section.typeId))
+      .filter((section) => matchesSnapshotSection(request.section, section.logicalName) && requestAcceptsLayout(request, section.typeId))
       .map((section) => ({ segment, typeId: section.typeId })))
     if (matching.length === 0) continue
     if (request.pageSize !== undefined || request.group !== undefined) {
@@ -1010,7 +1018,7 @@ export function requestsForSegment(
 ): readonly SectionRequest[] {
   return requests.flatMap((request) => {
     const typeIds = segment.sections
-      .filter((section) => section.logicalName === request.section)
+      .filter((section) => matchesSnapshotSection(request.section, section.logicalName))
       .map((section) => section.typeId)
       .filter((typeId) => request.typeId === undefined || request.typeId === typeId)
       .filter((typeId) => request.typeIds === undefined || request.typeIds.includes(typeId))
@@ -1272,7 +1280,8 @@ export async function loadSnapshot(
         throw new Error(`row for layout ${typeId} arrived before its layout`)
       }
       const { columns, logicalName } = layout
-      const rows = grouped[logicalName] ?? []
+      const requestedName = requests.find((request) => matchesSnapshotSection(request.section, logicalName))?.section ?? logicalName
+      const rows = grouped[requestedName] ?? []
       rows.push({
         segmentId: requiredText(record.segment_id, "row segment id"),
         logicalName,
@@ -1281,7 +1290,7 @@ export async function loadSnapshot(
         timestamp: record.timestamp === null ? at : integer(record.timestamp, "row timestamp"),
         values: rowValues(columns, values),
       })
-      grouped[logicalName] = rows
+      grouped[requestedName] = rows
     } else if (record.record === "snapshot_page") {
       const logicalName = requiredText(record.logical_name, "snapshot page logical name")
       if ((record.order_direction !== "asc" && record.order_direction !== "desc")

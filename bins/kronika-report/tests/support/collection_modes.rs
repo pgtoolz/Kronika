@@ -8,6 +8,8 @@ use kronika_registry::pg_stat_activity::PgStatActivityV3;
 use kronika_registry::{StrId, Ts};
 use kronika_writer::{Interner, Journal, JournalConfig, SectionBuffers, dict, write_segment};
 
+#[path = "collection_modes/all_groups.rs"]
+mod all_groups;
 #[path = "collection_modes/discovery.rs"]
 mod discovery;
 
@@ -19,6 +21,7 @@ pub(super) enum Collection {
     Postgresql(Option<u32>),
     Cgroup,
     SeparatedControllers,
+    AllCgroups,
 }
 
 #[expect(
@@ -56,7 +59,6 @@ pub(super) fn encoded(collection: Collection) -> Vec<u8> {
             .expect("backend type")
             .get(),
     );
-    let dictionary = dict::encode(interner.window()).expect("dictionary");
     let mut buffers = SectionBuffers::new();
     let os = !matches!(collection, Collection::Postgresql(_));
     buffers
@@ -75,7 +77,9 @@ pub(super) fn encoded(collection: Collection) -> Vec<u8> {
             postgresql_interval_seconds: 30,
             postgresql_effective_cpus: match collection {
                 Collection::Postgresql(capacity) => capacity,
-                Collection::Cgroup | Collection::SeparatedControllers => None,
+                Collection::Cgroup | Collection::SeparatedControllers | Collection::AllCgroups => {
+                    None
+                }
             },
         })
         .expect("metadata");
@@ -108,8 +112,10 @@ pub(super) fn encoded(collection: Collection) -> Vec<u8> {
                     .expect("PostgreSQL activity");
             }
         }
-        Collection::Cgroup | Collection::SeparatedControllers => {
-            if !separated {
+        Collection::Cgroup | Collection::SeparatedControllers | Collection::AllCgroups => {
+            if matches!(collection, Collection::AllCgroups) {
+                all_groups::push(&mut buffers, &mut interner, label, first, second);
+            } else if !separated {
                 discovery::push(&mut buffers, label, first);
             }
             for (offset, usage, quota, identity) in [
@@ -189,6 +195,7 @@ pub(super) fn encoded(collection: Collection) -> Vec<u8> {
             }
         }
     }
+    let dictionary = dict::encode(interner.window()).expect("dictionary");
     let part = buffers
         .flush(&dictionary)
         .expect("encode rows")

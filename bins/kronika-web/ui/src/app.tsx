@@ -83,10 +83,10 @@ import { apiFetch, bootstrapSession, getSessionSnapshot, logout, subscribeSessio
 import { activityForProcess, hasPostgresTelemetry, postgresProcessesShared, recordedLinuxEnabled } from "./source-availability"
 import type { RelatedNavigation } from "./statement-navigation"
 import {
-  CGROUP_SNAPSHOT_REQUESTS,
+  cgroupTableRequest,
+  cgroupTableSection,
   SYSTEM_REQUESTS,
   SystemView,
-  cgroupSnapshotPlan,
   recordedEnvironment,
 } from "./system-view"
 import { beginSnapshotRequest, READY_SNAPSHOT_REQUEST, settleSnapshotRequest, snapshotRowsVisible, tableRequestPhase, visibleSnapshotRequest, type SnapshotRequestState } from "./table-request"
@@ -343,7 +343,7 @@ function App({ locale, onLocale, t }: {
   const viewKey = pgSection === "statements" && visibleSource === "postgresql"
     ? `${baseViewKey}:${statementLens}`
     : pgSection === "plans" && visibleSource === "postgresql" ? `${baseViewKey}:${planLens}` : baseViewKey
-  const foregroundView = visibleSource === "processes"
+  const foregroundView = visibleSource === "host" && cgroupTableSection(systemMetric) !== null ? `${viewKey}:${cgroupTableSection(systemMetric)}` : visibleSource === "processes"
     ? `${viewKey}:${lens}`
     : activeRelation ? `${viewKey}:${activeRelationLens}:${relationLevel}` : viewKey
   const foregroundKey = `${hour ?? "pending"}:${foregroundView}`
@@ -352,7 +352,9 @@ function App({ locale, onLocale, t }: {
     foregroundReadyKey.current = foregroundKey
     setBackgroundReadyHour(hour)
   }, [foregroundKey, hour, visibleSource])
+  const activeCgroupSection = visibleSource === "host" ? cgroupTableSection(systemMetric) : null
   const viewRequests = useMemo(() => {
+    if (visibleSource === "host" && activeCgroupSection !== null) return [...(VIEW_REQUESTS.host ?? []), cgroupTableRequest(activeCgroupSection)]
     if (visibleSource === "processes") return [
       ...TIMELINE_REQUESTS,
       processRequest(lens),
@@ -370,7 +372,7 @@ function App({ locale, onLocale, t }: {
       return [...TIMELINE_REQUESTS, relationRequest(relationSectionOf(pgSection), activeRelationLens, relationLevel), ...POSTGRESQL_CONTEXT_REQUESTS]
     }
     return VIEW_REQUESTS[baseViewKey] ?? []
-  }, [activeRelation, activeRelationLens, baseViewKey, lens, pgSection, planLens, relationLevel, statementLens, visibleSource])
+  }, [activeCgroupSection, activeRelation, activeRelationLens, baseViewKey, lens, pgSection, planLens, relationLevel, statementLens, visibleSource])
   const [segments, setSegments] = useState<readonly SegmentBound[]>([])
   const densePattern = viewRequests.some((request) => request.pageSize !== undefined) ? find.trim() : ""
   const denseCandidate = viewRequests.find((request) => request.pageSize !== undefined)
@@ -404,9 +406,7 @@ function App({ locale, onLocale, t }: {
     ? undefined
     : initialPageOptions(denseRequest, pageContext, densePattern, relationFilters, denseRequest.section === "pg_stat_statements" ? statementScope.scope : undefined)
   const requestOrder = visibleSource === "processes" ? order ?? processTableDefaultOrder(lens) : order
-  const cgroupTargetGroups = visibleSource === "host" && timelineData.availableSections.some((name) => name.startsWith("os_cgroup"))
-    ? snapshotRequestGroups(segments, cursor, CGROUP_SNAPSHOT_REQUESTS)
-    : []
+  const cgroupTargetGroups: readonly SnapshotRequestGroup[] = []
   const snapshotTarget = snapshotGroups.length === 0
     ? null
     : snapshotTargetKey(snapshotGroups, cursor, cgroupTargetGroups, requestOrder, denseOptions)
@@ -557,7 +557,6 @@ function App({ locale, onLocale, t }: {
   const cursorState = visibleSnapshotRequest(snapshotRequest, snapshotTarget)
   const currentTableRequest = tableRequestPhase(cursorState, densePageState)
   const snapshotGeneration = useRef(0)
-  const cgroupSnapshotKey = useRef<string | null>(null)
   const densePage = useRef<{
     failed: string | undefined
     load: (cursor?: string) => void
@@ -580,7 +579,6 @@ function App({ locale, onLocale, t }: {
     } else if (denseSurface === null || !denseSearchValid) {
       setSearchRequest(IDLE_SEARCH_REQUEST)
     }
-    cgroupSnapshotKey.current = null
     const completesRefresh = refreshAwaitingSnapshot.current
     densePage.current = null
     if (hour === null) {
@@ -608,31 +606,7 @@ function App({ locale, onLocale, t }: {
     setDensePageState(denseRequest === undefined ? "idle" : "loading")
     const controller = new AbortController()
     const stale = () => controller.signal.aborted || generation !== snapshotGeneration.current
-    const loadOrdinarySnapshot = async (ordinary: readonly SnapshotRequestGroup[]): Promise<HourData> => {
-      const primary = await loadSnapshotGroups(ordinary, cursor, controller.signal, requestOrder ?? undefined)
-      if (stale() || cgroupTargetGroups.length === 0) return primary
-      const plans = cgroupTargetGroups.map((group) => ({
-        anchor: group.anchor,
-        plan: cgroupSnapshotPlan(group.anchor.id, cursor, primary, group.requests),
-      }))
-      const planKey = JSON.stringify(plans.map(({ anchor, plan }) => [anchor.id, plan.key]))
-      cgroupSnapshotKey.current = planKey
-      const exact = await Promise.all(plans.flatMap(({ anchor, plan }) => plan.loads.map(({ filters, request }) => loadSnapshot(
-        anchor.id,
-        cursor,
-        [request],
-        controller.signal,
-        undefined,
-        { filters },
-      ).catch((reason: unknown) => {
-        if (!stale() && cgroupSnapshotKey.current === planKey) {
-          console.error(`kronika: filtered ${request.section} snapshot failed`, reason)
-        }
-        return EMPTY_DATA
-      }))))
-      if (stale() || cgroupSnapshotKey.current !== planKey) return primary
-      return exact.reduce((current, incoming) => mergeSnapshotData(current, incoming), primary)
-    }
+    const loadOrdinarySnapshot = (ordinary: readonly SnapshotRequestGroup[]): Promise<HourData> => loadSnapshotGroups(ordinary, cursor, controller.signal, requestOrder ?? undefined)
     const timer = setTimeout(() => {
       if (denseLoad === undefined) {
         void loadOrdinarySnapshot(ordinaryGroups)
@@ -712,7 +686,7 @@ function App({ locale, onLocale, t }: {
             if (completesRefresh && pageCursor === undefined) finishRefresh(false)
             console.error("kronika: snapshot page failed", reason)
           }
-          if (pageCursor === undefined && visibleSource === "processes") {
+          if (pageCursor === undefined && (visibleSource === "processes" || activeCgroupSection !== null)) {
             void page.then((incoming) => {
               loaded(incoming, null, ordinaryGroups.length !== 0)
               void base.then((companion) => {
@@ -899,7 +873,7 @@ function App({ locale, onLocale, t }: {
     }
     return sharedNavigationTimestamps
   }, [data.activities, data.processes, data.sections.pg_stat_progress_vacuum, hour, pgSection, processHistory.value, processSummary.history, processSummary.hour, sharedNavigationTimestamps, visibleSource])
-  const activeSearchSurface = searchSurfaceForLocation(source, pgSection)
+  const activeSearchSurface = source === "host" && activeCgroupSection !== null ? searchSurfaceForSection(activeCgroupSection) : searchSurfaceForLocation(source, pgSection)
   const visibleSearchRequest = searchRequestForSurface(searchRequest, activeSearchSurface)
   const applyFind = useCallback((next: string) => {
     if (next === find) return
@@ -1170,7 +1144,7 @@ function App({ locale, onLocale, t }: {
       {!loading && error === null && hour !== null && <MobileControls filtered={find !== ""} onOpenChart={openChart} onSearch={setMobileSearch} searchOpen={mobileSearch} t={t} />}
       {loading && <HourSkeleton locale={locale} progress={loadProgress} t={t} />}
       {!loading && error !== null && <StateCard message={t("status.error")} />}
-      {!loading && error === null && hour !== null && visibleSource === "host" && <SystemView environment={environment} context={context} contextRow={contextRow} cursor={cursor} data={data} focus={systemFocus} historyRevision={refreshVersion} hour={hour} locale={locale} metric={systemMetric} navigationTimestamps={navigationTimestamps} onContextClear={clearEntityContext} onCursor={chooseCursor} onFinding={selectFinding} onMetric={setSystemMetric} onOpenChart={openChart} onPreview={previewClock} onSelectedKey={selectDetailKey} onSelectedLane={setTimelineLane} requestPhase={currentTableRequest} selectedKey={selectedKey} selectedLane={timelineLane} t={t} />}
+      {!loading && error === null && hour !== null && visibleSource === "host" && <SystemView segmentId={denseLoad?.anchor.id} densePageState={densePageState} metadata={denseMetadata} onLoadMore={loadMoreDense} onRetry={retryDense} onOrder={setOrder} onPattern={applyFind} order={order ?? undefined} pattern={find} searchRequest={visibleSearchRequest} environment={environment} context={context} contextRow={contextRow} cursor={cursor} data={data} focus={systemFocus} historyRevision={refreshVersion} hour={hour} locale={locale} metric={systemMetric} navigationTimestamps={navigationTimestamps} onContextClear={clearEntityContext} onCursor={chooseCursor} onFinding={selectFinding} onMetric={(next) => { if (cgroupTableSection(next) !== cgroupTableSection(systemMetric)) { setOrder(null); setFind(""); setSelectedKey(null) }; setSystemMetric(next) }} onOpenChart={openChart} onPreview={previewClock} onSelectedKey={selectDetailKey} onSelectedLane={setTimelineLane} requestPhase={currentTableRequest} selectedKey={selectedKey} selectedLane={timelineLane} t={t} />}
       {!loading && error === null && hour !== null && visibleSource === "processes" && <>
         <Timeline cursor={cursor} environment={environment} findings={data.findings} health={data.health} hour={hour} lanePoints={data.lanePoints} locale={locale} navigationTimestamps={navigationTimestamps} onCursor={chooseCursor} onFinding={selectFinding} onOpenChart={openChart} onPreview={previewClock} onSelectedLane={setTimelineLane} primaryLane={timelinePrimary} selectedLane={timelineLane} t={t} />
         <div className="lensbar !mt-0 border-t-0">

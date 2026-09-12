@@ -28,10 +28,6 @@ export interface UseResource {
   readonly errors: UseCell | null
 }
 
-// The container rows describe the collector's own cgroup, the scope the
-// recording runs in. Their lanes come from `os_cgroup_*` rows selected by the
-// exact membership paths and from the pressure of that cgroup; a host CPU count
-// or host `/proc` value never stands in for them.
 export const USE_RESOURCES: readonly UseResource[] = [
   {
     key: "cgroup_cpu",
@@ -138,7 +134,7 @@ export function UseTable({
   // readings, group metrics or entity tables. Cells without a lane stay "—".
   const byLane = useMemo(() => lanePointsByLane(lanePoints), [lanePoints])
   const shown = useMemo(() => USE_RESOURCES.filter((resource) =>
-    (containerScopes || !isContainerResource(resource.key))
+    (containerScopes || !isContainerResource(resource.key) || withContent.has(resource.key))
     && (visibleResources === undefined || visibleResources.has(resource.key))
     && (withContent.has(resource.key) || USE_COLUMNS.some((column) => resolveCell(resource, column, byLane) !== null))), [byLane, containerScopes, visibleResources, withContent])
   const resourceLabel = (key: UseResourceKey) => t(containerScopes && key === "network" ? "use.resource.namespace_network" : `use.resource.${key}`)

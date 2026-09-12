@@ -213,7 +213,18 @@ include children, and devices may be stacked: neither set is added together.
 A recreated directory starts a separate counter history.
 
 The rows from each cgroup pass share an observation timestamp.
-Container resource charts show the selected ancestor described below.
+Host → Cgroups shows the recorded groups in CPU, Memory, I/O and Tasks tables.
+Search and sorting cover the matching rows before pagination. Each resource
+uses its latest observation at or before the cursor; at equal times, all-group
+records take precedence over older layouts. Missing fields remain unavailable.
+I/O keeps each group and device separate. Group limits are its own recorded
+limits, not the selected ancestor's capacity. History follows the recorded
+directory identity; a recreated path does not continue the old counters.
+Throttled periods are `100 × Δnr_throttled / Δnr_periods`, not lost CPU capacity.
+Throttling time, local OOM kills and PID failures show their counter differences
+over the observed interval. Missing predecessors, counter decreases or a changed
+directory/event-source identity leave these differences unavailable.
+The container overview and its resource charts show the selected ancestor described below.
 PSI comes from the host on a machine or the selected ancestor in a container.
 Available cgroup CPU `full` fields are recorded; system CPU `full` remains undefined.
 

@@ -201,7 +201,10 @@ fn output_names(
 /// Filters are typed against every `known` layout, so the error does not depend
 /// on what the segment recorded; a recorded layout without the column matches
 /// nothing.
-fn validate_filters(known: &[&'static TypeContract], filters: &[Filter]) -> Result<(), QueryError> {
+pub(crate) fn validate_filters(
+    known: &[&'static TypeContract],
+    filters: &[Filter],
+) -> Result<(), QueryError> {
     for filter in filters {
         let carried = known.iter().try_fold(false, |seen, contract| {
             typed_filter(contract, filter).map(|typed| seen | typed.is_some())

@@ -1,13 +1,12 @@
 import { registry } from "kronika:registry"
-import { CgroupActivity } from "./activity"
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 
-import { fieldNameForLocator, loadSeries, resolveLocator, type Cell, type DataRow, type Finding, type HourData, type Point, type SectionRequest } from "./api"
+import { fieldNameForLocator, loadSeries, loadSnapshot, resolveLocator, type Cell, type DataRow, type Finding, type HourData, type Point, type SectionRequest, type SnapshotRows } from "./api"
 import { buildMetricSamples } from "./chart"
 import { blockParents, cgroupDeviceChain, cgroupDeviceKey, cgroupDevicePresentation, cgroupDevicePrimary, cgroupDeviceSecondary, type CgroupDevicePresentation, type CgroupMountAssociation } from "./cgroup-device"
 import { contextualRows, type EntityContext } from "./entity-context"
 import { DetailList, DetailRow } from "./detail-list"
-import { cellAriaValue, detailValueRoleForColumn, EntityTable, type EntityColumn } from "./entity-table"
+import { cellAriaValue, detailValueRoleForColumn, EntityTable, type EntityColumn, type TableOrder } from "./entity-table"
 import { LabelHelp, type Translate } from "./help"
 import { useHistoryRequest } from "./history-request"
 import { InspectorChartPortal, InspectorPortal } from "./inspector"
@@ -16,6 +15,8 @@ import { readingAt, SeriesChart, type ChartPoint } from "./series-chart"
 import { SparkCell } from "./spark-cell"
 import { sparkScaleMax } from "./spark"
 import { Timeline } from "./timeline"
+import type { SearchRequestState } from "./search-request"
+import type { SearchSurface } from "./search"
 import { TableRequestPlaceholder, type TableRequestPhase } from "./table-request"
 import { UPlotChart, type RecordedSeries } from "./uplot-chart"
 import { UseTable, isContainerResource, type LedgerKey, type UseResourceKey } from "./use-table"
@@ -91,16 +92,6 @@ export interface MetricHistoryRequest {
 export interface EntityHistoryRequest extends MetricHistoryRequest {
   readonly key: string
   readonly typeId: string
-}
-
-export interface CgroupSnapshotLoad {
-  readonly filters: Readonly<Record<string, string>>
-  readonly request: SectionRequest
-}
-
-export interface CgroupSnapshotPlan {
-  readonly key: string
-  readonly loads: readonly CgroupSnapshotLoad[]
 }
 
 export const SYSTEM_METRICS: readonly MetricSpec[] = [
@@ -326,6 +317,59 @@ export const SYSTEM_ENTITIES: readonly {
   },
 ]
 
+export const CGROUP_TABLE_SECTIONS = ["os_cgroup_v2_cpu", "os_cgroup_v2_memory", "os_cgroup_v2_io", "os_cgroup_v2_pids"] as const
+
+export function cgroupTableSection(metric: string | null): string | null {
+  const resource = metric?.split(".")[0]
+  return resource !== undefined && ["cgroup_cpu", "cgroup_memory", "cgroup_io", "cgroup_pids"].includes(resource)
+    ? `os_cgroup_v2_${resource.slice(7)}` : null
+}
+
+export function cgroupTableRequest(section: string): SectionRequest {
+  return {
+    section, pageSize: 200,
+    defaultOrder: section.endsWith("cpu") ? ["usage_usec"] : section.endsWith("io") ? ["rbytes"] : ["current"],
+    fallbackOrder: ["cgroup_path"],
+    order: {
+      tasks_current: ["current"], tasks_max: ["max"], cgroup_path: ["cgroup_path"], cgroup_used_cores: ["usage_usec"], cgroup_user_cores: ["user_usec"], cgroup_system_cores: ["system_usec"],
+      cgroup_quota: ["derived.quota_cores"], cpuset_cpus: ["cpuset_cpus"], throttled_period_ratio: ["derived.throttled_period_ratio"],
+      ...Object.fromEntries(["current", "max", "high", "local_oom_kill", "failure_max", "rbytes", "wbytes", "rios", "wios", "throttled_usec"].map((field) => [field, [field]])),
+    },
+  }
+}
+
+export const CGROUP_TABLE_COLUMNS: Readonly<Record<string, readonly SystemEntityColumn[]>> = {
+  os_cgroup_v2_cpu: [
+    machineText("cgroup_path", 240, true),
+    derivedCores("cgroup_used_cores", ["usage_usec"], (rows) => cgroupCpuPoints(rows, "usage_usec")),
+    nonChartCores("cgroup_quota", ["quota_usec", "period_usec"]), number("cpuset_cpus"),
+    derivedPercent("throttled_period_ratio", ["nr_periods", "nr_throttled"], (rows) => counterRatioPoints(rows, "nr_throttled", "nr_periods")),
+    derived("throttled_interval", "microseconds", ["throttled_usec"], (rows) => exactDeltaPoints(rows, ["throttled_usec"], ([delta]) => Number(delta))),
+    ...[
+      derivedCores("cgroup_user_cores", ["user_usec"], (rows) => cgroupCpuPoints(rows, "user_usec")),
+      derivedCores("cgroup_system_cores", ["system_usec"], (rows) => cgroupCpuPoints(rows, "system_usec")),
+      cgroupRateNumber("nr_periods"), cgroupRateNumber("nr_throttled"), number("quota_usec"), number("period_usec"),
+      { ...systemColumn("throttled_usec", "microseconds", 145), rate: true, points: (rows: readonly DataRow[]) => exactCounterRatePoints(rows, "throttled_usec", 1) },
+    ].map((column) => ({ ...column, detailOnly: true })),
+  ],
+  os_cgroup_v2_memory: [
+    machineText("cgroup_path", 240, true), bytes("current"), bytes("max"), bytes("high"), derivedNumber("local_oom_kill_delta", ["local_oom_kill"], (rows) => exactDeltaPoints(rows, ["local_oom_kill"], ([delta]) => Number(delta))),
+    { ...cgroupRateNumber("local_oom_kill"), detailOnly: true },
+    ...["anon", "file", "kernel", "slab"].map((field) => ({ ...bytes(field), detailOnly: true })),
+    ...["low_events", "high_events", "max_events", "oom_events", "oom_kill", "local_high_events", "local_max_events", "local_oom_events", "local_oom_group_kill"].map((field) => ({ ...cgroupRateNumber(field), detailOnly: true })),
+  ],
+  os_cgroup_v2_io: [machineText("cgroup_path", 240, true), virtualText("device_id", ["major", "minor"]), cgroupRateBytes("rbytes"), cgroupRateBytes("wbytes"), cgroupRateNumber("rios"), cgroupRateNumber("wios")],
+  os_cgroup_v2_pids: [machineText("cgroup_path", 240, true), physicalNumber("tasks_current", "current"), physicalNumber("tasks_max", "max"), derivedNumber("failure_max_delta", ["failure_max"], (rows) => exactDeltaPoints(rows, ["failure_max"], ([delta]) => Number(delta))), { ...cgroupRateNumber("failure_max"), detailOnly: true }, { ...number("events_source"), chartable: false, detailOnly: true }],
+}
+
+function cgroupRateNumber(field: string): SystemEntityColumn {
+  return { ...rateNumber(field), points: (rows) => exactCounterRatePoints(rows, field, 1) }
+}
+
+function cgroupRateBytes(field: string): SystemEntityColumn {
+  return { ...rateBytes(field), points: (rows) => exactCounterRatePoints(rows, field, 1) }
+}
+
 function systemRequests(): readonly SectionRequest[] {
   const wanted = new Map<string, Set<string>>()
   const need = (section: string, fields: readonly string[]) => {
@@ -365,22 +409,7 @@ function systemRequests(): readonly SectionRequest[] {
 const ALL_SYSTEM_REQUESTS = systemRequests()
 const CGROUP_SECTIONS = new Set(["os_cgroup_context", "os_cgroup_cpu", "os_cgroup_memory", "os_cgroup_io", "os_cgroup_pids"])
 
-export const CGROUP_SNAPSHOT_REQUESTS = ALL_SYSTEM_REQUESTS.filter(({ section }) => CGROUP_SECTIONS.has(section))
-export const SYSTEM_REQUESTS = ALL_SYSTEM_REQUESTS.filter(({ section }) => !CGROUP_SECTIONS.has(section))
-
-export function cgroupSnapshotPlan(
-  segmentId: string,
-  cursor: number,
-  data: Pick<HourData, "sections">,
-  requests: readonly SectionRequest[] = CGROUP_SNAPSHOT_REQUESTS,
-): CgroupSnapshotPlan {
-  const environment = recordedEnvironment(data, cursor)
-  const key = JSON.stringify([segmentId, cursor, environment])
-  const loads = environment === "container"
-    ? requests.map((request) => ({ request, filters: {} }))
-    : []
-  return { key, loads }
-}
+export const SYSTEM_REQUESTS = ALL_SYSTEM_REQUESTS.filter(({ section }) => !CGROUP_SECTIONS.has(section) || section === "os_cgroup_context")
 
 export function recordedEnvironment(data: Pick<HourData, "sections">, cursor: number): "machine" | "container" | null {
   const row = snapshot(data.sections.instance_metadata ?? [], cursor)[0]
@@ -391,6 +420,16 @@ export function recordedEnvironment(data: Pick<HourData, "sections">, cursor: nu
 export function SystemView({
   context,
   contextRow,
+  densePageState,
+  metadata,
+  segmentId,
+  onLoadMore,
+  onRetry,
+  onOrder,
+  onPattern,
+  order,
+  pattern,
+  searchRequest,
   cursor,
   data,
   environment,
@@ -415,6 +454,16 @@ export function SystemView({
 }: {
   readonly context: EntityContext | null
   readonly contextRow: DataRow | null
+  readonly densePageState?: "idle" | "loading" | "error" | undefined
+  readonly metadata?: SnapshotRows | undefined
+  readonly segmentId?: string | undefined
+  readonly onLoadMore?: (() => void) | undefined
+  readonly onRetry?: (() => void) | undefined
+  readonly onOrder?: ((order: TableOrder | null) => void) | undefined
+  readonly onPattern?: ((pattern: string) => void) | undefined
+  readonly order?: TableOrder | undefined
+  readonly pattern?: string | undefined
+  readonly searchRequest?: SearchRequestState | undefined
   readonly cursor: number
   readonly data: HourData
   readonly environment: "machine" | "container" | null
@@ -443,26 +492,31 @@ export function SystemView({
         const frequency = storedNumber(row, "actual_frequency_hz")
         return frequency !== undefined && frequency !== null && Number.isFinite(frequency)
       }))), [data])
+  const activeCgroup = cgroupTableSection(metric)
+  const cgroupMetric = metric?.split(".")[1] ?? null
   const selectedSpec = metric === null ? undefined : SYSTEM_METRICS.find((spec) => spec.id === metric)
   // The address owns the chosen metric and opens its ledger row.
   const [expanded, setExpanded] = useState<ReadonlySet<LedgerKey>>(() => {
-    const key = selectedSpec === undefined ? null : metricResource(selectedSpec)
+    const key = activeCgroup === null ? (selectedSpec === undefined ? null : metricResource(selectedSpec)) : activeCgroup.replace("os_cgroup_v2_", "cgroup_") as LedgerKey
     return new Set<LedgerKey>(key === null ? [] : [key])
   })
-  const openRow = (key: LedgerKey) => setExpanded((current) => current.has(key) ? current : new Set([...current, key]))
+  const openRow = (key: LedgerKey) => { if (isContainerResource(key)) onMetric(key); setExpanded((current) => current.has(key) ? current : new Set([...current, key])) }
   const [groupMetric, setGroupMetric] = useState<Readonly<Record<string, string>>>({})
   const [groupMode, setGroupMode] = useState<Readonly<Record<string, HostMode | null>>>({})
-  const toggleRow = (key: LedgerKey) => setExpanded((current) => {
+  const toggleRow = (key: LedgerKey) => {
+    if (isContainerResource(key)) onMetric(expanded.has(key) ? null : key)
+    setExpanded((current) => {
     const next = new Set(current)
     if (next.has(key)) next.delete(key)
     else next.add(key)
     return next
-  })
+    })
+  }
   const chooseMetric = (key: LedgerKey, id: string) => {
     setExpanded((current) => current.has(key) ? current : new Set([...current, key]))
     setGroupMetric((current) => ({ ...current, [key]: id }))
     onSelectedKey(null)
-    onMetric(id)
+    onMetric(isContainerResource(key) ? `${key}.${id}` : id)
   }
   useEffect(() => {
     if (selectedSpec === undefined) return
@@ -471,6 +525,11 @@ export function SystemView({
     setExpanded((current) => current.has(key) ? current : new Set([...current, key]))
     setGroupMetric((current) => current[key] === selectedSpec.id ? current : { ...current, [key]: selectedSpec.id })
   }, [selectedSpec])
+  useEffect(() => {
+    if (activeCgroup === null) return
+    const key = activeCgroup.replace("os_cgroup_v2_", "cgroup_") as LedgerKey
+    setExpanded((current) => new Set([...current].filter((item) => !isContainerResource(item)).concat(key)))
+  }, [activeCgroup])
   const appliedFocus = useRef<Finding | null>(null)
   useEffect(() => {
     if (focus === null) {
@@ -495,29 +554,25 @@ export function SystemView({
       onMetric(match.spec.id)
     }
   }, [available, data, focus, onMetric])
-  const cgroupDevices = useMemo(() => environment === "container" ? cgroupDevicePresentations(data, cursor) : new Map<string, CgroupDevicePresentation>(), [cursor, data, environment])
   const withContent = useMemo(() => new Set<UseResourceKey>([
     ...(Object.keys(RESOURCE_GROUP) as UseResourceKey[]).filter((key) =>
       available.some(({ spec }) => spec.group === RESOURCE_GROUP[key])
         || sectionEntities(LEDGER_SECTION[key], LEDGER_DEFAULT_MODE[key] ?? null).some((name) => data.availableSections.includes(name))),
-    // A container row exists once its cgroup table is recorded, before its lanes arrive.
-    ...(environment === "container" ? CONTAINER_KEYS.filter((key) => data.availableSections.includes(LEDGER_SECTION[key])) : []),
+    ...CONTAINER_KEYS.filter((key) => data.availableSections.includes(LEDGER_SECTION[key]) || data.availableSections.includes(LEDGER_SECTION[key].replace("os_cgroup_", "os_cgroup_v2_"))),
   ]), [available, data.availableSections, environment])
   const chartMetricFor = (key: LedgerKey): string | null => {
     if (isContainerResource(key)) return null
     return groupMetric[key] ?? resourceSelection(available, key)
   }
   const renderExpansion = (key: LedgerKey) => {
-    const sectionName = LEDGER_SECTION[key]
+    const sectionName = isContainerResource(key) ? LEDGER_SECTION[key].replace("os_cgroup_", "os_cgroup_v2_") : LEDGER_SECTION[key]
     const modes = LEDGER_MODES[key] ?? []
     const mode = groupMode[key] === undefined ? LEDGER_DEFAULT_MODE[key] ?? null : groupMode[key]!
-    // A container row discloses its own cgroup table; CPU and I/O also carry
-    // the ranked activity ledger of every recorded cgroup.
     const entities = isContainerResource(key) ? [sectionName] : sectionEntities(sectionName, mode)
     const chartMetric = chartMetricFor(key)
     return <div className="grid min-w-0 gap-2 px-2 pb-2 pt-2">
-      {key === "cgroup_cpu" && data.availableSections.includes("os_cgroup_cpu") && <CgroupActivity cursor={cursor} hour={hour} io={false} locale={locale} onCursor={onCursor} t={t} />}
-      {key === "cgroup_io" && data.availableSections.includes("os_cgroup_io") && <CgroupActivity cursor={cursor} devices={cgroupDevices} hour={hour} io locale={locale} onCursor={onCursor} t={t} />}
+
+
       {chartMetric !== null && <SystemGroupChart available={available} cursor={cursor} data={data} groupKey={key} historyRevision={historyRevision} hour={hour} locale={locale} metricId={chartMetric} onCursor={onCursor} onSelect={(id) => chooseMetric(key, id)} t={t} />}
       {modes.length > 0 && <div aria-label={t(`section.${sectionName}`)} className="dock-tabs" data-testid={`host-${sectionName}-modes`} role="group">
         {modes.map((choice) => <button aria-pressed={mode === choice} key={choice} onClick={() => setGroupMode((current) => ({ ...current, [key]: key === "cpu" && current[key] === choice ? null : choice }))} type="button">{t(`host.mode.${choice}`)}</button>)}
@@ -531,15 +586,16 @@ export function SystemView({
         t={t}
       />}
       {entities.length > 0 && <section className="entity-panels grid grid-cols-1 content-start gap-2">
-        {SYSTEM_ENTITIES.filter((entity) => entities.includes(entity.section)).map((entity) => {
+        {[...SYSTEM_ENTITIES, ...Object.entries(CGROUP_TABLE_COLUMNS).map(([section, columns]) => ({ section, columns, label: `system.entities.cgroup_${section.endsWith("pids") ? "tasks" : section.split("_").at(-1)}` }))].filter((entity) => entities.includes(entity.section)).map((entity) => {
           const allRows = systemEntityRows(data, entity.section, cursor)
           const activeContext = context?.logicalName === entity.section ? context : null
           const rows = contextualRows(allRows, activeContext, activeContext === null ? null : contextRow)
-          if (rows.length === 0 && activeContext === null && requestPhase === "ready") return null
-          if (rows.length === 0 && activeContext === null && !data.availableSections.includes(entity.section)) return null
+          if (rows.length === 0 && activeContext === null && requestPhase === "ready" && !isContainerResource(key)) return null
+          if (rows.length === 0 && activeContext === null && !data.availableSections.includes(entity.section) && !data.availableSections.includes(entity.section.replace("_v2_", "_"))) return null
           const finding = focus?.logicalName === entity.section ? focus : null
           return <SystemEntityPanel
             columns={entity.columns}
+            {...(isContainerResource(key) ? { metadata, segmentId, densePageState, onLoadMore, onRetry, onOrder, onPattern, order, pattern, searchRequest } : {})}
             contextLabel={activeContext?.label}
             cursor={cursor}
             finding={finding}
@@ -550,11 +606,11 @@ export function SystemView({
             locale={locale}
             onContextClear={activeContext === null ? undefined : onContextClear}
             onCursor={onCursor}
-            onMetric={onMetric}
+            onMetric={isContainerResource(key) ? (field) => onMetric(field === null ? key : `${key}.${field}`) : onMetric}
             onSelectedKey={onSelectedKey}
             rows={rows}
             section={entity.section}
-            selectedField={metric}
+            selectedField={isContainerResource(key) ? cgroupMetric : metric}
             selectedKey={selectedKey}
             requestPhase={requestPhase}
             t={t}
@@ -806,6 +862,16 @@ export function mountPairSeries(rows: readonly DataRow[], t: Translate, kind: "b
 }
 
 function SystemEntityPanel({
+  densePageState = "idle",
+  metadata,
+  segmentId,
+  onLoadMore,
+  onRetry,
+  onOrder,
+  onPattern,
+  order,
+  pattern,
+  searchRequest,
   columns,
   contextLabel,
   cursor,
@@ -825,6 +891,16 @@ function SystemEntityPanel({
   selectedKey,
   t,
 }: {
+  readonly densePageState?: "idle" | "loading" | "error" | undefined
+  readonly metadata?: SnapshotRows | undefined
+  readonly segmentId?: string | undefined
+  readonly onLoadMore?: (() => void) | undefined
+  readonly onRetry?: (() => void) | undefined
+  readonly onOrder?: ((order: TableOrder | null) => void) | undefined
+  readonly onPattern?: ((pattern: string) => void) | undefined
+  readonly order?: TableOrder | undefined
+  readonly pattern?: string | undefined
+  readonly searchRequest?: SearchRequestState | undefined
   readonly columns: readonly SystemEntityColumn[]
   readonly contextLabel?: string | undefined
   readonly cursor: number
@@ -844,18 +920,40 @@ function SystemEntityPanel({
   readonly selectedKey: string | null
   readonly t: Translate
 }) {
+  const cgroupTable = section.startsWith("os_cgroup_v2_")
   const presentedColumns = useMemo(() => localizedSystemColumns(columns, section, locale, t), [columns, locale, section, t])
-  const commonPath = section.startsWith("os_cgroup_") ? sharedCgroupPath(rows) : null
-  const tableColumns = presentedColumns.filter(({ detailOnly, field }) => !detailOnly && (commonPath === null || field !== "cgroup_path"))
+  const commonPath = !cgroupTable && section.startsWith("os_cgroup_") ? sharedCgroupPath(rows) : null
+  const tableColumns = presentedColumns.filter(({ detailOnly, field }) => !detailOnly && (commonPath === null || field !== "cgroup_path")).map((column) => cgroupTable ? { ...column, sortable: Object.hasOwn(cgroupTableRequest(section).order ?? {}, column.field) } : column)
   const metricColumns = useMemo(() => chartableEntityColumns(presentedColumns), [presentedColumns])
-  const selectedRow = selectedKey === null ? null : rows.find((row) => entityRowKey(row) === selectedKey) ?? null
+  const pageSelectedRow = selectedKey === null ? null : rows.find((row) => entityRowKey(row) === selectedKey) ?? null
+  const selectedRequest = cgroupTable && selectedKey !== null && pageSelectedRow === null ? cgroupSelectionRequest(selectedKey, section) : null
+  const lookupKey = selectedRequest === null || segmentId === undefined ? null : JSON.stringify([segmentId, cursor, selectedKey])
+  const selectedLookup = useHistoryRequest(lookupKey, historyRevision, lookupKey === null || selectedRequest === null || segmentId === undefined ? null : async (signal) => {
+    const incoming = await loadSnapshot(segmentId, cursor, [{ section, typeId: selectedRequest.typeId, pageSize: 1 }], signal, undefined, { filters: selectedRequest.where })
+    return systemEntityRows(incoming, section, cursor)[0] ?? null
+  })
+  const selectedRow = pageSelectedRow ?? selectedLookup.value
+  const groupIdentity = selectedRow === null ? null : rawText(value(selectedRow, "cgroup_identity"))
+  const groupKey = !cgroupTable || selectedRow === null || groupIdentity === null ? null : JSON.stringify([selectedRow.segmentId, selectedRow.timestamp, groupIdentity])
+  const groupFacts = useHistoryRequest(groupKey, historyRevision, groupKey === null || selectedRow === null || groupIdentity === null ? null : async (signal) => {
+    const groupData = await loadSnapshot(selectedRow.segmentId, selectedRow.timestamp, [{ section: "os_cgroup_v2_group", pageSize: 1 }], signal, undefined, { filters: { cgroup_identity: groupIdentity } })
+    const group = groupData.sections.os_cgroup_v2_group?.find((row) => row.timestamp === selectedRow.timestamp) ?? null
+    const parentIdentity = rawText(value(group, "parent_identity"))
+    if (group === null || parentIdentity === null) return { group, parent: null, parentResource: null }
+    const parentData = await loadSnapshot(selectedRow.segmentId, selectedRow.timestamp, [{ section: "os_cgroup_v2_group", pageSize: 1 }], signal, undefined, { filters: { cgroup_identity: parentIdentity } })
+    const parent = parentData.sections.os_cgroup_v2_group?.find((row) => row.timestamp === selectedRow.timestamp) ?? null
+    if (parent === null) return { group, parent: null, parentResource: null }
+    const device = section.endsWith("io") ? Object.fromEntries(["major", "minor"].flatMap((field) => { const stored = rawText(value(selectedRow, field)); return stored === null ? [] : [[field, stored]] })) : {}
+    const resource = await loadSnapshot(selectedRow.segmentId, selectedRow.timestamp, [{ section, pageSize: 1 }], signal, undefined, { filters: { cgroup_identity: parentIdentity, ...device } })
+    return { group, parent, parentResource: systemEntityRows(resource, section, selectedRow.timestamp).find((row) => row.timestamp === selectedRow.timestamp) ?? null }
+  })
   const availableColumns = useMemo(() => selectedRow === null
     ? []
     : metricColumns.filter((column) => Object.hasOwn(selectedRow.values, physicalField(column, selectedRow.typeId))), [metricColumns, selectedRow])
   useEffect(() => {
-    if (selectedKey !== null && selectedRow === null && requestPhase !== "pending"
+    if (selectedKey !== null && selectedRow === null && requestPhase !== "pending" && selectedLookup.status === "ready"
       && entityKeyOwnedBySection(selectedKey, section)) onSelectedKey(null)
-  }, [onSelectedKey, requestPhase, section, selectedKey, selectedRow])
+  }, [onSelectedKey, requestPhase, section, selectedKey, selectedRow, selectedLookup.status])
   useEffect(() => {
     if (selectedRow === null) return
     if (availableColumns.some((column) => column.field === selectedField)) return
@@ -889,9 +987,15 @@ function SystemEntityPanel({
     <h2 className="panel-head"><span>{label}</span>{commonPath !== null && <span className="font-mono text-sm font-normal text-fg3" data-testid="system-common-cgroup-path">{commonPath}</span>}</h2>
     <div className="contents">
     <EntityTable
+      {...(cgroupTable ? {
+        onOrder, onPattern, order: order ?? { column: section.endsWith("cpu") ? "cgroup_used_cores" : section.endsWith("io") ? "rbytes" : section.endsWith("pids") ? "tasks_current" : "current", descending: true }, pattern, searchRequest,
+        searchSurface: section as SearchSurface, serverSorted: true,
+        onNearEnd: densePageState === "idle" && metadata?.hasMore === true ? onLoadMore : undefined,
+        status: <strong>{t("pg.table.shown", { returned: new Intl.NumberFormat(locale).format(rows.length), eligible: new Intl.NumberFormat(locale).format(metadata?.eligible ?? rows.length) })}</strong>,
+      } : {})}
       className={section.startsWith("os_cgroup_") ? "cgroup-entity-table" : undefined}
       columns={tableColumns}
-      contentSized
+      contentSized={!cgroupTable}
       contextLabel={contextLabel}
       empty={t("table.no_rows")}
       requestPhase={requestPhase}
@@ -915,9 +1019,16 @@ function SystemEntityPanel({
       t={t}
       testId={`system-${section}`}
     />
+    {cgroupTable && (densePageState !== "idle" || metadata?.hasMore === true) && <div className="lens-tabs" data-testid="table-paging"><button disabled={densePageState === "loading"} onClick={densePageState === "error" ? onRetry : onLoadMore} type="button">{t(densePageState === "loading" ? "table.loading" : densePageState === "error" ? "table.retry" : "table.load_more")}</button></div>}
     </div>
     {selectedRow !== null && (mountPair || selectedColumn !== undefined) && <InspectorPortal identity={`system:${section}:${entityRowKey(selectedRow)}`} onClose={() => { onSelectedKey(null); onMetric(null) }} title={systemEntityInspectorTitle(section, selectedRow, label)}><aside className="p-[11px]" data-testid={`system-${section}-detail`}>
-      <DetailList>{presentedColumns.filter((column) => (column.available?.(selectedRow) ?? true) && (value(selectedRow, column.field) !== null || column.renderNull !== undefined)).map((column) => {
+      {cgroupTable && groupFacts.value?.group !== undefined && groupFacts.value.group !== null && <DetailList>
+      <DetailRow term={t("system.field.mount_root.label")} valueRole="machine">{rawText(value(groupFacts.value.group, "mount_root")) ?? "—"}</DetailRow>
+      {groupFacts.value.parent !== null && <DetailRow term={t("system.field.parent_path.label")} valueRole="machine"><button className="cursor-pointer border-0 bg-transparent p-0 text-accent" disabled={groupFacts.value.parentResource === null} onClick={() => { const parent = groupFacts.value?.parentResource; if (parent !== null && parent !== undefined) onSelectedKey(entityRowKey(parent)) }} type="button">{rawText(value(groupFacts.value.parent, "cgroup_path"))}</button></DetailRow>}
+      {section.endsWith("memory") && <DetailRow term="memory.events">{t(value(groupFacts.value.group, "memory_localevents") === true ? "system.cgroups.events_local" : "system.cgroups.events_recursive")}</DetailRow>}
+      {section.endsWith("pids") && <DetailRow term="pids_localevents">{t(value(groupFacts.value.group, "pids_localevents") === true ? "system.cgroups.enabled" : "system.cgroups.disabled")}</DetailRow>}
+    </DetailList>}
+    <DetailList>{presentedColumns.filter((column) => (column.available?.(selectedRow) ?? true) && (value(selectedRow, column.field) !== null || column.renderNull !== undefined)).map((column) => {
         const stored = value(selectedRow, column.field)
         const rendered = stored === null && column.renderNull !== undefined ? column.renderNull(selectedRow) : column.render === undefined ? cellAriaValue(stored, column, locale, t) : column.render(selectedRow)
         return <DetailRow key={column.field} term={column.help === undefined ? t(column.label) : <LabelHelp helpKey={column.help} labelKey={column.label} t={t} />} valueRole={detailValueRoleForColumn(column)}>{rendered}</DetailRow>
@@ -949,7 +1060,7 @@ function SystemEntityPanel({
             /></div>
         : selectedColumn !== undefined && <SeriesChart
             cursor={cursor}
-            durationAxis={selectedColumn.kind === "milliseconds" || selectedColumn.kind === "duration"}
+            durationAxis={selectedColumn.kind === "milliseconds" || selectedColumn.kind === "duration" || selectedColumn.kind === "microseconds"}
             empty={t("history.empty")}
             format={(reading, place) => entityMetricValue(reading, place, selectedColumn, chartMetadata)}
             helpKey={selectedColumn.help ?? "chart.metric.help"}
@@ -980,10 +1091,21 @@ export function chartableEntityColumns(columns: readonly SystemEntityColumn[]): 
     || column.kind === "cores"))
 }
 
+export function cgroupSelectionRequest(key: string, section: string): { readonly typeId: string; readonly where: Readonly<Record<string, string>> } | null {
+  if (!entityKeyOwnedBySection(key, section)) return null
+  try {
+    const parsed: unknown = JSON.parse(key)
+    if (!Array.isArray(parsed) || typeof parsed[1] !== "string" || !Array.isArray(parsed[2])) return null
+    const layout = registry.find((candidate) => candidate.typeId === parsed[1])
+    if (layout === undefined || layout.identity.length !== parsed[2].length || !parsed[2].every((stored: unknown) => typeof stored === "string")) return null
+    return { typeId: parsed[1], where: Object.fromEntries(layout.identity.map((field, index) => [field, parsed[2][index]])) }
+  } catch { return null }
+}
+
 export function entityHistoryRequest(row: DataRow, column: SystemEntityColumn): EntityHistoryRequest | null {
   if (!chartableEntityColumns([column]).includes(column)) return null
-  const layout = registry.find((candidate) => candidate.typeId === row.typeId && candidate.logicalName === row.logicalName)
-  if (layout === undefined || layout.identity.length === 0) return null
+  const layout = registry.find((candidate) => candidate.typeId === row.typeId)
+  if (layout === undefined || layout.logicalName === null || layout.identity.length === 0) return null
   const identities = layout.identity.map((field) => [field, rawText(value(row, field))] as const)
   if (identities.some(([, stored]) => stored === null)) return null
   const field = physicalField(column, row.typeId)
@@ -992,7 +1114,7 @@ export function entityHistoryRequest(row: DataRow, column: SystemEntityColumn): 
   return {
     fields,
     key: JSON.stringify([row.typeId, identities, field]),
-    section: row.logicalName,
+    section: layout.logicalName,
     typeId: row.typeId,
     where,
   }
@@ -1017,7 +1139,7 @@ export function sharedCgroupPath(rows: readonly DataRow[]): string | null {
 }
 
 function entityRowLabel(row: DataRow): string {
-  const layout = registry.find((candidate) => candidate.typeId === row.typeId && candidate.logicalName === row.logicalName)
+  const layout = registry.find((candidate) => candidate.typeId === row.typeId)
   const parts = layout === undefined ? [] : layout.identity
     .map((field) => rawText(value(row, field)))
     .filter((part): part is string => part !== null && part !== "")
@@ -1038,13 +1160,19 @@ export function entityKeyOwnedBySection(key: string, section: string): boolean {
     typeId = key.split(":")[1] ?? null
   }
   if (typeId === null) return false
-  return registry.some((layout) => layout.typeId === typeId && layout.logicalName === section)
+  return registry.some((layout) => layout.typeId === typeId && (layout.logicalName === section || section.replace("_v2_", "_") === layout.logicalName))
 }
 
 function entityRowKey(row: DataRow): string {
-  const layout = registry.find((candidate) => candidate.typeId === row.typeId && candidate.logicalName === row.logicalName)
+  const layout = registry.find((candidate) => candidate.typeId === row.typeId)
   if (layout === undefined || layout.identity.length === 0) return rowKey(row)
-  return JSON.stringify([row.segmentId, row.typeId, layout.identity.map((field) => rawText(value(row, field)))])
+  return JSON.stringify([row.logicalName.startsWith("os_cgroup_v2_") ? "cgroup" : row.segmentId, row.typeId, layout.identity.map((field) => rawText(value(row, field)))])
+}
+
+function counterRatioPoints(rows: readonly DataRow[], numerator: string, denominator: string): readonly ChartPoint[] {
+  const top = exactCounterRatePoints(rows, numerator, 1)
+  const bottom = new Map(exactCounterRatePoints(rows, denominator, 1).map((point) => [point.timestamp, point.value]))
+  return top.map((point) => { const divisor = bottom.get(point.timestamp); return { ...point, value: point.value === null || divisor === undefined || divisor === null || divisor <= 0 ? null : point.value / divisor * 100 } })
 }
 
 function physicalField(column: EntityColumn, typeId: string): string {
@@ -1618,6 +1746,25 @@ export function fallbackMetric(logicalName: string): string | null {
 
 export function systemEntityRows(data: HourData, section: string, cursor: number): readonly DataRow[] {
   const rows = snapshot(sectionRows(data, section), cursor)
+  if (section.startsWith("os_cgroup_v2_")) return rows.map((row) => {
+    const values: Record<string, Cell> = { ...row.values }
+    if (section.endsWith("cpu")) {
+      values.cgroup_used_cores = scaled(row, "usage_usec", 0.000_001)
+      values.cgroup_user_cores = scaled(row, "user_usec", 0.000_001)
+      values.cgroup_system_cores = scaled(row, "system_usec", 0.000_001)
+      const quota = ratio(row, "quota_usec", "period_usec")
+      values.cgroup_quota = quota !== null && quota > 0 ? quota : null
+      const throttle = asNumber(value(row, "throttled_period_ratio"))
+      values.throttled_period_ratio = throttle === null ? null : throttle * 100
+    }
+    if (section.endsWith("pids")) {
+      values.tasks_current = value(row, "current")
+      values.tasks_max = value(row, "max")
+    }
+    const device = deviceId(row)
+    if (device !== null) values.device_id = device
+    return { ...row, values }
+  })
   const context = snapshot(sectionRows(data, "os_cgroup_context"), cursor)[0] ?? null
   const devices = section === "os_cgroup_io" ? cgroupDevicePresentations(data, cursor) : null
   const pathField = section === "os_cgroup_cpu" ? "cpu_path" : section === "os_cgroup_memory" ? "memory_path" : section === "os_cgroup_io" ? "io_path" : null
@@ -1740,7 +1887,15 @@ function cgroupMountAssociationText(association: CgroupMountAssociation, t: Tran
 
 const LOWER_LAYER_FIELDS = ["rbytes", "wbytes", "rios", "wios"] as const
 
-function localizedSystemColumns(columns: readonly SystemEntityColumn[], section: string, locale: Locale, t: Translate): readonly SystemEntityColumn[] {
+export function localizedSystemColumns(columns: readonly SystemEntityColumn[], section: string, locale: Locale, t: Translate): readonly SystemEntityColumn[] {
+  if (section.startsWith("os_cgroup_v2_")) return columns.map((column) => {
+    if (["max", "high", "tasks_max", "cgroup_quota"].includes(column.field)) return {
+      ...column,
+      renderNull: (row: DataRow) => <span>{(column.field === "cgroup_quota" ? value(row, "quota_usec") === -1 : (value(row, `${column.field === "tasks_max" ? "max" : column.field}_unlimited`) === true || (!registry.find((layout) => layout.typeId === row.typeId)?.columns.includes("max_unlimited") && ["max", "tasks_max"].includes(column.field) && Object.hasOwn(row.values, "max")))) ? t("system.cgroups.pids_unlimited") : t("system.cgroups.pids_unavailable")}</span>,
+    }
+    if (column.field === "events_source") return { ...column, render: (row: DataRow) => value(row, "events_source") === 1 ? "pids.events.local" : value(row, "events_source") === 2 ? "pids.events" : "—" }
+    return column
+  })
   if (section === "os_cgroup_io") return columns.map((column) => {
     if (column.field === "cgroup_device") return {
       ...column,
@@ -1786,6 +1941,7 @@ function localizedSystemColumns(columns: readonly SystemEntityColumn[], section:
 }
 
 function systemEntityInspectorTitle(section: string, row: DataRow, label: string): string {
+  if (section.startsWith("os_cgroup_v2_")) return [label, rawText(value(row, "cgroup_path")), section.endsWith("io") ? deviceId(row) : null].filter((part) => part !== null).join(" · ")
   if (section !== "os_cgroup_io") return `${label} · ${entityRowLabel(row)}`
   const id = deviceId(row)
   return [label, rawText(value(row, "cgroup_device")) ?? id, id].filter((part, index, all): part is string => part !== null && all.indexOf(part) === index).join(" · ")

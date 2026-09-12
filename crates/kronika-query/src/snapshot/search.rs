@@ -869,6 +869,15 @@ impl<'a> Parser<'a> {
 pub fn search_fields(logical_name: &str) -> &'static [SearchField] {
     match logical_name {
         "os_process" => PROCESS_SEARCH_FIELDS,
+        "os_cgroup_cpu"
+        | "os_cgroup_memory"
+        | "os_cgroup_io"
+        | "os_cgroup_pids"
+        | "os_cgroup_v2_cpu"
+        | "os_cgroup_v2_memory"
+        | "os_cgroup_v2_io"
+        | "os_cgroup_v2_pids"
+        | "os_cgroup_v2_group" => CGROUP_SEARCH_FIELDS,
         "pg_stat_statements" => STATEMENT_SEARCH_FIELDS,
         "pg_store_plans" => PLAN_SEARCH_FIELDS,
         "pg_stat_user_tables" => TABLE_SEARCH_FIELDS,
@@ -2187,3 +2196,6 @@ const DATABASE_SEARCH_FIELDS: &[SearchField] = &[
         &["temp_bytes"],
     ),
 ];
+
+const CGROUP_SEARCH_FIELDS: &[SearchField] =
+    &[search_string("path", &["cgroup_path"], &["cgroup_path"])];

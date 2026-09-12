@@ -290,6 +290,7 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
             Some(80),
         ),
         ("selected-cgroup", Collection::Cgroup, SOURCE_OS, None),
+        ("all-cgroups", Collection::AllCgroups, SOURCE_OS, None),
         (
             "separated-controllers",
             Collection::SeparatedControllers,
@@ -383,6 +384,21 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
             assert_eq!(pg, Some(vec![expected]));
             assert_eq!(overall, pg);
         }
+        if matches!(collection, Collection::AllCgroups) {
+            let segment = reader
+                .open_segment(&resources.resources[0])
+                .expect("all-group segment");
+            for type_id in [1_206_001, 1_207_001, 1_208_001, 1_209_001, 1_210_001] {
+                let expected_rows = if type_id == 1_210_001 { 3164 } else { 1582 };
+                assert_eq!(segment.rows_of(type_id), Some(expected_rows));
+                assert_eq!(
+                    u64::try_from(segment.rows(type_id).expect("decode all groups").len())
+                        .expect("row count"),
+                    expected_rows
+                );
+            }
+            assert_all_group_snapshots(&engine);
+        }
         if matches!(collection, Collection::SeparatedControllers) {
             let oom = values
                 .iter()
@@ -419,6 +435,75 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
                 std::fs::write(directory.join(name), bytes).expect("fixture artifact");
             }
             std::fs::write(directory.join("sources"), sources.to_string()).expect("family bits");
+        }
+    }
+}
+
+fn assert_all_group_snapshots(engine: &crate::ReportEngine) {
+    use kronika_query::{Order, QueryRequest, QuerySink, SnapshotRequest, StatementScope};
+
+    #[derive(Default)]
+    struct Records(Vec<serde_json::Value>);
+    impl QuerySink for Records {
+        fn record(&mut self, bytes: Vec<u8>) -> bool {
+            self.0
+                .push(serde_json::from_slice(&bytes).expect("snapshot record"));
+            true
+        }
+        fn cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    for (offset, expected) in [(3, 262), (5, 264)] {
+        for section in [
+            "os_cgroup_v2_group",
+            "os_cgroup_v2_cpu",
+            "os_cgroup_v2_memory",
+            "os_cgroup_v2_pids",
+            "os_cgroup_v2_io",
+        ] {
+            let mut records = Records::default();
+            engine
+                .execute(
+                    QueryRequest::Snapshot(SnapshotRequest {
+                        segment_id: collection_modes::START,
+                        at: collection_modes::START + offset * 1_000_000,
+                        sections: vec![section.to_owned()],
+                        fields: vec!["cgroup_path".to_owned(), "cgroup_identity".to_owned()],
+                        by: Vec::new(),
+                        direction: Order::Asc,
+                        group: None,
+                        page_size: None,
+                        cursor: None,
+                        search: None,
+                        first_match: false,
+                        text: None,
+                        filters: Vec::new(),
+                        type_id: None,
+                        row_ordinal: None,
+                        scope: StatementScope::All,
+                    }),
+                    &mut records,
+                )
+                .expect("all-group report snapshot");
+            let rows = records
+                .0
+                .iter()
+                .filter(|row| row["record"] == "row")
+                .collect::<Vec<_>>();
+            let devices = if section == "os_cgroup_v2_io" { 2 } else { 1 };
+            assert_eq!(rows.len(), expected * devices, "{section} at +{offset}s");
+            for path in [
+                "/visible",
+                "/visible/api",
+                "/visible/database",
+                "/visible/jobs",
+            ] {
+                assert!(rows.iter().any(|row| row["values"][0] == path), "{path}");
+            }
+            let timestamp = (collection_modes::START + offset * 1_000_000).to_string();
+            assert!(rows.iter().all(|row| row["timestamp"] == timestamp));
         }
     }
 }

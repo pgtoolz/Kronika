@@ -1,5 +1,6 @@
 //! Reads one snapshot and derives counter rates.
 
+mod cgroup;
 mod relation;
 mod search;
 mod selector;
@@ -34,7 +35,7 @@ use crate::StatementScope;
 use crate::dataset::{DatasetSegment, QueryDataset, SegmentBounds, SegmentSelection};
 use crate::exact_product::compare_products;
 use crate::output_fields as shared_fields;
-use crate::projection::{Plan, plans, resolved_dictionary};
+use crate::projection::{Plan, resolved_dictionary};
 use crate::render::{cell, projected_layout, record, shorten};
 use crate::statement_scope::{CollectorStatements, plan_statement_query_id_columns};
 use crate::{
@@ -719,14 +720,20 @@ impl SnapshotPreparation {
             &relation_fields,
             search.as_deref(),
         )?;
+        cgroup::extend_plans(
+            dataset.as_ref(),
+            &anchor,
+            &segments,
+            &physical_request,
+            &mut sections,
+            search.as_deref(),
+        )?;
         project_statement_text(&mut sections, request.scope);
-        let has_relation = sections
+        let relation_count = sections
             .iter()
-            .any(|section| SnapshotViewSpec::for_logical_name(&section.logical_name).is_some());
-        let has_other = sections
-            .iter()
-            .any(|section| SnapshotViewSpec::for_logical_name(&section.logical_name).is_none());
-        let prior_sources = if has_other {
+            .filter(|section| SnapshotViewSpec::for_logical_name(&section.logical_name).is_some())
+            .count();
+        let prior_sources = if relation_count < sections.len() {
             preceding(
                 dataset.as_ref(),
                 &anchor,
@@ -739,7 +746,7 @@ impl SnapshotPreparation {
         } else {
             Vec::new()
         };
-        let (relation_predecessors, relation_moments) = if has_relation {
+        let (relation_predecessors, relation_moments) = if relation_count > 0 {
             relation_preceding(
                 dataset.as_ref(),
                 &anchor,
@@ -849,6 +856,28 @@ fn project_statement_text(sections: &mut [SectionPlans], scope: StatementScope) 
     }
 }
 
+fn selected_virtual_fields<'a>(logical_name: &str, fields: &'a [String]) -> Vec<&'a str> {
+    let known: &[&str] = match logical_name {
+        "os_process" => PROCESS_VIRTUAL_FIELDS,
+        "os_cgroup_v2_cpu" => &[
+            "throttled_period_ratio",
+            "quota_cores",
+            "throttled_interval",
+        ],
+        "os_cgroup_v2_memory" => &["local_oom_kill_delta"],
+        "os_cgroup_v2_pids" => &["failure_max_delta"],
+        _ => &[],
+    };
+    if fields.is_empty() {
+        known.to_vec()
+    } else {
+        fields
+            .iter()
+            .filter_map(|field| known.contains(&field.as_str()).then_some(field.as_str()))
+            .collect()
+    }
+}
+
 fn section_plans(
     segment: &Segment,
     request: &SnapshotRequest,
@@ -878,25 +907,13 @@ fn section_plans(
         if shared_projection && fields.is_empty() {
             continue;
         }
-        let selected_virtual = if logical_name == "os_process" {
-            if fields.is_empty() {
-                PROCESS_VIRTUAL_FIELDS.to_vec()
-            } else {
-                fields
-                    .iter()
-                    .filter_map(|field| {
-                        PROCESS_VIRTUAL_FIELDS
-                            .contains(&field.as_str())
-                            .then_some(field.as_str())
-                    })
-                    .collect()
-            }
-        } else {
-            Vec::new()
-        };
+        let selected_virtual = selected_virtual_fields(logical_name, &fields);
         let physical_fields = fields
             .iter()
-            .filter(|field| !PROCESS_VIRTUAL_FIELDS.contains(&field.as_str()))
+            .filter(|field| {
+                !PROCESS_VIRTUAL_FIELDS.contains(&field.as_str())
+                    && !selected_virtual.contains(&field.as_str())
+            })
             .cloned()
             .collect::<Vec<_>>();
         let data = DataRequest {
@@ -910,7 +927,7 @@ fn section_plans(
             after: None,
         };
         // Missing sections are empty so one source cannot fail the snapshot.
-        match plans(segment, &data, true) {
+        match cgroup::plans(segment, &data) {
             Ok(mut plans) => {
                 for plan in &mut plans {
                     if !fields.is_empty() {
@@ -931,6 +948,7 @@ fn section_plans(
                     if selected_virtual.contains(&CPU_TIME_VIRTUAL_FIELD) {
                         plan.add_projection_columns(&["utime", "stime"]);
                     }
+                    cgroup::project_virtual_inputs(logical_name, plan);
                     if logical_name == "pg_store_plans" {
                         plan.add_aliased_output("calls_per_second", "calls");
                     }
@@ -948,6 +966,12 @@ fn section_plans(
                 sections.push(SectionPlans {
                     logical_name: logical_name.clone(),
                     plans,
+                });
+            }
+            Err(QueryError::NoSuchSection) if cgroup::legacy(logical_name).is_some() => {
+                sections.push(SectionPlans {
+                    logical_name: logical_name.clone(),
+                    plans: Vec::new(),
                 });
             }
             Err(QueryError::NoSuchSection) => {}
@@ -1008,6 +1032,9 @@ fn page_order(logical_name: &str, plan: &Plan, requested: &[String]) -> Option<P
     reason = "all fixed derived sort tokens remain visibly allowlisted together"
 )]
 fn derived_page_order(logical_name: &str, plan: &Plan, token: &str) -> Option<PageOrder> {
+    if let Some(order) = cgroup::page_order(logical_name, plan, token) {
+        return Some(order);
+    }
     let supported = match logical_name {
         "pg_stat_statements" => matches!(plan.type_id, 1_002_001..=1_002_006),
         "pg_store_plans" => matches!(plan.type_id, 1_003_001 | 1_004_001 | 1_018_001),
@@ -1301,7 +1328,9 @@ impl PreparedSnapshot {
         }
         let mut facts = HashMap::new();
         for section in &self.sections {
-            if SnapshotViewSpec::for_logical_name(&section.logical_name).is_some() {
+            if SnapshotViewSpec::for_logical_name(&section.logical_name).is_some()
+                || cgroup::legacy(&section.logical_name).is_some()
+            {
                 if !self.emit_partitioned_section(section, emit, cancelled)? {
                     return Ok(());
                 }
@@ -1337,7 +1366,7 @@ impl PreparedSnapshot {
                 return Ok(false);
             }
         }
-        let contexts = self.partitioned_contexts(section, cancelled)?;
+        let contexts = self.page_contexts(section, cancelled)?;
         for context in &contexts {
             if self.row_ordinal.is_some() && context.source.id() != self.anchor.id() {
                 continue;
@@ -1551,6 +1580,23 @@ impl PreparedSnapshot {
                         "nullable": true,
                         "available": true,
                     });
+                }
+            }
+        }
+        if cgroup::legacy(&section.logical_name).is_some()
+            && let Some(columns) = layout.get_mut("columns").and_then(Value::as_array_mut)
+        {
+            for column in columns {
+                if let Some((ty, unit)) = column
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .and_then(cgroup::virtual_type)
+                {
+                    column["type"] = json!(ty);
+                    column["class"] = json!("gauge");
+                    column["unit"] = json!(unit);
+                    column["nullable"] = json!(true);
+                    column["available"] = json!(true);
                 }
             }
         }
@@ -2276,6 +2322,7 @@ impl PreparedSnapshot {
                 &mut facts,
             )?);
         }
+        cgroup::retain_family(&mut contexts, &section.logical_name);
         Ok(contexts)
     }
 
@@ -3181,6 +3228,12 @@ impl PreparedSnapshot {
         let mut values = Vec::with_capacity(plan.fields.len());
         for field in &plan.fields {
             let Some(column) = field.column else {
+                if let Some(value) =
+                    cgroup::virtual_value(&field.name, row, before.filter(|_| elapsed.is_some()))
+                {
+                    values.push(value);
+                    continue;
+                }
                 if field.name == CPU_TIME_VIRTUAL_FIELD {
                     values.push(scheduled_ticks(row));
                     continue;
@@ -3660,6 +3713,11 @@ fn page_order_value(
     dictionary: &Dictionary,
 ) -> Option<PageOrderValue> {
     let order = context.order.as_ref()?;
+    if order.name == "quota_cores"
+        && !matches!(row.get("quota_usec"), Some(Cell::I64(value)) if *value > 0)
+    {
+        return None;
+    }
     match &order.kind {
         PageOrderKind::Column(column) => {
             column_order_value(context, row, identity, dictionary, column)

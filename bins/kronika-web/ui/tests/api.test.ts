@@ -1888,3 +1888,14 @@ test("cgroup Inspector history filters raw identity and keeps same-group rates a
     globalThis.fetch = originalFetch
   }
 })
+
+
+test("all-group resource requests retain legacy-only recorded hours without an eager snapshot", async () => {
+  const api = await bundledApi()
+  const segment = { id: "100", minTs: START, maxTs: START, sections: [{ logicalName: "os_cgroup_cpu", typeId: "1201001" }] }
+  const request = { section: "os_cgroup_v2_cpu", pageSize: 200, defaultOrder: ["usage_usec"] }
+  const groups = api.snapshotRequestGroups([segment], START, [request])
+  assert.equal(groups.length, 1)
+  assert.deepEqual(groups[0].requests, [request])
+  assert.equal(groups[0].anchor.id, "100")
+})
