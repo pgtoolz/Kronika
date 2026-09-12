@@ -583,7 +583,7 @@ export function SystemView({
         t={t}
         withContent={withContent}
       />
-      {available.length === 0 && <TableRequestPlaceholder empty={t("system.no_metrics")} phase={requestPhase} t={t} testId="system-request-state" />}
+      {available.length === 0 && (requestPhase !== "ready" || withContent.size === 0) && <TableRequestPlaceholder empty={t("system.no_metrics")} phase={requestPhase} t={t} testId="system-request-state" />}
     </div>
   </>
 }
