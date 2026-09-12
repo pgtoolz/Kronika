@@ -929,10 +929,7 @@ function SystemEntityPanel({
   const pageSelectedRow = selectedKey === null ? null : rows.find((row) => entityRowKey(row) === selectedKey) ?? null
   const selectedRequest = cgroupTable && selectedKey !== null && pageSelectedRow === null ? cgroupSelectionRequest(selectedKey, section) : null
   const lookupKey = selectedRequest === null || segmentId === undefined ? null : JSON.stringify([segmentId, cursor, selectedKey])
-  const selectedLookup = useHistoryRequest(lookupKey, historyRevision, lookupKey === null || selectedRequest === null || segmentId === undefined ? null : async (signal) => {
-    const incoming = await loadSnapshot(segmentId, cursor, [{ section, typeId: selectedRequest.typeId, pageSize: 1 }], signal, undefined, { filters: selectedRequest.where })
-    return systemEntityRows(incoming, section, cursor)[0] ?? null
-  })
+  const selectedLookup = useHistoryRequest(lookupKey, historyRevision, lookupKey === null || selectedRequest === null || segmentId === undefined ? null : (signal) => loadSelectedCgroupRow(segmentId, cursor, section, selectedRequest, signal))
   const selectedRow = pageSelectedRow ?? selectedLookup.value
   const groupIdentity = selectedRow === null ? null : rawText(value(selectedRow, "cgroup_identity"))
   const groupKey = !cgroupTable || selectedRow === null || groupIdentity === null ? null : JSON.stringify([selectedRow.segmentId, selectedRow.timestamp, groupIdentity])
@@ -1090,6 +1087,17 @@ export function chartableEntityColumns(columns: readonly SystemEntityColumn[]): 
     || column.kind === "microseconds"
     || column.kind === "percent"
     || column.kind === "cores"))
+}
+
+export async function loadSelectedCgroupRow(segmentId: string, cursor: number, section: string, selectedRequest: NonNullable<ReturnType<typeof cgroupSelectionRequest>>, signal: AbortSignal): Promise<DataRow | null> {
+  const incoming = await loadSnapshot(segmentId, cursor, [{ section, typeId: selectedRequest.typeId, pageSize: 1 }], signal, undefined, { filters: selectedRequest.where })
+  const row = systemEntityRows(incoming, section, cursor)[0] ?? null
+  if (row === null || registry.find((layout) => layout.typeId === row.typeId)?.logicalName !== "os_cgroup_cpu") return row
+  const path = rawText(value(row, "cgroup_path"))
+  const scope = rawText(value(row, "scope"))
+  if (path === null || scope === null) return row
+  const context = await loadSnapshot(row.segmentId, row.timestamp, [{ section: "os_cgroup_context", fields: ["cpu_path", "scope", "cpuset_cpus"], pageSize: 1 }], signal, undefined, { filters: { cpu_path: path, scope } })
+  return systemEntityRows({ ...incoming, sections: { ...incoming.sections, os_cgroup_context: context.sections.os_cgroup_context ?? [] } }, section, cursor)[0] ?? null
 }
 
 export function cgroupSelectionRequest(key: string, section: string): { readonly typeId: string; readonly where: Readonly<Record<string, string>> } | null {

@@ -12,6 +12,8 @@ use kronika_writer::{Interner, Journal, JournalConfig, SectionBuffers, dict, wri
 mod all_groups;
 #[path = "collection_modes/discovery.rs"]
 mod discovery;
+#[path = "collection_modes/legacy_selected.rs"]
+mod legacy_selected;
 
 pub(super) const START: i64 = 1_709_164_800_000_000;
 pub(super) const END: i64 = START + 5_000_001;
@@ -23,6 +25,7 @@ pub(super) enum Collection {
     SeparatedControllers,
     AllCgroups,
     AllCgroupsMachine,
+    LegacySelectedCgroup,
 }
 
 #[expect(
@@ -84,11 +87,15 @@ pub(super) fn encoded(collection: Collection) -> Vec<u8> {
                 Collection::Cgroup
                 | Collection::SeparatedControllers
                 | Collection::AllCgroups
-                | Collection::AllCgroupsMachine => None,
+                | Collection::AllCgroupsMachine
+                | Collection::LegacySelectedCgroup => None,
             },
         })
         .expect("metadata");
     match collection {
+        Collection::LegacySelectedCgroup => {
+            legacy_selected::push(&mut buffers, &mut interner);
+        }
         Collection::AllCgroupsMachine => {
             all_groups::push(&mut buffers, &mut interner, label, first, second);
         }

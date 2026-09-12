@@ -132,7 +132,7 @@ compare(
 
 
 if (collectionArgument) {
-  for (const name of ["postgresql-unknown", "postgresql-explicit", "selected-cgroup", "separated-controllers", "all-cgroups", "all-cgroups-machine"]) {
+  for (const name of ["postgresql-unknown", "postgresql-explicit", "selected-cgroup", "separated-controllers", "all-cgroups", "all-cgroups-machine", "legacy-cgroup"]) {
     session.free();
     nativeFixtureDirectory = resolve(collectionArgument, name);
     const [fixtureZms, fixtureIdx, sourceText, html] = await Promise.all([
@@ -171,6 +171,23 @@ if (collectionArgument) {
       const row = metadata.find(row => row.record === "row");
       assert.deepEqual(row.values, [null, false, false]);
     } else {
+      if (name === "legacy-cgroup") {
+        const path = `/api/segments/${SEGMENT_ID}/snapshot`;
+        const query = new URLSearchParams({ at: "1709164805000000", section: "os_cgroup_v2_cpu", page_size: "20" });
+        for (const field of ["cgroup_path", "cgroup_identity", "usage_usec", "quota_cores"]) query.append("field", field);
+        const selected = records(compare(`${name}-selected-CPU`, path, query.toString())).filter(row => row.record === "row");
+        assert.equal(selected.length, 1);
+        assert.equal(selected[0].type_id, "1201003");
+        assert.deepEqual(selected[0].values, ["/legacy-selected", "directory:selected", 1_000_000, 2]);
+        query.set("search", "path:legacy-earlier");
+        assert.equal(records(compare(`${name}-excluded-selected`, path, query.toString())).filter(row => row.record === "row").length, 0);
+        const contextQuery = new URLSearchParams({ at: "1709164805000000", section: "os_cgroup_context", "where.cpu_path": "/legacy-selected", "where.cpu_identity": "directory:selected", "where.scope": "4" });
+        for (const field of ["cpuset_cpus", "cpu_path", "cpu_identity"]) contextQuery.append("field", field);
+        const selectedContext = records(compare(`${name}-selected-cpuset`, path, contextQuery.toString())).filter(row => row.record === "row");
+        assert.equal(selectedContext.length, 1);
+        assert.deepEqual(selectedContext[0].values, ["8", "/legacy-selected", "directory:selected"]);
+        continue;
+      }
       if (name.startsWith("all-cgroups")) {
         const at = "1709164805000000";
         for (const [resource, field] of [["cpu", "usage_usec"], ["memory", "current"], ["pids", "current"], ["io", "rbytes"]]) {

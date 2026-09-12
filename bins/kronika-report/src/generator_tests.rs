@@ -290,6 +290,12 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
             Some(80),
         ),
         ("selected-cgroup", Collection::Cgroup, SOURCE_OS, None),
+        (
+            "legacy-cgroup",
+            Collection::LegacySelectedCgroup,
+            SOURCE_OS,
+            None,
+        ),
         ("all-cgroups", Collection::AllCgroups, SOURCE_OS, None),
         (
             "all-cgroups-machine",
@@ -411,6 +417,22 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
                 assert_eq!(context["environment"], 0);
                 assert!(segment.rows_of(1_205_002).is_none());
                 assert!(segment.rows_of(1_201_003).is_none());
+            }
+        }
+        if matches!(collection, Collection::LegacySelectedCgroup) {
+            let segment = reader
+                .open_segment(&resources.resources[0])
+                .expect("legacy selected segment");
+            assert_eq!(context["environment"], 1);
+            assert_eq!(segment.rows_of(1_201_003), Some(6));
+            assert_eq!(segment.rows_of(1_205_002), Some(6));
+            assert!(
+                segment
+                    .type_ids()
+                    .all(|id| !(1_206_001..=1_210_001).contains(&id))
+            );
+            for row in segment.rows(1_205_002).expect("decode legacy context") {
+                assert_eq!(row.get("cpuset_cpus"), Some(&kronika_reader::Cell::I64(8)));
             }
         }
         if matches!(collection, Collection::SeparatedControllers) {

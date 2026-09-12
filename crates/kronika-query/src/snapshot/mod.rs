@@ -5016,7 +5016,11 @@ fn validate_shared_projection(sections: &[String], fields: &[String]) -> Result<
                     .any(|section| section == name || cgroup::legacy(section) == Some(name))
             }) && layout.column(field).is_some()
         });
-        if !known {
+        let cgroup_virtual = sections.iter().any(|section| {
+            cgroup::legacy(section).is_some()
+                && !selected_virtual_fields(section, std::slice::from_ref(field)).is_empty()
+        });
+        if !known && !cgroup_virtual {
             return Err(QueryError::NoSuchColumn(field.clone()));
         }
     }
@@ -5043,9 +5047,16 @@ fn section_projection(segment: &Segment, logical_name: &str, fields: &[String]) 
                 .collect::<HashSet<_>>()
         },
     );
+    let virtual_fields = if cgroup::legacy(logical_name).is_some() {
+        selected_virtual_fields(logical_name, fields)
+    } else {
+        Vec::new()
+    };
     fields
         .iter()
-        .filter(|field| columns.contains(field.as_str()))
+        .filter(|field| {
+            columns.contains(field.as_str()) || virtual_fields.contains(&field.as_str())
+        })
         .cloned()
         .collect()
 }

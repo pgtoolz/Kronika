@@ -7,7 +7,7 @@ import { importModule, registryPlugin } from "./import-module.mjs"
 import { parseDictionary, validateDictionaries } from "../scripts/i18n.mjs"
 
 const helpers = await importModule(
-  'export { entityMetricUnit, entityMetricValue, localizedSystemColumns, CGROUP_TABLE_COLUMNS, cgroupTableSection, cgroupTableRequest, cgroupSelectionRequest, cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"; export { cellAriaValue } from "../src/entity-table.tsx"',
+  'export { loadSelectedCgroupRow, entityMetricUnit, entityMetricValue, localizedSystemColumns, CGROUP_TABLE_COLUMNS, cgroupTableSection, cgroupTableRequest, cgroupSelectionRequest, cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"; export { cellAriaValue } from "../src/entity-table.tsx"; export { signInBasic } from "../src/session.ts"',
   { plugins: [registryPlugin([
     { typeId: "1202003", logicalName: "os_cgroup_memory", identity: ["cgroup_path", "cgroup_identity"], columns: ["ts", "cgroup_path", "cgroup_identity", "max", "max_unlimited"] },
     { typeId: "1202001", logicalName: "os_cgroup_memory", identity: ["cgroup_path"], columns: ["ts", "cgroup_path", "max"] },
@@ -846,4 +846,50 @@ test("entity history and table share localized rate units without adding rates t
     assert.equal(helpers.entityMetricUnit(interval, locale, null, t), "")
     assert.equal(helpers.entityMetricUnit({ ...interval, rate: true }, locale, null, t), t("unit.per_second"))
   }
+})
+
+
+test("selected legacy CPU excluded from the page keeps its recorded cpuset through the exact lookup", async () => {
+  const section = "os_cgroup_v2_cpu"
+  const old = { typeId: "1201001", logicalName: section, segmentId: "recorded", timestamp: 20, ordinal: "0", values: { cgroup_path: "/selected", scope: 3, usage_usec: 500000, quota_usec: "-1", period_usec: "100000" } }
+  const context = { segmentId: "recorded", timestamp: 20, values: { cpu_path: "/selected", scope: 3, cpuset_cpus: 8 } }
+  const original = helpers.systemEntityRows({ sections: { [section]: [old], os_cgroup_context: [context] } }, section, 40)[0]
+  const filteredPage = helpers.systemEntityRows({ sections: { [section]: [] } }, section, 40)
+  assert.equal(filteredPage.length, 0)
+  const selectedRequest = helpers.cgroupSelectionRequest(JSON.stringify(["cgroup", old.typeId, ["/selected"]]), section)
+  assert.ok(selectedRequest)
+  const urls = []
+  let returned = old
+  const originalFetch = globalThis.fetch
+  Reflect.deleteProperty(globalThis, "__KRONIKA_REAL_HOUR__")
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input), "http://kronika.invalid")
+    if (url.pathname === "/auth/session") return new Response(null, { status: 204 })
+    urls.push(url)
+    const isContext = url.searchParams.get("section") === "os_cgroup_context"
+    const row = isContext ? context : returned
+    const values = row.values
+    const typeId = isContext ? "1205001" : returned.typeId
+    const logicalName = isContext ? "os_cgroup_context" : section
+    return new Response([
+      { record: "layout", layout: { type_id: typeId, logical_name: logicalName, columns: Object.keys(values).map((name) => ({ name })) } },
+      { record: "row", segment_id: row.segmentId, type_id: typeId, ordinal: "0", timestamp: String(row.timestamp), values: Object.values(values) },
+    ].map((record) => JSON.stringify(record)).join("\n"))
+  }
+  try {
+    await helpers.signInBasic("test", "test", new AbortController().signal)
+    const selected = await helpers.loadSelectedCgroupRow("cursor-segment", 40, section, selectedRequest, new AbortController().signal)
+    assert.equal(selected.typeId, old.typeId)
+    assert.equal(selected.values.cgroup_path, old.values.cgroup_path)
+    assert.equal(selected.values.cpuset_cpus, original.values.cpuset_cpus)
+    assert.equal(urls.length, 2)
+    assert.equal(urls[1].pathname, "/api/segments/recorded/snapshot")
+    assert.equal(urls[1].searchParams.get("at"), "20")
+    assert.deepEqual([...urls[1].searchParams].filter(([key]) => key.startsWith("where.")), [["where.cpu_path", "/selected"], ["where.scope", "3"]])
+    assert.deepEqual(urls[1].searchParams.getAll("field"), ["cpu_path", "scope", "cpuset_cpus"])
+    returned = { ...old, typeId: "1207001", values: { ...old.values, cgroup_identity: "own", cpuset_cpus: 4 } }
+    const current = await helpers.loadSelectedCgroupRow("cursor-segment", 40, section, { typeId: returned.typeId, where: { cgroup_path: "/selected", cgroup_identity: "own" } }, new AbortController().signal)
+    assert.equal(current.values.cpuset_cpus, 4)
+    assert.equal(urls.length, 3, "new physical CPU rows do not request selected-primary context")
+  } finally { globalThis.fetch = originalFetch }
 })

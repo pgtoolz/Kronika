@@ -516,3 +516,70 @@ fn shared_projection_preserves_old_only_cgroup_alias_in_both_request_orders() {
         matches!(execute(&context, QueryRequest::Snapshot(request)), Err(crate::QueryError::NoSuchColumn(field)) if field == "not_a_field")
     );
 }
+
+#[test]
+fn shared_cgroup_virtual_projection_uses_own_quota_in_both_family_orders() {
+    for new_recorded in [false, true] {
+        let payload = fixture_payload(|interner, buffers| {
+            let path = StrId(interner.intern(b"/work").expect("path").get());
+            for ts in [100, 200] {
+                buffers.push(legacy_cpu(ts, path, ts)).expect("legacy");
+                if new_recorded {
+                    let mut cpu = discovered_cpu(ts, path, path, Some(ts));
+                    cpu.cpuset_cpus = None;
+                    buffers.push(cpu).expect("new");
+                }
+            }
+        });
+        for reverse in [false, true] {
+            for fields in [
+                vec!["quota_cores"],
+                vec!["quota_cores", "cpuset_cpus", "usage_usec"],
+            ] {
+                let mut request = snapshot_request("os_cgroup_cpu", &fields);
+                request.sections.push("os_cgroup_v2_cpu".to_owned());
+                if reverse {
+                    request.sections.reverse();
+                }
+                let records = snapshot_records(&payload, request);
+                let mut current = String::new();
+                let mut selected = Vec::new();
+                for record in records {
+                    if record["record"] == "layout" {
+                        record["layout"]["logical_name"]
+                            .as_str()
+                            .expect("section")
+                            .clone_into(&mut current);
+                    } else if record["record"] == "row" && current == "os_cgroup_v2_cpu" {
+                        selected.push(record);
+                    }
+                }
+                assert_eq!(selected.len(), 1);
+                assert_eq!(
+                    selected[0]["type_id"],
+                    if new_recorded { "1207001" } else { "1201001" }
+                );
+                assert_eq!(
+                    selected[0]["values"][0],
+                    if new_recorded { json!(1.5) } else { json!(2.0) }
+                );
+                if fields.len() > 1 {
+                    assert!(selected[0]["values"][1].is_null());
+                    assert_eq!(selected[0]["values"][2], 1_000_000.0);
+                }
+            }
+        }
+        let source = EmbeddedSource::from_owned(
+            SegmentId::new(SEGMENT_ID).expect("id"),
+            payload.to_vec(),
+            u64::try_from(payload.len()).expect("length"),
+        )
+        .expect("source");
+        let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0b11, false);
+        let mut request = snapshot_request("os_cgroup_cpu", &["quota_cores", "unknown_virtual"]);
+        request.sections.push("os_cgroup_v2_cpu".to_owned());
+        assert!(
+            matches!(execute(&context, QueryRequest::Snapshot(request)), Err(crate::QueryError::NoSuchColumn(field)) if field == "unknown_virtual")
+        );
+    }
+}
