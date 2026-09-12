@@ -34,8 +34,7 @@ struct Counters {
     waiting: BTreeMap<i64, f64>,
     lock_waiting: BTreeMap<i64, f64>,
     oldest_xact: BTreeMap<i64, f64>,
-    // The container scope: the selected recorded cgroup, selected by the exact
-    // paths `os_cgroup_context` records, and the pressure of that cgroup.
+    // Counters and pressure for the cgroup selected by `os_cgroup_context`.
     cg_cpu_usage: BTreeMap<i64, i64>,
     cg_cpu_throttled: BTreeMap<i64, i64>,
     cg_cpu_capacity: BTreeMap<i64, Option<f64>>,
@@ -139,8 +138,7 @@ pub(super) fn collect(
 ) -> Result<(Vec<LanePoint>, SegmentFacts), QueryError> {
     let mut facts = Facts::default();
     let collection = kronika_index::collection_facts(segment)?;
-    // Clock facts and selected cgroup membership come first: the
-    // container rows below are selected by those exact paths and scope.
+    // Read clock facts and cgroup context first: resource rows need those paths and scope.
     for (type_id, _rows) in segment.sections() {
         match logical_section_name(type_id) {
             Some("instance_metadata") => read_metadata(segment, type_id, &mut facts)?,
@@ -226,7 +224,7 @@ struct Facts {
     memory_limits: BTreeMap<i64, Option<f64>>,
 }
 
-/// The selected recorded cgroup memberships recorded by `os_cgroup_context`.
+/// Controller paths and scope recorded by `os_cgroup_context`.
 /// Paths are dictionary ids of the segment, so rows compare without text.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Membership {
@@ -357,7 +355,7 @@ fn cgroup_cpu_capacity(row: &Row) -> Option<f64> {
     )
 }
 
-/// Whether a cgroup row is the selected recorded membership for one controller.
+/// Whether a row belongs to the selected group for this controller.
 fn member_row(row: &Row, membership: Option<&Membership>, path: Option<u64>) -> bool {
     let (Some(membership), Some(path)) = (membership, path) else {
         return false;
@@ -627,9 +625,8 @@ fn read_psi(segment: &Segment, type_id: u32, counters: &mut Counters) -> Result<
     Ok(())
 }
 
-/// Host pressure (scope 0) feeds the host lanes; the pressure of the
-/// selected recorded cgroup (legacy scope 3 or current scope 4) feeds the container lanes. Resource 0 is
-/// cpu, 1 memory, 2 io; host memory pressure has no lane.
+/// Host lanes use scope 0; container lanes use selected cgroup scope 3 (legacy)
+/// or 4. Resources: 0 CPU, 1 memory, 2 I/O; host memory pressure has no lane.
 const fn pressure_lane(
     counters: &mut Counters,
     scope: i64,
@@ -952,8 +949,7 @@ fn points(counters: &Counters, ticks_per_second: i64, cpu_count: i64) -> Vec<Lan
     out
 }
 
-/// The container lanes: the selected recorded cgroup against its recorded
-/// capacity, its pressure, its events and its gauges.
+/// Resource lanes for the selected cgroup, using its recorded capacity.
 fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
     for (ts, cores) in group_rate(
         &counters.cg_cpu_usage,

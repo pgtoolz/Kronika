@@ -200,8 +200,8 @@ atomic; completed portions remain readable while later groups are collected.
 | Section | Recorded values |
 |---|---|
 | `os_cgroup_v2_group` | Path, directory identity, exposed mount root, exact known parent identity, `memory_localevents` and `pids_localevents` mount flags; present even without resource files |
-| `os_cgroup_v2_cpu` | Usage/user/system and throttled time in µs; periods/throttled periods; local quota/period and effective cpuset CPU count |
-| `os_cgroup_v2_memory` | Current/max/high and anon/file/kernel/slab bytes; ordinary low/high/max/oom/oom_kill events; separate local high/max/oom/oom_kill/oom_group_kill events |
+| `os_cgroup_v2_cpu` | Total, user and system CPU time, and time throttled, in µs; counts of periods and throttled periods; local quota/period and CPU count from `cpuset.cpus.effective` |
+| `os_cgroup_v2_memory` | `current`, `max`, `high`, `anon`, `file`, `kernel`, `slab`, in bytes; low/high/max/oom/oom_kill events from `memory.events`; high/max/oom/oom_kill/oom_group_kill from `memory.events.local` |
 | `os_cgroup_v2_pids` | Current threads, local limit, failure `max`; event source `0` unknown, `1` `pids.events.local`, `2` `pids.events` |
 | `os_cgroup_v2_io` | Each group's device `major:minor`, rbytes/wbytes/rios/wios |
 
@@ -212,10 +212,10 @@ its interpretation depends on kernel and mount semantics. Parent counters may
 include children, and devices may be stacked: neither set is added together.
 A recreated directory starts a separate counter history.
 
-Typed rows are appended in bounded portions with the same observation timestamp;
-WAL and sealed segments retain every portion. Container resource lanes use the selected context below. PSI has one primary source: host on a machine, the
-selected ancestor in a container. Available cgroup CPU `full` fields are recorded;
-system CPU `full` remains undefined.
+The rows from each cgroup pass share an observation timestamp.
+Container resource charts show the selected ancestor described below.
+PSI comes from the host on a machine or the selected ancestor in a container.
+Available cgroup CPU `full` fields are recorded; system CPU `full` remains undefined.
 
 ### Capacity and membership
 
