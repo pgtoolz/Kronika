@@ -1,37 +1,83 @@
 use kronika_registry::os_diskstats::OsDiskstats;
 use kronika_registry::{
-    ColumnClass, PgStatDatabaseV1, PgStatDatabaseV4, PgStatStatementsV1, PgStatStatementsV3,
-    Section as _,
+    ColumnClass, PgStatDatabaseV1, PgStatDatabaseV2, PgStatDatabaseV4, PgStatStatementsV1,
+    PgStatStatementsV3, Section as _,
 };
 
-use super::{OutputField, cells_equal, output_names, projection, typed_filter};
+use super::{OutputField, cells_equal, output_names, projection, typed_filter, validate_filters};
 use crate::QueryError;
 use crate::request::Filter;
 
 #[test]
+fn filters_are_typed_against_every_layout_of_the_section() {
+    let known = [&PgStatDatabaseV2::CONTRACT, &PgStatDatabaseV4::CONTRACT];
+    let filter = |column: &str, value: &str| Filter {
+        column: column.to_owned(),
+        value: value.to_owned(),
+    };
+    validate_filters(&known, &[filter("datname", "postgres")])
+        .expect("a label the section carries");
+    let error = validate_filters(&known, &[filter("sessions_fatal", "0")])
+        .expect_err("a counter is not a filter even where only an older layout is recorded");
+    assert!(matches!(error, QueryError::BadFilter(name) if name == "sessions_fatal"));
+    let error = validate_filters(&known, &[filter("datid", "not-a-number")])
+        .expect_err("the value must fit the column type");
+    assert!(matches!(error, QueryError::BadFilter(name) if name == "datid"));
+    let error = validate_filters(&known, &[filter("not_a_column", "x")])
+        .expect_err("a name no layout of the section carries");
+    assert!(matches!(error, QueryError::NoSuchColumn(name) if name == "not_a_column"));
+}
+
+#[test]
 fn requested_field_may_exist_in_only_one_physical_layout() {
     let contracts = [&PgStatDatabaseV1::CONTRACT, &PgStatDatabaseV4::CONTRACT];
-    let names = output_names(&contracts, &["parallel_workers_launched".to_owned()])
-        .expect("field exists in one layout");
+    let names = output_names(
+        &contracts,
+        &contracts,
+        &["parallel_workers_launched".to_owned()],
+    )
+    .expect("field exists in one layout");
     assert_eq!(names, ["parallel_workers_launched"]);
 }
 
 #[test]
 fn a_field_absent_from_every_layout_is_rejected() {
     let contracts = [&PgStatDatabaseV1::CONTRACT, &PgStatDatabaseV4::CONTRACT];
-    let error = output_names(&contracts, &["not_a_column".to_owned()]).expect_err("unknown field");
+    let error = output_names(&contracts, &contracts, &["not_a_column".to_owned()])
+        .expect_err("unknown field");
+    assert!(matches!(error, QueryError::NoSuchColumn(name) if name == "not_a_column"));
+}
+
+#[test]
+fn a_field_known_to_the_section_is_accepted_when_no_recorded_layout_has_it() {
+    let recorded = [&PgStatDatabaseV2::CONTRACT];
+    let known = [&PgStatDatabaseV2::CONTRACT, &PgStatDatabaseV4::CONTRACT];
+    let names = output_names(&recorded, &known, &["sessions_fatal".to_owned()])
+        .expect("a newer layout of the section carries the field");
+    assert_eq!(names, ["sessions_fatal"]);
+    let error = output_names(&recorded, &known, &["not_a_column".to_owned()])
+        .expect_err("no layout of the section carries the field");
     assert!(matches!(error, QueryError::NoSuchColumn(name) if name == "not_a_column"));
 }
 
 #[test]
 fn default_projection_is_the_union_in_stable_layout_order() {
     let contracts = [&PgStatDatabaseV1::CONTRACT, &PgStatDatabaseV4::CONTRACT];
-    let names = output_names(&contracts, &[]).expect("default fields");
+    let names = output_names(&contracts, &contracts, &[]).expect("default fields");
     assert_eq!(names.first().map(String::as_str), Some("ts"));
     assert!(names.iter().any(|name| name == "datname"));
     assert!(names.iter().any(|name| name == "parallel_workers_launched"));
     let unique: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();
     assert_eq!(unique.len(), names.len());
+}
+
+#[test]
+fn default_projection_covers_only_the_recorded_layouts() {
+    let recorded = [&PgStatDatabaseV1::CONTRACT];
+    let known = [&PgStatDatabaseV1::CONTRACT, &PgStatDatabaseV4::CONTRACT];
+    let names = output_names(&recorded, &known, &[]).expect("default fields");
+    assert!(names.iter().any(|name| name == "datname"));
+    assert!(!names.iter().any(|name| name == "parallel_workers_launched"));
 }
 
 #[test]

@@ -1,5 +1,6 @@
 use kronika_format::DictLimits;
 use kronika_layout::{DataRoot, LayoutLimits, SegmentAddress, SegmentId};
+use kronika_query::QueryError;
 use kronika_registry::{PgStatDatabaseV1, PgStatDatabaseV4, Section, StrId, Ts};
 use kronika_writer::{Interner, Journal, JournalConfig, SectionBuffers, dict, write_segment};
 use serde_json::{Value, json};
@@ -86,6 +87,29 @@ fn database_v4(
 }
 
 fn finished_multi_layout_segment() -> tempfile::TempDir {
+    finished_segment(|buffers, postgres, template| {
+        buffers
+            .push(database_v1(100, 42, postgres))
+            .expect("V1 row fits");
+        buffers
+            .push(database_v4(200, 42, postgres, 8))
+            .expect("matching V4 row fits");
+        buffers
+            .push(database_v4(300, 43, template, 99))
+            .expect("nonmatching V4 row fits");
+    })
+}
+
+fn finished_single_layout_segment() -> tempfile::TempDir {
+    // The row sits inside the segment's hour so the hour route selects it.
+    finished_segment(|buffers, postgres, _template| {
+        buffers
+            .push(database_v1(SEGMENT_ID + 100, 42, postgres))
+            .expect("V1 row fits");
+    })
+}
+
+fn finished_segment(fill: impl FnOnce(&mut SectionBuffers, StrId, StrId)) -> tempfile::TempDir {
     let directory = tempfile::tempdir().expect("temporary data root");
     let root = DataRoot::open(directory.path()).expect("open data root");
     let writer = root
@@ -107,15 +131,7 @@ fn finished_multi_layout_segment() -> tempfile::TempDir {
     let dictionaries = dict::encode(interner.window()).expect("encode fixture dictionary");
 
     let mut buffers = SectionBuffers::new();
-    buffers
-        .push(database_v1(100, 42, postgres))
-        .expect("V1 row fits");
-    buffers
-        .push(database_v4(200, 42, postgres, 8))
-        .expect("matching V4 row fits");
-    buffers
-        .push(database_v4(300, 43, template, 99))
-        .expect("nonmatching V4 row fits");
+    fill(&mut buffers, postgres, template);
     let part = buffers
         .flush(&dictionaries)
         .expect("encode fixture part")
@@ -139,6 +155,74 @@ fn stream(prepared: Prepared) -> Vec<Value> {
         )
         .expect("stream history");
     records
+}
+
+#[test]
+fn a_field_no_recorded_layout_carries_is_reported_unavailable() {
+    // A PostgreSQL major that predates the column records only the older
+    // layout; the request still answers, as it does when a newer layout
+    // shares the hour, and the layout advertises the field as unavailable.
+    let directory = finished_single_layout_segment();
+    let history =
+        format!("/api/segments/{SEGMENT_ID}/sections/pg_stat_database/history?field={FIELD}");
+    let hour = format!(
+        "/api/hour?from={SEGMENT_ID}&to={}&section=pg_stat_database&field={FIELD}",
+        SEGMENT_ID + 3_599_999_999
+    );
+    for target in [history, hour] {
+        let (path, query) = target.split_once('?').expect("query");
+        let route = crate::route::parse(path, Some(query)).expect("valid route");
+        let prepared = crate::api::prepare(directory.path(), 0b10, route, None)
+            .unwrap_or_else(|error| panic!("prepare {target}: {error:?}"));
+        let records = stream(prepared);
+        let layout = records
+            .iter()
+            .find(|record| record["record"] == "layout")
+            .unwrap_or_else(|| panic!("projected layout for {target}"));
+        assert_eq!(
+            layout["layout"]["columns"],
+            json!([{ "name": FIELD, "available": false }]),
+            "{target}: the recorded layout advertises the requested field as unavailable"
+        );
+        let rows = records
+            .iter()
+            .filter(|record| record["record"] == "row")
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 1, "{target}: the recorded row is still emitted");
+        assert_eq!(
+            rows[0]["values"],
+            json!([null]),
+            "{target}: the absent field is emitted as null"
+        );
+    }
+
+    // The history route validates while preparing; the hour route validates
+    // each segment while streaming.
+    let rejected = |target: String| -> QueryError {
+        let (path, query) = target.split_once('?').expect("query");
+        let route = crate::route::parse(path, Some(query)).expect("valid route");
+        match crate::api::prepare(directory.path(), 0b10, route, None) {
+            Err(error) => error,
+            Ok(prepared) => prepared
+                .stream(&mut |_record| true, &|| false)
+                .err()
+                .unwrap_or_else(|| panic!("{target} is still rejected")),
+        }
+    };
+    let error = rejected(format!(
+        "/api/segments/{SEGMENT_ID}/sections/pg_stat_database/history?field=not_a_column"
+    ));
+    assert!(
+        matches!(error, QueryError::NoSuchColumn(ref name) if name == "not_a_column"),
+        "a name no layout of the section carries: {error:?}"
+    );
+    let error = rejected(format!(
+        "/api/segments/{SEGMENT_ID}/sections/pg_stat_database/history?field=xact_commit&where.{FIELD}=1"
+    ));
+    assert!(
+        matches!(error, QueryError::BadFilter(ref name) if name == FIELD),
+        "a counter is not a filter whatever the recorded layout: {error:?}"
+    );
 }
 
 #[test]

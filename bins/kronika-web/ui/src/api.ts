@@ -243,6 +243,8 @@ export interface TimelineData {
   readonly syntheticDemo?: boolean
   readonly postgresqlConfigured?: boolean
   readonly postgresqlPresent?: boolean
+  // The serving build, from the catalog record; absent from older servers.
+  readonly kronikaVersion?: string
 }
 
 export interface TimelineRange {
@@ -427,6 +429,7 @@ export async function loadTimeline(
     syntheticDemo: catalog?.demo === "synthetic",
     postgresqlConfigured: sourceConfigured(catalog, "postgresql"),
     postgresqlPresent: sourceMetricsPresent(catalog, "postgresql"),
+    ...(typeof catalog?.["kronika_version"] === "string" ? { kronikaVersion: catalog["kronika_version"] } : {}),
   }
 }
 
@@ -916,6 +919,13 @@ export function segmentAt(segments: readonly SegmentBound[], at: number): string
 export function segmentBoundAt(segments: readonly SegmentBound[], at: number): SegmentBound | null {
   return newestSegment(segments.filter((segment) => segment.minTs <= at && segment.maxTs >= at))
     ?? newestSegment(segments.filter((segment) => segment.maxTs <= at))
+}
+
+// Physical layouts the hour's segments recorded for one logical section.
+export function recordedLayouts(segments: readonly SegmentBound[], logicalName: string): readonly string[] {
+  return unique(segments.flatMap((segment) => segment.sections
+    .filter((section) => section.logicalName === logicalName)
+    .map((section) => section.typeId)))
 }
 
 export function snapshotRequestGroups(

@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::cell::Cell as Counter;
 
 use kronika_reader::{Cell, Dictionary, Resolved, Row, Segment, SegmentKind};
-use kronika_registry::{ColumnClass, ColumnType, contract, logical_section_name};
+use kronika_registry::{ColumnClass, ColumnType, contract, logical_section_name, registry};
 use serde_json::{Value, json};
 
 use crate::StatementScope;
@@ -857,7 +857,7 @@ fn section_plans(
 ) -> Result<Vec<SectionPlans>, QueryError> {
     let shared_projection = request.sections.len() > 1 && !request.fields.is_empty();
     if shared_projection {
-        validate_shared_projection(segment, &request.sections, &request.fields)?;
+        validate_shared_projection(&request.sections, &request.fields)?;
     }
     let mut sections = Vec::with_capacity(request.sections.len());
     for logical_name in &request.sections {
@@ -4934,17 +4934,14 @@ fn record_contributing_moment(moments: &mut ContributingMoments, at: i64, segmen
     }
 }
 
-fn validate_shared_projection(
-    segment: &Segment,
-    sections: &[String],
-    fields: &[String],
-) -> Result<(), QueryError> {
+/// A shared field must exist in some registered layout of a requested section,
+/// whatever the segment recorded, as in `projection::plans`.
+fn validate_shared_projection(sections: &[String], fields: &[String]) -> Result<(), QueryError> {
     for field in fields {
-        let known = sections.iter().any(|section| {
-            segment
-                .layouts(section)
-                .filter_map(|(type_id, _section)| contract(type_id))
-                .any(|layout| layout.column(field).is_some())
+        let known = registry().iter().any(|layout| {
+            logical_section_name(layout.type_id.get())
+                .is_some_and(|name| sections.iter().any(|section| section == name))
+                && layout.column(field).is_some()
         });
         if !known {
             return Err(QueryError::NoSuchColumn(field.clone()));
