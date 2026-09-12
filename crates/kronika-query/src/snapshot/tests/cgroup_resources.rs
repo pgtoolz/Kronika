@@ -450,3 +450,69 @@ fn cgroup_interval_sort_orders_actual_deltas_across_different_elapsed_intervals(
         "rate order differs from interval order"
     );
 }
+
+#[test]
+fn shared_projection_preserves_old_only_cgroup_alias_in_both_request_orders() {
+    let payload = fixture_payload(|interner, buffers| {
+        let path = StrId(interner.intern(b"/work").expect("path").get());
+        buffers.push(legacy_cpu(100, path, 1)).expect("old before");
+        buffers.push(legacy_cpu(200, path, 2)).expect("old after");
+    });
+    for reverse in [false, true] {
+        for fields in [
+            vec!["usage_usec"],
+            vec!["usage_usec", "nr_periods"],
+            vec!["nr_periods"],
+        ] {
+            let mut request = snapshot_request("os_cgroup_cpu", &fields);
+            request.sections.push("os_cgroup_v2_cpu".to_owned());
+            if reverse {
+                request.sections.reverse();
+            }
+            let records = snapshot_records(&payload, request);
+            let mut current = String::new();
+            let mut values = BTreeMap::new();
+            for record in records {
+                if record["record"] == "layout" {
+                    record["layout"]["logical_name"]
+                        .as_str()
+                        .expect("logical section")
+                        .clone_into(&mut current);
+                } else if record["record"] == "row" {
+                    assert_eq!(record["type_id"], "1201001");
+                    values.insert(current.clone(), record["values"].clone());
+                }
+            }
+            let expected = fields
+                .iter()
+                .map(|field| {
+                    if *field == "usage_usec" {
+                        json!(10_000.0)
+                    } else {
+                        Value::Null
+                    }
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                values.get("os_cgroup_v2_cpu"),
+                Some(&json!(expected)),
+                "alias fields retained with order reverse={reverse}"
+            );
+            if fields.contains(&"usage_usec") {
+                assert_eq!(values.get("os_cgroup_cpu"), Some(&json!([10_000.0])));
+            }
+        }
+    }
+    let source = EmbeddedSource::from_owned(
+        SegmentId::new(SEGMENT_ID).expect("id"),
+        payload.to_vec(),
+        u64::try_from(payload.len()).expect("length"),
+    )
+    .expect("source");
+    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0b11, false);
+    let mut request = snapshot_request("os_cgroup_cpu", &["not_a_field"]);
+    request.sections.push("os_cgroup_v2_cpu".to_owned());
+    assert!(
+        matches!(execute(&context, QueryRequest::Snapshot(request)), Err(crate::QueryError::NoSuchColumn(field)) if field == "not_a_field")
+    );
+}

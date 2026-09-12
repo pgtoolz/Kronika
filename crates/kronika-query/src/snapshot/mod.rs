@@ -5010,9 +5010,11 @@ fn record_contributing_moment(moments: &mut ContributingMoments, at: i64, segmen
 fn validate_shared_projection(sections: &[String], fields: &[String]) -> Result<(), QueryError> {
     for field in fields {
         let known = registry().iter().any(|layout| {
-            logical_section_name(layout.type_id.get())
-                .is_some_and(|name| sections.iter().any(|section| section == name))
-                && layout.column(field).is_some()
+            logical_section_name(layout.type_id.get()).is_some_and(|name| {
+                sections
+                    .iter()
+                    .any(|section| section == name || cgroup::legacy(section) == Some(name))
+            }) && layout.column(field).is_some()
         });
         if !known {
             return Err(QueryError::NoSuchColumn(field.clone()));
@@ -5022,11 +5024,25 @@ fn validate_shared_projection(sections: &[String], fields: &[String]) -> Result<
 }
 
 fn section_projection(segment: &Segment, logical_name: &str, fields: &[String]) -> Vec<String> {
-    let columns = segment
-        .layouts(logical_name)
-        .filter_map(|(type_id, _section)| contract(type_id))
-        .flat_map(|layout| layout.columns.iter().map(|column| column.name))
-        .collect::<HashSet<_>>();
+    let columns = cgroup::legacy(logical_name).map_or_else(
+        || {
+            segment
+                .layouts(logical_name)
+                .filter_map(|(type_id, _section)| contract(type_id))
+                .flat_map(|layout| layout.columns.iter().map(|column| column.name))
+                .collect::<HashSet<_>>()
+        },
+        |legacy| {
+            registry()
+                .iter()
+                .filter(|layout| {
+                    let name = logical_section_name(layout.type_id.get());
+                    name == Some(logical_name) || name == Some(legacy)
+                })
+                .flat_map(|layout| layout.columns.iter().map(|column| column.name))
+                .collect::<HashSet<_>>()
+        },
+    );
     fields
         .iter()
         .filter(|field| columns.contains(field.as_str()))
