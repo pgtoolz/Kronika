@@ -19,7 +19,6 @@ A recorded hour, 5 September 2026, 19:00–20:00 UTC:
 
 Version **1.1.0 is unreleased**. [Build from this source](docs/build.md) or
 [install](INSTALL.md) a matching [development archive](docs/releases.md#development-builds).
-The examples require `kronika-collector --version` to report `1.1.0`.
 
 Choose `local` to record Linux and, optionally, PostgreSQL in the same VM or pod.
 Choose `postgresql` for a remote server or when you only need database metrics.

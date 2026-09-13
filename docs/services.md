@@ -146,13 +146,10 @@ sudo systemctl restart kronika-collector kronika-web
 
 ## Replace binaries
 
-Verify and extract the next archive using [Install](../INSTALL.md#1-download-and-extract).
+Download and extract the next archive using [Install](../INSTALL.md#1-download-and-extract).
 From its extracted directory:
 
 ```sh
-for binary in kronika-collector kronika-web kronika-dump kronika-report; do
-  "./$binary" --version
-done
 sudo systemctl stop kronika-collector kronika-web
 sudo install -m 0755 kronika-collector kronika-web kronika-dump \
   kronika-report /usr/local/bin/

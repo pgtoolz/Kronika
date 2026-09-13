@@ -155,13 +155,10 @@ sudo systemctl restart kronika-collector kronika-web
 <a id="замена-binaries"></a>
 ## Замена программ
 
-Проверьте и распакуйте следующий архив по [инструкции установки](../INSTALL.ru.md#1-скачивание-и-распаковка).
+Скачайте и распакуйте следующий архив по [инструкции установки](../INSTALL.ru.md#1-скачивание-и-распаковка).
 В распакованном каталоге:
 
 ```sh
-for binary in kronika-collector kronika-web kronika-dump kronika-report; do
-  "./$binary" --version
-done
 sudo systemctl stop kronika-collector kronika-web
 sudo install -m 0755 kronika-collector kronika-web kronika-dump \
   kronika-report /usr/local/bin/

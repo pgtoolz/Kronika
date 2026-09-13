@@ -9,19 +9,13 @@ inspect or extract part of a recording and `kronika-report` to create an HTML re
 ## 1. Download and extract
 
 Version **1.1.0 is unreleased**. Use a development archive for this source revision;
-follow its [download, verification and extraction instructions](docs/releases.md#development-builds).
+follow the [download and extraction instructions](docs/releases.md#development-builds).
 Alternatively, [build and install from source](docs/build.md), then skip to
 [collector startup](#3-start-collector).
 
-In the extracted archive directory, check the binary before installing:
-
-```sh
-./kronika-collector --version
-```
-
-It must report `1.1.0` for the new `KRONIKA_PG_DSN` examples.
-
 ## 2. Install
+
+Run from the extracted archive directory:
 
 ```sh
 sudo install -d -m 0755 /usr/local/bin
