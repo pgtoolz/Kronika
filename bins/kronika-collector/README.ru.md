@@ -173,7 +173,7 @@ PostgreSQL Health; если его нельзя вычислить, общая �
 
 Чтобы собирать данные нескольких серверов PostgreSQL, запустите для каждого
 из них процесс `kronika-collector` со своим DSN и отдельным каталогом хранения.
-Пример для двух серверов — в первом терминале:
+Сбор с `pg-a.example.net` в первом терминале:
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
@@ -182,7 +182,7 @@ KRONIKA_COLLECTOR_MODE=postgresql \
   /usr/local/bin/kronika-collector
 ```
 
-Во втором терминале:
+Сбор с `pg-b.example.net` во втором терминале:
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
