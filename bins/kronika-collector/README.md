@@ -185,10 +185,8 @@ KRONIKA_COLLECTOR_MODE=postgresql \
   /usr/local/bin/kronika-collector
 ```
 
-Each process discovers that server's accessible databases; a process per database
-is unnecessary. Primary and standby also need separate processes and stores.
-Each web process, its MCP endpoint and exports read one storage directory.
-Use a separate web process and listen address for each store.
+To view both recordings, start `kronika-web` separately for `kronika-pg-a`
+and `kronika-pg-b`, using different listen addresses.
 
 <a id="postgresql-role"></a>
 ### PostgreSQL role
