@@ -167,9 +167,9 @@ See [Health formulas](../../docs/metrics-time.md#health) and
 <a id="several-postgresql-servers"></a>
 ### Several PostgreSQL servers
 
-For each PostgreSQL server, start a separate `kronika-collector` process with
-that server’s DSN and a separate storage directory. All processes use the same
-binary. For two servers, start the first process in one terminal:
+To collect from several PostgreSQL servers, run a `kronika-collector` process
+for each server with its DSN and a separate storage directory.
+For two servers, start the first process in one terminal:
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \

@@ -66,9 +66,8 @@ known, add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, replacing `4` with its CPU count
 Without it, SQL metrics remain available; PostgreSQL Health is unknown.
 See [collector configuration](bins/kronika-collector/README.md#remote-postgresql).
 
-For each PostgreSQL server, start a separate `kronika-collector` process with
-that server’s DSN and a separate storage directory. All processes use the same
-binary; each process collects metrics from the accessible databases on its server. See the
+To collect from several PostgreSQL servers, run a `kronika-collector` process
+for each server with its DSN and a separate storage directory. See the
 [two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
 ### Open the web interface

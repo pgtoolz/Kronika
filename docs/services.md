@@ -57,10 +57,9 @@ All parameters:
 [collector](../bins/kronika-collector/README.md) and
 [web](../bins/kronika-web/README.md).
 
-For each PostgreSQL server, run a separate `kronika-collector` process with its
-own DSN and storage directory. All processes use the same binary, regardless
-of how you start them. Each web process reads one storage directory and needs
-its own listen address. See the
+To collect from several PostgreSQL servers, run a `kronika-collector` process
+for each server with its DSN and a separate storage directory. Each web process
+reads one storage directory and needs its own listen address. See the
 [two-server example](../bins/kronika-collector/README.md#several-postgresql-servers).
 
 ## Units

@@ -6,7 +6,7 @@
 
 Changes since the last published release, 1.0.1.
 
-- Use `KRONIKA_PG_DSN` for one PostgreSQL server. Start a separate `kronika-collector` process for each server, with its own DSN and `KRONIKA_STORAGE_DIR`. All processes use the same binary; each collects metrics from the accessible databases on its server.
+- Add `KRONIKA_PG_DSN` for the PostgreSQL connection string. To collect from several servers, run `kronika-collector` for each server with its own `KRONIKA_PG_DSN` and a separate `KRONIKA_STORAGE_DIR`.
 - Collectors close ZMS files on a schedule with a random time offset. The offset survives restarts; closes can still coincide.
 
 `KRONIKA_PG_DSNS` is deprecated and will be removed; only its first DSN is used. Replace it with `KRONIKA_PG_DSN` and remove the old variable. Setting both stops startup.

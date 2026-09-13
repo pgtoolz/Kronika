@@ -61,10 +61,10 @@ KRONIKA_PG_DSN="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-w
 [сборщик](../bins/kronika-collector/README.ru.md) и
 [веб-сервер](../bins/kronika-web/README.ru.md).
 
-Для каждого сервера PostgreSQL запустите отдельный процесс `kronika-collector`
-со своим DSN и каталогом хранения. Бинарник для всех процессов один;
-способ запуска выбираете вы. Каждый веб-процесс читает один каталог хранения
-и использует свой адрес прослушивания. См.
+Чтобы собирать данные нескольких серверов PostgreSQL, запустите для каждого
+из них процесс `kronika-collector` со своим DSN и отдельным каталогом хранения.
+Каждый веб-процесс читает один каталог хранения и использует свой адрес
+прослушивания. См.
 [пример двух серверов](../bins/kronika-collector/README.ru.md#several-postgresql-servers).
 
 <a id="units"></a>

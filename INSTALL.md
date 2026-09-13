@@ -81,10 +81,9 @@ The role needs inherited `pg_monitor` membership, `CONNECT` to each collected
 database and the database-local extension permissions listed in
 [PostgreSQL role](bins/kronika-collector/README.md#postgresql-role).
 
-For each PostgreSQL server, including primary and standby, start a separate
-`kronika-collector` process with its own DSN and storage directory. All processes
-use the same binary. Each process collects metrics from the accessible databases on its
-server; no separate collector per database is needed. See the
+To collect from several PostgreSQL servers, including primary and standby,
+run a `kronika-collector` process for each with its DSN and a separate storage
+directory. See the
 [two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
 PostgreSQL and Linux metrics from the same VM or pod:

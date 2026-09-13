@@ -86,10 +86,9 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_current_logfile() TO kronika_monitor;
 каждой базе; они перечислены в разделе
 [«Роль PostgreSQL»](bins/kronika-collector/README.ru.md#postgresql-role).
 
-Для каждого сервера PostgreSQL, включая primary и standby, запустите отдельный
-процесс `kronika-collector` со своим DSN и каталогом хранения. Бинарник для всех
-процессов один. Каждый процесс собирает метрики доступных баз своего сервера;
-отдельный сборщик для каждой базы не нужен. См.
+Для сбора с нескольких серверов PostgreSQL, включая primary и standby,
+запустите для каждого процесс `kronika-collector` со своим DSN и отдельным
+каталогом хранения. См.
 [пример двух серверов](bins/kronika-collector/README.ru.md#several-postgresql-servers).
 
 PostgreSQL и метрики Linux из той же VM или pod:
