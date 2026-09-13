@@ -108,9 +108,8 @@ Empty lists add no entries; empty entries between semicolons are errors.
 The PostgreSQL DSN covers its initial database and other accessible databases
 on that server, excluding template databases.
 
-`KRONIKA_PG_DSNS` is deprecated and will be removed; only its first DSN is used.
-The remaining entries are ignored without validation.
-Replace it with `KRONIKA_PG_DSN` and remove the old variable. Setting both stops startup.
+Move the first connection string from `KRONIKA_PG_DSNS` to `KRONIKA_PG_DSN`
+and remove the old variable. Support for `KRONIKA_PG_DSNS` will be removed.
 
 ### Other settings
 
