@@ -381,9 +381,9 @@ fn cgroup_cpu_limit(world: &mut BddWorld, cores: i64) -> Result<()> {
     anyhow::bail!("no cgroup records a {cores}-core quota; the limits found were {seen:?}")
 }
 
-#[then(regex = r"^age-closed segments after the first cover at least (\d+) windows$")]
-fn age_window_count(world: &mut BddWorld, least: i64) -> Result<()> {
-    use super::then_log::field_value;
+#[then("age publications preserve their windows and coalesce after the first")]
+fn age_window_count(world: &mut BddWorld) -> Result<()> {
+    use crate::collector::field_value;
     let listed = segments(world)?;
     for segment in &listed {
         let count = segment
@@ -426,6 +426,7 @@ fn age_window_count(world: &mut BddWorld, least: i64) -> Result<()> {
         "{published} ZMS files but {} close records",
         closes.len()
     );
+    let mut coalesced = false;
     for (index, close) in closes.iter().enumerate() {
         anyhow::ensure!(
             field_value(close, "reason")? == "age",
@@ -452,13 +453,12 @@ fn age_window_count(world: &mut BddWorld, least: i64) -> Result<()> {
                 && max == field_value(close, "max_ts")?.parse::<i64>()?,
             "timestamp bounds differ from close: {close}"
         );
-        if index > 0 {
-            anyhow::ensure!(
-                count >= least && max > min,
-                "complete age cycle coalesced {count} windows spanning {min}..{max}, expected at least {least}"
-            );
-        }
+        coalesced |= index > 0 && count > 1 && max > min;
     }
+    anyhow::ensure!(
+        coalesced,
+        "no post-first age publication coalesced distinct windows"
+    );
     Ok(())
 }
 

@@ -2,6 +2,7 @@
 
 use super::table_rows;
 use crate::BddWorld;
+use crate::collector::field_value;
 use anyhow::{Context as _, Result};
 use cucumber::gherkin::Step;
 use cucumber::then;
@@ -202,13 +203,6 @@ fn validate_shutdown_query_summary(line: &str, payload_measure: &str) -> Result<
         "fetch_elapsed_ms_max={fetch_max} exceeds fetch_elapsed_ms_total={fetch_total} in {line}"
     );
     Ok(())
-}
-
-pub(super) fn field_value<'a>(line: &'a str, name: &str) -> Result<&'a str> {
-    let prefix = format!("{name}=");
-    line.split_whitespace()
-        .find_map(|field| field.strip_prefix(&prefix))
-        .with_context(|| format!("{name} is missing from {line}"))
 }
 
 fn require_literal_field(line: &str, name: &str, expected: &str) -> Result<()> {

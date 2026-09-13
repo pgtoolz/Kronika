@@ -40,8 +40,8 @@ Feature: Where a segment lands and what it says about itself
       | KRONIKA_SEGMENT_MAX_BYTES   | 1073741824 |
       | KRONIKA_SEGMENT_MAX_AGE_S   | 3          |
       | KRONIKA_OS_CORE_INTERVAL_S  | 0          |
-    When it publishes 2 age segments within 30 seconds and stops
-    Then age-closed segments after the first cover at least 2 windows
+    When it publishes 2 age segments with coalescing after the first within 30 seconds and stops
+    Then age publications preserve their windows and coalesce after the first
 
   Scenario: Stopping the collector leaves the journal in place
     Given a collector with these settings
