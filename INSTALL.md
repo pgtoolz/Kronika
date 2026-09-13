@@ -47,8 +47,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 Processes are sampled every 5 seconds and core Linux metrics every 10 seconds.
 
-The collector periodically saves compressed segments. Web reads new data from
-`active.wal` without waiting for a finished segment.
+The web interface shows recorded history and data from ongoing collection.
 `Ctrl+C` stops collection and retains the journal; run the same command to resume.
 
 `KRONIKA_RETENTION` defaults to `2147483648` bytes (2 GiB). For a fixed 10 GiB

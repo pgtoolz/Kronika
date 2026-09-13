@@ -96,8 +96,9 @@ KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
-Open <http://127.0.0.1:8080/> and sign in. Web reads new data while collector
-runs. `Ctrl+C` stops either process; the recordings stay on disk.
+Open <http://127.0.0.1:8080/> and sign in. The web interface shows recorded
+history and data from ongoing collection. `Ctrl+C` stops either process;
+the recordings stay on disk.
 [Systemd setup](docs/services.md) covers running both programs as services and
 changing an existing service's configuration.
 
