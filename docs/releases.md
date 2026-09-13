@@ -6,7 +6,7 @@
 
 Version **1.1.0 is unreleased**. Use a [build from this 1.1.0 source](build.md) or
 a matching [development build](#development-builds) for the `KRONIKA_PG_DSN`
-examples. Verify that `kronika-collector --version` reports `1.1.0`.
+examples.
 
 <a id="download"></a>
 ## Archives
