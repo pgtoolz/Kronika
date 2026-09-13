@@ -30,8 +30,8 @@ happens after an abrupt stop or when a recording cannot be read.
 | `KRONIKA_JOURNAL_MAX_BYTES` | `1073741824` (1 GiB) | Maximum journal size in bytes: `36..1073741824`. Reaching it saves the segment early. |
 | `KRONIKA_RETENTION` | `2147483648` (2 GiB) | Storage target in bytes, or `auto` (= `auto:80`), or `auto:P`, where `P` is a whole percentage from 1 to 99. |
 
-Scheduled ZMS closing is staggered across collectors; each storage directory’s
-offset survives restarts, though closes can coincide.
+Collectors close ZMS files on a schedule with a random time offset. The offset
+survives restarts; closes can still coincide.
 
 The first segment after startup or an early close may be shorter. Ongoing
 collection can delay closing; size limits and `SIGUSR2` can close it sooner.
