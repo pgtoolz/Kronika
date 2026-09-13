@@ -5,8 +5,8 @@
 Kronika records Linux metrics, PostgreSQL statistics, query plans and events
 from PostgreSQL/PgBouncer logs. The collector runs on the monitored Linux machine
 or records only PostgreSQL data from a local or remote server. The web interface
-shows what happened during a selected
-hour: resource use, individual processes and queries, locks and changes over time.
+shows resource use, processes, queries and locks during a selected hour,
+and how they changed over time.
 
 ![Process CPU activity and the process snapshot for a recorded hour](docs/images/processes.png)
 
@@ -17,18 +17,13 @@ A recorded hour, 5 September 2026, 19:00–20:00 UTC:
 
 ## Install and run
 
-Version **1.1.0 is unreleased**. The commands below require binaries built from
-this 1.1.0 source: [build and install them](docs/build.md), or use a matching
-[development archive](docs/releases.md#development-builds) and follow the
-[installation guide](INSTALL.md). Confirm `kronika-collector --version` reports
-`1.1.0` before using the new `KRONIKA_PG_DSN` setting.
+Version **1.1.0 is unreleased**. [Build from this source](docs/build.md) or
+[install](INSTALL.md) a matching [development archive](docs/releases.md#development-builds).
+The examples require `kronika-collector --version` to report `1.1.0`.
 
-One collector process saves data from one PostgreSQL server and its accessible
-databases in a separate storage directory. Choose `local` for Linux and optional
-PostgreSQL in the same VM or pod; choose `postgresql` for a remote server or when OS data is
-unnecessary. Without a DSN, `local` records Linux only.
-The local examples save recordings in `/var/lib/kronika`; collector creates the
-directory if needed.
+Choose `local` to record Linux and, optionally, PostgreSQL in the same VM or pod.
+Choose `postgresql` for a remote server or when you only need database metrics.
+The local examples use `/var/lib/kronika`; the collector creates it if needed.
 
 ### Linux and optional PostgreSQL
 
@@ -55,10 +50,8 @@ comes from its recorded CPU snapshots.
 
 ### PostgreSQL only — local or remote
 
-Run collector on a machine that can reach the server, with a recording directory
-in your home directory.
-
-PostgreSQL-only collection does not need sudo.
+Run the collector on any machine that can reach PostgreSQL. This example saves
+data in your home directory and needs no sudo.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
@@ -75,13 +68,12 @@ See [collector configuration](bins/kronika-collector/README.md#remote-postgresql
 
 For each PostgreSQL server, start a separate `kronika-collector` process with
 that server’s DSN and a separate storage directory. All processes use the same
-binary. See the
+binary; each process collects all accessible databases on its server. See the
 [two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
 ### Open the web interface
 
-With your chosen collector running, start web in a second terminal over the
-same data directory.
+Start `kronika-web` in a second terminal with the collector’s data directory.
 
 #### For `local` mode
 
@@ -129,12 +121,10 @@ for the rotation rules and automatic mode.
 
 ## Recorded data and views
 
-The names below match sections in the interface.
-
 | Domain | What you can inspect | Reference |
 | --- | --- | --- |
 | Processes | Command, state and process number (PID), CPU use, memory and disk reads/writes; process tree and hourly activity. | [Linux metrics](docs/metrics-linux.md) |
-| Host | CPU, memory, time waiting for resources (PSI), network and disks, free space and device relationships; container resource limits and use. | [Linux metrics](docs/metrics-linux.md) |
+| Host | CPU, memory, time waiting for resources (PSI), network and disks, free space and device relationships; cgroup resource limits and use. | [Linux metrics](docs/metrics-linux.md) |
 | PostgreSQL sessions | Overview, Activity, Locks, Vacuum; session states and waits, blocking chains, query/transaction durations and table cleanup progress. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
 | PostgreSQL SQL | Statements and Plans; calls, execution/planning time, page and temporary-file reads, write-ahead log (WAL) output, SQL and plan text. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
 | PostgreSQL objects | Databases, Tables, Indexes and settings; size, reads and changes, maintenance and transaction ages; grouping by database, schema and tablespace. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
@@ -167,14 +157,13 @@ The web server serves the browser, HTTP API and MCP at one address and port.
 MCP is a protocol through which an AI client can read stored data. The **AI**
 panel provides connection settings. [MCP tools](docs/features.md#mcp) return
 values at a chosen time, objects ranked by a measurement, field descriptions,
-events and complete row details.
+events and row details.
 
 ## Portable HTML export
 
 **Export** saves a selected interval of your recording as one interactive HTML
-file. It embeds the interface, data and a Rust/WebAssembly program to process
-queries on the browser’s main thread. Opening the file requires no server or
-network connection.
+file. It includes the interface and data, so tables, search and charts work without
+a server or network connection.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/report-export-dark.svg">
@@ -183,8 +172,7 @@ network connection.
 
 [kronika-dump](bins/kronika-dump/README.md) inspects storage and extracts an
 interval into a standalone ZMS recording; [kronika-report](bins/kronika-report/README.md)
-converts that recording into HTML. Offline reports provide tables, search,
-charts and activity maps.
+converts that recording into HTML.
 
 ## Documentation
 

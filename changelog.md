@@ -9,13 +9,13 @@ Changes since the last published release, 1.0.1.
 - Use `KRONIKA_PG_DSN` for one PostgreSQL server. Start a separate `kronika-collector` process for each server, with its own DSN and `KRONIKA_STORAGE_DIR`. All processes use the same binary; each collects the accessible databases on its server.
 - Collectors close ZMS files on a schedule with a random time offset. The offset survives restarts; closes can still coincide.
 
-`KRONIKA_PG_DSNS` is deprecated: only the first DSN is used; the parameter will be removed. Use `KRONIKA_PG_DSN`.
+`KRONIKA_PG_DSNS` is deprecated: only its first DSN is used; the rest are ignored without validation. Replace it with `KRONIKA_PG_DSN`; setting both stops startup.
 
 ### Other changes
 
 - Add `KRONIKA_COLLECTOR_MODE=postgresql` for local or remote PostgreSQL without Linux collection or sudo. The existing `local` mode retains OS collection from the same VM or pod, with optional PostgreSQL. See [collector configuration](bins/kronika-collector/README.md).
-- Collect all visible, accessible cgroup v2 groups and show their CPU, Memory, I/O and Tasks in tables with search, sorting and history. Keep each group separate and distinguish unlimited from unavailable limits. Older recordings remain readable.
-- Read PostgreSQL 12 and older `pg_stat_statements` layouts without requesting absent fields. Use `total_time` for older statement layouts and hide Activity metrics unsupported by the recording.
+- View all visible, accessible cgroup v2 groups in CPU, Memory, I/O and Tasks tables with search, sorting and history. Groups stay separate; limits distinguish unlimited from unavailable. Older recordings remain readable.
+- Read PostgreSQL 12 and older `pg_stat_statements` layouts without requesting absent fields. Hide Activity metrics unsupported by the recording.
 - Keep Activity heatmaps within their recorded time window in partial-hour HTML reports. Cell clicks and row navigation select the corresponding recorded interval instead of jumping to the report start.
 
 ## [1.0.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.1) — 2026-09-06

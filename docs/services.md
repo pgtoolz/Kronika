@@ -2,11 +2,10 @@
 
 [Русская версия](services.ru.md) · [Install](../INSTALL.md)
 
-Systemd starts collector and web automatically and restarts them after a
-failure. These service files use programs in `/usr/local/bin`, root-owned
-storage and a web server accepting local connections only. Each recording
-directory in this setup has one collector and one web process. If either
-program is already running in a terminal, stop it before starting its service.
+These units start collector and web at boot and restart them after a failure.
+They use `/usr/local/bin`, root-owned storage and a web listener on localhost.
+Run one collector and one web process per storage directory. Stop any manually
+started instance before starting its service.
 
 ## Environment files
 
@@ -108,10 +107,9 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Both services use `UMask=0077`. Collector reads protected process and log data;
-web creates indexes and ownership locks in the same storage root. Web also
-reads recordings after collector stops. Export creates temporary ZMS/HTML files
-in `TMPDIR` or the system temporary directory.
+Root can read protected process counters and logs. `UMask=0077` keeps new files
+private. Web needs write access to storage for indexes. It can serve recordings
+after the collector stops.
 
 ## Start
 
@@ -129,9 +127,8 @@ Open <http://127.0.0.1:8080/>. The same listener serves `/mcp`.
 
 ## Operations
 
-Settings from these files apply when systemd starts each service. To change an
-already-running service, edit its environment file and restart that service. For example, to
-add PostgreSQL collection and update the web source setting:
+After editing an environment file, restart the affected service. For example,
+to add PostgreSQL collection and change the web source setting:
 
 ```sh
 sudoedit /etc/kronika/collector.env /etc/kronika/web.env
@@ -142,7 +139,7 @@ sudo systemctl restart kronika-collector kronika-web
 | --- | --- |
 | Collector log | `sudo journalctl -u kronika-collector -f` |
 | Web log | `sudo journalctl -u kronika-web -f` |
-| Immediate collection; publication if data was appended and segment is nonempty | `sudo systemctl kill --kill-whom=main --signal=SIGUSR2 kronika-collector` |
+| Collect now and save the segment if this collection adds data | `sudo systemctl kill --kill-whom=main --signal=SIGUSR2 kronika-collector` |
 | Apply environment changes | `sudo systemctl restart kronika-collector kronika-web` |
 | Stop collection and retain files | `sudo systemctl stop kronika-collector` |
 | Disable web startup and stop web | `sudo systemctl disable --now kronika-web` |
