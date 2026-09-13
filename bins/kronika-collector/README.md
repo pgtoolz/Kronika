@@ -31,7 +31,7 @@ survives restarts; closes can still coincide.
 
 The first segment after startup or an early close may be shorter. Ongoing
 collection can delay closing; size limits and `SIGUSR2` can close it sooner.
-`KRONIKA_INTERVAL_S=0` disables timed collection and age timer wakeups.
+`KRONIKA_INTERVAL_S=0` disables collection and segment closing by timer.
 
 A fixed budget counts the active journal, compressed recordings, their `.idx`
 index files and collector temporary files. It must be at least twice
@@ -52,8 +52,7 @@ files hourly to include new indexes created by web.
 
 Each `kronika-collector` process saves data from one PostgreSQL server in its
 own storage directory. One DSN covers that server's accessible databases;
-use separate processes for separate servers, including primary and standby with the same
-`system_identifier`.
+use separate processes for separate servers, including primary and standby.
 
 `KRONIKA_COLLECTOR_MODE=local` is the default: Linux metrics and optional
 PostgreSQL in the same VM or pod. Without a DSN, PostgreSQL metrics are not
@@ -64,9 +63,11 @@ include other containers; its metrics do not establish PostgreSQL process
 identity or CPU capacity.
 
 `KRONIKA_COLLECTOR_MODE=postgresql` records only PostgreSQL data from a local or
-remote server without reading procfs/sysfs, host identity, Linux processes or cgroups. `KRONIKA_PG_DSN` is
-required. Root access is unnecessary; the process needs network and storage access. Explicit `KRONIKA_PG_LOGS` paths are optional. PgBouncer log settings are
-not accepted in this mode. OS intervals do not apply.
+remote server. It does not collect Linux metrics, processes or cgroups.
+`KRONIKA_PG_DSN` is required. The process needs access to PostgreSQL and write
+access to storage; it does not need root. You can add local log files with
+`KRONIKA_PG_LOGS`. PgBouncer log settings are not accepted in this mode.
+Linux collection intervals do not apply.
 
 ### Collection intervals
 
@@ -98,7 +99,7 @@ paths with semicolons (`;`).
 | --- | --- | --- |
 | `KRONIKA_PG_DSN` | Unset | One PostgreSQL connection string for server metrics and accessible databases. In `local` mode, the same DSN discovers the current local log. Required in `postgresql` mode. |
 | `KRONIKA_PG_SSL_ROOT_CERT` | Unset | PEM CA bundle replacing the included public CA roots. When unset, the included public roots are used. TLS validates the server hostname in both cases. |
-| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Unset | Available CPUs of the monitored PostgreSQL server: integer `1..4294967295`; requires `KRONIKA_PG_DSN`. Automatic only for a recorded shared local machine. Without capacity, SQL metrics continue and PostgreSQL Health is unknown. |
+| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Unset | Available CPUs of the monitored PostgreSQL server: integer `1..4294967295`; requires `KRONIKA_PG_DSN`. Determined automatically in `local` mode on a machine shared with PostgreSQL. Without this count, SQL metrics continue and PostgreSQL Health is unknown. |
 | `KRONIKA_PG_LOGS` | Unset | Optional readable local paths; final filename supports `*` and `?`. In `local` mode, paths add to `pg_current_logfile()` discovery. In `postgresql` mode, only explicit paths are opened. |
 | `KRONIKA_PGBOUNCER_DSNS` | Unset | Connections to the administrative console (`dbname=pgbouncer`) to read `SHOW CONFIG`/`logfile`; the account must belong to `stats_users`. |
 | `KRONIKA_PGBOUNCER_LOGS` | Unset | Local PgBouncer log paths; filenames can use `*` and `?` wildcards. |
@@ -107,7 +108,8 @@ Empty lists add no entries; empty entries between semicolons are errors.
 The PostgreSQL DSN covers its initial database and other accessible databases
 on that server, excluding template databases.
 
-`KRONIKA_PG_DSNS` is deprecated: only its first DSN is used; the rest are ignored without validation. Replace it with `KRONIKA_PG_DSN`; setting both stops startup.
+`KRONIKA_PG_DSNS` is deprecated and will be removed; only its first DSN is used.
+Replace it with `KRONIKA_PG_DSN` and remove the old variable. Setting both stops startup.
 
 ### Other settings
 
@@ -149,17 +151,16 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 Add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4` when that server has 4 available CPUs.
 Use `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem` for a private CA. The DSN accepts
 `sslmode=disable` (plaintext), `prefer` (TLS when available; default), or
-`require` (TLS required). Every TLS connection checks the CA and hostname,
-including reconnects and query cancellation. `verify-full` is not accepted DSN syntax.
+`require` (TLS required). Every TLS connection checks the CA and hostname. `verify-full` is not accepted DSN syntax.
 
 Start web over the same recording with `KRONIKA_WEB_SOURCES=2`. This declares
 PostgreSQL in the catalog; the collector mode controls acquisition. Overall equals
 PostgreSQL Health, or is unknown when PostgreSQL Health cannot be calculated.
 
-Process links in Activity, Vacuum and Processes require recorded shared-process
-metadata for the selected segment. New local machine recordings supply it;
-PostgreSQL-only, container and older recordings do not. Their PostgreSQL and Linux
-rows remain readable independently, without a link based only on matching PIDs.
+In local recordings of a shared machine, Activity, Vacuum and Processes link
+PostgreSQL sessions to their Linux processes. These links are unavailable in
+PostgreSQL-only, container and older recordings. You can still inspect the
+PostgreSQL and Linux data separately.
 See [Health formulas](../../docs/metrics-time.md#health) and
 [container collection](../../docs/metrics-linux.md#container-cgroups).
 
@@ -220,23 +221,24 @@ role. The explicit `pg_current_logfile()` grant is needed on PostgreSQL 10–16.
 | Extension inventory | Each database is checked during discovery. One usable installation of each extension is selected. |
 | `pg_stat_statements` | Supports extension `1.5+` in the `1.x` series; PostgreSQL 14+ requires `1.9+`. The newest compatible set of fields is preferred. |
 | `pg_store_plans` | OSSC and Datasentinel return different fields through a function with no arguments; the vadv boolean interface requires its four-key plan lookup function and plan-to-text converter. |
-| Info views | `pg_stat_statements_info` and `pg_store_plans_info` are discovered independently of the main readers. |
-| Settings | Read each PostgreSQL tick; full snapshot after first successful read, on change, and in every segment. Latest successful snapshot is reused when other sources open a segment. |
+| Settings | Read with PostgreSQL metrics. A full snapshot is recorded after the first successful read, on change and in every segment. |
 | Settings exclusions | `primary_conninfo` and `ssl_passphrase_command` are omitted; other command and custom settings are recorded. |
 
 ### Query execution
 
+Connect directly to PostgreSQL or through PgBouncer in session pooling mode.
+Transaction/statement pooling does not preserve the session settings needed
+by the collector.
+
 | Item | Value or behavior |
 | --- | --- |
-| Transport | `sslmode=require` uses validated TLS; `prefer` (default) allows plaintext when TLS is unavailable; `disable` uses plaintext. Direct PostgreSQL or PgBouncer session pooling. Transaction/statement pooling do not retain the session state required by metric reads. |
 | Concurrency | One query at a time per connection. |
-| Session initialization | `SET statement_timeout = '30s'; SET lock_timeout = '100ms'` in one request before any monitoring query, including log discovery; repeated on every new connection. |
-| Client fetch deadline | 35 seconds, then a CancelRequest attempt with a one-second deadline and connection close. |
+| Session limits | `statement_timeout=30s`, `lock_timeout=100ms` for all monitoring queries, including log discovery. |
+| Client fetch deadline | After 35 seconds, attempt to cancel the query and close the connection. |
 | Collector identity | One unique `application_name` per collector process; Activity/Locks exclude that exact name. |
-| Batch bounds | At most 256 rows, targeting 512 KiB of decoded data; the final row, bounded by the SQL query, can exceed the byte target. Each batch reaches the recording journal before the next is read. |
 | Text bounds | Statement and plan text limited to 65,536 characters in SQL. |
-| Stream error | Earlier appended batches remain; the remaining read is skipped and independent sources continue. |
-| SQLSTATE `57014` | Counted as query timeout; session is reusable after `ReadyForQuery`. |
+| Interrupted read | Data already recorded is retained. The rest of that read is skipped; other sources continue. |
+| SQLSTATE `57014` | Counted as a query timeout. |
 | Query logs | Debug `pg_query_finish`; warning `pg_query_slow` when fetch exceeds 500 ms; summary about every five minutes and at shutdown. |
 
 `lock_timeout` limits each lock acquisition wait to 100 ms.
@@ -247,9 +249,10 @@ again on a later scheduled pass. These limits apply only to Kronika monitoring
 sessions.
 Source: [PostgreSQL documentation](https://www.postgresql.org/docs/current/runtime-config-client.html#GUC-LOCK-TIMEOUT).
 
-`pg_query_summary` records query count/rate, rows, logical bytes, errors,
-timeouts, slow queries, fetch/encoding/WAL times, encoded/appended bytes and
-`peak_rss_kib`, the peak physical memory occupied by the process in KiB in local mode; unavailable in PostgreSQL-only mode. Connection labels are `user@host:port`. Source:
+Use `pg_query_summary` to track query volume, errors, timeouts and slow queries.
+In `local` mode it also reports `peak_rss_kib`, the process’s peak physical memory
+in KiB; this is unavailable in PostgreSQL-only mode. Connections are labelled
+`user@host:port`. Source:
 [query.rs](../../crates/kronika-source-pg/src/query.rs).
 
 ## Log collection
@@ -272,8 +275,8 @@ listed above.
 
 | Property | Behavior |
 | --- | --- |
-| Discovery cadence | First collection cycle, then on the first collection cycle at least five minutes after the preceding scan; retries after errors. `system_identifier` is cached after its first successful read. |
-| Read bound | 64 KiB physical buffer; batches of at most 4 MiB raw bytes; at most 256 MiB per file per collection. |
+| Discovery cadence | First collection cycle, then on the first collection cycle at least five minutes after the preceding scan; retries after errors. |
+| Read limit | At most 256 MiB per file per collection. |
 | PostgreSQL formats | Filename selects `.csv` → csvlog, `.json` → jsonlog, otherwise stderr. |
 | Path-only identity | `system_identifier` is null; every row records its source file. |
 | Path-only stderr | Database/user are unavailable; severity, SQLSTATE when present, message and continuations are parsed. Parsed timestamp is used when present, otherwise collection time. |
@@ -297,9 +300,8 @@ unavailable; other enabled sources continue. See the
 
 Filesystem capacity is queried for `ext2`, `ext3`, `ext4`, `xfs`, `btrfs`,
 `f2fs`, `zfs`, `tmpfs` and `overlay`. Other types retain null capacity fields.
-One helper process handles supported mounts under a shared one-second
-deadline. Mount rows record their exact roots, space in bytes and available
-file metadata entries (inodes). Device relationships connect partitions to
+Capacity reads for supported mounts share a one-second deadline. Mount rows
+record their roots, space in bytes and available inodes. Device relationships connect partitions to
 devices and layered devices to their underlying devices. In containers, these
 relationships are limited to chains of mounted devices or devices accounted
 for by cgroup I/O statistics.
@@ -312,8 +314,8 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika /usr/local/bin/kronika-collector
 
 `SIGINT` and `SIGTERM` stop collection and retain `active.wal` without a final
 ZMS close. Restarting recovers a valid nonempty journal immediately.
-`SIGUSR2` collects immediately and requests segment publication when the cycle appends data and the
-segment is nonempty. `-h`, `--help` and `--version` exit before
+`SIGUSR2` collects immediately and saves a segment if that collection adds data.
+`-h`, `--help` and `--version` exit before
 configuration or storage access. Readiness and segment paths go to stdout;
 structured logs go to stderr. In local mode, each `segment_write_finish` records `rss_kib`,
 the peak physical memory occupied by the process in KiB.

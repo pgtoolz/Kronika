@@ -61,12 +61,10 @@ not finish. Power-loss durability also depends on the filesystem and device.
 An existing ZMS at the recovered path must be valid and match the recovered
 file byte for byte; a different file is never overwritten.
 
-Successful recovery prints `wrote <path> reason=recovered` after the journal
-reset, then `ready` after initialization. `segment_write_finish` with
-`reason=recovered` and `segment_path` appears earlier and alone does not prove
-that reset succeeded. Failures log `segment_close_failure`, `reason=recovered`
-and stage `write` or `journal-reset`. The message
-`open active.wal; the existing file is preserved on failure` identifies an open failure.
+Look for `wrote <path> reason=recovered` and `ready` to confirm recovery and
+startup. `segment_write_finish` alone is not enough. On failure, inspect
+`segment_close_failure` or the `open active.wal` error; the latter confirms
+that the existing file was preserved.
 
 ## Reading the journal while collector writes
 
@@ -85,7 +83,7 @@ A file appearing in the catalog does not prove that all its data is readable:
 | --- | --- |
 | Web catalog discovery | File structure and catalog checksum, without reading section bodies. |
 | Validated range listing, including ordinary `kronika-dump` | Structure and every section checksum in selected finished segments; bodies outside the selected interval are not checked. |
-| Reading a section | Its checksum, schema, row count and decoding limits; rows and required dictionaries are decoded as needed. Other sections are not all decoded. |
+| Reading a section | Its checksum and whether its rows can be decoded. This does not validate every other section. |
 
 A damaged catalog can hide a whole file. Damaged section data may fail only
 when a particular table or chart reads it. Checksums detect changed bytes but
@@ -111,14 +109,8 @@ rebuild it. Recreate a damaged report from readable source recordings.
 | Invalid or unreadable file during catalog scan | The file can be omitted with a warning while other recordings remain available. Storage-root access or traversal errors can fail the whole request. |
 | Data cannot be read before the response starts | HTTP `500`, `{"error":"unreadable"}`. |
 | Segment or section does not exist | HTTP `404`, `{"error":"no_such_segment"}` or `{"error":"no_such_section"}`. |
-| Read fails after the response starts | The transfer aborts, with no final NDJSON error record. Received rows are incomplete even if the HTTP status was successful. |
+| Read fails after the response starts | The transfer aborts. Received rows are incomplete even if the HTTP status was successful. |
 | Invalid ZMS or active-journal warning during HTML export | HTTP `500`, `export_failed`, even when the warning concerns a file outside the requested interval. |
-| Instance-label read fails | The error is logged; HTTP `200` returns `database: null`. |
-
-Web retries an eligible file-change error once before sending the response,
-but not checksum or decoding failures. After transmission starts, it aborts
-instead of combining data from different file versions. The browser retries
-an interrupted network transfer once, not an HTTP error response.
 
 Failed requests do not stop web. The interface reports hour/table-load errors
 and may retain previously loaded rows; a failed refresh preserves the working

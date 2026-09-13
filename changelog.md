@@ -6,15 +6,15 @@
 
 Changes since the last published release, 1.0.1.
 
-- Use `KRONIKA_PG_DSN` for one PostgreSQL server. Start a separate `kronika-collector` process for each server, with its own DSN and `KRONIKA_STORAGE_DIR`. All processes use the same binary; each collects the accessible databases on its server.
+- Use `KRONIKA_PG_DSN` for one PostgreSQL server. Start a separate `kronika-collector` process for each server, with its own DSN and `KRONIKA_STORAGE_DIR`. All processes use the same binary; each collects metrics from the accessible databases on its server.
 - Collectors close ZMS files on a schedule with a random time offset. The offset survives restarts; closes can still coincide.
 
-`KRONIKA_PG_DSNS` is deprecated: only its first DSN is used; the rest are ignored without validation. Replace it with `KRONIKA_PG_DSN`; setting both stops startup.
+`KRONIKA_PG_DSNS` is deprecated and will be removed; only its first DSN is used. Replace it with `KRONIKA_PG_DSN` and remove the old variable. Setting both stops startup.
 
 ### Other changes
 
-- Add `KRONIKA_COLLECTOR_MODE=postgresql` for local or remote PostgreSQL without Linux collection or sudo. The existing `local` mode retains OS collection from the same VM or pod, with optional PostgreSQL. See [collector configuration](bins/kronika-collector/README.md).
-- View all visible, accessible cgroup v2 groups in CPU, Memory, I/O and Tasks tables with search, sorting and history. Groups stay separate; limits distinguish unlimited from unavailable. Older recordings remain readable.
+- Add `KRONIKA_COLLECTOR_MODE=postgresql` for local or remote PostgreSQL without Linux collection or sudo. The `local` mode collects Linux metrics from the same VM or pod and, optionally, PostgreSQL. See [collector configuration](bins/kronika-collector/README.md).
+- Collect all visible, accessible cgroup v2 groups and show them in CPU, Memory, I/O and Tasks tables with search, sorting and history. Groups stay separate; limits distinguish unlimited from unavailable. Older recordings remain readable.
 - Read PostgreSQL 12 and older `pg_stat_statements` layouts without requesting absent fields. Hide Activity metrics unsupported by the recording.
 - Keep Activity heatmaps within their recorded time window in partial-hour HTML reports. Cell clicks and row navigation select the corresponding recorded interval instead of jumping to the report start.
 

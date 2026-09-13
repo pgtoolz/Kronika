@@ -27,7 +27,7 @@ The local examples use `/var/lib/kronika`; the collector creates it if needed.
 
 ### Linux and optional PostgreSQL
 
-Without `KRONIKA_PG_DSN`, the default `local` mode collects Linux only:
+Start collecting Linux metrics:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -68,7 +68,7 @@ See [collector configuration](bins/kronika-collector/README.md#remote-postgresql
 
 For each PostgreSQL server, start a separate `kronika-collector` process with
 that server’s DSN and a separate storage directory. All processes use the same
-binary; each process collects all accessible databases on its server. See the
+binary; each process collects metrics from the accessible databases on its server. See the
 [two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
 ### Open the web interface
@@ -126,7 +126,7 @@ for the rotation rules and automatic mode.
 | Processes | Command, state and process number (PID), CPU use, memory and disk reads/writes; process tree and hourly activity. | [Linux metrics](docs/metrics-linux.md) |
 | Host | CPU, memory, time waiting for resources (PSI), network and disks, free space and device relationships; cgroup resource limits and use. | [Linux metrics](docs/metrics-linux.md) |
 | PostgreSQL sessions | Overview, Activity, Locks, Vacuum; session states and waits, blocking chains, query/transaction durations and table cleanup progress. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
-| PostgreSQL SQL | Statements and Plans; calls, execution/planning time, page and temporary-file reads, write-ahead log (WAL) output, SQL and plan text. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
+| Queries and plans | Statements and Plans; calls, execution/planning time, page and temporary-file reads, write-ahead log (WAL) output, SQL and plan text. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
 | PostgreSQL objects | Databases, Tables, Indexes and settings; size, reads and changes, maintenance and transaction ages; grouping by database, schema and tablespace. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
 | Events | Grouped PostgreSQL/PgBouncer log events, occurrences, durations and recorded context; metric marks. | [Views and controls](docs/features.md) |
 | Time and charts | Choose an hour and a time within it; view changes, activity maps, totals and the distribution of measurements. | [Time and calculations](docs/metrics-time.md) |

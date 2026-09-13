@@ -8,10 +8,10 @@ inspect or extract part of a recording and `kronika-report` to create an HTML re
 
 ## 1. Download and extract
 
-Version **1.1.0 is unreleased**. For the examples below, [build and install this
-1.1.0 source](docs/build.md), then continue with [collector startup](#3-start-collector).
-If a successful development build exists for the same source revision, follow
-its [download, verification and extraction instructions](docs/releases.md#development-builds).
+Version **1.1.0 is unreleased**. Use a development archive for this source revision;
+follow its [download, verification and extraction instructions](docs/releases.md#development-builds).
+Alternatively, [build and install from source](docs/build.md), then skip to
+[collector startup](#3-start-collector).
 
 In the extracted archive directory, check the binary before installing:
 
@@ -44,7 +44,7 @@ For `local` mode, create a private recording directory owned by root:
 sudo install -d -m 0700 /var/lib/kronika
 ```
 
-Without `KRONIKA_PG_DSN`, the default `local` mode collects Linux only:
+Start collecting Linux metrics:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -55,9 +55,8 @@ Use a real storage directory, not a symlink. Root can read protected process
 I/O counters and local logs. Processes are sampled every 5 seconds and core
 Linux metrics every 10 seconds.
 
-The scheduled segment closing period is 900 seconds. The first may be shorter,
-a size limit can close one earlier, and ongoing collection can delay closing.
-Web reads new data from `active.wal` without waiting for a finished segment.
+The collector periodically saves compressed segments. Web reads new data from
+`active.wal` without waiting for a finished segment.
 `Ctrl+C` stops collection and retains the journal; run the same command to resume.
 
 `KRONIKA_RETENTION` defaults to `2147483648` bytes (2 GiB). For a fixed 10 GiB
@@ -84,11 +83,11 @@ database and the database-local extension permissions listed in
 
 For each PostgreSQL server, including primary and standby, start a separate
 `kronika-collector` process with its own DSN and storage directory. All processes
-use the same binary. Each process collects the accessible databases on its
+use the same binary. Each process collects metrics from the accessible databases on its
 server; no separate collector per database is needed. See the
 [two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
-PostgreSQL with OS from the same VM or pod:
+PostgreSQL and Linux metrics from the same VM or pod:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -96,18 +95,14 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-| Setting or connection | Purpose |
-| --- | --- |
-| `KRONIKA_COLLECTOR_MODE` | `local` by default: Linux and optional local PostgreSQL. `postgresql`: PostgreSQL only, without local OS/process/cgroup reads. |
-| `KRONIKA_PG_DSN` | One connection string selects one PostgreSQL server and its accessible databases. The same DSN discovers local logs in `local` mode. Required in `postgresql` mode. |
-| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Optional integer `1..4294967295`: PostgreSQL CPU capacity. A shared local machine uses recorded CPUs automatically. Remote/container capacity remains unknown without an explicit value; SQL collection continues. |
-| Extension discovery | Supported `pg_stat_statements` and `pg_store_plans` interfaces are detected in connectable databases. Activity, Locks and relation statistics use PostgreSQL's built-in views. |
-| Transport | DSN `sslmode=disable`, `prefer` (default) or `require`; TLS validates the CA and server hostname. `KRONIKA_PG_SSL_ROOT_CERT` replaces included public roots with a PEM CA bundle. Direct PostgreSQL and PgBouncer session pooling retain the required session state. |
-| Log paths | In `local` mode, `pg_current_logfile()` discovers readable local files; `KRONIKA_PG_LOGS` adds paths/globs. In `postgresql` mode, only explicit `KRONIKA_PG_LOGS` files are read. No remote file download. PgBouncer log settings apply only to `local`. |
+On a machine shared with PostgreSQL, the CPU count is determined automatically;
+leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset. Installed `pg_stat_statements` and
+`pg_store_plans` extensions supply query and plan statistics. Activity, Locks,
+and table and index statistics use PostgreSQL's built-in views.
 
 ### PostgreSQL only — local or remote
 
-Choose this mode for a remote server or when OS data is unnecessary.
+Choose this mode for a remote server or when you do not need Linux metrics.
 PostgreSQL-only collection does not need sudo.
 
 ```sh
@@ -116,6 +111,9 @@ KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
   /usr/local/bin/kronika-collector
 ```
+
+The example requires TLS and validates the server certificate and hostname.
+For a private CA, set `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`.
 
 If you know the server’s available CPU count, set `KRONIKA_POSTGRES_EFFECTIVE_CPUS`
 to that number (for example, `4`). If unknown, leave it unset: SQL metrics remain
@@ -160,8 +158,8 @@ recording directory to create search indexes (`.idx`). In the `/var/lib/kronika`
 example, both programs run as root and other users cannot access the storage.
 
 `KRONIKA_WEB_SOURCES` reports which sources are configured; it does not enable
-collection or hide recorded data. User and password remain required with
-`KRONIKA_WEB_AUTH=disabled`.
+collection or hide recorded data. See the [web configuration reference](bins/kronika-web/README.md)
+for authentication settings.
 
 For access from another machine, run on that machine:
 
