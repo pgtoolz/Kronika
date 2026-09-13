@@ -4,22 +4,22 @@
 
 ## Release
 
-Version **1.1.0 is unreleased**. Use a [build from this 1.1.0 source](build.md) or
-a matching [development build](#development-builds) for the `KRONIKA_PG_DSN`
-examples.
+Download [Kronika 1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
+for Linux x86-64 or ARM64. You can also [build from source](build.md) or use a
+[development build](#development-builds).
 
 <a id="download"></a>
 ## Archives
 
-Expected archive names for 1.1.0:
+Release archives for 1.1.0:
 
 | Architecture | Archive |
 | --- | --- |
-| x86-64 | `kronika-1.1.0-x86_64-unknown-linux-musl.tar.gz` |
-| ARM64 | `kronika-1.1.0-aarch64-unknown-linux-musl.tar.gz` |
+| x86-64 | [kronika-1.1.0-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.0/kronika-1.1.0-x86_64-unknown-linux-musl.tar.gz) |
+| ARM64 | [kronika-1.1.0-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.0/kronika-1.1.0-aarch64-unknown-linux-musl.tar.gz) |
 
-Each archive has a matching `.tar.gz.sha256` checksum file. Follow the
-[development download instructions](#development-builds), then
+Each archive has a matching `.tar.gz.sha256` checksum file. See
+[download and extraction](../INSTALL.md#1-download-and-extract), then
 [install the extracted programs](../INSTALL.md#2-install).
 The existing [interactive preview](https://pgtoolz.github.io/Kronika/) remains available.
 
@@ -85,7 +85,7 @@ distribution environments with that kernel, not with every Linux kernel. Matrix 
 ## Development builds
 
 With an authenticated [GitHub CLI](https://cli.github.com/manual/gh_run_download),
-select a successful workflow run for the same 1.1.0 source revision:
+select a successful workflow run for the source revision you want:
 
 ```sh
 gh run list --repo pgtoolz/Kronika --workflow release-package.yml --status success --limit 10

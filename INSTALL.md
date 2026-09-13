@@ -8,9 +8,20 @@ inspect or extract part of a recording and `kronika-report` to create an HTML re
 
 ## 1. Download and extract
 
-Version **1.1.0 is unreleased**. Use a development archive for this source revision;
-follow the [download and extraction instructions](docs/releases.md#development-builds).
-Alternatively, [build and install from source](docs/build.md), then skip to
+Download the [1.1.0 release archive](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
+for your architecture. The commands below use x86-64; for ARM64, set
+`target=aarch64-unknown-linux-musl`.
+
+```sh
+target=x86_64-unknown-linux-musl
+archive="kronika-1.1.0-$target.tar.gz"
+curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.1.0/$archive"
+tar -xzf "$archive"
+cd "${archive%.tar.gz}"
+```
+
+[Archive contents and checksums](docs/releases.md#download). To build the programs
+yourself, follow the [source-build guide](docs/build.md), then continue with
 [collector startup](#3-start-collector).
 
 ## 2. Install

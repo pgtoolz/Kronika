@@ -17,8 +17,8 @@ Linux либо записывает только данные PostgreSQL с ло
 
 ## Установка и запуск
 
-Версия **1.1.0 ещё не выпущена**. [Соберите её из этих исходников](docs/build.ru.md)
-или [установите](INSTALL.ru.md) соответствующий [архив для разработки](docs/releases.ru.md#development-builds).
+[Установите Kronika 1.1.0](INSTALL.ru.md) из [архива для Linux](docs/releases.ru.md#download)
+или [соберите из исходников](docs/build.ru.md).
 
 Выберите `local` для метрик Linux и, при необходимости, PostgreSQL в той же VM
 или pod. Режим `postgresql` подходит для удалённого сервера или сбора только

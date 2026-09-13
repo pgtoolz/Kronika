@@ -17,8 +17,8 @@ A recorded hour, 5 September 2026, 19:00–20:00 UTC:
 
 ## Install and run
 
-Version **1.1.0 is unreleased**. [Build from this source](docs/build.md) or
-[install](INSTALL.md) a matching [development archive](docs/releases.md#development-builds).
+[Install Kronika 1.1.0](INSTALL.md) from a [Linux release archive](docs/releases.md#download),
+or [build from source](docs/build.md).
 
 Choose `local` to record Linux and, optionally, PostgreSQL in the same VM or pod.
 Choose `postgresql` for a remote server or when you only need database metrics.

@@ -9,10 +9,21 @@
 
 ## 1. Скачивание и распаковка
 
-Версия **1.1.0 ещё не выпущена**. Используйте архив сборки для этой ревизии:
-[скачайте и распакуйте его](docs/releases.ru.md#development-builds).
-Либо [соберите и установите программы из исходников](docs/build.ru.md),
-затем перейдите к [запуску сборщика](#3-запуск-сборщика).
+Скачайте [архив 1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
+для своей архитектуры. Команды ниже — для x86-64; для ARM64 задайте
+`target=aarch64-unknown-linux-musl`.
+
+```sh
+target=x86_64-unknown-linux-musl
+archive="kronika-1.1.0-$target.tar.gz"
+curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.1.0/$archive"
+tar -xzf "$archive"
+cd "${archive%.tar.gz}"
+```
+
+[Состав архивов и контрольные суммы](docs/releases.ru.md#download). Для самостоятельной
+сборки воспользуйтесь [инструкцией](docs/build.ru.md), затем перейдите к
+[запуску сборщика](#3-запуск-сборщика).
 
 ## 2. Установка
 

@@ -4,23 +4,23 @@
 
 ## Релиз
 
-Версия **1.1.0 ещё не выпущена**. Для примеров с `KRONIKA_PG_DSN` используйте
-[сборку этих исходников 1.1.0](build.ru.md) или соответствующую
-[сборку для разработки](#development-builds).
+Скачайте [Kronika 1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
+для Linux x86-64 или ARM64. Также можно [собрать программы из исходников](build.ru.md)
+или использовать [сборку для разработки](#development-builds).
 
 <a id="download"></a>
 ## Архивы
 
-Ожидаемые имена архивов для 1.1.0:
+Архивы версии 1.1.0:
 
 | Архитектура | Архив |
 | --- | --- |
-| x86-64 | `kronika-1.1.0-x86_64-unknown-linux-musl.tar.gz` |
-| ARM64 | `kronika-1.1.0-aarch64-unknown-linux-musl.tar.gz` |
+| x86-64 | [kronika-1.1.0-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.0/kronika-1.1.0-x86_64-unknown-linux-musl.tar.gz) |
+| ARM64 | [kronika-1.1.0-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.0/kronika-1.1.0-aarch64-unknown-linux-musl.tar.gz) |
 
-У каждого архива есть файл контрольной суммы `.tar.gz.sha256`. Выполните
-[скачивание сборки для разработки](#development-builds), затем
-[установите распакованные программы](../INSTALL.ru.md#2-установка).
+У каждого архива есть файл контрольной суммы `.tar.gz.sha256`.
+[Скачайте и распакуйте архив](../INSTALL.ru.md#1-скачивание-и-распаковка), затем
+[установите программы](../INSTALL.ru.md#2-установка).
 Существующий [интерактивный пример](https://pgtoolz.github.io/Kronika/) остаётся доступен.
 
 ## Состав и идентификация
@@ -89,7 +89,7 @@ PNG-иллюстрации, светлые и тёмные SVG-схемы, ре�
 ## Сборки для разработки
 
 Войдите в учётную запись через [GitHub CLI](https://cli.github.com/manual/gh_run_download)
-и выберите успешный запуск для той же ревизии исходников 1.1.0:
+и выберите успешный запуск для нужной ревизии исходников:
 
 ```sh
 gh run list --repo pgtoolz/Kronika --workflow release-package.yml --status success --limit 10
