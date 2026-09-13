@@ -19,7 +19,7 @@ trap 'rm -rf -- "$release_tmp"' EXIT
 tar -xzf "$archive" -C "$release_tmp"
 package="$release_tmp/$(basename "$archive" .tar.gz)"
 (cd "$package" && sha256sum --check SHA256SUMS)
-for required in kronika-collector kronika-web kronika-dump kronika-report LICENSE README.md README.ru.md INSTALL.md INSTALL.ru.md docs/storage-recovery.md docs/storage-recovery.ru.md BUILDINFO THIRD_PARTY_LICENSES.html; do
+for required in kronika-collector kronika-web kronika-dump kronika-report LICENSE README.md README.ru.md changelog.md changelog.ru.md INSTALL.md INSTALL.ru.md docs/storage-recovery.md docs/storage-recovery.ru.md BUILDINFO THIRD_PARTY_LICENSES.html; do
   test -s "$package/$required"
 done
 target=$(sed -n 's/^target=//p' "$package/BUILDINFO")

@@ -5,26 +5,63 @@ import test from "node:test"
 import { importModule, registryPlugin } from "./import-module.mjs"
 
 const activity = await importModule(
-  'export { cgroupActivityIdentity, cgroupIoSharedPath, cursorColumnOf, intervalInstant, planTextsByPlanId, rowPeakColumn, statementTextsByQueryId } from "../src/activity.tsx"; export { activityPreview } from "../src/activity-cuts.ts"',
+  'export { ActivityStrip, cgroupActivityIdentity, cgroupIoSharedPath, cursorColumnOf, intervalInstant, planTextsByPlanId, rowPeakColumn, statementTextsByQueryId } from "../src/activity.tsx"; export { activityPreview } from "../src/activity-cuts.ts"',
   { plugins: [registryPlugin([])] },
 )
 
 const HOUR = 1_000_000_000_000
 const HOUR_MICROS = 3_600_000_000
 
-test("a cell click and the drill land on the identical microsecond of a column", () => {
-  // The last moment of the column, exactly as ActivityStrip.pick computes it.
-  assert.equal(activity.intervalInstant(HOUR, 0, 12), HOUR + 300_000_000 - 1)
-  assert.equal(activity.intervalInstant(HOUR, 11, 12), HOUR + HOUR_MICROS - 1)
-  assert.equal(activity.intervalInstant(HOUR, 59, 60), HOUR + HOUR_MICROS - 1)
-})
+function intervals(from, toExclusive, columns) {
+  return Array.from({ length: columns }, (_, index) => ({
+    start: from + Math.floor(((toExclusive - from) * index) / columns),
+    end: from + Math.floor(((toExclusive - from) * (index + 1)) / columns) - 1,
+  }))
+}
 
-test("the cursor's column mirrors the strip and is null outside the hour", () => {
-  assert.equal(activity.cursorColumnOf(HOUR, HOUR, 12), 0)
-  assert.equal(activity.cursorColumnOf(HOUR + 300_000_000, HOUR, 12), 1)
-  assert.equal(activity.cursorColumnOf(HOUR + HOUR_MICROS - 1, HOUR, 12), 11)
-  assert.equal(activity.cursorColumnOf(HOUR - 1, HOUR, 12), null)
-  assert.equal(activity.cursorColumnOf(HOUR + HOUR_MICROS, HOUR, 12), null)
+for (const columns of [12, 60]) {
+  for (const partial of [false, true]) {
+    test(`${columns}-column ${partial ? "partial" : "full"} hour binds rendered cells, cursor and drill to returned times`, () => {
+      const from = partial ? HOUR + 2_122_238_000 : HOUR
+      const to = partial ? from + 600_343_350 : HOUR + HOUR_MICROS
+      const recorded = intervals(from, to, columns)
+      const cells = recorded.map((_, index) => index + 1)
+      const picked = []
+      const strip = activity.ActivityStrip({ cells, cursor: from, hour: HOUR, intervals: recorded, max: columns, onCursor: (at) => picked.push(at) })
+      const rects = strip.props.children[0]
+      assert.equal(strip.props.viewBox, "0 0 100 8")
+      for (const index of [0, Math.floor(columns / 2), columns - 1]) {
+        const interval = recorded[index]
+        const width = ((interval.end - interval.start + 1) / HOUR_MICROS) * 100
+        assert.equal(rects[index].props.x, ((interval.start - HOUR) / HOUR_MICROS) * 100 + width * 0.05)
+        assert.equal(rects[index].props.width, width * 0.9)
+        assert.equal(activity.cursorColumnOf(interval.start, recorded), index)
+        assert.equal(activity.cursorColumnOf(interval.end, recorded), index)
+        const time = Math.floor((interval.start + interval.end) / 2)
+        strip.props.onClick({ stopPropagation() {}, clientX: 10 + ((time - HOUR) / HOUR_MICROS) * 1000, currentTarget: { getBoundingClientRect: () => ({ left: 10, width: 1000 }) } })
+        assert.equal(picked.at(-1), interval.end)
+        assert.equal(cells[activity.cursorColumnOf(picked.at(-1), recorded)], cells[index])
+      }
+      assert.equal(activity.intervalInstant(recorded, activity.rowPeakColumn(cells)), to - 1)
+      assert.equal(activity.cursorColumnOf(from - 1, recorded), null)
+      assert.equal(activity.cursorColumnOf(to, recorded), null)
+      if (partial) {
+        strip.props.onClick({ stopPropagation() {}, clientX: 10, currentTarget: { getBoundingClientRect: () => ({ left: 10, width: 1000 }) } })
+        assert.equal(picked.length, 3)
+        assert.ok(rects[0].props.x > 58)
+        assert.ok(rects.at(-1).props.x + rects.at(-1).props.width < 76)
+      }
+    })
+  }
+}
+
+test("returned gaps, null cells and intervals outside the hour remain empty", () => {
+  const recorded = [{ start: HOUR - 10, end: HOUR - 1 }, { start: HOUR + 10, end: HOUR + 19 }, { start: HOUR + 30, end: HOUR + 39 }, { start: HOUR + HOUR_MICROS, end: HOUR + HOUR_MICROS + 9 }]
+  const strip = activity.ActivityStrip({ cells: [1, null, 0, 2], cursor: HOUR + 25, hour: HOUR, intervals: recorded, max: 2, onCursor: () => assert.fail("gap has no target") })
+  assert.deepEqual(strip.props.children[0].map((cell) => cell !== null), [false, false, true, false])
+  assert.equal(activity.cursorColumnOf(HOUR + 25, recorded), null)
+  assert.equal(activity.intervalInstant(recorded, 4), null)
+  strip.props.onClick({ stopPropagation() {}, clientX: 25, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: HOUR_MICROS }) } })
 })
 
 test("a row's peak is its first strictly positive maximum, and a silent row has none", () => {
@@ -71,10 +108,10 @@ test("a drill moves the cursor only when the drilled row is silent at it", async
   // Silent at the cursor (or the cursor outside the hour) -> jump to the
   // row's own peak, by the shared instant. Alive at the cursor -> stay.
   assert.match(choose, /cursorColumn === null \|\| \(row\.cells\[cursorColumn\] \?\? null\) === null/)
-  assert.match(choose, /onCursor\(intervalInstant\(hour, peak, columns\)\)/)
+  assert.match(choose, /intervalInstant\(view\?\.intervals \?\? \[\], peak\)/)
   assert.match(choose, /rowPeakColumn\(row\.cells\)/)
   // The strip's own click uses the same instant, so the two gestures agree.
-  assert.match(source, /onCursor\(intervalInstant\(hour, column, columns\)\)/)
+  assert.match(source, /intervalInstant\(intervals, column\)/)
 })
 
 test("ranked statement and plan previews use the first nonempty loaded table text", async () => {

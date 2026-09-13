@@ -107,6 +107,46 @@ impl Run {
         Ok(())
     }
 
+    pub(crate) fn run_until_age_publications_and_stop(
+        &mut self,
+        count: usize,
+        timeout: Duration,
+    ) -> Result<()> {
+        let started = Instant::now();
+        loop {
+            let log = self.log()?;
+            let child = self.child.as_mut().context("the collector is running")?;
+            if let Some(status) = child.try_wait().context("reap the collector")? {
+                anyhow::bail!(
+                    "collector exited early ({status}); log tail:\n{}",
+                    log.lines().rev().take(20).collect::<Vec<_>>().join("\n")
+                );
+            }
+            let mut publications = 0;
+            let mut coalesced = false;
+            for line in log.lines().filter(|line| {
+                line.split_whitespace()
+                    .any(|field| field == "action=segment_write_finish")
+                    && line.split_whitespace().any(|field| field == "reason=age")
+            }) {
+                let parts = field_value(line, "journal_parts")?.parse::<usize>()?;
+                let min = field_value(line, "min_ts")?.parse::<i64>()?;
+                let max = field_value(line, "max_ts")?.parse::<i64>()?;
+                coalesced |= publications > 0 && parts > 1 && max > min;
+                publications += 1;
+            }
+            anyhow::ensure!(
+                started.elapsed() < timeout,
+                "observed {publications}/{count} age publications, post-first coalescing={coalesced} within {timeout:?}; log tail:\n{}",
+                log.lines().rev().take(20).collect::<Vec<_>>().join("\n")
+            );
+            if publications >= count && coalesced {
+                return self.run_for_and_stop(Duration::ZERO);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
     /// Peak resident set size over the run, kibibytes.
     pub(crate) const fn peak_rss_kib(&self) -> Option<u64> {
         self.peak_rss_kib
@@ -181,4 +221,11 @@ pub(crate) fn copy_tree(source: &Path, dest: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub(crate) fn field_value<'a>(line: &'a str, name: &str) -> Result<&'a str> {
+    let prefix = format!("{name}=");
+    line.split_whitespace()
+        .find_map(|field| field.strip_prefix(&prefix))
+        .with_context(|| format!("{name} is missing from {line}"))
 }

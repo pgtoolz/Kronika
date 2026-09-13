@@ -14,6 +14,7 @@ journal bytes; `kronika-writer` encodes sections and writes final segments.
 ```text
 DATA_ROOT/
 ├── active.wal
+├── seal.seed
 ├── .kronika-writer.owner.lock
 ├── .kronika-index.owner.lock
 └── YYYY/
@@ -41,11 +42,19 @@ data and uses the same stem. An IDX can be rebuilt from its ZMS.
 `kronika-layout` controls access to the file, while `kronika-format` defines
 its bytes and `kronika-writer` implements its lifecycle.
 
+`seal.seed` is a 16-byte control file holding the persistent random seed for
+age-driven segment closing. Collector creates it from OS randomness under
+`WriterOwner`, synchronizes it and its directory, and retains it across restarts.
+`seal.seed.tmp` is its recognized publication temporary. Both must be regular
+files; malformed or inaccessible `seal.seed` stops startup. Copying the seed
+copies the closing phase; independent new storage roots generate their own seed.
+
 <a id="closed-grammar"></a>
 
 ## Valid names and paths
 
-The data root is reserved for Kronika files. It contains the journal, two owner-lock
+The data root is reserved for Kronika files. It contains the journal, the
+persistent `seal.seed`, its publication temporary `seal.seed.tmp`, two owner-lock
 files, four-digit year directories, two-digit valid months and days, canonical
 final files, and recognized Kronika publication temporaries. The scanner
 follows only verified calendar directories. It records symbolic links, unknown

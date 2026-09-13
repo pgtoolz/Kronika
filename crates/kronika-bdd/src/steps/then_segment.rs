@@ -381,28 +381,84 @@ fn cgroup_cpu_limit(world: &mut BddWorld, cores: i64) -> Result<()> {
     anyhow::bail!("no cgroup records a {cores}-core quota; the limits found were {seen:?}")
 }
 
-#[then(regex = r"^every segment covers at least (\d+) windows$")]
-fn window_count(world: &mut BddWorld, least: i64) -> Result<()> {
-    for line in segments(world)? {
-        let windows = line
+#[then("age publications preserve their windows and coalesce after the first")]
+fn age_window_count(world: &mut BddWorld) -> Result<()> {
+    use crate::collector::field_value;
+    let listed = segments(world)?;
+    for segment in &listed {
+        let count = segment
             .number("windows")
             .context("a segment without windows")?;
-        anyhow::ensure!(
-            windows >= least,
-            "a segment coalesced {windows} windows, fewer than {least}"
-        );
+        let min = segment
+            .number("min_ts")
+            .context("a segment without min_ts")?;
+        let max = segment
+            .number("max_ts")
+            .context("a segment without max_ts")?;
+        anyhow::ensure!(count >= 1 && max >= min, "invalid segment: {segment:?}");
     }
-    Ok(())
-}
-
-#[then("every segment ends later than it starts")]
-fn segment_time_span(world: &mut BddWorld) -> Result<()> {
-    for (min_ts, max_ts) in windows(world)? {
+    let log = world
+        .run
+        .as_ref()
+        .context("a collector was started")?
+        .log()?;
+    let closes: Vec<_> = log
+        .lines()
+        .filter(|line| {
+            line.split_whitespace()
+                .any(|field| field == "action=segment_write_finish")
+        })
+        .collect();
+    anyhow::ensure!(
+        closes.len() >= 2,
+        "need two age publications to observe a complete cycle; log:\n{log}"
+    );
+    let published = listed
+        .iter()
+        .filter(|segment| {
+            segment
+                .get("path")
+                .is_some_and(|path| Path::new(&path).extension().is_some_and(|ext| ext == "zms"))
+        })
+        .count();
+    anyhow::ensure!(
+        published == closes.len(),
+        "{published} ZMS files but {} close records",
+        closes.len()
+    );
+    let mut coalesced = false;
+    for (index, close) in closes.iter().enumerate() {
         anyhow::ensure!(
-            max_ts > min_ts,
-            "a segment spans {min_ts}..{max_ts}, which is not a span"
+            field_value(close, "reason")? == "age",
+            "unexpected close: {close}"
         );
+        let filename = format!("{}.zms", field_value(close, "segment_id")?);
+        let segment = listed
+            .iter()
+            .find(|segment| {
+                segment.get("path").is_some_and(|path| {
+                    Path::new(&path).file_name() == Some(std::ffi::OsStr::new(&filename))
+                })
+            })
+            .with_context(|| format!("no listed ZMS for {close}"))?;
+        let count = segment.number("windows").context("missing windows")?;
+        let min = segment.number("min_ts").context("missing min_ts")?;
+        let max = segment.number("max_ts").context("missing max_ts")?;
+        anyhow::ensure!(
+            count == field_value(close, "journal_parts")?.parse::<i64>()?,
+            "window count differs from WAL at close: {close}"
+        );
+        anyhow::ensure!(
+            min == field_value(close, "min_ts")?.parse::<i64>()?
+                && max == field_value(close, "max_ts")?.parse::<i64>()?,
+            "timestamp bounds differ from close: {close}"
+        );
+        coalesced |= index > 0 && count > 1 && max > min;
     }
+    anyhow::ensure!(
+        coalesced,
+        "no post-first age publication coalesced distinct windows"
+    );
     Ok(())
 }
 

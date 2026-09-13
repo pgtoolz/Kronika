@@ -33,7 +33,7 @@ fn config(root: &Path, journal_max_bytes: u64) -> Config {
         segment_max_age_secs: u64::MAX,
         journal_max_bytes,
         retention: None,
-        pg_dsns: Vec::new(),
+        pg_dsn: None,
         postgres_effective_cpus: None,
         pg_logs: Vec::new(),
         pgbouncer_dsns: Vec::new(),
@@ -471,9 +471,7 @@ fn postgresql_mode_normal_and_deferred_windows_encode_no_linux_identity_or_rows(
             Journal::open(&writer, JournalConfig::default()).expect("open SQL-only WAL");
         let mut config = config(dir.path(), u64::MAX);
         config.mode = crate::config::CollectorMode::Postgresql;
-        config
-            .pg_dsns
-            .push("host=unused dbname=postgres".to_owned());
+        config.pg_dsn = Some("host=unused dbname=postgres".to_owned());
         let mut segment = SegmentState::default();
         let mut scheduler = Scheduler::for_mode(Intervals::default(), false);
         let mut process_io = None;

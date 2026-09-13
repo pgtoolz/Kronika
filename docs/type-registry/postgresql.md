@@ -6,7 +6,7 @@ Sections occupy `2_001_001`–`2_099_999`. The [codec](../../crates/kronika-regi
 
 ## Sources and formats
 
-Using the connections in `KRONIKA_PG_DSNS`, the collector discovers log files through `pg_current_logfile()`. Paths and patterns in `KRONIKA_PG_LOGS` add files to that set. The collector reads the files locally; they must be accessible on its host. A file reached by both methods is read once. A previously unread file starts at its beginning; a known file resumes at its saved offset.
+In `local` mode, the collector uses the same `KRONIKA_PG_DSN` as metrics to discover log files through `pg_current_logfile()`. Paths and patterns in `KRONIKA_PG_LOGS` add files to that set. In `postgresql` mode, only those explicit paths are read. The collector reads the files locally; they must be accessible on its host. A file reached by both methods is read once. A previously unread file starts at its beginning; a known file resumes at its saved offset.
 
 | Format by filename | Parsing |
 | --- | --- |

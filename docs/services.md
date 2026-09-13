@@ -2,11 +2,10 @@
 
 [Русская версия](services.ru.md) · [Install](../INSTALL.md)
 
-Systemd starts collector and web automatically and restarts them after a
-failure. These service files use programs in `/usr/local/bin`, root-owned
-storage and a web server accepting local connections only. Each recording
-directory in this setup has one collector and one web process. If either
-program is already running in a terminal, stop it before starting its service.
+You can launch the programs however you prefer. This guide shows automatic
+startup and restart using systemd. The example runs one collector and one web
+process, using `/usr/local/bin`, root-owned storage and a web listener on
+localhost. Stop any manually started instance before starting its service.
 
 ## Environment files
 
@@ -44,7 +43,7 @@ PostgreSQL, [prepare a monitoring role](../INSTALL.md#5-postgresql) and add its
 connection string to `collector.env`:
 
 ```ini
-KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
+KRONIKA_PG_DSN="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
 ```
 
 For PostgreSQL on the collector machine, use the connection above and set
@@ -57,6 +56,11 @@ in the catalog. See [connection settings](../bins/kronika-collector/README.md#re
 All parameters:
 [collector](../bins/kronika-collector/README.md) and
 [web](../bins/kronika-web/README.md).
+
+To collect from several PostgreSQL servers, run a `kronika-collector` process
+for each server with its DSN and a separate storage directory. Each web process
+reads one storage directory and needs its own listen address. See the
+[two-server example](../bins/kronika-collector/README.md#several-postgresql-servers).
 
 ## Units
 
@@ -102,10 +106,8 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Both services use `UMask=0077`. Collector reads protected process and log data;
-web creates indexes and ownership locks in the same storage root. Web also
-reads recordings after collector stops. Export creates temporary ZMS/HTML files
-in `TMPDIR` or the system temporary directory.
+`UMask=0077` keeps new files private. Web needs write access to storage for
+indexes and can serve recordings after the collector stops.
 
 ## Start
 
@@ -123,9 +125,8 @@ Open <http://127.0.0.1:8080/>. The same listener serves `/mcp`.
 
 ## Operations
 
-Settings from these files apply when systemd starts each service. To change an
-already-running service, edit its environment file and restart that service. For example, to
-add PostgreSQL collection and update the web source setting:
+After editing an environment file, restart the affected service. For example,
+to add PostgreSQL collection and change the web source setting:
 
 ```sh
 sudoedit /etc/kronika/collector.env /etc/kronika/web.env
@@ -136,22 +137,19 @@ sudo systemctl restart kronika-collector kronika-web
 | --- | --- |
 | Collector log | `sudo journalctl -u kronika-collector -f` |
 | Web log | `sudo journalctl -u kronika-web -f` |
-| Immediate collection; publication if data was appended and segment is nonempty | `sudo systemctl kill --kill-whom=main --signal=SIGUSR2 kronika-collector` |
+| Collect now and save the segment if this collection adds data | `sudo systemctl kill --kill-whom=main --signal=SIGUSR2 kronika-collector` |
 | Apply environment changes | `sudo systemctl restart kronika-collector kronika-web` |
-| Stop collection and retain files | `sudo systemctl stop kronika-collector` |
+| Stop collection | `sudo systemctl stop kronika-collector` |
 | Disable web startup and stop web | `sudo systemctl disable --now kronika-web` |
 | Start web | `sudo systemctl start kronika-web` |
 | Storage bytes | `sudo du -sh /var/lib/kronika` |
 
 ## Replace binaries
 
-Verify and extract the next archive using [Install](../INSTALL.md#1-download-and-extract).
+Download and extract the next archive using [Install](../INSTALL.md#1-download-and-extract).
 From its extracted directory:
 
 ```sh
-for binary in kronika-collector kronika-web kronika-dump kronika-report; do
-  "./$binary" --version
-done
 sudo systemctl stop kronika-collector kronika-web
 sudo install -m 0755 kronika-collector kronika-web kronika-dump \
   kronika-report /usr/local/bin/

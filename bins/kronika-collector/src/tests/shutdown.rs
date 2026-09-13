@@ -47,7 +47,7 @@ fn config(storage_dir: &Path) -> Config {
         segment_max_age_secs: 900,
         journal_max_bytes: 64 * 1024 * 1024,
         retention: None,
-        pg_dsns: Vec::new(),
+        pg_dsn: None,
         postgres_effective_cpus: None,
         pg_logs: Vec::new(),
         pgbouncer_dsns: Vec::new(),
@@ -84,14 +84,14 @@ fn invalid_connections_stop_before_storage_recovery() {
     let invalid = "host='unterminated password=RAW_SECRET dbname=PRIVATE_DATABASE".to_owned();
 
     for (variable, storage_dir) in [
-        ("KRONIKA_PG_DSNS", dir.path().join("postgresql")),
+        ("KRONIKA_PG_DSN", dir.path().join("postgresql")),
         ("KRONIKA_PGBOUNCER_DSNS", dir.path().join("pgbouncer")),
     ] {
         let mut config = config(&storage_dir);
         let wal_before = recovery_candidate(&storage_dir);
         match variable {
-            "KRONIKA_PG_DSNS" => {
-                config.pg_dsns = vec![valid.clone(), invalid.clone()];
+            "KRONIKA_PG_DSN" => {
+                config.pg_dsn = Some(invalid.clone());
             }
             "KRONIKA_PGBOUNCER_DSNS" => {
                 config.pgbouncer_dsns = vec![valid.clone(), invalid.clone()];
@@ -103,7 +103,10 @@ fn invalid_connections_stop_before_storage_recovery() {
             .expect_err("an invalid connection must stop collector initialization");
         let message = format!("{error:#}");
 
-        assert!(message.contains(&format!("{variable}[1]")));
+        assert!(message.contains(variable));
+        if variable == "KRONIKA_PGBOUNCER_DSNS" {
+            assert!(message.contains("KRONIKA_PGBOUNCER_DSNS[1]"));
+        }
         for secret in [&invalid, "RAW_SECRET", "PRIVATE_DATABASE"] {
             assert!(!message.contains(secret));
         }
@@ -153,7 +156,7 @@ fn postgres_ca_is_required_only_for_postgres_targets() {
     assert!(pgbouncer.storage_dir.join("active.wal").exists());
 
     let mut postgres = config(&dir.path().join("postgres"));
-    postgres.pg_dsns = vec![dsn];
+    postgres.pg_dsn = Some(dsn);
     let wal_before = recovery_candidate(&postgres.storage_dir);
     let error = initialize_collector(&postgres).expect_err("PostgreSQL requires a valid CA");
     assert!(

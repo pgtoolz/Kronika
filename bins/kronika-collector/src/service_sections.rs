@@ -76,7 +76,7 @@ pub(crate) fn push_instance_metadata(
         btime: facts.map(|facts| Ts(facts.btime)),
         os_enabled: config.mode.collect_os(),
         postgresql_processes_shared: config.mode.collect_os() && !in_container,
-        postgresql_enabled: !config.pg_dsns.is_empty(),
+        postgresql_enabled: config.pg_dsn.is_some(),
         postgresql_interval_seconds: effective_interval(config.intervals.pg, config.tick_secs),
         postgresql_effective_cpus: config.postgres_effective_cpus,
     };

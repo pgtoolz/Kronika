@@ -107,7 +107,7 @@ impl PostgresTarget {
 #[derive(Debug)]
 pub(crate) struct LogSources {
     offsets: Offsets,
-    pg_dsns: Vec<PostgresTarget>,
+    pg_dsn: Option<PostgresTarget>,
     discover_postgres_paths: bool,
     pg_logs: Vec<String>,
     pgbouncer_dsns: Vec<settings::ConnectionTarget>,
@@ -125,15 +125,21 @@ impl LogSources {
     /// Returns an opaque configuration error or the error of reading the
     /// offsets file. Nothing is opened here: the first rescan finds what exists.
     pub(crate) fn open(config: &Config) -> anyhow::Result<Self> {
-        let pg_dsns = parse_connections("KRONIKA_PG_DSNS", &config.pg_dsns)?
-            .into_iter()
-            .map(PostgresTarget::new)
-            .collect::<anyhow::Result<_>>()?;
+        let pg_dsn = config
+            .pg_dsn
+            .as_deref()
+            .map(|raw| {
+                let connection = settings::ConnectionTarget::parse(raw, 0).map_err(|_error| {
+                    anyhow::anyhow!("KRONIKA_PG_DSN is not a valid connection string")
+                })?;
+                PostgresTarget::new(connection)
+            })
+            .transpose()?;
         let pgbouncer_dsns = parse_connections("KRONIKA_PGBOUNCER_DSNS", &config.pgbouncer_dsns)?;
         let offsets = Offsets::load(&config.storage_dir)?;
         Ok(Self {
             offsets,
-            pg_dsns,
+            pg_dsn,
             discover_postgres_paths: config.mode.collect_os(),
             pg_logs: config.pg_logs.clone(),
             pgbouncer_dsns,
@@ -159,7 +165,7 @@ impl LogSources {
     async fn rescan_postgres(&mut self, observe: &mut (dyn FnMut(PgObservation) + Send)) {
         let mut wanted: BTreeMap<PathBuf, PostgresFacts> = BTreeMap::new();
         for target in self
-            .pg_dsns
+            .pg_dsn
             .iter_mut()
             .filter(|_| self.discover_postgres_paths)
         {

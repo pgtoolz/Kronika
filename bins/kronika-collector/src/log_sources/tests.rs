@@ -230,7 +230,7 @@ fn postgres_sources(root: &std::path::Path, dsn: &str) -> LogSources {
     LogSources {
         discover_postgres_paths: true,
         offsets: Offsets::load(root).expect("load offsets"),
-        pg_dsns: vec![PostgresTarget::new(connection).expect("load PostgreSQL transport")],
+        pg_dsn: Some(PostgresTarget::new(connection).expect("load PostgreSQL transport")),
         pg_logs: Vec::new(),
         pgbouncer_dsns: Vec::new(),
         pgbouncer_logs: Vec::new(),
@@ -263,7 +263,7 @@ fn sources(root: &std::path::Path, path: std::path::PathBuf) -> LogSources {
     LogSources {
         discover_postgres_paths: true,
         offsets: Offsets::load(root).expect("load offsets"),
-        pg_dsns: Vec::new(),
+        pg_dsn: None,
         pg_logs: Vec::new(),
         pgbouncer_dsns: Vec::new(),
         pgbouncer_logs: Vec::new(),
@@ -297,7 +297,7 @@ fn configured_connections_retain_no_raw_dsn_or_secret() {
     let raw = "postgresql://monitor:RAW_SECRET@db.example:6432/PRIVATE_DATABASE";
     let configured = vec![raw.to_owned()];
 
-    let parsed = parse_connections("KRONIKA_PG_DSNS", &configured)
+    let parsed = parse_connections("KRONIKA_PGBOUNCER_DSNS", &configured)
         .expect("the configured connection parses");
 
     assert_eq!(parsed.len(), 1);
@@ -313,16 +313,91 @@ fn invalid_connection_error_contains_only_variable_and_index() {
     let raw = "host='unterminated password=RAW_SECRET dbname=PRIVATE_DATABASE";
     let configured = vec!["host=db.example user=monitor".to_owned(), raw.to_owned()];
 
-    let error = parse_connections("KRONIKA_PG_DSNS", &configured)
+    let error = parse_connections("KRONIKA_PGBOUNCER_DSNS", &configured)
         .expect_err("the second connection is invalid");
     let message = format!("{error:#}");
 
     assert_eq!(
         message,
-        "KRONIKA_PG_DSNS[1] is not a valid connection string"
+        "KRONIKA_PGBOUNCER_DSNS[1] is not a valid connection string"
     );
     for secret in [raw, "RAW_SECRET", "PRIVATE_DATABASE"] {
         assert!(!message.contains(secret));
+    }
+}
+
+#[tokio::test]
+async fn configured_postgres_log_discovery_never_attempts_an_ignored_legacy_target() {
+    const CHILD: &str = "KRONIKA_TEST_SINGLE_DSN_LOG_CHILD";
+    if let Ok(expected) = std::env::var(CHILD) {
+        let config = crate::config::Config::from_env().expect("normalized collector config");
+        let _metrics =
+            crate::pg_sources::PgSources::open(&config).expect("same selected metrics DSN");
+        let mut sources = LogSources::open(&config).expect("open normalized log target");
+        sources.rescan(&mut |_| {}).await;
+        if expected == "success" {
+            assert_eq!(sources.postgres.len(), 1);
+            assert_eq!(sources.postgres[0].system_identifier, Some(777));
+        } else {
+            assert!(sources.postgres.is_empty());
+        }
+        return;
+    }
+
+    for (variable, succeeds) in [
+        ("KRONIKA_PG_DSN", true),
+        ("KRONIKA_PG_DSNS", true),
+        ("KRONIKA_PG_DSNS", false),
+    ] {
+        let directory = tempfile::tempdir().expect("routing fixture");
+        let path = directory.path().join("selected.log");
+        std::fs::write(&path, "").expect("selected log file");
+        let server = if succeeds {
+            FakePostgres::start(vec![facts(&path, "%m ")], vec![Reply::Value(777)])
+        } else {
+            FakePostgres::start(vec![Reply::Error], vec![])
+        };
+        let ignored = TcpListener::bind(("127.0.0.1", 0)).expect("ignored legacy target");
+        ignored
+            .set_nonblocking(true)
+            .expect("check without waiting");
+        let configured = if variable == "KRONIKA_PG_DSN" {
+            format!("{} password='one;complete;value'", server.dsn)
+        } else {
+            format!(
+                "{};host=127.0.0.1 port={} user=monitor sslmode=disable;;host='unterminated",
+                server.dsn,
+                ignored.local_addr().expect("ignored address").port()
+            )
+        };
+        let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("KRONIKA_") {
+                command.env_remove(name);
+            }
+        }
+        let output = command
+            .args([
+                "--exact",
+                "log_sources::tests::configured_postgres_log_discovery_never_attempts_an_ignored_legacy_target",
+                "--nocapture",
+            ])
+            .env(CHILD, if succeeds { "success" } else { "failure" })
+            .env("KRONIKA_STORAGE_DIR", directory.path())
+            .env(variable, configured)
+            .output()
+            .expect("isolated production routing check");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(query_counts(&server.finish()), (1, usize::from(succeeds)));
+        assert!(
+            matches!(ignored.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "ignored target receives no connection, including when selected discovery fails"
+        );
     }
 }
 
@@ -341,9 +416,19 @@ async fn two_successful_rescans_read_identity_once_and_refresh_log_facts() {
     sources.rescan_postgres(&mut observe).await;
     sources.rescan_postgres(&mut observe).await;
 
-    assert_eq!(sources.pg_dsns[0].system_identifier, Some(42));
     assert_eq!(
-        sources.pg_dsns[0]
+        sources
+            .pg_dsn
+            .as_ref()
+            .expect("selected target")
+            .system_identifier,
+        Some(42)
+    );
+    assert_eq!(
+        sources
+            .pg_dsn
+            .as_ref()
+            .expect("selected target")
             .last_log
             .as_ref()
             .map(|(_, prefix)| prefix.as_str()),
@@ -366,11 +451,25 @@ async fn failed_first_identity_read_is_retried_on_the_next_rescan() {
     let mut observe = |_observation| {};
 
     sources.rescan_postgres(&mut observe).await;
-    assert_eq!(sources.pg_dsns[0].system_identifier, None);
+    assert_eq!(
+        sources
+            .pg_dsn
+            .as_ref()
+            .expect("selected target")
+            .system_identifier,
+        None
+    );
     assert_eq!(sources.postgres[0].system_identifier, None);
 
     sources.rescan_postgres(&mut observe).await;
-    assert_eq!(sources.pg_dsns[0].system_identifier, Some(43));
+    assert_eq!(
+        sources
+            .pg_dsn
+            .as_ref()
+            .expect("selected target")
+            .system_identifier,
+        Some(43)
+    );
     assert_eq!(sources.postgres[0].system_identifier, Some(43));
     assert_eq!(query_counts(&server.finish()), (2, 2));
 }
@@ -390,7 +489,14 @@ async fn cached_identity_and_followed_source_survive_a_later_refresh_failure() {
     sources.rescan_postgres(&mut observe).await;
     sources.rescan_postgres(&mut observe).await;
 
-    assert_eq!(sources.pg_dsns[0].system_identifier, Some(44));
+    assert_eq!(
+        sources
+            .pg_dsn
+            .as_ref()
+            .expect("selected target")
+            .system_identifier,
+        Some(44)
+    );
     assert_eq!(sources.postgres.len(), 1);
     assert_eq!(sources.postgres[0].log.path(), path);
     assert_eq!(sources.postgres[0].system_identifier, Some(44));
@@ -495,7 +601,8 @@ async fn postgresql_mode_follows_only_explicit_paths_without_discovery_connectio
     sources
         .pg_logs
         .push(explicit.to_string_lossy().into_owned());
-    sources.pg_dsns[0].last_log = Some((unrelated, "%m [%p] ".to_owned()));
+    sources.pg_dsn.as_mut().expect("selected target").last_log =
+        Some((unrelated, "%m [%p] ".to_owned()));
     let mut observations = Vec::new();
     sources
         .rescan_postgres(&mut |observation| observations.push(observation))

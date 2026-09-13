@@ -18,7 +18,7 @@ SECRET = "cli-check-secret-must-not-appear"
 # Required parameters and units, independent of help layout.
 HELP_CONTENT = {
     "kronika-collector": (
-        "KRONIKA_STORAGE_DIR", "KRONIKA_PG_DSNS", "KRONIKA_COLLECTOR_MODE",
+        "KRONIKA_STORAGE_DIR", "KRONIKA_PG_DSN", "KRONIKA_COLLECTOR_MODE",
         "local", "postgresql", "KRONIKA_PG_SSL_ROOT_CERT", "sslmode=require",
         "KRONIKA_POSTGRES_EFFECTIVE_CPUS", "KRONIKA_INTERVAL_S", "5",
         "KRONIKA_SEGMENT_MAX_BYTES", "67108864", "KRONIKA_SEGMENT_MAX_AGE_S", "900",
@@ -29,7 +29,7 @@ HELP_CONTENT = {
         "KRONIKA_STORAGE_DIR", "KRONIKA_WEB_SOURCES", "127.0.0.1:8080",
         "KRONIKA_WEB_USER", "KRONIKA_WEB_PASSWORD", "KRONIKA_WEB_AUTH",
         "required", "disabled", "catalog", "health", "/mcp", "TMPDIR",
-        "kronika-collector", "KRONIKA_PG_DSNS", "No default",
+        "kronika-collector", "KRONIKA_PG_DSN", "No default",
         "0", "1", "2", "3", "Health uses instance information saved by the collector",
         "All recorded data remains available for every value",
     ),
@@ -152,7 +152,7 @@ def check(binary, version, root, strace):
     invalid = {
         "KRONIKA_STORAGE_DIR": str(storage),
         "KRONIKA_INTERVAL_S": "not-a-number",
-        "KRONIKA_PG_DSNS": f"invalid-postgresql-dsn-{SECRET}",
+        "KRONIKA_PG_DSN": f"invalid-postgresql-dsn-{SECRET}",
         "KRONIKA_WEB_LISTEN": "not-an-address",
         "KRONIKA_WEB_SOURCES": "not-a-number",
         "KRONIKA_WEB_AUTH": "invalid",

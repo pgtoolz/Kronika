@@ -12,7 +12,7 @@ use super::fsops::stat_no_follow;
 use super::scan::ParsedLeaf;
 use super::{
     ACTIVE_JOURNAL_NAME, DataRoot, FileIdentity, INDEX_OWNER_LOCK_NAME, LOG_OFFSETS_NAME,
-    LOG_OFFSETS_TEMP_NAME, WRITER_OWNER_LOCK_NAME,
+    LOG_OFFSETS_TEMP_NAME, SEAL_SEED_NAME, SEAL_SEED_TEMP_NAME, WRITER_OWNER_LOCK_NAME,
 };
 
 pub(super) fn is_control_name(name: &str) -> bool {
@@ -23,6 +23,8 @@ pub(super) fn is_control_name(name: &str) -> bool {
             | INDEX_OWNER_LOCK_NAME
             | LOG_OFFSETS_NAME
             | LOG_OFFSETS_TEMP_NAME
+            | SEAL_SEED_NAME
+            | SEAL_SEED_TEMP_NAME
     )
 }
 

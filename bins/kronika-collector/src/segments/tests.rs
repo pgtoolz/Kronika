@@ -126,7 +126,7 @@ fn test_config(storage_dir: &Path) -> Config {
         segment_max_age_secs: u64::MAX,
         journal_max_bytes: u64::MAX,
         retention: None,
-        pg_dsns: Vec::new(),
+        pg_dsn: None,
         postgres_effective_cpus: None,
         pg_logs: Vec::new(),
         pgbouncer_dsns: Vec::new(),
@@ -804,4 +804,142 @@ fn recovery_publishes_a_valid_dictionary_only_journal() {
             .map(|entry| entry.rows),
         Some(1)
     );
+}
+
+#[test]
+fn one_age_deadline_survives_later_appends_and_wall_clock_changes() {
+    use std::time::{Duration, Instant, UNIX_EPOCH};
+    let now = Instant::now();
+    let mut segment = SegmentState::with_seal_seed(2_000_000_000);
+    let id = SegmentId::new(777).expect("valid recorded timestamp");
+    assert_eq!(segment.time_until_age(now), None);
+    segment
+        .on_window_appended(
+            id,
+            now,
+            UNIX_EPOCH + Duration::from_millis(101_500),
+            Duration::from_secs(10),
+        )
+        .expect("first append deadline");
+    assert_eq!(segment.first_ts(), Some(777));
+    let sched = crate::scheduler::Scheduler::new(Intervals::default());
+    assert_eq!(
+        crate::timer_sleep_delay(now, 5, &sched, &segment, None),
+        Some(Duration::from_millis(500))
+    );
+    assert_eq!(
+        crate::timer_sleep_delay(now, 0, &sched, &segment, None),
+        None
+    );
+    for utc in [UNIX_EPOCH, UNIX_EPOCH + Duration::from_secs(1_000_000)] {
+        segment
+            .on_window_appended(
+                SegmentId::new(888).expect("valid timestamp"),
+                now + Duration::from_millis(100),
+                utc,
+                Duration::from_secs(10),
+            )
+            .expect("later append retains deadline");
+        assert_eq!(
+            segment.time_until_age(now + Duration::from_millis(100)),
+            Some(Duration::from_millis(400))
+        );
+    }
+    assert!(!segment.age_expired(now + Duration::from_millis(499)));
+    assert!(segment.age_expired(now + Duration::from_millis(500)));
+    assert_eq!(segment.first_ts(), Some(777));
+}
+
+#[test]
+fn forced_close_keeps_store_seed_and_both_encoded_segments_readable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(dir.path());
+    config.segment_max_age_secs = 3600;
+    let (owner, mut journal) = open_journal(dir.path(), JournalConfig::default().max_journal_len);
+    let seed = owner.load_or_create_seal_seed().expect("persist seed");
+    let mut segment = SegmentState::with_seal_seed(seed);
+    for ts in [100, 200] {
+        let closed = append_window_and_maybe_close(
+            &mut journal,
+            &owner,
+            &config,
+            &mut segment,
+            ts,
+            true,
+            &flushed_window(ts),
+        )
+        .expect("forced append and close");
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].1, "forced");
+        let bytes = fs::read(&closed[0].0).expect("read sealed output");
+        let catalog = validate_part(&bytes).expect("validate actual sealed bytes");
+        assert_eq!(
+            catalog
+                .entries
+                .iter()
+                .find(|e| e.type_id == OsLoadavg::CONTRACT.type_id.get())
+                .expect("loadavg section")
+                .rows,
+            1
+        );
+        assert_eq!(segment.seal_seed, seed);
+        assert!(segment.is_empty());
+        assert!(segment.age_deadline.is_none());
+    }
+    assert_eq!(
+        owner
+            .load_or_create_seal_seed()
+            .expect("same seed after closes"),
+        seed
+    );
+    let reader = Reader::open(dir.path()).expect("read seeded recording");
+    let listing = reader.segments(..).expect("list both sealed segments");
+    assert!(listing.warnings.is_empty());
+    assert_eq!(listing.segments.len(), 2);
+    for (descriptor, ts) in listing.segments.iter().zip([100, 200]) {
+        let stored = reader
+            .open_segment(descriptor)
+            .expect("open sealed segment");
+        let rows = stored
+            .rows(OsLoadavg::CONTRACT.type_id.get())
+            .expect("decode loadavg");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("ts"), Some(&Cell::Ts(ts)));
+        assert_eq!(rows[0].get("load1"), Some(&Cell::F64(1.5)));
+    }
+}
+
+#[test]
+fn zero_age_closes_the_successful_append_with_recorded_time_unchanged() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut config = test_config(dir.path());
+    config.segment_max_age_secs = 0;
+    let (owner, mut journal) = open_journal(dir.path(), JournalConfig::default().max_journal_len);
+    let mut segment = SegmentState::with_seal_seed(123);
+    let closed = append_window_and_maybe_close(
+        &mut journal,
+        &owner,
+        &config,
+        &mut segment,
+        321,
+        false,
+        &flushed_window(321),
+    )
+    .expect("append immediately eligible row");
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0].1, "age");
+    assert!(segment.is_empty());
+    assert_eq!(segment.seal_seed, 123);
+    let reader = Reader::open(dir.path()).expect("open production reader");
+    let listing = reader.segments(..).expect("list age-closed segment");
+    assert!(listing.warnings.is_empty());
+    assert_eq!(listing.segments.len(), 1);
+    let stored = reader
+        .open_segment(&listing.segments[0])
+        .expect("open segment");
+    let rows = stored
+        .rows(OsLoadavg::CONTRACT.type_id.get())
+        .expect("decode loadavg");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("ts"), Some(&Cell::Ts(321)));
 }

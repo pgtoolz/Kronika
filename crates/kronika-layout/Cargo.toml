@@ -13,7 +13,7 @@ default = ["posix"]
 posix = ["dep:rustix"]
 
 [dependencies]
-rustix = { version = "1", features = ["fs"], optional = true }
+rustix = { version = "1", features = ["fs", "rand"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

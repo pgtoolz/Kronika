@@ -5,33 +5,29 @@
 Kronika сохраняет метрики Linux, статистику PostgreSQL, планы запросов и
 события из журналов PostgreSQL/PgBouncer. Сборщик работает на наблюдаемой машине
 Linux либо записывает только данные PostgreSQL с локального или удалённого сервера.
-Веб-интерфейс показывает, что происходило в выбранный
-час: нагрузку, отдельные процессы и запросы, блокировки и изменения показателей.
+Веб-интерфейс показывает нагрузку, процессы, запросы и блокировки за выбранный
+час и их изменения во времени.
 
 ![Использование CPU и значения показателей процессов за записанный час](docs/images/processes.png)
 
-[Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/) ·
-[Скачать HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-v1.0.2.html).
+[Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/).
 
 Запись за 5 сентября 2026 года, 19:00–20:00 UTC:
 [Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=host).
 
 ## Установка и запуск
 
-Скачайте Kronika для [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz)
-или [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz).
-Проверьте и установите архив по [инструкции](INSTALL.ru.md)
-или [соберите из исходников](docs/build.ru.md). Архив содержит `kronika-collector`,
-`kronika-web`, `kronika-dump` и `kronika-report`.
+[Установите Kronika 1.1.0](INSTALL.ru.md) из [архива для Linux](docs/releases.ru.md#download)
+или [соберите из исходников](docs/build.ru.md).
 
-Выберите режим: Linux и при необходимости PostgreSQL (`local`) либо только
-PostgreSQL на локальном или удалённом сервере (`postgresql`).
-Примеры локального сбора сохраняют записи в `/var/lib/kronika`; сборщик создаёт
-каталог, если его ещё нет.
+Выберите `local` для метрик Linux и, при необходимости, PostgreSQL в той же VM
+или pod. Режим `postgresql` подходит для удалённого сервера или сбора только
+метрик базы данных. Локальные примеры используют `/var/lib/kronika`; сборщик
+создаёт каталог, если его ещё нет.
 
 ### Linux и при необходимости PostgreSQL
 
-Без `KRONIKA_PG_DSNS` режим `local` собирает только Linux:
+Запустите сбор метрик Linux:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -39,13 +35,13 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```
 
 <a id="linux-и-postgresql"></a>
-Для PostgreSQL на машине сборщика укажите строку подключения в `KRONIKA_PG_DSNS`
+Для PostgreSQL на машине сборщика укажите строку подключения в `KRONIKA_PG_DSN`
 при запуске. Используйте учётную запись PostgreSQL с
 [правами для сбора данных](INSTALL.ru.md#5-postgresql).
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
+  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
   /usr/local/bin/kronika-collector
 ```
 
@@ -54,26 +50,26 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ### Только PostgreSQL — локальный или удалённый сервер
 
-Запустите сборщик на машине, откуда доступен сервер, с каталогом записи в домашней папке.
-
-Для сбора только PostgreSQL sudo не нужен.
-
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 
-TLS проверяет сертификат и имя сервера. Для частного центра сертификации задайте
-`KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. Если число CPU PostgreSQL известно,
-добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, заменив `4` нужным числом.
+Если число CPU PostgreSQL известно, добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`,
+заменив `4` нужным числом.
 Без него SQL-метрики доступны, а PostgreSQL Health неизвестен. Подробнее — в [настройках сборщика](bins/kronika-collector/README.ru.md#remote-postgresql).
+
+Чтобы собирать данные нескольких серверов PostgreSQL, запустите для каждого
+из них процесс `kronika-collector` со своим DSN и отдельным каталогом хранения. См.
+[пример двух серверов](bins/kronika-collector/README.ru.md#several-postgresql-servers).
 
 ### Открыть веб-интерфейс
 
-Оставив выбранный сборщик работать, запустите веб-сервер во втором терминале
-с тем же каталогом данных.
+Запустите `kronika-web` во втором терминале с каталогом данных сборщика.
 
 #### Для режима `local`
 
@@ -92,16 +88,17 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 #### Для режима `postgresql`
 
 ```sh
-KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
   KRONIKA_WEB_USER=kronika \
   KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
-Откройте <http://127.0.0.1:8080/> и войдите. Веб-сервер читает новые данные,
-пока работает сборщик. `Ctrl+C` останавливает любой из процессов; записи
-остаются на диске. [Настройка systemd](docs/services.ru.md) описывает запуск
+Откройте <http://127.0.0.1:8080/> и войдите. Веб-интерфейс показывает сохранённую
+историю измерений и данные текущего сбора.
+
+[Настройка systemd](docs/services.ru.md) описывает запуск
 обеих программ как служб и изменение настроек уже работающей службы.
 
 ### Место на диске
@@ -121,16 +118,14 @@ KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
 
 ## Данные и представления
 
-Названия в первом столбце соответствуют разделам интерфейса.
-
 | Область | Что можно посмотреть | Справочник |
 | --- | --- | --- |
 | Processes — процессы | Команда, состояние и номер процесса (PID), использование CPU, память, чтение и запись на диск; дерево процессов и активность за час. | [Метрики Linux](docs/metrics-linux.ru.md) |
-| Host — система | CPU, память, ожидание ресурсов (PSI), сеть и диски, свободное место и связи устройств; ограничения и использование ресурсов контейнера. | [Метрики Linux](docs/metrics-linux.ru.md) |
+| Host — система | CPU, память, ожидание ресурсов (PSI), сеть и диски, свободное место и связи устройств; лимиты и использование ресурсов cgroup. | [Метрики Linux](docs/metrics-linux.ru.md) |
 | Overview, Activity, Locks, Vacuum — работа PostgreSQL | Общая нагрузка, сеансы и ожидания, цепочки блокировок, длительность запросов и транзакций, ход очистки таблиц. | [Метрики PostgreSQL](docs/metrics-postgresql.ru.md) |
 | Statements и Plans — запросы и планы | Число вызовов, время выполнения и планирования, чтение страниц и временных файлов, запись журнала WAL, текст SQL и плана. | [Метрики PostgreSQL](docs/metrics-postgresql.ru.md) |
-| Databases, Tables, Indexes — объекты PostgreSQL | Размеры, чтение и изменение данных, обслуживание и возраст транзакций; объединение объектов по базе, схеме и табличному пространству. | [Метрики PostgreSQL](docs/metrics-postgresql.ru.md) |
-| Events — события | Сообщения журналов PostgreSQL/PgBouncer, группы похожих сообщений, время и длительность событий. | [Управление интерфейсом](docs/features.ru.md) |
+| Databases, Tables, Indexes — объекты PostgreSQL | Настройки, размеры, чтение и изменение данных, обслуживание и возраст транзакций; объединение объектов по базе, схеме и табличному пространству. | [Метрики PostgreSQL](docs/metrics-postgresql.ru.md) |
+| Events — события | Группы похожих сообщений PostgreSQL/PgBouncer, время, длительность и записанный контекст событий; отметки метрик. | [Управление интерфейсом](docs/features.ru.md) |
 | Время и графики | Выбор часа и момента внутри него, изменение показателей, карты активности, итоговые значения и распределение измерений. | [Время и вычисления](docs/metrics-time.ru.md) |
 
 [Руководство по интерфейсу](docs/features.ru.md) описывает выбор показателей,
@@ -164,9 +159,8 @@ MCP — протокол, через который ИИ-клиент может
 ## Переносимый HTML-экспорт
 
 **Export** сохраняет выбранный интервал вашей записи в один интерактивный
-HTML-файл. Он содержит интерфейс, данные и программу обработки запросов
-на Rust/WebAssembly, которая выполняется в основном потоке браузера. Для открытия файла не нужны
-сервер или сетевое подключение.
+HTML-файл. Он содержит интерфейс и данные: таблицы, поиск и графики работают
+без сервера и сетевого подключения.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/report-export-ru-dark.svg">
@@ -175,8 +169,7 @@ HTML-файл. Он содержит интерфейс, данные и про�
 
 [kronika-dump](bins/kronika-dump/README.ru.md) читает хранилище и извлекает
 интервал в отдельный файл записи ZMS; [kronika-report](bins/kronika-report/README.ru.md) преобразует
-отдельный ZMS в HTML. Отчёт работает без сервера: в нём доступны таблицы, поиск,
-графики и карты активности.
+ZMS в HTML.
 
 ## Документация
 

@@ -125,10 +125,11 @@ function ActivityLedger({ columns, cursor, cuts, defaultCut, drill, group, headi
   const choose = drill === undefined ? undefined : (row: HeatmapViewRow) => {
     setChosen(rowKey(row))
     setMaximized(false)
-    const cursorColumn = cursorColumnOf(cursor, hour, columns)
+    const cursorColumn = cursorColumnOf(cursor, view?.intervals ?? [])
     if (cursorColumn === null || (row.cells[cursorColumn] ?? null) === null) {
       const peak = rowPeakColumn(row.cells)
-      if (peak !== null) onCursor(intervalInstant(hour, peak, columns))
+      const instant = peak === null ? null : intervalInstant(view?.intervals ?? [], peak)
+      if (instant !== null) onCursor(instant)
     }
     drill(row)
   }
@@ -182,7 +183,6 @@ function ActivityLedger({ columns, cursor, cuts, defaultCut, drill, group, headi
   }
 
   const panel = <ActivityPanel
-    columns={columns}
     cursor={cursor}
     cut={cut}
     cuts={cuts}
@@ -221,16 +221,13 @@ function rowKey(row: HeatmapViewRow): string {
   return `${row.typeId}:${row.identity.join(":")}`
 }
 
-// The last moment of a column: what clicking that cell on the strip sets.
-export function intervalInstant(hour: number, column: number, columns: number): number {
-  return hour + Math.floor(((column + 1) * HOUR_MICROS) / columns) - 1
+export function intervalInstant(intervals: HeatmapView["intervals"], column: number): number | null {
+  return intervals[column]?.end ?? null
 }
 
-// The column the cursor stands in, or null when it is outside the hour.
-export function cursorColumnOf(cursor: number, hour: number, columns: number): number | null {
-  return cursor >= hour && cursor < hour + HOUR_MICROS
-    ? Math.min(columns - 1, Math.floor(((cursor - hour) * columns) / HOUR_MICROS))
-    : null
+export function cursorColumnOf(cursor: number, intervals: HeatmapView["intervals"]): number | null {
+  const column = intervals.findIndex(({ start, end }) => cursor >= start && cursor <= end)
+  return column < 0 ? null : column
 }
 
 // The row's busiest recorded interval: the first strictly positive maximum.
@@ -481,8 +478,7 @@ export function planTextsByPlanId(rows: readonly DataRow[]): ReadonlyMap<string,
   return textsById(rows, "planid", "plan")
 }
 
-function ActivityPanel({ chosen, columns, cursor, cut, cuts, drill, headingContext, hour, keys, label, loadedCut, loading, locale, maximized, onCollapse, onCursor, onCut, onMaximized, onScale, onTop, scale, scales, section, t, top, view }: {
-  readonly columns: number
+function ActivityPanel({ chosen, cursor, cut, cuts, drill, headingContext, hour, keys, label, loadedCut, loading, locale, maximized, onCollapse, onCursor, onCut, onMaximized, onScale, onTop, scale, scales, section, t, top, view }: {
   readonly cursor: number
   readonly cut: ActivityCut
   readonly cuts: readonly ActivityCut[]
@@ -511,7 +507,7 @@ function ActivityPanel({ chosen, columns, cursor, cut, cuts, drill, headingConte
 }) {
   const { kind, scale: valueScale } = cutScale(loadedCut, scales)
   const suffix = view.cumulative ? t("unit.per_second") : ""
-  const cursorColumn = cursorColumnOf(cursor, hour, columns)
+  const cursorColumn = cursorColumnOf(cursor, view.intervals)
   const globalMax = heatmapViewMax(view)
   const totalsMax = view.totals.cells.reduce<number>((current, cell) => cell !== null && cell > current ? cell : current, 0)
   const rowMax = (cells: readonly (number | null)[]) => scale === "row"
@@ -556,23 +552,24 @@ function ActivityPanel({ chosen, columns, cursor, cut, cuts, drill, headingConte
         <span className="px-2 text-right" data-testid="activity-summary-label">{t("activity.average")}</span>
         <strong className="px-2 text-right font-normal">{t("activity.at_cursor")}</strong>
       </div>}
-      <ActivityRow cells={view.totals.cells} cursor={cursor} help={<LabelHelp helpKey={`${keys.bands}.totals.help`} iconOnly labelKey="activity.totals" t={t} />} hour={hour} max={totalsMax} muted onCursor={onCursor} reading={atCursor(view.totals.cells)} testId="activity-row-totals" text={t("activity.totals")} total={total(view.totals.total)} />
+      <ActivityRow intervals={view.intervals} cells={view.totals.cells} cursor={cursor} help={<LabelHelp helpKey={`${keys.bands}.totals.help`} iconOnly labelKey="activity.totals" t={t} />} hour={hour} max={totalsMax} muted onCursor={onCursor} reading={atCursor(view.totals.cells)} testId="activity-row-totals" text={t("activity.totals")} total={total(view.totals.total)} />
       {view.rows.map((row) => {
         const { detail = null, prefix, semantic = false, text, title } = label(row)
-        return <ActivityRow active={chosen === rowKey(row)} cells={row.cells} cursor={cursor} detail={detail} hour={hour} key={rowKey(row)} labelTitle={title} max={rowMax(row.cells)} onClick={drill === undefined ? undefined : () => drill(row)} onCursor={onCursor} prefix={headingContext !== null && prefix === headingContext ? null : prefix} reading={atCursor(row.cells)} semantic={semantic} testId="activity-row" text={text} total={total(row.total)} />
+        return <ActivityRow intervals={view.intervals} active={chosen === rowKey(row)} cells={row.cells} cursor={cursor} detail={detail} hour={hour} key={rowKey(row)} labelTitle={title} max={rowMax(row.cells)} onClick={drill === undefined ? undefined : () => drill(row)} onCursor={onCursor} prefix={headingContext !== null && prefix === headingContext ? null : prefix} reading={atCursor(row.cells)} semantic={semantic} testId="activity-row" text={text} total={total(row.total)} />
       })}
-      {view.othersCount > 0 && <ActivityRow cells={view.others.cells} cursor={cursor} help={<LabelHelp helpKey={`${keys.bands}.others.help`} iconOnly labelKey={`${keys.bands}.others_label`} t={t} />} hour={hour} max={rowMax(view.others.cells)} muted onCursor={onCursor} reading={atCursor(view.others.cells)} testId="activity-row-others" text={t(`${keys.bands}.others`, { count: String(view.othersCount) })} total={total(view.others.total)} />}
+      {view.othersCount > 0 && <ActivityRow intervals={view.intervals} cells={view.others.cells} cursor={cursor} help={<LabelHelp helpKey={`${keys.bands}.others.help`} iconOnly labelKey={`${keys.bands}.others_label`} t={t} />} hour={hour} max={rowMax(view.others.cells)} muted onCursor={onCursor} reading={atCursor(view.others.cells)} testId="activity-row-others" text={t(`${keys.bands}.others`, { count: String(view.othersCount) })} total={total(view.others.total)} />}
     </div>}
   </section>
 }
 
-function ActivityRow({ active = false, cells, cursor, detail = null, help, hour, labelTitle, max, muted = false, onClick, onCursor, prefix = null, reading, semantic = false, testId, text, total }: {
+function ActivityRow({ active = false, cells, cursor, detail = null, help, hour, intervals, labelTitle, max, muted = false, onClick, onCursor, prefix = null, reading, semantic = false, testId, text, total }: {
   readonly active?: boolean | undefined
   readonly cells: readonly (number | null)[]
   readonly cursor: number
   readonly detail?: string | null
   readonly help?: React.ReactNode
   readonly hour: number
+  readonly intervals: HeatmapView["intervals"]
   readonly labelTitle?: string | undefined
   readonly max: number
   readonly muted?: boolean
@@ -592,32 +589,40 @@ function ActivityRow({ active = false, cells, cursor, detail = null, help, hour,
       {detail !== null && <span className="flex-none font-mono text-[12px] font-normal text-fg4">{detail}</span>}
       {help}
     </span>
-    <ActivityStrip cells={cells} cursor={cursor} hour={hour} max={max} onCursor={onCursor} />
+    <ActivityStrip cells={cells} cursor={cursor} hour={hour} intervals={intervals} max={max} onCursor={onCursor} />
     <strong className="px-2 text-right font-mono text-xs font-normal tabular-nums text-fg2">{total}</strong>
     <strong className="px-2 text-right font-mono text-xs font-normal tabular-nums text-fg3">{reading}</strong>
   </div>
 }
 
-function ActivityStrip({ cells, cursor, hour, max, onCursor }: {
+export function ActivityStrip({ cells, cursor, hour, intervals, max, onCursor }: {
   readonly cells: readonly (number | null)[]
   readonly cursor: number
   readonly hour: number
+  readonly intervals: HeatmapView["intervals"]
   readonly max: number
   readonly onCursor: (timestamp: number) => void
 }) {
-  const columns = Math.max(cells.length, 1)
-  const cursorX = cursor >= hour && cursor < hour + HOUR_MICROS ? ((cursor - hour) / HOUR_MICROS) * columns : null
+  const cursorX = cursor >= hour && cursor < hour + HOUR_MICROS ? ((cursor - hour) / HOUR_MICROS) * 100 : null
   const pick = (event: React.MouseEvent<SVGSVGElement>) => {
     event.stopPropagation()
     const bounds = event.currentTarget.getBoundingClientRect()
     if (bounds.width <= 0) return
-    const column = Math.max(0, Math.min(columns - 1, Math.floor(((event.clientX - bounds.left) / bounds.width) * columns)))
-    onCursor(intervalInstant(hour, column, columns))
+    const timestamp = hour + Math.max(0, Math.min(HOUR_MICROS - 1, Math.floor(((event.clientX - bounds.left) / bounds.width) * HOUR_MICROS)))
+    const column = cursorColumnOf(timestamp, intervals)
+    const instant = column === null ? null : intervalInstant(intervals, column)
+    if (instant !== null) onCursor(instant)
   }
-  return <svg className="activity-strip" onClick={pick} preserveAspectRatio="none" viewBox={`0 0 ${columns} 8`}>
-    {cells.map((cell, index) => cell === null
-      ? null
-      : <rect className={`heat-${heatmapIntensity(cell, max)}`} height={8} key={index} width={0.9} x={index + 0.05} y={0} />)}
+  return <svg className="activity-strip" onClick={pick} preserveAspectRatio="none" viewBox="0 0 100 8">
+    {cells.map((cell, index) => {
+      const interval = intervals[index]
+      if (cell === null || interval === undefined) return null
+      const start = Math.max(hour, interval.start)
+      const end = Math.min(hour + HOUR_MICROS, interval.end + 1)
+      if (start >= end) return null
+      const width = ((end - start) / HOUR_MICROS) * 100
+      return <rect className={`heat-${heatmapIntensity(cell, max)}`} height={8} key={index} width={width * 0.9} x={((start - hour) / HOUR_MICROS) * 100 + width * 0.05} y={0} />
+    })}
     {cursorX !== null && <>
       <path className="activity-cursor-halo" d={`M${cursorX.toFixed(3)} 0 V8`} vectorEffect="non-scaling-stroke" />
       <path className="activity-cursor" d={`M${cursorX.toFixed(3)} 0 V8`} vectorEffect="non-scaling-stroke" />

@@ -58,7 +58,6 @@ use tokio::signal::unix::{SignalKind, signal};
 fn timer_sleep_delay(
     now: Instant,
     tick_secs: u64,
-    segment_max_age_secs: u64,
     sched: &Scheduler,
     segment: &SegmentState,
     rotation: Option<&Rotation>,
@@ -68,9 +67,7 @@ fn timer_sleep_delay(
         if let Some(next_due) = sched.next_elapsed_due_in(now) {
             *delay = (*delay).min(next_due);
         }
-        if let Some(next_age) =
-            segment.time_until_age(now, Duration::from_secs(segment_max_age_secs))
-        {
+        if let Some(next_age) = segment.time_until_age(now) {
             *delay = (*delay).min(next_age);
         }
     }
@@ -193,7 +190,10 @@ async fn run_collector(config: Config) -> Result<()> {
     let mut sigint = signal(SignalKind::interrupt()).context("install the SIGINT handler")?;
     let mut sched = Scheduler::for_mode(config.intervals, config.mode.collect_os());
     let mut process_io = config.mode.collect_os().then(ProcessIoCredentials::new);
-    let mut segment = SegmentState::default();
+    let seal_seed = writer_owner
+        .load_or_create_seal_seed()
+        .context("load the storage seal seed")?;
+    let mut segment = SegmentState::with_seal_seed(seal_seed);
     let mut rotation = Rotation::new(
         config.retention,
         &writer_owner,
@@ -215,7 +215,6 @@ async fn run_collector(config: Config) -> Result<()> {
                 timer_sleep_delay(
                     Instant::now(),
                     config.tick_secs,
-                    config.segment_max_age_secs,
                     &sched,
                     &segment,
                     rotation.as_ref(),
@@ -244,8 +243,7 @@ async fn run_collector(config: Config) -> Result<()> {
             let mut written_this_tick: Vec<PathBuf> = Vec::new();
             // The age valve runs before collection: a tick whose sources fail or
             // return no rows must still close an expired segment.
-            let age = Duration::from_secs(config.segment_max_age_secs);
-            if segment.age_expired(Instant::now(), age) {
+            if segment.age_expired(Instant::now()) {
                 let dest = close_open_segment(&mut journal, &writer_owner, &mut segment, "age")?;
                 sched.mark_segment_opened();
                 announce(&format!("wrote {} reason=age", dest.display()));

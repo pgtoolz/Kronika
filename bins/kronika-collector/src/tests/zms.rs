@@ -131,7 +131,7 @@ fn config(root: &Path, journal_max_bytes: u64) -> Config {
         segment_max_age_secs: u64::MAX,
         journal_max_bytes,
         retention: None,
-        pg_dsns: Vec::new(),
+        pg_dsn: None,
         postgres_effective_cpus: None,
         pg_logs: Vec::new(),
         pgbouncer_dsns: Vec::new(),

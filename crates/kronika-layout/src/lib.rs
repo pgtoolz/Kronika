@@ -19,7 +19,8 @@ pub use root::{
     ACTIVE_JOURNAL_NAME, DAMAGED_JOURNAL_NAME, DataRoot, DayDirectory, EntryDiagnostic,
     EntryFileType, EntryScope, FileIdentity, FileKind, FilesystemUsage, ForeignEntry,
     ForeignEntryReason, INDEX_OWNER_LOCK_NAME, IdxTemp, IndexOwner, LOG_OFFSETS_NAME,
-    LOG_OFFSETS_TEMP_NAME, LayoutSnapshot, PathIdentity, SegmentArtifacts, SegmentRemoval,
-    TemporaryKind, TemporaryObject, WRITER_OWNER_LOCK_NAME, WriterLease, WriterOwner, ZmsTemp,
+    LOG_OFFSETS_TEMP_NAME, LayoutSnapshot, PathIdentity, SEAL_SEED_NAME, SEAL_SEED_TEMP_NAME,
+    SegmentArtifacts, SegmentRemoval, TemporaryKind, TemporaryObject, WRITER_OWNER_LOCK_NAME,
+    WriterLease, WriterOwner, ZmsTemp,
 };
 pub use time::{SegmentAddress, SegmentId, UtcDay};

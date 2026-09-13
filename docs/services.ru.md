@@ -2,11 +2,11 @@
 
 [English version](services.md) · [Установка](../INSTALL.ru.md)
 
-Systemd запускает сборщик и веб-сервер автоматически и перезапускает их при сбое.
-В примере программы установлены в `/usr/local/bin`, запись принадлежит root,
-а веб-сервер принимает подключения только с этой машины. В этом примере с
-каталогом записи работают один сборщик и один веб-сервер. Если программа уже
-запущена вручную в терминале, остановите её перед запуском соответствующего сервиса.
+Программы можно запускать любым удобным способом. Здесь показан автозапуск
+и перезапуск через systemd. В примере работают один сборщик и один веб-сервер:
+программы находятся в `/usr/local/bin`, хранилище принадлежит root,
+веб-сервер слушает localhost. Перед запуском сервиса остановите соответствующую
+программу, если она уже работает в терминале.
 
 <a id="environment-files"></a>
 ## Файлы настроек
@@ -46,7 +46,7 @@ PostgreSQL, [подготовьте роль мониторинга](../INSTALL.
 добавьте строку подключения в `collector.env`:
 
 ```ini
-KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
+KRONIKA_PG_DSN="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
 ```
 
 Для PostgreSQL на машине сборщика используйте строку подключения выше и
@@ -60,6 +60,12 @@ KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-
 Полный список параметров:
 [сборщик](../bins/kronika-collector/README.ru.md) и
 [веб-сервер](../bins/kronika-web/README.ru.md).
+
+Чтобы собирать данные нескольких серверов PostgreSQL, запустите для каждого
+из них процесс `kronika-collector` со своим DSN и отдельным каталогом хранения.
+Каждый веб-процесс читает один каталог хранения и использует свой адрес
+прослушивания. См.
+[пример двух серверов](../bins/kronika-collector/README.ru.md#several-postgresql-servers).
 
 <a id="units"></a>
 ## Описание сервисов
@@ -106,11 +112,9 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Оба сервиса используют `UMask=0077`: создаваемые файлы закрыты для других
-пользователей. Сборщик читает защищённые данные процессов и журналы; веб-сервер
-создаёт индексы и файлы блокировки в том же каталоге записи. Веб-сервер может читать
-запись и после остановки сборщика. Экспорт создаёт временные файлы ZMS и HTML
-в `TMPDIR` или системном временном каталоге.
+`UMask=0077` закрывает новые файлы от других пользователей. Веб-серверу нужны
+права записи в хранилище для создания индексов. Он может показывать записи после остановки
+сборщика.
 
 ## Запуск
 
@@ -129,9 +133,7 @@ sudo journalctl -u kronika-collector -u kronika-web --since '5 minutes ago'
 
 ## Операции
 
-Настройки из этих файлов применяются при запуске сервиса через systemd. Чтобы
-изменить настройки уже работающего сервиса, отредактируйте его файл и перезапустите
-этот сервис.
+После изменения файла настроек перезапустите соответствующий сервис.
 Например, чтобы добавить сбор PostgreSQL и изменить список источников веб-сервера:
 
 ```sh
@@ -143,9 +145,9 @@ sudo systemctl restart kronika-collector kronika-web
 | --- | --- |
 | Журнал сборщика | `sudo journalctl -u kronika-collector -f` |
 | Журнал веб-сервера | `sudo journalctl -u kronika-web -f` |
-| Немедленный сбор; сохранение сегмента, если добавлены данные и сегмент непустой | `sudo systemctl kill --kill-whom=main --signal=SIGUSR2 kronika-collector` |
+| Собрать сейчас и сохранить сегмент, если этот сбор добавит данные | `sudo systemctl kill --kill-whom=main --signal=SIGUSR2 kronika-collector` |
 | Применить изменения настроек | `sudo systemctl restart kronika-collector kronika-web` |
-| Остановка сбора с сохранением файлов | `sudo systemctl stop kronika-collector` |
+| Остановка сбора | `sudo systemctl stop kronika-collector` |
 | Отключение автозапуска и остановка веб-сервера | `sudo systemctl disable --now kronika-web` |
 | Запуск веб-сервера | `sudo systemctl start kronika-web` |
 | Место, занятое записью | `sudo du -sh /var/lib/kronika` |
@@ -153,13 +155,10 @@ sudo systemctl restart kronika-collector kronika-web
 <a id="замена-binaries"></a>
 ## Замена программ
 
-Проверьте и распакуйте следующий архив по [инструкции установки](../INSTALL.ru.md#1-скачивание-и-распаковка).
+Скачайте и распакуйте следующий архив по [инструкции установки](../INSTALL.ru.md#1-скачивание-и-распаковка).
 В распакованном каталоге:
 
 ```sh
-for binary in kronika-collector kronika-web kronika-dump kronika-report; do
-  "./$binary" --version
-done
 sudo systemctl stop kronika-collector kronika-web
 sudo install -m 0755 kronika-collector kronika-web kronika-dump \
   kronika-report /usr/local/bin/

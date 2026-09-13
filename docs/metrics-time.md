@@ -142,7 +142,7 @@ change affects later samples only. The DSN, hostname and matching PIDs do not
 establish placement. Container cgroup capacity belongs to the selected group,
 which can include several containers; it is not automatically PostgreSQL capacity.
 
-`KRONIKA_PG_DSNS` enables PostgreSQL collection independently of capacity.
+`KRONIKA_PG_DSN` enables PostgreSQL collection independently of capacity.
 Unknown capacity does not disable collection; it leaves PostgreSQL Health and
 capacity-dependent marks unavailable. Missing active-count input also gives
 null Health. Conflicting activity layouts at one timestamp give an unknown count.

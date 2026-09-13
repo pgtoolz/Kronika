@@ -7,43 +7,44 @@ Usage: kronika-collector
 
 Runs in the foreground. Configure it with environment variables; there are no
 collection flags or public subcommands. Local mode requires KRONIKA_STORAGE_DIR;
-postgresql mode also requires KRONIKA_PG_DSNS.
+postgresql mode also requires KRONIKA_PG_DSN.
 
 EXAMPLES
   Linux recording:
     sudo env KRONIKA_STORAGE_DIR=/path/to/recording kronika-collector
 
-  PostgreSQL on the same Linux machine/VM:
+  PostgreSQL and Linux in the same VM or pod:
     sudo env KRONIKA_STORAGE_DIR=/path/to/recording \
-      KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
+      KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
       kronika-collector
 
   PostgreSQL only, local or remote; no sudo:
     KRONIKA_COLLECTOR_MODE=postgresql KRONIKA_STORAGE_DIR=$HOME/kronika-data \
-      KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+      KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
       kronika-collector
 
 REQUIRED ENVIRONMENT
   KRONIKA_STORAGE_DIR
       Directory where the collector saves recordings. No default. It contains
       the current journal (active.wal), finished files under
-      YYYY/MM/DD/<segment-id>.zms, and a lock to prevent two writers. Use a real
-      directory, not a ZMS filename or symlink; web uses this same directory.
+      YYYY/MM/DD/<segment-id>.zms, persistent seal.seed, and a writer lock.
+      Use a real directory, not a ZMS filename or symlink; web uses this directory.
 
 OPTIONAL COLLECTION MODE
   KRONIKA_COLLECTOR_MODE   default local; local or postgresql
-      local: Linux metrics and optional PostgreSQL on the recorded machine.
-      postgresql: PostgreSQL only, local or remote; requires KRONIKA_PG_DSNS.
+      local: Linux metrics and optional PostgreSQL in the same VM or pod.
+      postgresql: PostgreSQL only, remote or when OS is unnecessary; requires
+      KRONIKA_PG_DSN. Mode is explicit, not inferred from the DSN address.
       In postgresql mode: no Linux, process, cgroup, or host identity reads.
       No root required in postgresql mode.
       PgBouncer log settings are not accepted in postgresql mode.
 
 OPTIONAL POSTGRESQL AND LOG ENVIRONMENT (all unset by default)
-  KRONIKA_PG_DSNS
-      Semicolon-separated connection strings: keyword/value pairs or PostgreSQL
-      URLs. The first enables metrics from that server's connectable databases.
-      In local mode, all entries also discover local PostgreSQL logs. Additional
-      DSNs are not additional metric sources. Leave unset for Linux only.
+  KRONIKA_PG_DSN
+      One connection string: keyword/value pairs or a PostgreSQL URL.
+      Selects one server and its connectable databases. In local mode, the same
+      DSN also discovers local PostgreSQL logs. Leave unset for Linux
+      only. Use a separate process and storage directory per server.
       Direct PostgreSQL and PgBouncer session pooling are supported.
       DSN sslmode: disable (plaintext), prefer (default), require (TLS required).
       TLS validates the CA and server hostname, including query cancellation.
@@ -53,14 +54,14 @@ OPTIONAL POSTGRESQL AND LOG ENVIRONMENT (all unset by default)
       public CA roots. Certificate and hostname validation remain enabled.
   KRONIKA_POSTGRES_EFFECTIVE_CPUS
       Optional target PostgreSQL CPU capacity: whole number 1..4294967295.
-      Requires KRONIKA_PG_DSNS. Overrides automatic capacity. In local mode on
+      Requires KRONIKA_PG_DSN. Overrides automatic capacity. In local mode on
       a shared machine/VM, unset uses the latest recorded machine CPU count at
       or before each PostgreSQL sample. Remote and container capacity is unknown
       without this setting; SQL metrics continue, dependent Health is null.
       Health and active-backend marks compare active count with twice capacity.
   KRONIKA_PG_LOGS
       Optional local PostgreSQL log paths or globs, separated by semicolons.
-      In local mode, each KRONIKA_PG_DSNS entry discovers its current log through
+      In local mode, KRONIKA_PG_DSN discovers the selected server's log through
       pg_current_logfile(), even when this list is unset; explicit paths add to
       those sources. In postgresql mode, only explicit paths are opened.
       Files must be readable on the collector host. Example:
@@ -88,7 +89,11 @@ OPTIONAL STORAGE ENVIRONMENT (sizes are nonnegative whole numbers of bytes)
   KRONIKA_SEGMENT_MAX_BYTES       default 67108864 (64 MiB), greater than 0
       Write a finished segment once the journal reaches this many raw bytes.
   KRONIKA_SEGMENT_MAX_AGE_S       default 900 seconds
-      Write the open segment at this age; 0 makes it eligible immediately.
+      Nonnegative period for scheduled closing, with a persistent random phase
+      per storage directory. The next boundary can make a segment due earlier;
+      later ordinary boundaries keep this period. Closing can be delayed by work
+      in progress. 0 makes it eligible immediately; no timed age closing when
+      KRONIKA_INTERVAL_S=0.
   KRONIKA_JOURNAL_MAX_BYTES       default 1073741824 (1 GiB), range 36..1073741824
       Hard active.wal size cap; reaching it writes the segment early. A segment
       threshold larger than this cap logs a warning and the journal cap wins.
@@ -125,8 +130,9 @@ OPTIONAL LOGGING AND MOUNT PATHS
   KRONIKA_SYS_ROOT    default /sys; sysfs mount to read in local mode
 
 STOPPING AND ERRORS
-  SIGINT (Ctrl+C) and SIGTERM stop collection and retain active.wal. Restart
-  with the same directory to recover it. SIGUSR2 forces a collection cycle;
+  SIGINT (Ctrl+C) and SIGTERM stop collection and retain active.wal without a
+  final ZMS close. Restart with the same directory to recover a valid nonempty
+  journal immediately. SIGUSR2 forces a collection cycle;
   the accumulated segment is saved when the cycle appended data and left
   a nonempty segment. Invalid configuration and unrecoverable storage failures
   exit nonzero; individual source errors are logged and retried.
