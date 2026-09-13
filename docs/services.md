@@ -106,9 +106,8 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Root can read protected process counters and logs. `UMask=0077` keeps new files
-private. Web needs write access to storage for indexes. It can serve recordings
-after the collector stops.
+`UMask=0077` keeps new files private. Web needs write access to storage for
+indexes and can serve recordings after the collector stops.
 
 ## Start
 

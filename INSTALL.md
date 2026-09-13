@@ -51,9 +51,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-Use a real storage directory, not a symlink. Root can read protected process
-I/O counters and local logs. Processes are sampled every 5 seconds and core
-Linux metrics every 10 seconds.
+Processes are sampled every 5 seconds and core Linux metrics every 10 seconds.
 
 The collector periodically saves compressed segments. Web reads new data from
 `active.wal` without waiting for a finished segment.
