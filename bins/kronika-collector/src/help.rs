@@ -6,21 +6,22 @@ Usage: kronika-collector
        kronika-collector --help | -h | --version
 
 Runs in the foreground. Configure it with environment variables; there are no
-collection flags or public subcommands. Only KRONIKA_STORAGE_DIR is required.
+collection flags or public subcommands. Local mode requires KRONIKA_STORAGE_DIR;
+postgresql mode also requires KRONIKA_PG_DSNS.
 
 EXAMPLES
   Linux recording:
     sudo env KRONIKA_STORAGE_DIR=/path/to/recording kronika-collector
 
-  Local PostgreSQL sharing the collector's CPU limits, existing connection:
+  PostgreSQL on the same Linux machine/VM:
     sudo env KRONIKA_STORAGE_DIR=/path/to/recording \
-      KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
+      KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
       kronika-collector
 
-  Remote PostgreSQL with 4 CPUs, using an existing connection:
-    sudo env KRONIKA_STORAGE_DIR=/path/to/recording \
-      KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-      KRONIKA_POSTGRES_EFFECTIVE_CPUS=4 kronika-collector
+  PostgreSQL only, local or remote; no sudo:
+    KRONIKA_COLLECTOR_MODE=postgresql KRONIKA_STORAGE_DIR=$HOME/kronika-data \
+      KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+      kronika-collector
 
 REQUIRED ENVIRONMENT
   KRONIKA_STORAGE_DIR
@@ -29,31 +30,39 @@ REQUIRED ENVIRONMENT
       YYYY/MM/DD/<segment-id>.zms, and a lock to prevent two writers. Use a real
       directory, not a ZMS filename or symlink; web uses this same directory.
 
+OPTIONAL COLLECTION MODE
+  KRONIKA_COLLECTOR_MODE   default local; local or postgresql
+      local: Linux metrics and optional PostgreSQL on the recorded machine.
+      postgresql: PostgreSQL only, local or remote; requires KRONIKA_PG_DSNS.
+      In postgresql mode: no Linux, process, cgroup, or host identity reads.
+      No root required in postgresql mode.
+      PgBouncer log settings are not accepted in postgresql mode.
+
 OPTIONAL POSTGRESQL AND LOG ENVIRONMENT (all unset by default)
   KRONIKA_PG_DSNS
-      Semicolon-separated connection strings (DSNs): keyword/value pairs or
-      PostgreSQL connection URLs. The first
-      enables metrics from that server's connectable databases; all entries
-      discover PostgreSQL log paths and formats. Additional DSNs are for log
-      discovery, not additional metric sources. Leave unset for Linux only.
-      Use an existing monitoring connection, directly or through PgBouncer
-      session pooling. Transaction/statement pooling and TLS are unsupported.
+      Semicolon-separated connection strings: keyword/value pairs or PostgreSQL
+      URLs. The first enables metrics from that server's connectable databases.
+      In local mode, all entries also discover local PostgreSQL logs. Additional
+      DSNs are not additional metric sources. Leave unset for Linux only.
+      Direct PostgreSQL and PgBouncer session pooling are supported.
+      DSN sslmode: disable (plaintext), prefer (default), require (TLS required).
+      TLS validates the CA and server hostname, including query cancellation.
+      Transaction/statement pooling and sslmode=verify-full are unsupported.
+  KRONIKA_PG_SSL_ROOT_CERT
+      Optional PEM CA bundle for PostgreSQL TLS. When set, replaces the included
+      public CA roots. Certificate and hostname validation remain enabled.
   KRONIKA_POSTGRES_EFFECTIVE_CPUS
-      Explicit target PostgreSQL CPU capacity: whole number 1..4294967295.
-      Requires KRONIKA_PG_DSNS. Set for remote PostgreSQL or a different cgroup
-      (a group of processes with shared resource limits), even on the same host.
-      This value overrides automatic capacity. Leave unset when local PostgreSQL
-      shares the collector's VM/container CPU limits. For each PostgreSQL sample,
-      use the latest CPU information recorded at or before it: the VM CPU count
-      or the container quota divided by its period, capped by its allowed CPU
-      set (cpuset). Fractions are preserved. Unlimited quota uses a positive
-      cpuset count; unknown capacity gives null Health. The connection address
-      alone cannot establish which CPU limits apply. Health and active-backend
-      marks compare the active count with twice this capacity.
+      Optional target PostgreSQL CPU capacity: whole number 1..4294967295.
+      Requires KRONIKA_PG_DSNS. Overrides automatic capacity. In local mode on
+      a shared machine/VM, unset uses the latest recorded machine CPU count at
+      or before each PostgreSQL sample. Remote and container capacity is unknown
+      without this setting; SQL metrics continue, dependent Health is null.
+      Health and active-backend marks compare active count with twice capacity.
   KRONIKA_PG_LOGS
       Optional local PostgreSQL log paths or globs, separated by semicolons.
-      When unset, each KRONIKA_PG_DSNS entry still discovers its current log
-      through pg_current_logfile(). Explicit entries add to those sources.
+      In local mode, each KRONIKA_PG_DSNS entry discovers its current log through
+      pg_current_logfile(), even when this list is unset; explicit paths add to
+      those sources. In postgresql mode, only explicit paths are opened.
       Files must be readable on the collector host. Example:
       '/var/log/postgresql/*.csv;/srv/pg-logs/*.json'. Only the last path
       component supports * and ?. Filename .csv selects csvlog, .json selects
@@ -101,19 +110,19 @@ OPTIONAL COLLECTION INTERVALS (nonnegative whole numbers of seconds)
   KRONIKA_OS_MOUNTTOPO_INTERVAL_S     default 60; mounts, capacity, device topology
   KRONIKA_OS_PROCESS_INTERVAL_S       default 5; process counters
   KRONIKA_OS_PROCESS_STATUS_INTERVAL_S default 30; process status details
-  KRONIKA_OS_CGROUP_INTERVAL_S        default 30; container cgroup controllers
-  KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S default 30; process-to-cgroup mappings
+  KRONIKA_OS_CGROUP_INTERVAL_S        default 30; all visible accessible cgroup v2 groups
+  KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S default 30; process-to-cgroup v2 mappings
   KRONIKA_LOG_INTERVAL_S              default 10; configured PostgreSQL/PgBouncer logs
   KRONIKA_PG_INTERVAL_S               default 30; PostgreSQL metrics and settings
-  KRONIKA_PG_RELATIONS_INTERVAL_S     default 300; relations and database/extension discovery
+  KRONIKA_PG_RELATIONS_INTERVAL_S     default 300; tables and indexes
 
 OPTIONAL LOGGING AND MOUNT PATHS
   KRONIKA_LOG_LEVEL   default info; error, warn (or warning), info, debug, trace
       Case-insensitive. Structured logs go to stderr; readiness and written
-      segment paths go to stdout. Segment-write logs include peak rss_kib.
+      segment paths go to stdout. In local mode, segment-write logs include peak rss_kib.
   KRONIKA_PROC_ROOT   default /proc; procfs mount to read
-      Setting this limits container detection to that root's cgroup file.
-  KRONIKA_SYS_ROOT    default /sys; sysfs mount to read
+      Used only in local mode. Container detection uses that root's cgroup file.
+  KRONIKA_SYS_ROOT    default /sys; sysfs mount to read in local mode
 
 STOPPING AND ERRORS
   SIGINT (Ctrl+C) and SIGTERM stop collection and retain active.wal. Restart

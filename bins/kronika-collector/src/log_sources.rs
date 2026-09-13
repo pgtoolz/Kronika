@@ -87,17 +87,19 @@ struct PostgresFacts {
 #[derive(Debug)]
 struct PostgresTarget {
     connection: settings::ConnectionTarget,
+    transport: kronika_source_pg::Transport,
     system_identifier: Option<u64>,
     last_log: Option<(PathBuf, String)>,
 }
 
 impl PostgresTarget {
-    const fn new(connection: settings::ConnectionTarget) -> Self {
-        Self {
+    fn new(connection: settings::ConnectionTarget) -> anyhow::Result<Self> {
+        Ok(Self {
             connection,
+            transport: kronika_source_pg::Transport::from_env()?,
             system_identifier: None,
             last_log: None,
-        }
+        })
     }
 }
 
@@ -106,6 +108,7 @@ impl PostgresTarget {
 pub(crate) struct LogSources {
     offsets: Offsets,
     pg_dsns: Vec<PostgresTarget>,
+    discover_postgres_paths: bool,
     pg_logs: Vec<String>,
     pgbouncer_dsns: Vec<settings::ConnectionTarget>,
     pgbouncer_logs: Vec<String>,
@@ -125,12 +128,13 @@ impl LogSources {
         let pg_dsns = parse_connections("KRONIKA_PG_DSNS", &config.pg_dsns)?
             .into_iter()
             .map(PostgresTarget::new)
-            .collect();
+            .collect::<anyhow::Result<_>>()?;
         let pgbouncer_dsns = parse_connections("KRONIKA_PGBOUNCER_DSNS", &config.pgbouncer_dsns)?;
         let offsets = Offsets::load(&config.storage_dir)?;
         Ok(Self {
             offsets,
             pg_dsns,
+            discover_postgres_paths: config.mode.collect_os(),
             pg_logs: config.pg_logs.clone(),
             pgbouncer_dsns,
             pgbouncer_logs: config.pgbouncer_logs.clone(),
@@ -154,8 +158,19 @@ impl LogSources {
 
     async fn rescan_postgres(&mut self, observe: &mut (dyn FnMut(PgObservation) + Send)) {
         let mut wanted: BTreeMap<PathBuf, PostgresFacts> = BTreeMap::new();
-        for target in &mut self.pg_dsns {
-            match settings::postgres(&target.connection, target.system_identifier, observe).await {
+        for target in self
+            .pg_dsns
+            .iter_mut()
+            .filter(|_| self.discover_postgres_paths)
+        {
+            match settings::postgres(
+                &target.connection,
+                &target.transport,
+                target.system_identifier,
+                observe,
+            )
+            .await
+            {
                 Ok(server) => {
                     if let Some(identifier) = server.system_identifier {
                         target.system_identifier = Some(identifier);

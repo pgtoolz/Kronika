@@ -4,7 +4,6 @@ use kronika_reader::{Cell, ReaderError, Segment};
 use kronika_registry::instance_metadata::Environment;
 
 const OS_CPU: u32 = 1_102_001;
-const OS_CGROUP_CONTEXT: u32 = 1_205_001;
 
 /// Effective cgroup CPU capacity in cores from the recorded cpuset and
 /// hierarchical quota/period. An unknown quota remains unknown; `-1` uses the
@@ -29,6 +28,23 @@ pub fn cgroup_cpu_capacity(
         }
         _ => None,
     }
+}
+
+/// Finite CPU bound observed for the selected group. Each available constraint
+/// contributes independently; limits above the exposed hierarchy are unobserved.
+#[must_use]
+pub fn observed_cgroup_cpu_capacity(
+    cpuset: Option<i64>,
+    quota: Option<i64>,
+    period: Option<i64>,
+) -> Option<f64> {
+    cgroup_cpu_capacity(cpuset, quota, period).or_else(|| {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "recorded CPU counts fit f64 capacity"
+        )]
+        cpuset.filter(|cpus| *cpus > 0).map(|cpus| cpus as f64)
+    })
 }
 
 #[derive(Debug, Default)]
@@ -58,14 +74,8 @@ impl RecordedCpuCapacity {
         if capacity.explicit.is_some() {
             return Ok(capacity);
         }
-        match environment {
-            Some(value) if value == u32::from(Environment::Machine.as_u8()) => {
-                capacity.read_machine(segment)?;
-            }
-            Some(value) if value == u32::from(Environment::Container.as_u8()) => {
-                capacity.read_container(segment)?;
-            }
-            _ => {}
+        if environment == Some(u32::from(Environment::Machine.as_u8())) {
+            capacity.read_machine(segment)?;
         }
         Ok(capacity)
     }
@@ -120,47 +130,6 @@ impl RecordedCpuCapacity {
             })
             .collect();
         Ok(())
-    }
-
-    fn read_container(&mut self, segment: &Segment) -> Result<(), ReaderError> {
-        if segment.rows_of(OS_CGROUP_CONTEXT).is_none() {
-            return Ok(());
-        }
-        segment.visit_rows(
-            OS_CGROUP_CONTEXT,
-            &[
-                "ts",
-                "cpuset_cpus",
-                "effective_cpu_quota_usec",
-                "effective_cpu_period_usec",
-                "scope",
-            ],
-            0,
-            usize::MAX,
-            |_, row| {
-                if let Some(Cell::Ts(ts)) = row.get("ts") {
-                    let capacity = matches!(row.get("scope"), Some(Cell::U32(1 | 3)))
-                        .then(|| {
-                            cgroup_cpu_capacity(
-                                optional_i64(row.get("cpuset_cpus")),
-                                optional_i64(row.get("effective_cpu_quota_usec")),
-                                optional_i64(row.get("effective_cpu_period_usec")),
-                            )
-                        })
-                        .flatten();
-                    self.snapshots.insert(*ts, capacity);
-                }
-                true
-            },
-        )?;
-        Ok(())
-    }
-}
-
-const fn optional_i64(cell: Option<&Cell>) -> Option<i64> {
-    match cell {
-        Some(Cell::I64(value)) => Some(*value),
-        _ => None,
     }
 }
 

@@ -190,7 +190,7 @@ test("first table settlement gates slow hour products without gating Process row
   const failedPage = app.match(/const failed = \(reason: unknown\) => \{([\s\S]*?)\n          \}/)?.[1] ?? ""
   assert.doesNotMatch(failedPage, /setBackgroundReadyHour|setProcessReadyHour|foregroundReadyKey/)
 
-  const processFastPath = app.match(/if \(pageCursor === undefined && visibleSource === "processes"\) \{([\s\S]*?)\n          \}/)?.[1] ?? ""
+  const processFastPath = app.match(/if \(pageCursor === undefined && \(visibleSource === "processes" \|\| activeCgroupSection !== null\)\) \{([\s\S]*?)\n          \}/)?.[1] ?? ""
   assert.ok(processFastPath.indexOf("loaded(incoming, null, ordinaryGroups.length !== 0)") >= 0)
   assert.ok(processFastPath.indexOf("loaded(incoming, null, ordinaryGroups.length !== 0)") < processFastPath.indexOf("void base.then"))
   assert.match(processFastPath, /companionPending: false/)

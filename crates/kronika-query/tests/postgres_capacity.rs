@@ -13,8 +13,8 @@ use kronika_query::{
     execute,
 };
 use kronika_reader::{FinishedReader, Reader, SegmentKind};
-use kronika_registry::instance_metadata::{Environment, InstanceMetadata};
-use kronika_registry::os_cgroup_context::OsCgroupContext;
+use kronika_registry::instance_metadata::{Environment, InstanceMetadata, InstanceMetadataV3};
+use kronika_registry::os_cgroup_context::{OsCgroupContext, OsCgroupContextV2};
 use kronika_registry::os_cpu::OsCpu;
 use kronika_registry::pg_stat_activity::PgStatActivityV3;
 use kronika_registry::{StrId, Ts};
@@ -29,6 +29,8 @@ type HealthValues = Vec<(i64, Option<u8>)>;
 
 struct Fixture {
     environment: Environment,
+    shared: bool,
+    legacy_metadata: bool,
     explicit_cpus: Option<u32>,
     cpu_snapshots: Vec<(i64, Vec<i32>)>,
     contexts: Vec<OsCgroupContext>,
@@ -39,6 +41,8 @@ impl Fixture {
     const fn machine(cpu_snapshots: Vec<(i64, Vec<i32>)>, active: Vec<(i64, u32)>) -> Self {
         Self {
             environment: Environment::Machine,
+            shared: true,
+            legacy_metadata: false,
             explicit_cpus: None,
             cpu_snapshots,
             contexts: Vec::new(),
@@ -49,6 +53,8 @@ impl Fixture {
     fn container(contexts: Vec<OsCgroupContext>, active: Vec<(i64, u32)>) -> Self {
         Self {
             environment: Environment::Container,
+            shared: false,
+            legacy_metadata: false,
             explicit_cpus: None,
             // Node CPUs are deliberately present to catch container fallback.
             cpu_snapshots: vec![(START, (-1..8).collect())],
@@ -129,21 +135,41 @@ fn append(journal: &mut Journal, id: SegmentId, fixture: &Fixture) {
     let path = StrId(interner.intern(b"/recorded").expect("cgroup path").get());
     let dictionary = dict::encode(interner.window()).expect("dictionary");
     let mut buffers = SectionBuffers::new();
-    buffers
-        .push(InstanceMetadata {
-            ts: Ts(id.get()),
-            hostname: label,
-            kernel_version: label,
-            environment: fixture.environment.as_u8(),
-            clock_ticks_per_sec: 100,
-            page_size_bytes: 4_096,
-            boot_id: label,
-            btime: Ts(START - 100_000_000),
-            postgresql_enabled: true,
-            postgresql_interval_seconds: 30,
-            postgresql_effective_cpus: fixture.explicit_cpus,
-        })
-        .expect("metadata");
+    if fixture.legacy_metadata {
+        buffers
+            .push(InstanceMetadata {
+                ts: Ts(id.get()),
+                hostname: label,
+                kernel_version: label,
+                environment: fixture.environment.as_u8(),
+                clock_ticks_per_sec: 100,
+                page_size_bytes: 4_096,
+                boot_id: label,
+                btime: Ts(START - 100_000_000),
+                postgresql_enabled: true,
+                postgresql_interval_seconds: 30,
+                postgresql_effective_cpus: fixture.explicit_cpus,
+            })
+            .expect("metadata");
+    } else {
+        buffers
+            .push(InstanceMetadataV3 {
+                ts: Ts(id.get()),
+                hostname: Some(label),
+                kernel_version: Some(label),
+                environment: Some(fixture.environment.as_u8()),
+                clock_ticks_per_sec: Some(100),
+                page_size_bytes: Some(4_096),
+                boot_id: Some(label),
+                btime: Some(Ts(START - 100_000_000)),
+                os_enabled: true,
+                postgresql_processes_shared: fixture.shared,
+                postgresql_enabled: true,
+                postgresql_interval_seconds: 30,
+                postgresql_effective_cpus: fixture.explicit_cpus,
+            })
+            .expect("modern recorded placement metadata");
+    }
     for (at, ids) in &fixture.cpu_snapshots {
         for &cpu_id in ids {
             buffers.push(cpu(*at, cpu_id)).expect("CPU row");
@@ -151,9 +177,26 @@ fn append(journal: &mut Journal, id: SegmentId, fixture: &Fixture) {
     }
     for &row in &fixture.contexts {
         buffers
-            .push(OsCgroupContext {
+            .push(OsCgroupContextV2 {
+                ts: row.ts,
+                cgroup_version: row.cgroup_version,
                 cpu_path: Some(path),
-                ..row
+                memory_path: None,
+                io_path: None,
+                pids_path: None,
+                cpu_identity: None,
+                memory_identity: None,
+                io_identity: None,
+                pids_identity: None,
+                cpu_root: Some(path),
+                memory_root: None,
+                io_root: None,
+                pids_root: None,
+                cpuset_cpus: row.cpuset_cpus,
+                effective_cpu_quota_usec: row.effective_cpu_quota_usec,
+                effective_cpu_period_usec: row.effective_cpu_period_usec,
+                effective_memory_max: row.effective_memory_max,
+                scope: 4,
             })
             .expect("cgroup context");
     }
@@ -347,7 +390,7 @@ fn machine_topology_uses_each_snapshot_and_distinct_nonnegative_ids() {
 }
 
 #[test]
-fn fractional_quota_changes_affect_only_subsequent_activity() {
+fn changing_container_aggregate_quota_never_becomes_postgresql_capacity() {
     check_artifacts(
         &Fixture::container(
             vec![
@@ -363,28 +406,28 @@ fn fractional_quota_changes_affect_only_subsequent_activity() {
         ),
         &[
             (START, None),
-            (START + 20, Some(100)),
-            (START + 30, Some(75)),
-            (START + 40, Some(100)),
+            (START + 20, None),
+            (START + 30, None),
+            (START + 40, None),
         ],
-        &[START + 30],
+        &[],
     );
 }
 
 #[test]
-fn active_finding_uses_exact_capacity_even_when_health_rounds_to_one_hundred() {
+fn fractional_aggregate_capacity_does_not_create_postgresql_findings() {
     check_artifacts(
         &Fixture::container(
             vec![context(START, Some(299_999), Some(200_000), Some(8))],
             vec![(START, 3)],
         ),
-        &[(START, Some(100))],
-        &[START],
+        &[(START, None)],
+        &[],
     );
 }
 
 #[test]
-fn cpuset_caps_quota_and_bounds_known_unlimited_quota() {
+fn bounded_or_unlimited_container_aggregates_do_not_establish_pg_capacity() {
     check_artifacts(
         &Fixture::container(
             vec![
@@ -394,12 +437,8 @@ fn cpuset_caps_quota_and_bounds_known_unlimited_quota() {
             ],
             vec![(START + 10, 5), (START + 30, 5), (START + 50, 4)],
         ),
-        &[
-            (START + 10, Some(80)),
-            (START + 30, Some(80)),
-            (START + 50, Some(75)),
-        ],
-        &[START + 10, START + 30, START + 50],
+        &[(START + 10, None), (START + 30, None), (START + 50, None)],
+        &[],
     );
 }
 
@@ -453,6 +492,7 @@ fn remote_target_capacity_overrides_collector_vm_capacity() {
         vec![(START + 10, 8), (START + 20, 10)],
     );
     fixture.explicit_cpus = Some(4);
+    fixture.shared = false;
     check_artifacts(
         &fixture,
         &[(START + 10, Some(100)), (START + 20, Some(80))],
@@ -461,7 +501,7 @@ fn remote_target_capacity_overrides_collector_vm_capacity() {
 }
 
 #[test]
-fn reader_uses_prior_recorded_capacity_until_current_context_arrives() {
+fn reader_does_not_borrow_prior_container_aggregate_capacity() {
     let directory = tempfile::tempdir().expect("fixture directory");
     let root = DataRoot::open(directory.path()).expect("data root");
     let writer = root
@@ -498,11 +538,8 @@ fn reader_uses_prior_recorded_capacity_until_current_context_arrives() {
     let reference = listing.segments.first().expect("current reference");
     let segment = reader.open_segment(reference).expect("current WAL");
     let index = build_from_reader(&reader, reference, &segment).expect("reader index");
-    assert_eq!(
-        health(&index),
-        [(START + 100, Some(75)), (START + 110, Some(100))]
-    );
-    assert_eq!(active_findings(&index), [START + 100]);
+    assert_eq!(health(&index), [(START + 100, None), (START + 110, None)]);
+    assert!(active_findings(&index).is_empty());
     write_segment(
         &journal,
         &writer,
@@ -517,9 +554,15 @@ fn reader_uses_prior_recorded_capacity_until_current_context_arrives() {
     let reference = listing.segments.first().expect("current reference");
     let segment = reader.open_segment(reference).expect("current ZMS");
     let index = build_from_reader(&reader, reference, &segment).expect("finished reader index");
-    assert_eq!(
-        health(&index),
-        [(START + 100, Some(75)), (START + 110, Some(100))]
-    );
-    assert_eq!(active_findings(&index), [START + 100]);
+    assert_eq!(health(&index), [(START + 100, None), (START + 110, None)]);
+    assert!(active_findings(&index).is_empty());
+}
+
+#[test]
+fn legacy_machine_metadata_does_not_prove_postgresql_capacity() {
+    let mut fixture = Fixture::machine(vec![(START, (-1..8).collect())], vec![(START + 10, 20)]);
+    fixture.legacy_metadata = true;
+    check_artifacts(&fixture, &[(START + 10, None)], &[]);
+    fixture.explicit_cpus = Some(4);
+    check_artifacts(&fixture, &[(START + 10, Some(40))], &[START + 10]);
 }

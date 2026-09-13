@@ -49,9 +49,12 @@ KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-
 
 For PostgreSQL on the collector machine, use the connection above and set
 `KRONIKA_WEB_SOURCES=3` in `web.env` to declare Linux and PostgreSQL.
-For a remote server, Linux still belongs to the collector machine; see
-[remote PostgreSQL configuration](../bins/kronika-collector/README.md#remote-postgresql)
-for CPU settings, process associations and Health. All parameters:
+
+For PostgreSQL-only collection, set `KRONIKA_COLLECTOR_MODE=postgresql` in
+`collector.env` and `KRONIKA_WEB_SOURCES=2` in `web.env`. PostgreSQL may be local
+or remote. Collector mode controls recording; the web setting declares sources
+in the catalog. See [connection settings](../bins/kronika-collector/README.md#remote-postgresql).
+All parameters:
 [collector](../bins/kronika-collector/README.md) and
 [web](../bins/kronika-web/README.md).
 

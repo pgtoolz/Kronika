@@ -28,10 +28,6 @@ export interface UseResource {
   readonly errors: UseCell | null
 }
 
-// The container rows describe the collector's own cgroup, the scope the
-// recording runs in. Their lanes come from `os_cgroup_*` rows selected by the
-// exact membership paths and from the pressure of that cgroup; a host CPU count
-// or host `/proc` value never stands in for them.
 export const USE_RESOURCES: readonly UseResource[] = [
   {
     key: "cgroup_cpu",
@@ -103,6 +99,7 @@ export function isContainerResource(key: UseResourceKey): boolean {
 
 export function UseTable({
   containerScopes = false,
+  cgroupPaths,
   cursor,
   expanded,
   hour,
@@ -118,6 +115,7 @@ export function UseTable({
   t,
 }: {
   readonly containerScopes?: boolean | undefined
+  readonly cgroupPaths?: string | undefined
   readonly cursor: number
   readonly expanded: ReadonlySet<LedgerKey>
   readonly hour: number
@@ -136,7 +134,7 @@ export function UseTable({
   // readings, group metrics or entity tables. Cells without a lane stay "—".
   const byLane = useMemo(() => lanePointsByLane(lanePoints), [lanePoints])
   const shown = useMemo(() => USE_RESOURCES.filter((resource) =>
-    (containerScopes || !isContainerResource(resource.key))
+    (containerScopes || !isContainerResource(resource.key) || withContent.has(resource.key))
     && (visibleResources === undefined || visibleResources.has(resource.key))
     && (withContent.has(resource.key) || USE_COLUMNS.some((column) => resolveCell(resource, column, byLane) !== null))), [byLane, containerScopes, visibleResources, withContent])
   const resourceLabel = (key: UseResourceKey) => t(containerScopes && key === "network" ? "use.resource.namespace_network" : `use.resource.${key}`)
@@ -183,7 +181,7 @@ export function UseTable({
       {open && <div className="use-expansion border-b border-line2 bg-s1" data-testid={`use-expansion-${resource.key}`}>{renderExpansion(resource.key)}</div>}
     </div>
   }
-  const scope = (key: "container" | "namespace" | "host") => <h2 className="use-scope" data-testid={`use-scope-${key}`}>{t(`use.scope.${key}`)}</h2>
+  const scope = (key: "container" | "namespace" | "host") => <h2 className="use-scope overflow-hidden text-ellipsis whitespace-nowrap" data-testid={`use-scope-${key}`} title={key === "container" ? cgroupPaths : undefined}>{t(`use.scope.${key}`)}{key === "container" && cgroupPaths && <span className="ml-2 font-mono font-normal">{cgroupPaths}</span>}</h2>
   const container = shown.filter(({ key }) => isContainerResource(key))
   const network = shown.filter(({ key }) => key === "network")
   const host = shown.filter(({ key }) => !isContainerResource(key) && key !== "network")

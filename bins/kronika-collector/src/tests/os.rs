@@ -49,7 +49,7 @@ fn pressure_collection_keeps_machine_procfs_scope_and_values() {
 }
 
 #[test]
-fn pressure_collection_replaces_host_values_with_container_scope() {
+fn pressure_collection_uses_highest_ancestor_and_neutral_scope() {
     let dir = tempfile::tempdir().expect("tempdir");
     let proc_root = dir.path().join("proc");
     let sys_root = dir.path().join("sys");
@@ -65,12 +65,25 @@ fn pressure_collection_replaces_host_values_with_container_scope() {
         CONTAINER_CPU_PRESSURE,
     )
     .expect("write cgroup pressure");
+    std::fs::write(
+        sys_root.join("fs/cgroup/cpu.pressure"),
+        "some avg10=0.30 avg60=0.15 avg300=0.06 total=30000\n",
+    )
+    .expect("write selected root pressure");
+    std::fs::write(
+        proc_root.join("self/mountinfo"),
+        format!(
+            "40 1 0:30 / {} rw - cgroup2 cgroup rw\n",
+            sys_root.join("fs/cgroup").display()
+        ),
+    )
+    .expect("write cgroup mount binding");
     let rows =
         collect_pressure_for_test(&ProcFs::new(proc_root), &SysFs::new(sys_root), 0, 8, true);
 
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].scope, 3);
-    assert_eq!(rows[0].some_total, 20_000);
+    assert_eq!(rows[0].scope, 4);
+    assert_eq!(rows[0].some_total, 30_000);
 }
 
 #[test]
@@ -182,6 +195,7 @@ fn collect_os_sources_no_diskstats_on_mount_topo_only_tick() {
         0,
         false,
         &due,
+        None,
     );
 
     assert!(
@@ -217,11 +231,11 @@ fn container_diskstats_keep_mounted_and_charged_devices_only() {
 }
 
 #[test]
-fn cgroup_metrics_follow_the_recorded_container_environment() {
+fn cgroup_metrics_are_scheduled_on_machines_and_containers() {
     use crate::os_sources::collects_cgroup_metrics;
 
     let due = DueSet::for_test(vec![SourceKind::OsCgroup]);
-    assert!(!collects_cgroup_metrics(false, &due));
+    assert!(collects_cgroup_metrics(false, &due));
     assert!(collects_cgroup_metrics(true, &due));
     assert!(!collects_cgroup_metrics(
         true,

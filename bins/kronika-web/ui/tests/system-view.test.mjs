@@ -7,8 +7,12 @@ import { importModule, registryPlugin } from "./import-module.mjs"
 import { parseDictionary, validateDictionaries } from "../scripts/i18n.mjs"
 
 const helpers = await importModule(
-  'export { cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, cgroupSnapshotPlan, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, CGROUP_SNAPSHOT_REQUESTS, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"',
+  'export { loadSelectedCgroupRow, entityMetricUnit, entityMetricValue, localizedSystemColumns, CGROUP_TABLE_COLUMNS, cgroupTableSection, cgroupTableRequest, cgroupSelectionRequest, cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"; export { cellAriaValue } from "../src/entity-table.tsx"; export { signInBasic } from "../src/session.ts"',
   { plugins: [registryPlugin([
+    { typeId: "1202003", logicalName: "os_cgroup_memory", identity: ["cgroup_path", "cgroup_identity"], columns: ["ts", "cgroup_path", "cgroup_identity", "max", "max_unlimited"] },
+    { typeId: "1202001", logicalName: "os_cgroup_memory", identity: ["cgroup_path"], columns: ["ts", "cgroup_path", "max"] },
+    { typeId: "1201001", logicalName: "os_cgroup_cpu", identity: ["cgroup_path"], columns: ["ts", "cgroup_path", "scope", "usage_usec", "quota_usec", "period_usec"] },
+    { typeId: "1207001", logicalName: "os_cgroup_v2_cpu", identity: ["cgroup_path", "cgroup_identity"], columns: ["ts", "cgroup_path", "cgroup_identity", "usage_usec", "quota_usec", "period_usec", "cpuset_cpus"] },
     { typeId: "1108001", logicalName: "os_diskstats", identity: ["major", "minor"], columns: ["ts", "major", "minor", "device", "io_in_progress"] },
     { typeId: "1112002", logicalName: "os_mountinfo", identity: ["major", "minor", "mount_point"], columns: ["ts", "major", "minor", "mount_point", "root", "fstype", "source", "is_k8s_infra", "total_bytes", "free_bytes", "total_inodes", "available_inodes", "scope"] },
   ])] },
@@ -274,46 +278,32 @@ test("collector cgroup rows keep leaf settings factual and use effective hierarc
   assert.equal(memory.values.memory_unclassified, 100)
   assert.equal(helpers.systemEntityRows(source, "os_cgroup_io", 10)[0].values.device_id, "8:0")
   assert.equal(helpers.effectiveCpuCapacity(null, null, 2), null)
+  assert.equal(helpers.effectiveCpuCapacity(null, null, 8, true), 8)
+  assert.equal(helpers.effectiveCpuCapacity(50_000, 0, 8, true), 8)
+  assert.equal(helpers.effectiveCpuCapacity(null, null, null, true), null)
   assert.equal(helpers.effectiveCpuCapacity(-1, null, 2), 2)
   assert.equal(helpers.effectiveCpuCapacity(-1, 100_000, null), null)
   assert.equal(helpers.effectiveCpuCapacity(50_000, 100_000, null), 0.5)
   assert.equal(helpers.effectiveCpuCapacity(300_000, 100_000, 2), 2)
   assert.equal(helpers.effectiveCpuCapacity(50_000, 0, 2), null)
+  for (const [typeId, cpuset, expected] of [["1205001", 8, null], ["1205002", 8, 8], ["1205002", null, null]]) {
+    const observed = { ...context, typeId, values: { ...context.values, cpuset_cpus: cpuset, effective_cpu_quota_usec: null, effective_cpu_period_usec: null } }
+    const projected = helpers.systemEntityRows({ ...source, sections: { ...source.sections, os_cgroup_context: [observed] } }, "os_cgroup_cpu", 10)
+    assert.equal(projected.find(({ values }) => values.cgroup_path === "/mine").values.cgroup_capacity, expected, typeId)
+  }
   const malformedContext = { ...context, values: { ...context.values, effective_memory_max: -1 } }
   const malformedMemory = helpers.systemEntityRows({ ...source, sections: { ...source.sections, os_cgroup_context: [malformedContext] } }, "os_cgroup_memory", 10)[0]
   assert.equal(malformedMemory.values.effective_memory_max, null)
 })
 
-test("System loads cgroups only for the recorded container environment", () => {
+test("System loads selected context without eagerly loading cgroup resource tables", () => {
   for (const section of ["os_cgroup_context", "os_cgroup_cpu", "os_cgroup_memory", "os_cgroup_io", "os_cgroup_pids"]) {
-    assert.equal(helpers.SYSTEM_REQUESTS.some((request) => request.section === section), false)
-    const request = helpers.CGROUP_SNAPSHOT_REQUESTS.find((candidate) => candidate.section === section)
-    assert.ok(request, section)
+    assert.equal(helpers.SYSTEM_REQUESTS.some((request) => request.section === section), section === "os_cgroup_context")
   }
-  const tasks = helpers.CGROUP_SNAPSHOT_REQUESTS.find(({ section }) => section === "os_cgroup_pids")
-  assert.equal(tasks.fields.includes("current") && tasks.fields.includes("max"), true)
-  assert.equal(tasks.fields.includes("tasks_current") || tasks.fields.includes("tasks_max"), false)
-  assert.equal(helpers.SYSTEM_REQUESTS.some(({ section, fields }) => section === "instance_metadata" && fields.includes("environment")), true)
-
-  const metadata = (environment) => ({
-    logicalName: "instance_metadata", ordinal: "metadata", segmentId: "segment-a", timestamp: 10, typeId: "1021002",
-    values: { environment },
-  })
-  const machine = { sections: { instance_metadata: [metadata(0)] } }
-  assert.equal(helpers.recordedEnvironment(machine, 12), "machine")
-  assert.deepEqual(helpers.cgroupSnapshotPlan("segment-a", 12, machine).loads, [])
-
-  const container = { sections: { instance_metadata: [metadata(1)] } }
-  assert.equal(helpers.recordedEnvironment(container, 12), "container")
-  const plan = helpers.cgroupSnapshotPlan("segment-a", 12, container)
-  assert.equal(plan.key, '["segment-a",12,"container"]')
-  assert.deepEqual(plan.loads.map(({ filters, request }) => [request.section, filters]), [
-    ["os_cgroup_cpu", {}],
-    ["os_cgroup_memory", {}],
-    ["os_cgroup_io", {}],
-    ["os_cgroup_pids", {}],
-    ["os_cgroup_context", {}],
-  ])
+  for (const environment of [0, 1]) {
+    const row = { timestamp: 10, values: { environment } }
+    assert.equal(helpers.recordedEnvironment({ sections: { instance_metadata: [row] } }, 12), environment === 0 ? "machine" : "container")
+  }
   assert.equal(helpers.recordedEnvironment({ sections: {} }, 12), null)
 })
 
@@ -381,7 +371,7 @@ test("System entity headers have exact EN/RU help without obvious or orphan entr
   validateDictionaries(english, russian)
   const obvious = new Set(["device", "device_id", "cgroup_path", "mount_point", "root", "fstype", "source", "iface", "cpu_id", "model_name"])
   const usedHelp = new Set()
-  for (const { columns, section } of helpers.SYSTEM_ENTITIES) for (const column of columns) {
+  for (const { columns, section } of [...helpers.SYSTEM_ENTITIES, ...Object.entries(helpers.CGROUP_TABLE_COLUMNS).map(([section, columns]) => ({ section, columns }))]) for (const column of columns) {
     assert.equal(column.help === undefined, obvious.has(column.field), `${section}/${column.field}`)
     if (column.help === undefined) continue
     usedHelp.add(column.help)
@@ -638,10 +628,7 @@ test("the committed hour supplies only honest System metrics with complete histo
 
   const available = helpers.SYSTEM_METRICS.map((metric) => ({ metric, points: helpers.metricPoints(hour, metric) }))
     .filter(({ points }) => points.some((point) => point.value !== null && Number.isFinite(point.value)))
-  // The health card left with its duplicate; the fixture's own metrics remain.
   assert.ok(available.length >= 6, `available metrics: ${available.length}`)
-  // A resource owns its metrics now: load rides with the CPU, PSI with the
-  // resource it presses on.
   assert.deepEqual([...new Set(available.map(({ metric }) => metric.group))].sort(), ["cpu", "memory", "storage"])
 
   // Health is read from the top bar and the timeline lane; a metric card here
@@ -655,26 +642,17 @@ test("System is one ledger: rows expand in place and the chart lives on the page
     readFile(new URL("../src/system-view.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
   ])
-  // One operator question at a time inside a row: cgroup accounting stays
-  // dedicated, and Disk separates device I/O, filesystems and topology.
   assert.match(source, /disk: \["io", "filesystems", "topology"\]/)
-  // The container rail is the collector cgroup's own lanes, never a filter that leaves host lanes behind.
+  // Container timelines use the selected ancestor's recorded lanes.
   assert.match(source, /<Timeline cursor=\{cursor\} environment=\{environment\}/)
   assert.doesNotMatch(source, /lane\.startsWith\("pg_"\)/)
   assert.match(source, /EXACT_TIMELINE_METRIC_LANES[^\n]+\["cpu_busy", "cpu_stall", "memory"\]/)
   assert.doesNotMatch(source, /function groupLane/)
   assert.doesNotMatch(source, /function timelineLane/)
   assert.match(source, /if \(section === "storage"\)[\s\S]*mode === "filesystems"[\s\S]*\["os_mountinfo"\]/)
-  // The container scope is four real USE rows: each discloses its own cgroup
-  // table, CPU and I/O carry the cgroup activity ledgers, and nothing is
-  // force-opened or drawn as a card strip above the ledger.
   assert.match(source, /isContainerResource\(key\) \? \[sectionName\] : sectionEntities\(sectionName, mode\)/)
-  assert.match(source, /key === "cgroup_cpu" && data\.availableSections\.includes\("os_cgroup_cpu"\) && <CgroupActivity/)
-  assert.match(source, /key === "cgroup_io" && data\.availableSections\.includes\("os_cgroup_io"\) && <CgroupActivity/)
   assert.match(source, /onOpenRow=\{openRow\}/)
   assert.doesNotMatch(source, /ContainerCgroupOverview|cgroup-overview|openedContainer|afterCgroups/)
-  // The ledger is the page: expansion is disclosure, the group chart renders
-  // inline, and no machinery force-opens an Inspector to fake content.
   assert.match(source, /renderExpansion=\{renderExpansion\}/)
   assert.match(source, /<SystemGroupChart /)
   assert.doesNotMatch(source, /dismissedOverview|autoMetric|SystemDock|metric-choice|metric-grid/)
@@ -734,4 +712,174 @@ test("the usage chart draws the recorded share components under its own line", (
   for (const one of series) assert.equal(one.scale, "percent")
   // Colours step past the usage line the chart prepends, so no pair collides.
   assert.equal(new Set(series.map(({ color }) => color)).size, series.length)
+})
+
+
+test("cgroup tables keep server rate order and a bounded page", () => {
+  assert.equal(helpers.cgroupTableSection("cgroup_cpu.cgroup_used_cores"), "os_cgroup_v2_cpu")
+  assert.equal(helpers.cgroupTableSection("cpu_used_cores"), null)
+  const cpu = helpers.cgroupTableRequest("os_cgroup_v2_cpu")
+  assert.equal(cpu.pageSize, 200)
+  assert.deepEqual(cpu.defaultOrder, ["usage_usec"])
+  assert.deepEqual(cpu.order.cgroup_quota, ["derived.quota_cores"])
+  assert.deepEqual(helpers.cgroupTableRequest("os_cgroup_v2_io").order.rbytes, ["rbytes"])
+})
+
+test("cgroup selection outside the page retains exact directory identity", () => {
+  const key = JSON.stringify(["cgroup", "1207001", ["/same-path", "directory:new"]])
+  assert.deepEqual(helpers.cgroupSelectionRequest(key, "os_cgroup_v2_cpu"), {
+    typeId: "1207001", where: { cgroup_path: "/same-path", cgroup_identity: "directory:new" },
+  })
+  assert.equal(helpers.cgroupSelectionRequest(key, "os_cgroup_v2_memory"), null)
+  assert.equal(helpers.cgroupSelectionRequest(JSON.stringify(["cgroup", "1207001", ["/same-path"]]), "os_cgroup_v2_cpu"), null)
+})
+
+test("all-group CPU preserves independent limits and already derived rates", () => {
+  const rows = [
+    { segmentId: "one", timestamp: 10, typeId: "1207001", logicalName: "os_cgroup_v2_cpu", ordinal: "0", values: { cgroup_path: "/parent", cgroup_identity: "a", usage_usec: 1250000, user_usec: 1000000, system_usec: 250000, quota_usec: 200000, period_usec: 100000, cpuset_cpus: 8, throttled_period_ratio: 0.25 } },
+    { segmentId: "one", timestamp: 10, typeId: "1207001", logicalName: "os_cgroup_v2_cpu", ordinal: "1", values: { cgroup_path: "/parent/child", cgroup_identity: "b", usage_usec: 0, quota_usec: -1, period_usec: 100000, cpuset_cpus: null, throttled_period_ratio: null } },
+  ]
+  const result = helpers.systemEntityRows({ sections: { os_cgroup_v2_cpu: rows, os_cgroup_context: [{ timestamp: 10, values: { cpuset_cpus: 2 } }] } }, "os_cgroup_v2_cpu", 11)
+  assert.equal(result.length, 2)
+  assert.equal(result[0].values.cgroup_used_cores, 1.25)
+  assert.equal(result[0].values.throttled_period_ratio, 25)
+  assert.equal(result[0].values.cgroup_quota, 2)
+  assert.equal(result[0].values.cpuset_cpus, 8)
+  assert.equal(result[1].values.cgroup_used_cores, 0)
+  assert.equal(result[1].values.cgroup_quota, null)
+  assert.equal(result[1].values.cpuset_cpus, null)
+})
+
+
+test("legacy explicit memory availability does not become unlimited in the all-group alias", () => {
+  const columns = helpers.localizedSystemColumns(helpers.CGROUP_TABLE_COLUMNS.os_cgroup_v2_memory, "os_cgroup_v2_memory", "en", (key) => key)
+  const max = columns.find((column) => column.field === "max")
+  assert.equal(max.renderNull({ typeId: "1202003", values: { max: null, max_unlimited: null } }).props.children, "system.cgroups.pids_unavailable")
+  assert.equal(max.renderNull({ typeId: "1202003", values: { max: null, max_unlimited: true } }).props.children, "system.cgroups.pids_unlimited")
+  assert.equal(max.renderNull({ typeId: "1202001", values: { max: null } }).props.children, "system.cgroups.pids_unlimited")
+})
+
+
+test("cgroup I/O history differences exact large counters before conversion", () => {
+  const column = helpers.CGROUP_TABLE_COLUMNS.os_cgroup_v2_io.find(({ field }) => field === "rbytes")
+  const points = column.points([
+    { segmentId: "one", timestamp: 1000000, values: { rbytes: "9007199254740992" } },
+    { segmentId: "two", timestamp: 2000000, values: { rbytes: "9007199254740993" } },
+    { segmentId: "two", timestamp: 3000000, values: { rbytes: "0" } },
+  ])
+  assert.deepEqual(points.map(({ value }) => value), [null, 1, null])
+})
+
+
+test("CPU quota renders the encoded unlimited sentinel without treating unknown as unlimited", () => {
+  const columns = helpers.localizedSystemColumns(helpers.CGROUP_TABLE_COLUMNS.os_cgroup_v2_cpu, "os_cgroup_v2_cpu", "en", (key) => key)
+  const quota = columns.find((column) => column.field === "cgroup_quota")
+  for (const stored of [-1, "-1"]) assert.equal(quota.renderNull({ typeId: "1207001", values: { quota_usec: stored } }).props.children, "system.cgroups.pids_unlimited")
+  for (const stored of [null, undefined, "0"]) assert.equal(quota.renderNull({ typeId: "1207001", values: { quota_usec: stored } }).props.children, "system.cgroups.pids_unavailable")
+})
+
+test("legacy CPU receives only its matching recorded context cpuset", () => {
+  const row = (typeId, path, scope, cpuset = undefined) => ({ typeId, logicalName: "os_cgroup_v2_cpu", timestamp: 20, segmentId: "s", ordinal: path, values: { cgroup_path: path, scope, cpuset_cpus: cpuset, usage_usec: 500000, quota_usec: "-1", period_usec: "100000" } })
+  const contexts = [
+    { timestamp: 10, values: { cpu_path: "/selected", scope: 3, cpuset_cpus: 8 } },
+    { timestamp: 30, values: { cpu_path: "/selected", scope: 3, cpuset_cpus: 2 } },
+  ]
+  const rows = [row("1201001", "/selected", 3), row("1201001", "/other", 3), row("1201001", "/selected", 0), row("1207001", "/selected", 3, null), row("1207001", "/selected", 3, 4)]
+  const result = helpers.systemEntityRows({ sections: { os_cgroup_v2_cpu: rows, os_cgroup_context: contexts } }, "os_cgroup_v2_cpu", 40)
+  assert.deepEqual(result.map((row) => row.values.cpuset_cpus), [8, null, null, null, 4])
+  assert.deepEqual(result.map((row) => row.values.cgroup_used_cores), [0.5, 0.5, 0.5, 0.5, 0.5])
+})
+
+test("default interval columns request interval ordering rather than counter rate ordering", () => {
+  for (const [resource, field] of [["cpu", "throttled_interval"], ["memory", "local_oom_kill_delta"], ["pids", "failure_max_delta"]]) {
+    assert.deepEqual(helpers.cgroupTableRequest(`os_cgroup_v2_${resource}`).order[field], [`derived.${field}`])
+  }
+})
+
+
+test("cgroup interval histories honor hidden family/source boundaries and retain later valid intervals", () => {
+  const cases = [
+    ["os_cgroup_v2_cpu", "throttled_interval", "throttled_usec"],
+    ["os_cgroup_v2_memory", "local_oom_kill_delta", "local_oom_kill"],
+    ["os_cgroup_v2_pids", "failure_max_delta", "failure_max"],
+  ]
+  for (const [section, field, raw] of cases) {
+    const column = helpers.CGROUP_TABLE_COLUMNS[section].find((candidate) => candidate.field === field)
+    const rows = [
+      { segmentId: "first", timestamp: 50, values: { [raw]: "1" } },
+      { segmentId: "second", timestamp: 150, breakBefore: true, values: { [raw]: "20" } },
+      { segmentId: "second", timestamp: 200, values: { [raw]: "25" } },
+      { segmentId: "third", timestamp: 250, values: { [raw]: "30" } },
+      { segmentId: "third", timestamp: 350, breakBefore: true, values: { [raw]: "40" } },
+      { segmentId: "fourth", timestamp: 400, values: { [raw]: "40" } },
+    ]
+    assert.deepEqual(column.points(rows).map(({ value }) => value), [null, null, 5, 5, null, 0], field)
+  }
+})
+
+
+test("entity history and table share localized rate units without adding rates to interval deltas", async () => {
+  for (const locale of ["en", "ru"]) {
+    const dictionary = parseDictionary(await readFile(new URL(`../i18n/${locale}.yaml`, import.meta.url), "utf8"), `${locale}.yaml`)
+    const t = (key) => dictionary[key]
+    for (const [kind, reading] of [["bytes", 20_000_000], ["microseconds", 2500], ["number", 3]]) {
+      const column = { field: "counter", kind, rate: true }
+      const metadata = { class: "cumulative", unit: kind === "bytes" ? "bytes" : "count" }
+      const formatted = helpers.entityMetricValue(reading, locale, column, metadata, t)
+      assert.equal(formatted, helpers.cellAriaValue(reading, column, locale, t))
+      assert.ok(formatted.endsWith(t("unit.per_second")))
+    }
+    const interval = { field: "throttled_interval", kind: "microseconds" }
+    const formatted = helpers.entityMetricValue(2500, locale, interval, null, t)
+    assert.equal(formatted, helpers.cellAriaValue(2500, interval, locale, t))
+    assert.equal(formatted.endsWith(t("unit.per_second")), false)
+    assert.equal(helpers.entityMetricUnit(interval, locale, null, t), "")
+    assert.equal(helpers.entityMetricUnit({ ...interval, rate: true }, locale, null, t), t("unit.per_second"))
+  }
+})
+
+
+test("selected legacy CPU excluded from the page keeps its recorded cpuset through the exact lookup", async () => {
+  const section = "os_cgroup_v2_cpu"
+  const old = { typeId: "1201001", logicalName: section, segmentId: "recorded", timestamp: 20, ordinal: "0", values: { cgroup_path: "/selected", scope: 3, usage_usec: 500000, quota_usec: "-1", period_usec: "100000" } }
+  const context = { segmentId: "recorded", timestamp: 20, values: { cpu_path: "/selected", scope: 3, cpuset_cpus: 8 } }
+  const original = helpers.systemEntityRows({ sections: { [section]: [old], os_cgroup_context: [context] } }, section, 40)[0]
+  const filteredPage = helpers.systemEntityRows({ sections: { [section]: [] } }, section, 40)
+  assert.equal(filteredPage.length, 0)
+  const selectedRequest = helpers.cgroupSelectionRequest(JSON.stringify(["cgroup", old.typeId, ["/selected"]]), section)
+  assert.ok(selectedRequest)
+  const urls = []
+  let returned = old
+  const originalFetch = globalThis.fetch
+  Reflect.deleteProperty(globalThis, "__KRONIKA_REAL_HOUR__")
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input), "http://kronika.invalid")
+    if (url.pathname === "/auth/session") return new Response(null, { status: 204 })
+    urls.push(url)
+    const isContext = url.searchParams.get("section") === "os_cgroup_context"
+    const row = isContext ? context : returned
+    const values = row.values
+    const typeId = isContext ? "1205001" : returned.typeId
+    const logicalName = isContext ? "os_cgroup_context" : section
+    return new Response([
+      { record: "layout", layout: { type_id: typeId, logical_name: logicalName, columns: Object.keys(values).map((name) => ({ name })) } },
+      { record: "row", segment_id: row.segmentId, type_id: typeId, ordinal: "0", timestamp: String(row.timestamp), values: Object.values(values) },
+    ].map((record) => JSON.stringify(record)).join("\n"))
+  }
+  try {
+    await helpers.signInBasic("test", "test", new AbortController().signal)
+    const selected = await helpers.loadSelectedCgroupRow("cursor-segment", 40, section, selectedRequest, new AbortController().signal)
+    assert.equal(selected.typeId, old.typeId)
+    assert.equal(selected.values.cgroup_path, old.values.cgroup_path)
+    assert.equal(selected.values.cpuset_cpus, original.values.cpuset_cpus)
+    assert.equal(urls.length, 2)
+    assert.equal(urls[1].pathname, "/api/segments/recorded/snapshot")
+    assert.equal(urls[1].searchParams.get("at"), "20")
+    assert.deepEqual([...urls[1].searchParams].filter(([key]) => key.startsWith("where.")), [["where.cpu_path", "/selected"], ["where.scope", "3"]])
+    assert.deepEqual(urls[1].searchParams.getAll("field"), ["cpu_path", "scope", "cpuset_cpus"])
+    returned = { ...old, typeId: "1207001", values: { ...old.values, cgroup_identity: "own", cpuset_cpus: 4 } }
+    const current = await helpers.loadSelectedCgroupRow("cursor-segment", 40, section, { typeId: returned.typeId, where: { cgroup_path: "/selected", cgroup_identity: "own" } }, new AbortController().signal)
+    assert.equal(current.values.cpuset_cpus, 4)
+    assert.equal(urls.length, 3, "new physical CPU rows do not request selected-primary context")
+  } finally { globalThis.fetch = originalFetch }
 })

@@ -26,7 +26,7 @@ use kronika_query::{
     execute_heatmap_batch, execute_row_detail, validate_row_detail_ref,
 };
 use kronika_reader::Reader;
-use kronika_registry::instance_metadata::InstanceMetadata;
+use kronika_registry::instance_metadata::{InstanceMetadata, InstanceMetadataV3};
 use kronika_registry::os_cpu::OsCpu;
 use kronika_registry::os_process::OsProcess;
 use kronika_registry::pg_locks::PgLocksV2;
@@ -619,11 +619,20 @@ fn fixture_label(interner: &mut Interner, value: &[u8]) -> StrId {
     StrId(interner.intern(value).expect("intern fixture label").get())
 }
 
+fn write_heatmap_fixture(root: &Path, segment_id: SegmentId) -> Arc<[u8]> {
+    write_heatmap_fixture_with_sharing(root, segment_id, None, 42)
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "one shared segment fixture covers every query family without duplicate writers"
 )]
-fn write_heatmap_fixture(root: &Path, segment_id: SegmentId) -> Arc<[u8]> {
+fn write_heatmap_fixture_with_sharing(
+    root: &Path,
+    segment_id: SegmentId,
+    shared: Option<bool>,
+    activity_pid: i32,
+) -> Arc<[u8]> {
     let data_root = DataRoot::open(root).expect("open heatmap data root");
     let owner = data_root
         .acquire_writer(LayoutLimits::default())
@@ -636,21 +645,41 @@ fn write_heatmap_fixture(root: &Path, segment_id: SegmentId) -> Arc<[u8]> {
     let schema = fixture_label(&mut interner, b"parity_schema");
     let table = fixture_label(&mut interner, b"parity_table");
     let mut buffers = SectionBuffers::new();
-    buffers
-        .push(InstanceMetadata {
-            ts: Ts(HEATMAP_FROM),
-            hostname: label,
-            kernel_version: label,
-            environment: 0,
-            clock_ticks_per_sec: 100,
-            page_size_bytes: 4_096,
-            boot_id: label,
-            btime: Ts(1),
-            postgresql_enabled: false,
-            postgresql_interval_seconds: 30,
-            postgresql_effective_cpus: None,
-        })
-        .expect("metadata row fits");
+    if let Some(shared) = shared {
+        buffers
+            .push(InstanceMetadataV3 {
+                ts: Ts(HEATMAP_FROM),
+                hostname: Some(label),
+                kernel_version: Some(label),
+                environment: Some(0),
+                clock_ticks_per_sec: Some(100),
+                page_size_bytes: Some(4_096),
+                boot_id: Some(label),
+                btime: Some(Ts(1)),
+                os_enabled: true,
+                postgresql_processes_shared: shared,
+                postgresql_enabled: true,
+                postgresql_interval_seconds: 30,
+                postgresql_effective_cpus: Some(4),
+            })
+            .expect("metadata row fits");
+    } else {
+        buffers
+            .push(InstanceMetadata {
+                ts: Ts(HEATMAP_FROM),
+                hostname: label,
+                kernel_version: label,
+                environment: 0,
+                clock_ticks_per_sec: 100,
+                page_size_bytes: 4_096,
+                boot_id: label,
+                btime: Ts(1),
+                postgresql_enabled: false,
+                postgresql_interval_seconds: 30,
+                postgresql_effective_cpus: None,
+            })
+            .expect("metadata row fits");
+    }
     for (timestamp, aggregate, first, second) in [(HEATMAP_FROM, 0, 0, 0), (HEATMAP_TO, 30, 10, 20)]
     {
         for (cpu_id, user) in [(-1, aggregate), (0, first), (1, second)] {
@@ -701,7 +730,7 @@ fn write_heatmap_fixture(root: &Path, segment_id: SegmentId) -> Arc<[u8]> {
     buffers
         .push(PgStatActivityV3 {
             ts: Ts(HEATMAP_TO),
-            pid: 42,
+            pid: activity_pid,
             leader_pid: None,
             datid: Some(1),
             datname: Some(database),
@@ -1106,6 +1135,59 @@ fn hour_products_are_byte_identical_for_posix_and_embedded_finished_zms() {
 }
 
 #[test]
+fn process_summary_pid_associations_require_recorded_sharing_in_both_sources() {
+    let segment_id = SegmentId::new(SEGMENT_ID).expect("segment identity");
+    for shared in [None, Some(false), Some(true)] {
+        let directory = tempfile::tempdir().expect("temporary source root");
+        let payload = write_heatmap_fixture_with_sharing(directory.path(), segment_id, shared, 41);
+        let posix: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(
+            PosixSource::open(directory.path()).expect("POSIX source"),
+        ));
+        let embedded: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(
+            EmbeddedSource::from_owned(
+                segment_id,
+                payload.as_ref().to_vec(),
+                u64::try_from(payload.len()).expect("payload length fits u64"),
+            )
+            .expect("embedded source"),
+        ));
+        let request = series_hour_request(
+            Window {
+                from: Some(HEATMAP_FROM),
+                to: Some(HEATMAP_TO),
+            },
+            "os_process_summary",
+            vec!["postgresql".to_owned()],
+            Vec::new(),
+            None,
+        );
+        let native = hour_bytes(posix, request.clone());
+        let embedded = hour_bytes(embedded, request);
+        assert_eq!(native, embedded, "sharing: {shared:?}");
+        let records = ndjson(&native);
+        let values = records
+            .iter()
+            .filter(|record| record["record"] == "row")
+            .map(|record| {
+                (
+                    record["timestamp"].as_str().expect("timestamp"),
+                    &record["values"][0],
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), 2, "sharing: {shared:?}");
+        assert_eq!(values[0].0, HEATMAP_FROM.to_string());
+        assert!(values[0].1.is_null(), "no PostgreSQL snapshot yet");
+        assert_eq!(values[1].0, HEATMAP_TO.to_string());
+        if shared == Some(true) {
+            assert_eq!(values[1].1.as_f64(), Some(1.0));
+        } else {
+            assert!(values[1].1.is_null(), "a matching PID is insufficient");
+        }
+    }
+}
+
+#[test]
 fn native_built_index_drives_real_posix_and_owned_embedded_queries() {
     let segment_id = SegmentId::new(SEGMENT_ID).expect("explicit segment identity");
     let directory = tempfile::tempdir().expect("temporary POSIX root");
@@ -1472,3 +1554,361 @@ fn all_snapshot_finders_are_typed_identical_for_posix_and_embedded_finished_zms(
 
 #[path = "finished_source_parity/statement_scope.rs"]
 mod statement_scope;
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one encoded fixture checks all selected controller counter contracts"
+)]
+fn selected_counter_identity_breaks_generic_history_and_detail_rates() {
+    use kronika_registry::os_cgroup_cpu::OsCgroupCpuV3;
+    use kronika_registry::os_cgroup_io::OsCgroupIoV2;
+    use kronika_registry::os_cgroup_memory::OsCgroupMemoryV3;
+    let directory = tempfile::tempdir().expect("counter fixture");
+    let root = DataRoot::open(directory.path()).expect("root");
+    let owner = root
+        .acquire_writer(LayoutLimits::default())
+        .expect("writer");
+    let mut journal = Journal::open(&owner, JournalConfig::default()).expect("journal");
+    let mut interner = Interner::new(DictLimits::default());
+    let path = fixture_label(&mut interner, b"/same-path");
+    let first = fixture_label(&mut interner, b"first-directory");
+    let second = fixture_label(&mut interner, b"recreated-directory");
+    let mut buffers = SectionBuffers::new();
+    for (offset, counter, cgroup_identity) in [
+        (0, 100, first),
+        (1_000_000, 900, second),
+        (2_000_000, 1000, second),
+    ] {
+        let ts = Ts(SEGMENT_ID + offset);
+        buffers
+            .push(OsCgroupCpuV3 {
+                ts,
+                cgroup_path: path,
+                cgroup_identity,
+                usage_usec: counter,
+                user_usec: counter,
+                system_usec: 0,
+                throttled_usec: None,
+                nr_throttled: None,
+                quota_usec: None,
+                period_usec: None,
+                scope: 4,
+            })
+            .expect("CPU");
+        buffers
+            .push(OsCgroupMemoryV3 {
+                ts,
+                cgroup_path: path,
+                cgroup_identity,
+                current: 1024,
+                max: None,
+                anon: None,
+                file: None,
+                kernel: None,
+                slab: None,
+                low_events: Some(counter),
+                high_events: None,
+                max_events: None,
+                oom_events: None,
+                oom_kill: Some(counter),
+                max_unlimited: None,
+                scope: 4,
+            })
+            .expect("memory");
+        buffers
+            .push(OsCgroupIoV2 {
+                ts,
+                cgroup_path: path,
+                cgroup_identity,
+                major: 8,
+                minor: 0,
+                rbytes: Some(counter),
+                wbytes: None,
+                rios: Some(counter),
+                wios: None,
+                scope: 4,
+            })
+            .expect("IO");
+    }
+    let dictionary = dict::encode(interner.window()).expect("dictionary");
+    let part = buffers.flush(&dictionary).expect("encode").expect("rows");
+    let id = SegmentId::new(SEGMENT_ID).expect("id");
+    journal.append(id, &part).expect("append");
+    write_segment(&journal, &owner, SegmentAddress::new(id).expect("address")).expect("seal");
+    journal.reset().expect("reset");
+    drop(journal);
+    drop(owner);
+    let bytes = std::fs::read(finished_path(directory.path(), id)).expect("ZMS");
+    let length = u64::try_from(bytes.len()).expect("length");
+    let datasets: [Arc<dyn QueryDataset>; 2] = [
+        Arc::new(FinishedDataset::new(
+            PosixSource::open(directory.path()).expect("posix"),
+        )),
+        Arc::new(FinishedDataset::new(
+            EmbeddedSource::from_owned(id, bytes, length).expect("embedded"),
+        )),
+    ];
+    for (section, type_id, field) in [
+        ("os_cgroup_cpu", 1_201_003, "usage_usec"),
+        ("os_cgroup_memory", 1_202_003, "oom_kill"),
+        ("os_cgroup_io", 1_203_003, "rbytes"),
+    ] {
+        let mut histories = Vec::new();
+        for dataset in &datasets {
+            let context = QueryContext::new(Arc::clone(dataset), 1, false);
+            let request = QueryRequest::History(kronika_query::DataRequest {
+                segment: kronika_query::SegmentRequest {
+                    segment_id: SEGMENT_ID,
+                    section: section.to_owned(),
+                },
+                fields: vec![field.to_owned()],
+                filters: Vec::new(),
+                type_id: Some(type_id),
+                after: None,
+            });
+            let mut sink = Records::default();
+            execute(&context, request)
+                .expect("history")
+                .stream(&mut sink)
+                .expect("stream");
+            let records = ndjson(&sink.0);
+            let rows = records
+                .iter()
+                .filter(|r| r["record"] == "row")
+                .collect::<Vec<_>>();
+            assert_eq!(rows.len(), 3);
+            assert_ne!(
+                rows[0]["identity"], rows[1]["identity"],
+                "history splits new object"
+            );
+            assert_eq!(rows[1]["identity"], rows[2]["identity"]);
+            histories.push(sink.0);
+            for (offset, ordinal, expected) in [(1_000_000, 1, None), (2_000_000, 2, Some(100.0))] {
+                let mut identity = serde_json::Map::new();
+                identity.insert("cgroup_path".to_owned(), path.0.to_string().into());
+                identity.insert("cgroup_identity".to_owned(), second.0.to_string().into());
+                if section == "os_cgroup_io" {
+                    identity.insert("major".to_owned(), "8".into());
+                    identity.insert("minor".to_owned(), "0".into());
+                }
+                let locator = detail_locator(
+                    section,
+                    SEGMENT_ID,
+                    SEGMENT_ID + offset,
+                    type_id,
+                    ordinal,
+                    identity,
+                )
+                .detail_ref()
+                .expect("locator");
+                let result = row_detail_result(Arc::clone(dataset), &locator);
+                assert_eq!(
+                    result.fields[field].as_f64(),
+                    expected,
+                    "{section} first new object has no rate"
+                );
+            }
+        }
+        assert_eq!(
+            histories[0], histories[1],
+            "native/embedded history {section}"
+        );
+    }
+}
+
+fn write_selected_cpu_segment(
+    root: &Path,
+    at: i64,
+    group: &[u8],
+    prefix: Option<&[u8]>,
+    counter: i64,
+) -> (StrId, StrId) {
+    use kronika_registry::os_cgroup_context::OsCgroupContextV2;
+    use kronika_registry::os_cgroup_cpu::OsCgroupCpuV3;
+    let data_root = DataRoot::open(root).expect("root");
+    let owner = data_root
+        .acquire_writer(LayoutLimits::default())
+        .expect("writer");
+    let mut journal = Journal::open(&owner, JournalConfig::default()).expect("journal");
+    let mut interner = Interner::new(DictLimits::default());
+    if let Some(prefix) = prefix {
+        fixture_label(&mut interner, prefix);
+    }
+    let path = fixture_label(&mut interner, b"/same-path");
+    let identity = fixture_label(&mut interner, group);
+    let host = fixture_label(&mut interner, b"fixture");
+    let visible_root = fixture_label(&mut interner, b"/");
+    let mut buffers = SectionBuffers::new();
+    buffers
+        .push(InstanceMetadataV3 {
+            ts: Ts(at),
+            hostname: Some(host),
+            kernel_version: Some(host),
+            environment: Some(1),
+            clock_ticks_per_sec: Some(100),
+            page_size_bytes: Some(4096),
+            boot_id: Some(host),
+            btime: Some(Ts(1)),
+            os_enabled: true,
+            postgresql_processes_shared: false,
+            postgresql_enabled: false,
+            postgresql_interval_seconds: 30,
+            postgresql_effective_cpus: None,
+        })
+        .expect("recorded container metadata");
+    buffers
+        .push(OsCgroupContextV2 {
+            ts: Ts(at),
+            cgroup_version: 2,
+            cpu_path: Some(path),
+            memory_path: None,
+            io_path: None,
+            cpuset_cpus: Some(2),
+            effective_cpu_quota_usec: Some(200_000),
+            effective_cpu_period_usec: Some(100_000),
+            effective_memory_max: None,
+            pids_path: None,
+            cpu_identity: Some(identity),
+            memory_identity: None,
+            io_identity: None,
+            pids_identity: None,
+            cpu_root: Some(visible_root),
+            memory_root: None,
+            io_root: None,
+            pids_root: None,
+            scope: 4,
+        })
+        .expect("recorded selected CPU group");
+    buffers
+        .push(OsCgroupCpuV3 {
+            ts: Ts(at),
+            cgroup_path: path,
+            cgroup_identity: identity,
+            usage_usec: counter,
+            user_usec: counter,
+            system_usec: 0,
+            throttled_usec: None,
+            nr_throttled: None,
+            quota_usec: None,
+            period_usec: None,
+            scope: 4,
+        })
+        .expect("row");
+    let dictionary = dict::encode(interner.window()).expect("dictionary");
+    let part = buffers.flush(&dictionary).expect("encode").expect("rows");
+    let id = SegmentId::new(at).expect("id");
+    journal.append(id, &part).expect("append");
+    write_segment(&journal, &owner, SegmentAddress::new(id).expect("address")).expect("seal");
+    journal.reset().expect("reset");
+    (path, identity)
+}
+
+#[test]
+fn selected_detail_uses_content_identity_across_segments() {
+    let directory = tempfile::tempdir().expect("fixture");
+    let original = write_selected_cpu_segment(directory.path(), SEGMENT_ID, b"first", None, 100);
+    let recreated = write_selected_cpu_segment(
+        directory.path(),
+        SEGMENT_ID + 1_000_000,
+        b"second",
+        None,
+        900,
+    );
+    let continued = write_selected_cpu_segment(
+        directory.path(),
+        SEGMENT_ID + 2_000_000,
+        b"second",
+        Some(b"different dictionary allocation"),
+        1000,
+    );
+    assert_ne!(
+        original, recreated,
+        "different directories have different content IDs"
+    );
+    assert_eq!(
+        recreated, continued,
+        "recorded directory identity is independent of interning order"
+    );
+    let dataset: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(
+        PosixSource::open(directory.path()).expect("posix"),
+    ));
+    let history = hour_bytes(
+        Arc::clone(&dataset),
+        series_hour_request(
+            Window {
+                from: Some(SEGMENT_ID),
+                to: Some(SEGMENT_ID + 2_000_000),
+            },
+            "os_cgroup_cpu",
+            vec![
+                "usage_usec".to_owned(),
+                "cgroup_path".to_owned(),
+                "cgroup_identity".to_owned(),
+            ],
+            vec![
+                Filter {
+                    column: "cgroup_path".to_owned(),
+                    value: "/same-path".to_owned(),
+                },
+                Filter {
+                    column: "cgroup_identity".to_owned(),
+                    value: "second".to_owned(),
+                },
+            ],
+            None,
+        ),
+    );
+    let records = ndjson(&history);
+    assert_eq!(
+        records.iter().filter(|row| row["record"] == "row").count(),
+        2,
+        "the real Inspector query excludes the replaced directory"
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|row| row["record"] == "series_segment")
+            .count(),
+        3,
+        "the real hour spans the three encoded segments"
+    );
+    if let Some(output) = std::env::var_os("KRONIKA_HISTORY_TEST_OUTPUT") {
+        let output = std::path::PathBuf::from(output);
+        for offset in [0, 1_000_000, 2_000_000] {
+            let id = SegmentId::new(SEGMENT_ID + offset).expect("id");
+            let path = finished_path(directory.path(), id);
+            let target = output.join(
+                path.strip_prefix(directory.path())
+                    .expect("fixture relative path"),
+            );
+            std::fs::create_dir_all(target.parent().expect("parent")).expect("output directory");
+            std::fs::copy(path, target).expect("fixture copy");
+        }
+    }
+    for (offset, (path, identity), expected) in [
+        (1_000_000, recreated, None),
+        (2_000_000, continued, Some(100.0)),
+    ] {
+        let at = SEGMENT_ID + offset;
+        let fields = [
+            ("cgroup_path".to_owned(), path.0.to_string().into()),
+            ("cgroup_identity".to_owned(), identity.0.to_string().into()),
+        ]
+        .into_iter()
+        .collect();
+        let detail = detail_locator("os_cgroup_cpu", at, at, 1_201_003, 0, fields)
+            .detail_ref()
+            .expect("locator");
+        assert_eq!(
+            row_detail_result(Arc::clone(&dataset), &detail).fields["usage_usec"].as_f64(),
+            expected
+        );
+    }
+}
+
+#[path = "finished_source_parity/controller_continuity.rs"]
+mod controller_continuity;
+
+#[path = "finished_source_parity/encoded_lane_order.rs"]
+mod encoded_lane_order;

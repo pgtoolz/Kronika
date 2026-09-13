@@ -60,7 +60,6 @@ import { parseSearch, type SearchSurface } from "./search"
 import { findAfterSurfaceNavigation, searchSurfaceForLocation, searchSurfaceForSection } from "./search-navigation"
 import { beginSearchRequest, IDLE_SEARCH_REQUEST, searchRequestForSurface, type SearchRequestState } from "./search-request"
 import {
-  activityFor,
   asNumber,
   floorHour,
   interpolate,
@@ -81,13 +80,13 @@ import { latestTimelineTimestamp, refreshedCursor, scheduleRefresh } from "./ref
 import { reportLatestHour, reportVisibleAt, reportVisibleCursor, reportVisibleRange } from "./report-transport"
 import type { ChartPoint } from "./series-chart"
 import { apiFetch, bootstrapSession, getSessionSnapshot, logout, subscribeSession } from "./session"
-import { hasPostgresTelemetry } from "./source-availability"
+import { activityForProcess, hasPostgresTelemetry, postgresProcessesShared, recordedLinuxEnabled } from "./source-availability"
 import type { RelatedNavigation } from "./statement-navigation"
 import {
-  CGROUP_SNAPSHOT_REQUESTS,
+  cgroupTableRequest,
+  cgroupTableSection,
   SYSTEM_REQUESTS,
   SystemView,
-  cgroupSnapshotPlan,
   recordedEnvironment,
 } from "./system-view"
 import { beginSnapshotRequest, READY_SNAPSHOT_REQUEST, settleSnapshotRequest, snapshotRowsVisible, tableRequestPhase, visibleSnapshotRequest, type SnapshotRequestState } from "./table-request"
@@ -219,7 +218,7 @@ function App({ locale, onLocale, t }: {
   const opened = useRef(readAddress(window.location.search))
   const [reportRange] = useState(() => KRONIKA_REPORT ? reportVisibleRange() : null)
   const initialAt = reportVisibleAt(opened.current.at, reportRange)
-  const replaceReportAddress = useRef(KRONIKA_REPORT)
+  const replaceReportAddress = useRef(true)
   const [cursor, setCursor] = useState(0)
   const cursorClock = useRef<HTMLSpanElement>(null)
   const cursorClockPreview = useRef<number | null>(null)
@@ -265,6 +264,7 @@ function App({ locale, onLocale, t }: {
   const [error, setError] = useState<string | null>(null)
   const [source, setSource] = useState<Source>(sourceOf(opened.current.view))
   const [systemMetric, setSystemMetric] = useState<string | null>(opened.current.metric)
+  const osEnabled = recordedLinuxEnabled(timelineData.laneContexts)
   const visibleSource = source
   const [pgSection, setPgSection] = useState<PostgresSection>(pgSectionOf(opened.current.view))
   const [statementLens, setStatementLens] = useState<StatementLens>(statementLensOf(opened.current.pgLens))
@@ -285,6 +285,14 @@ function App({ locale, onLocale, t }: {
   const [order, setOrder] = useState<TableOrder | null>(opened.current.sort)
   const [selectedKey, setSelectedKey] = useState<string | null>(opened.current.row)
   const [inspectorPanel, setInspectorPanel] = useState<InspectorPanel>(opened.current.panel)
+  useEffect(() => {
+    if (osEnabled || (source !== "host" && source !== "processes")) return
+    setSource("postgresql")
+    setFind("")
+    setOrder(null)
+    setSelectedKey(null)
+    setInspectorPanel(null)
+  }, [osEnabled, source])
   const [mobileSearch, setMobileSearch] = useState(false)
   const [inspectorDetailRoot, setInspectorDetailRoot] = useState<HTMLElement | null>(null)
   const [inspectorChartRoot, setInspectorChartRoot] = useState<HTMLElement | null>(null)
@@ -335,7 +343,7 @@ function App({ locale, onLocale, t }: {
   const viewKey = pgSection === "statements" && visibleSource === "postgresql"
     ? `${baseViewKey}:${statementLens}`
     : pgSection === "plans" && visibleSource === "postgresql" ? `${baseViewKey}:${planLens}` : baseViewKey
-  const foregroundView = visibleSource === "processes"
+  const foregroundView = visibleSource === "host" && cgroupTableSection(systemMetric) !== null ? `${viewKey}:${cgroupTableSection(systemMetric)}` : visibleSource === "processes"
     ? `${viewKey}:${lens}`
     : activeRelation ? `${viewKey}:${activeRelationLens}:${relationLevel}` : viewKey
   const foregroundKey = `${hour ?? "pending"}:${foregroundView}`
@@ -344,7 +352,9 @@ function App({ locale, onLocale, t }: {
     foregroundReadyKey.current = foregroundKey
     setBackgroundReadyHour(hour)
   }, [foregroundKey, hour, visibleSource])
+  const activeCgroupSection = visibleSource === "host" ? cgroupTableSection(systemMetric) : null
   const viewRequests = useMemo(() => {
+    if (visibleSource === "host" && activeCgroupSection !== null) return [...(VIEW_REQUESTS.host ?? []), cgroupTableRequest(activeCgroupSection)]
     if (visibleSource === "processes") return [
       ...TIMELINE_REQUESTS,
       processRequest(lens),
@@ -362,7 +372,7 @@ function App({ locale, onLocale, t }: {
       return [...TIMELINE_REQUESTS, relationRequest(relationSectionOf(pgSection), activeRelationLens, relationLevel), ...POSTGRESQL_CONTEXT_REQUESTS]
     }
     return VIEW_REQUESTS[baseViewKey] ?? []
-  }, [activeRelation, activeRelationLens, baseViewKey, lens, pgSection, planLens, relationLevel, statementLens, visibleSource])
+  }, [activeCgroupSection, activeRelation, activeRelationLens, baseViewKey, lens, pgSection, planLens, relationLevel, statementLens, visibleSource])
   const [segments, setSegments] = useState<readonly SegmentBound[]>([])
   const densePattern = viewRequests.some((request) => request.pageSize !== undefined) ? find.trim() : ""
   const denseCandidate = viewRequests.find((request) => request.pageSize !== undefined)
@@ -396,12 +406,9 @@ function App({ locale, onLocale, t }: {
     ? undefined
     : initialPageOptions(denseRequest, pageContext, densePattern, relationFilters, denseRequest.section === "pg_stat_statements" ? statementScope.scope : undefined)
   const requestOrder = visibleSource === "processes" ? order ?? processTableDefaultOrder(lens) : order
-  const cgroupTargetGroups = visibleSource === "host" && timelineData.availableSections.some((name) => name.startsWith("os_cgroup"))
-    ? snapshotRequestGroups(segments, cursor, CGROUP_SNAPSHOT_REQUESTS)
-    : []
   const snapshotTarget = snapshotGroups.length === 0
     ? null
-    : snapshotTargetKey(snapshotGroups, cursor, cgroupTargetGroups, requestOrder, denseOptions)
+    : snapshotTargetKey(snapshotGroups, cursor, requestOrder, denseOptions)
   const retainsDenseRows = denseRequest !== undefined
     && currentSnapshot.cursor === cursor
     && currentSnapshot.denseSection === denseRequest.section
@@ -549,7 +556,6 @@ function App({ locale, onLocale, t }: {
   const cursorState = visibleSnapshotRequest(snapshotRequest, snapshotTarget)
   const currentTableRequest = tableRequestPhase(cursorState, densePageState)
   const snapshotGeneration = useRef(0)
-  const cgroupSnapshotKey = useRef<string | null>(null)
   const densePage = useRef<{
     failed: string | undefined
     load: (cursor?: string) => void
@@ -572,7 +578,6 @@ function App({ locale, onLocale, t }: {
     } else if (denseSurface === null || !denseSearchValid) {
       setSearchRequest(IDLE_SEARCH_REQUEST)
     }
-    cgroupSnapshotKey.current = null
     const completesRefresh = refreshAwaitingSnapshot.current
     densePage.current = null
     if (hour === null) {
@@ -600,31 +605,7 @@ function App({ locale, onLocale, t }: {
     setDensePageState(denseRequest === undefined ? "idle" : "loading")
     const controller = new AbortController()
     const stale = () => controller.signal.aborted || generation !== snapshotGeneration.current
-    const loadOrdinarySnapshot = async (ordinary: readonly SnapshotRequestGroup[]): Promise<HourData> => {
-      const primary = await loadSnapshotGroups(ordinary, cursor, controller.signal, requestOrder ?? undefined)
-      if (stale() || cgroupTargetGroups.length === 0) return primary
-      const plans = cgroupTargetGroups.map((group) => ({
-        anchor: group.anchor,
-        plan: cgroupSnapshotPlan(group.anchor.id, cursor, primary, group.requests),
-      }))
-      const planKey = JSON.stringify(plans.map(({ anchor, plan }) => [anchor.id, plan.key]))
-      cgroupSnapshotKey.current = planKey
-      const exact = await Promise.all(plans.flatMap(({ anchor, plan }) => plan.loads.map(({ filters, request }) => loadSnapshot(
-        anchor.id,
-        cursor,
-        [request],
-        controller.signal,
-        undefined,
-        { filters },
-      ).catch((reason: unknown) => {
-        if (!stale() && cgroupSnapshotKey.current === planKey) {
-          console.error(`kronika: filtered ${request.section} snapshot failed`, reason)
-        }
-        return EMPTY_DATA
-      }))))
-      if (stale() || cgroupSnapshotKey.current !== planKey) return primary
-      return exact.reduce((current, incoming) => mergeSnapshotData(current, incoming), primary)
-    }
+    const loadOrdinarySnapshot = (ordinary: readonly SnapshotRequestGroup[]): Promise<HourData> => loadSnapshotGroups(ordinary, cursor, controller.signal, requestOrder ?? undefined)
     const timer = setTimeout(() => {
       if (denseLoad === undefined) {
         void loadOrdinarySnapshot(ordinaryGroups)
@@ -704,7 +685,7 @@ function App({ locale, onLocale, t }: {
             if (completesRefresh && pageCursor === undefined) finishRefresh(false)
             console.error("kronika: snapshot page failed", reason)
           }
-          if (pageCursor === undefined && visibleSource === "processes") {
+          if (pageCursor === undefined && (visibleSource === "processes" || activeCgroupSection !== null)) {
             void page.then((incoming) => {
               loaded(incoming, null, ordinaryGroups.length !== 0)
               void base.then((companion) => {
@@ -824,8 +805,8 @@ function App({ locale, onLocale, t }: {
   const pgRows = useMemo(() => snapshot(data.activities, cursor), [cursor, data.activities])
   const linkedPids = useMemo(() => new Set(pgRows.flatMap((row) => {
     const pid = asNumber(value(row, "pid"))
-    return pid === null ? [] : [pid]
-  })), [pgRows])
+    return pid === null || !postgresProcessesShared(data.laneContexts, row.segmentId) ? [] : [`${row.segmentId}:${pid}`]
+  })), [data.laneContexts, pgRows])
   const selectedProcess = useMemo(
     () => processTableRows.find((row) => processKey(row) === selectedKey) ?? null,
     [processTableRows, selectedKey],
@@ -867,7 +848,7 @@ function App({ locale, onLocale, t }: {
     return () => controller.abort()
   }, [data, findingRow, selectedFinding])
   const pgFocus = selectedFinding !== null && selectedFinding.logicalName.startsWith("pg_") ? contextRow : null
-  const joinedActivity = activityFor(selectedProcess, data.activities, selectedProcess?.timestamp ?? cursor)
+  const joinedActivity = activityForProcess(selectedProcess, data.activities, data.laneContexts, cursor)
   const selectedPid = selectedProcess === null ? null : rawText(value(selectedProcess, "pid"))
   const processHistoryKey = hour === null || selectedPid === null ? null : JSON.stringify([hour, selectedPid])
   const processHistory = useHistoryRequest(processHistoryKey, refreshVersion,
@@ -891,7 +872,7 @@ function App({ locale, onLocale, t }: {
     }
     return sharedNavigationTimestamps
   }, [data.activities, data.processes, data.sections.pg_stat_progress_vacuum, hour, pgSection, processHistory.value, processSummary.history, processSummary.hour, sharedNavigationTimestamps, visibleSource])
-  const activeSearchSurface = searchSurfaceForLocation(source, pgSection)
+  const activeSearchSurface = source === "host" && activeCgroupSection !== null ? searchSurfaceForSection(activeCgroupSection) : searchSurfaceForLocation(source, pgSection)
   const visibleSearchRequest = searchRequestForSurface(searchRequest, activeSearchSurface)
   const applyFind = useCallback((next: string) => {
     if (next === find) return
@@ -930,7 +911,7 @@ function App({ locale, onLocale, t }: {
   }), [activeRelation, activeRelationLens, cursor, find, inspectorPanel, lens, order, pgSection, planLens, relationFilters, relationLevel, relationSelectedKey, selectedKey, source, statementLens, systemMetric])
   const steps = useRef<string | null>(null)
   useEffect(() => {
-    if (KRONIKA_REPORT && loading) return
+    if (loading) return
     const destination = historyAddress(address, window.location.pathname)
     const replace = replaceReportAddress.current
     replaceReportAddress.current = false
@@ -1099,7 +1080,7 @@ function App({ locale, onLocale, t }: {
     if (visibleSource === "events") setSelectedFinding(null)
   }
   const openChart = () => setInspectorPanel("chart")
-  const openPortalDetail = useCallback(() => setInspectorPanel("detail"), [])
+  const openPortalDetail = useCallback(() => setInspectorPanel((current) => current ?? "detail"), [])
   const selectDetailKey = useCallback((key: string | null) => {
     setSelectedKey(key)
     if (key !== null) setInspectorPanel("detail")
@@ -1120,8 +1101,8 @@ function App({ locale, onLocale, t }: {
       <h1 title={serverVersion === null ? undefined : `${t("app.title")} ${serverVersion}`}>{database === null ? t("app.title") : `${t("app.title")} — ${database}`}</h1>
 
       <nav aria-label={t("nav.sources")} className="source-tabs max-[760px]:overflow-x-auto">
-        <button aria-current={visibleSource === "host" ? "page" : undefined} className={visibleSource === "host" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(null); setSystemFocus(null); setSelectedKey(null); setInspectorPanel(null); setSource("host") }} type="button">{t("nav.host")}</button>
-        <button aria-current={visibleSource === "processes" ? "page" : undefined} className={visibleSource === "processes" ? "source-active" : undefined} data-testid="process-tab" onClick={() => { navigateSearchSurface("os_process"); setSelectedKey(null); setInspectorPanel(null); setSource("processes") }} type="button">{t("nav.processes")}</button>
+        {osEnabled && <button aria-current={visibleSource === "host" ? "page" : undefined} className={visibleSource === "host" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(null); setSystemFocus(null); setSelectedKey(null); setInspectorPanel(null); setSource("host") }} type="button">{t("nav.host")}</button>}
+        {osEnabled && <button aria-current={visibleSource === "processes" ? "page" : undefined} className={visibleSource === "processes" ? "source-active" : undefined} data-testid="process-tab" onClick={() => { navigateSearchSurface("os_process"); setSelectedKey(null); setInspectorPanel(null); setSource("processes") }} type="button">{t("nav.processes")}</button>}
         <button aria-current={visibleSource === "postgresql" ? "page" : undefined} className={visibleSource === "postgresql" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(searchSurfaceForSection(pgSection)); setSelectedKey(null); setInspectorPanel(null); setSource("postgresql") }} title={pgPresent ? undefined : t("nav.no_data")} type="button">{t("nav.postgresql")}</button>
         <button aria-current={visibleSource === "events" ? "page" : undefined} className={visibleSource === "events" ? "source-active" : undefined} onClick={() => { navigateSearchSurface("events"); setEventScope(null); setSelectedFinding(null); setInspectorPanel(null); setSource("events") }} title={eventsPresent ? undefined : t("nav.no_data")} type="button">{t("nav.events")}</button>
       </nav>
@@ -1162,7 +1143,7 @@ function App({ locale, onLocale, t }: {
       {!loading && error === null && hour !== null && <MobileControls filtered={find !== ""} onOpenChart={openChart} onSearch={setMobileSearch} searchOpen={mobileSearch} t={t} />}
       {loading && <HourSkeleton locale={locale} progress={loadProgress} t={t} />}
       {!loading && error !== null && <StateCard message={t("status.error")} />}
-      {!loading && error === null && hour !== null && visibleSource === "host" && <SystemView environment={environment} context={context} contextRow={contextRow} cursor={cursor} data={data} focus={systemFocus} historyRevision={refreshVersion} hour={hour} locale={locale} metric={systemMetric} navigationTimestamps={navigationTimestamps} onContextClear={clearEntityContext} onCursor={chooseCursor} onFinding={selectFinding} onMetric={setSystemMetric} onOpenChart={openChart} onPreview={previewClock} onSelectedKey={selectDetailKey} onSelectedLane={setTimelineLane} requestPhase={currentTableRequest} selectedKey={selectedKey} selectedLane={timelineLane} t={t} />}
+      {!loading && error === null && hour !== null && visibleSource === "host" && <SystemView segmentId={denseLoad?.anchor.id} densePageState={densePageState} metadata={denseMetadata} onLoadMore={loadMoreDense} onRetry={retryDense} onOrder={setOrder} onPattern={applyFind} order={order ?? undefined} pattern={find} searchRequest={visibleSearchRequest} environment={environment} context={context} contextRow={contextRow} cursor={cursor} data={data} focus={systemFocus} historyRevision={refreshVersion} hour={hour} locale={locale} metric={systemMetric} navigationTimestamps={navigationTimestamps} onContextClear={clearEntityContext} onCursor={chooseCursor} onFinding={selectFinding} onMetric={(next) => { if (cgroupTableSection(next) !== cgroupTableSection(systemMetric)) { setOrder(null); setFind(""); setSelectedKey(null) }; setSystemMetric(next) }} onOpenChart={openChart} onPreview={previewClock} onSelectedKey={selectDetailKey} onSelectedLane={setTimelineLane} requestPhase={currentTableRequest} selectedKey={selectedKey} selectedLane={timelineLane} t={t} />}
       {!loading && error === null && hour !== null && visibleSource === "processes" && <>
         <Timeline cursor={cursor} environment={environment} findings={data.findings} health={data.health} hour={hour} lanePoints={data.lanePoints} locale={locale} navigationTimestamps={navigationTimestamps} onCursor={chooseCursor} onFinding={selectFinding} onOpenChart={openChart} onPreview={previewClock} onSelectedLane={setTimelineLane} primaryLane={timelinePrimary} selectedLane={timelineLane} t={t} />
         <div className="lensbar !mt-0 border-t-0">
@@ -1259,7 +1240,6 @@ function initialPageOptions(
 function snapshotTargetKey(
   groups: readonly SnapshotRequestGroup[],
   cursor: number,
-  cgroupGroups: readonly SnapshotRequestGroup[],
   order: TableOrder | null,
   options: SnapshotOptions | undefined,
 ): string {
@@ -1274,7 +1254,6 @@ function snapshotTargetKey(
   return JSON.stringify([
     cursor,
     groups.map(keyed),
-    cgroupGroups.map(keyed),
     order === null ? null : [order.column, order.descending],
     options ?? null,
   ])

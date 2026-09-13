@@ -26,9 +26,6 @@ git clone https://github.com/pgtoolz/Kronika.git
 cd Kronika
 ```
 
-Для конкретной версии исходного кода выполните `git checkout FULL_COMMIT`
-перед `cargo build`; для исходников опубликованного релиза — `git checkout v1.0.1`.
-
 Выберите команду сборки для своей машины. Для Linux x86-64:
 
 ```sh

@@ -113,3 +113,25 @@ fn a_zero_interval_runs_every_tick_without_pulling_the_wake_forward() {
         "the zero-interval source is not the one that sets the wake"
     );
 }
+
+#[test]
+fn postgresql_mode_never_schedules_linux_even_at_forced_segment_open() {
+    let now = Instant::now();
+    let mut scheduler = Scheduler::for_mode(intervals(), false);
+    for forced in [false, true] {
+        let due = scheduler.plan(now, forced);
+        scheduler.mark_segment_opened();
+        let due = scheduler.recollection_due(&due, now);
+        for kind in super::ALL_SOURCES {
+            let expected = matches!(
+                kind,
+                SourceKind::Pg | SourceKind::PgRelations | SourceKind::Logs
+            );
+            assert_eq!(due.has(kind), expected, "configured source {kind:?}");
+        }
+    }
+    assert_eq!(
+        scheduler.next_elapsed_due_in(now),
+        Some(Duration::from_secs(10))
+    );
+}

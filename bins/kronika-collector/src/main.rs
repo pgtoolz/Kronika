@@ -17,6 +17,7 @@ static GLOBAL_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemall
 
 mod buffering;
 mod capacity;
+mod cgroup_discovery;
 mod config;
 mod help;
 mod log_sources;
@@ -31,6 +32,7 @@ mod service_sections;
 use anyhow::{Context, Result};
 use config::Config;
 use kronika_layout::{DataRoot, LayoutLimits, TemporaryKind, WriterOwner};
+use kronika_registry::os_cgroup_context::OsCgroupContextV2;
 use kronika_source_os::proc::process::ProcessIoCredentials;
 use kronika_source_os::{OsScope, ProcFs, detect_container};
 use kronika_source_pg::query::BatchWrite;
@@ -46,7 +48,7 @@ use segments::{
     AppendWindowError, SegmentState, append_window_and_maybe_close, close_open_segment,
     encode_window, open_collector_journal,
 };
-use service_sections::{collect_instance, push_instance_metadata};
+use service_sections::push_instance_metadata;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -164,25 +166,33 @@ fn main() -> Result<()> {
             argument.display()
         );
     }
-    run_collector()
+    let config = Config::from_env()?;
+    logging::configure_process_diagnostics(config.mode.collect_os());
+    let mut runtime = tokio::runtime::Builder::new_multi_thread();
+    if !config.mode.collect_os() {
+        runtime.worker_threads(1);
+    }
+    runtime
+        .enable_all()
+        .build()
+        .context("initialize collector runtime")?
+        .block_on(run_collector(config))
 }
 
-#[tokio::main]
 #[allow(
     clippy::too_many_lines,
     reason = "the top-level signal and persistence loop must share shutdown telemetry"
 )]
-async fn run_collector() -> Result<()> {
-    let config = Config::from_env()?;
+async fn run_collector(config: Config) -> Result<()> {
     let (writer_owner, mut journal, mut logs, mut pg) = initialize_collector(&config)?;
-    let in_container = detect_container(&ProcFs::from_env());
+    let in_container = config.mode.collect_os() && detect_container(&ProcFs::from_env());
     let mut pg_telemetry = PgTelemetry::new(Instant::now());
 
     let mut sigusr2 = signal(SignalKind::user_defined2()).context("install the SIGUSR2 handler")?;
     let mut sigterm = signal(SignalKind::terminate()).context("install the SIGTERM handler")?;
     let mut sigint = signal(SignalKind::interrupt()).context("install the SIGINT handler")?;
-    let mut sched = Scheduler::new(config.intervals);
-    let mut process_io = ProcessIoCredentials::new();
+    let mut sched = Scheduler::for_mode(config.intervals, config.mode.collect_os());
+    let mut process_io = config.mode.collect_os().then(ProcessIoCredentials::new);
     let mut segment = SegmentState::default();
     let mut rotation = Rotation::new(
         config.retention,
@@ -246,6 +256,28 @@ async fn run_collector() -> Result<()> {
                 run_rotation(&mut rotation, &writer_owner, &journal, &written_this_tick);
                 continue;
             }
+            let mut cgroup_pass = if config.mode.collect_os() && due.has(SourceKind::OsCgroup) {
+                let fs = ProcFs::from_env();
+                let sys = kronika_source_os::SysFs::from_env();
+                let ts = unix_now_us()?;
+                Some(cgroup_discovery::run(
+                    &fs,
+                    &sys,
+                    &config,
+                    in_container,
+                    &mut journal,
+                    &writer_owner,
+                    &mut segment,
+                    &mut sched,
+                    ts,
+                    pg.last_settings().as_deref().unwrap_or(&[]),
+                )?)
+            } else {
+                None
+            };
+            if let Some(pass) = cgroup_pass.as_mut() {
+                written_this_tick.append(&mut pass.written);
+            }
             logs.rescan(&mut |observation| pg_telemetry.observe(observation))
                 .await;
             // PostgreSQL batches reach the WAL before the query stream fetches
@@ -268,6 +300,7 @@ async fn run_collector() -> Result<()> {
                     &mut segment,
                     &mut sched,
                     &mut pg_telemetry,
+                    cgroup_pass.as_ref(),
                 )),
                 shutdown,
             )
@@ -295,7 +328,8 @@ async fn run_collector() -> Result<()> {
                 &mut segment,
                 &mut sched,
                 &mut logs,
-                pg_outcome.appended,
+                pg_outcome.appended || cgroup_pass.as_ref().is_some_and(|pass| pass.appended),
+                cgroup_pass.as_ref(),
             )?);
             stop_if_persistence_unhealthy(&journal)?;
             run_rotation(&mut rotation, &writer_owner, &journal, &written_this_tick);
@@ -345,10 +379,11 @@ async fn run_pg_collection_cycle(
     config: &Config,
     in_container: bool,
     due: &DueSet,
-    process_io: &mut ProcessIoCredentials,
+    process_io: &mut Option<ProcessIoCredentials>,
     segment: &mut SegmentState,
     sched: &mut Scheduler,
     telemetry: &mut PgTelemetry,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> Result<PgCollectionOutcome> {
     let mut outcome = PgCollectionOutcome::default();
     let mut last_ts = None;
@@ -372,6 +407,7 @@ async fn run_pg_collection_cycle(
                     process_io,
                     segment,
                     sched,
+                    cgroup_pass,
                 )?;
                 outcome.written.extend(admitted.written);
                 outcome.appended = true;
@@ -395,6 +431,7 @@ struct PgPendingOutcome {
 struct BufferedWindow {
     buffers: SectionBuffers,
     pending_users: Vec<(u8, u32)>,
+    pending_cgroup_context: Option<OsCgroupContextV2>,
 }
 
 /// Retain one `PostgreSQL` batch through a pre-append close and encode it once
@@ -411,9 +448,10 @@ fn append_pending_pg_batch(
     batch: &PgBatch,
     opening_settings: &[kronika_source_pg::settings::SettingsRow],
     ts: i64,
-    process_io: &mut ProcessIoCredentials,
+    process_io: &mut Option<ProcessIoCredentials>,
     segment: &mut SegmentState,
     sched: &mut Scheduler,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> std::result::Result<PgPendingOutcome, PgAppendError> {
     let mut written = Vec::new();
     let mut encode_elapsed = Duration::ZERO;
@@ -433,6 +471,7 @@ fn append_pending_pg_batch(
             in_container,
             ts,
             process_io,
+            cgroup_pass,
         )
         .map_err(|()| {
             PgAppendError::Fatal(anyhow::anyhow!(
@@ -488,6 +527,7 @@ fn append_pending_pg_batch(
         }
         if !segment.is_empty() {
             segment.mark_users_recorded(&buffered.pending_users);
+            segment.mark_cgroup_context_recorded(buffered.pending_cgroup_context.as_ref());
         }
         let frame_bytes = encoded_bytes
             .saturating_add(u64::try_from(kronika_format::FRAME_HEADER_LEN).unwrap_or(u64::MAX));
@@ -534,19 +574,16 @@ fn buffer_pg_batch(
     config: &Config,
     in_container: bool,
     ts: i64,
-    process_io: &mut ProcessIoCredentials,
+    process_io: &mut Option<ProcessIoCredentials>,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> std::result::Result<BufferedWindow, ()> {
-    let fs = ProcFs::from_env();
     let mut buffers = SectionBuffers::new();
     let mut pending_users = Vec::new();
+    let mut pending_cgroup_context = None;
     if segment.is_empty() {
-        let facts = collect_instance().map_err(|err| {
-            log_buffer_failure(&err);
-        })?;
         push_instance_metadata(
             &mut buffers,
             segment.interner_mut(),
-            &facts,
             in_container,
             config,
             ts,
@@ -560,8 +597,11 @@ fn buffer_pg_batch(
     } else {
         &[]
     };
-    if let Some(due) = opening_due {
-        let os = {
+    if let Some(due) = opening_due
+        && let Some(process_io) = process_io.as_mut()
+    {
+        let fs = ProcFs::from_env();
+        let mut os = {
             let (interner, users) = segment.os_state_mut();
             collect_os_sources(
                 &fs,
@@ -572,8 +612,10 @@ fn buffer_pg_batch(
                 ts,
                 in_container,
                 due,
+                cgroup_pass,
             )
         };
+        pending_cgroup_context = os.deduplicate_context(segment.cgroup_context());
         pending_users.extend_from_slice(os.pending_users());
         push_os_sources(&mut buffers, &os).map_err(|err| {
             log_buffer_failure(&err);
@@ -585,6 +627,7 @@ fn buffer_pg_batch(
     Ok(BufferedWindow {
         buffers,
         pending_users,
+        pending_cgroup_context,
     })
 }
 
@@ -602,11 +645,12 @@ fn run_collection_cycle(
     in_container: bool,
     due: &DueSet,
     opening_settings: &[kronika_source_pg::settings::SettingsRow],
-    process_io: &mut ProcessIoCredentials,
+    process_io: &mut Option<ProcessIoCredentials>,
     segment: &mut SegmentState,
     sched: &mut Scheduler,
     logs: &mut LogSources,
     already_appended: bool,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> Result<Vec<PathBuf>> {
     let Some(parse_now) = collection_timestamp() else {
         return Ok(Vec::new());
@@ -638,6 +682,7 @@ fn run_collection_cycle(
             process_io,
             segment,
             sched,
+            cgroup_pass,
         )?;
         written.extend(outcome.written);
         appended |= outcome.appended;
@@ -662,6 +707,7 @@ fn run_collection_cycle(
             process_io,
             segment,
             sched,
+            cgroup_pass,
         )?;
         written.extend(outcome.written);
         appended |= outcome.appended;
@@ -697,9 +743,10 @@ fn append_pending_window(
     log_rows: &LogRows,
     opening_settings: &[kronika_source_pg::settings::SettingsRow],
     ts: i64,
-    process_io: &mut ProcessIoCredentials,
+    process_io: &mut Option<ProcessIoCredentials>,
     segment: &mut SegmentState,
     sched: &mut Scheduler,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> Result<PendingWindowOutcome> {
     let mut outcome = PendingWindowOutcome::default();
     let mut attempt_due = due_for_window(segment, due, sched);
@@ -715,6 +762,7 @@ fn append_pending_window(
             in_container,
             ts,
             process_io,
+            cgroup_pass,
         ) {
             Ok(Some(buffered)) => buffered,
             Ok(None) => {
@@ -773,6 +821,7 @@ fn append_pending_window(
                 }
                 if !segment.is_empty() {
                     segment.mark_users_recorded(&buffered.pending_users);
+                    segment.mark_cgroup_context_recorded(buffered.pending_cgroup_context.as_ref());
                 }
                 outcome.accepted = true;
                 outcome.appended = true;
@@ -822,29 +871,25 @@ fn buffer_window(
     config: &Config,
     in_container: bool,
     ts: i64,
-    process_io: &mut ProcessIoCredentials,
+    process_io: &mut Option<ProcessIoCredentials>,
+    cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> std::result::Result<Option<BufferedWindow>, BufferFailure> {
-    let fs = ProcFs::from_env();
     let mut buffers = SectionBuffers::new();
-    if segment.is_empty() {
-        let facts = collect_instance().map_err(|err| {
-            log_buffer_failure(&err);
-            BufferFailure
-        })?;
-        if let Err(err) = push_instance_metadata(
+    if segment.is_empty()
+        && let Err(err) = push_instance_metadata(
             &mut buffers,
             segment.interner_mut(),
-            &facts,
             in_container,
             config,
             ts,
-        ) {
-            log_buffer_failure(&err);
-            return Err(BufferFailure);
-        }
+        )
+    {
+        log_buffer_failure(&err);
+        return Err(BufferFailure);
     }
 
-    let os = {
+    let mut os = process_io.as_mut().map(|process_io| {
+        let fs = ProcFs::from_env();
         let (interner, users) = segment.os_state_mut();
         collect_os_sources(
             &fs,
@@ -855,15 +900,22 @@ fn buffer_window(
             ts,
             in_container,
             due,
+            cgroup_pass,
         )
-    };
+    });
+    let pending_cgroup_context = os
+        .as_mut()
+        .and_then(|os| os.deduplicate_context(segment.cgroup_context()));
     let settings = if segment.needs_pg_settings() {
         opening_settings
     } else {
         &[]
     };
     if let Err(err) = push_pg_settings(&mut buffers, segment.interner_mut(), settings)
-        .and_then(|()| push_os_sources(&mut buffers, &os))
+        .and_then(|()| {
+            os.as_ref()
+                .map_or(Ok(()), |os| push_os_sources(&mut buffers, os))
+        })
         .and_then(|()| push_log_sources(&mut buffers, segment.interner_mut(), log_rows))
     {
         log_buffer_failure(&err);
@@ -874,7 +926,10 @@ fn buffer_window(
     }
     Ok(Some(BufferedWindow {
         buffers,
-        pending_users: os.pending_users().to_vec(),
+        pending_cgroup_context,
+        pending_users: os
+            .as_ref()
+            .map_or_else(Vec::new, |os| os.pending_users().to_vec()),
     }))
 }
 

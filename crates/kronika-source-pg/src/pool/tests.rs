@@ -463,6 +463,20 @@ async fn a_dead_client_is_not_reported_as_a_reusable_generation() {
 fn accept_startup(stream: &mut TcpStream) -> Vec<u8> {
     let mut len = [0_u8; 4];
     stream.read_exact(&mut len).expect("read startup length");
+    if u32::from_be_bytes(len) == 8 {
+        let mut request = [0_u8; 4];
+        stream.read_exact(&mut request).expect("read SSLRequest");
+        assert_eq!(
+            u32::from_be_bytes(request),
+            80_877_103,
+            "PostgreSQL SSLRequest"
+        );
+        stream.write_all(b"N").expect("probe declines TLS");
+        stream.flush().expect("flush TLS refusal");
+        stream
+            .read_exact(&mut len)
+            .expect("read plaintext startup length");
+    }
     let body_len = usize::try_from(u32::from_be_bytes(len).saturating_sub(4))
         .expect("the startup body length fits usize");
     let mut body = vec![0_u8; body_len];
@@ -505,4 +519,34 @@ fn write_backend(stream: &mut TcpStream, tag: u8, body: &[u8]) {
         .write_all(&len.to_be_bytes())
         .expect("write backend length");
     stream.write_all(body).expect("write backend body");
+}
+
+#[tokio::test]
+async fn require_rejects_ssl_refusal_without_sending_plaintext_startup() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind TLS refusal fixture");
+    let port = listener.local_addr().expect("fixture address").port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept TLS negotiation");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("bound fixture read");
+        let mut request = [0; 8];
+        stream.read_exact(&mut request).expect("read SSLRequest");
+        assert_eq!(request, [0, 0, 0, 8, 4, 210, 22, 47]);
+        stream.write_all(b"N").expect("decline TLS");
+        stream.flush().expect("flush refusal");
+        let mut next = [0];
+        assert_eq!(
+            stream.read(&mut next).expect("read closed transport"),
+            0,
+            "require must never send a plaintext StartupMessage"
+        );
+    });
+    let mut pool = Pool::new(&format!(
+        "host=127.0.0.1 port={port} user=monitor dbname=metrics sslmode=require"
+    ))
+    .expect("valid require DSN");
+    assert!(pool.session().await.is_err());
+    assert_eq!(pool.generation(), None);
+    server.join().expect("TLS refusal fixture exits");
 }

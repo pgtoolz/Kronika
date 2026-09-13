@@ -33,7 +33,7 @@ fn summary_has_stable_units_and_separate_failure_counts() {
     );
     totals.record_connection(false);
     totals.record_connection(true);
-    let fields = summary_fields("shutdown", Duration::from_secs(2), totals, 1234);
+    let fields = summary_fields("shutdown", Duration::from_secs(2), totals, Some(1234));
     let line = crate::logging::render_log_line(LogLevel::Info, "pg_query_summary", &fields);
 
     for expected in [
@@ -108,8 +108,8 @@ fn query_line_has_safe_context_and_actionable_error() {
 fn shutdown_aggregate_is_emitted_once_even_when_empty() {
     let started = Instant::now();
     let mut telemetry = PgTelemetry::new(started);
-    let first = telemetry.shutdown_fields(started + Duration::from_secs(1), 7);
-    let second = telemetry.shutdown_fields(started + Duration::from_secs(2), 8);
+    let first = telemetry.shutdown_fields(started + Duration::from_secs(1), Some(7));
+    let second = telemetry.shutdown_fields(started + Duration::from_secs(2), Some(8));
 
     assert!(first.is_some());
     assert!(second.is_none());

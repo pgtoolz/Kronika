@@ -30,6 +30,7 @@ fn filesystem_fixture(world: &mut BddWorld, step: &Step) -> Result<()> {
                     .append(true)
                     .open(&path)
                     .with_context(|| format!("open {}", path.display()))?;
+                let value = value.replace("{fixture}", &root.to_string_lossy());
                 writeln!(file, "{value}")
                     .with_context(|| format!("append a line to {}", path.display()))?;
             }

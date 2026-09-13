@@ -4,7 +4,7 @@
 
 ## Release
 
-[The latest release](https://github.com/pgtoolz/Kronika/releases/latest)
+[Release 1.0.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.2)
 contains four programs for Linux x86-64 and ARM64.
 
 <a id="download"></a>
@@ -12,12 +12,12 @@ contains four programs for Linux x86-64 and ARM64.
 
 | Architecture | Archive | Checksum |
 | --- | --- | --- |
-| x86-64 | [kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz.sha256) |
-| ARM64 | [kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz.sha256) |
+| x86-64 | [kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz.sha256) |
+| ARM64 | [kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz.sha256) |
 
 Follow the [download and installation commands](../INSTALL.md#1-download-and-extract).
-The [HTML example](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-v1.0.1.html)
-opens offline; it is also [available in the browser](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html).
+The [HTML example](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-v1.0.2.html)
+can be opened offline or [in the browser](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html).
 
 <a id="members-and-identity"></a>
 ## Archive contents and build version

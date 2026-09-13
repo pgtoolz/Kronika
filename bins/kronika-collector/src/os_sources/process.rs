@@ -1,6 +1,6 @@
 use super::{
     DueSet, Instant, Interner, OsCgroupMapping, OsSources, ProcFs, ProcessError,
-    ProcessIoCredentials, ProcessIoTarget, ProcessReader, SourceKind, Ts, UserReferences, cgroup,
+    ProcessIoCredentials, ProcessIoTarget, ProcessReader, SourceKind, Ts, UserReferences,
     intern_str, log_collection_finish, log_count_degraded, log_degraded, process_facts,
 };
 
@@ -17,14 +17,12 @@ pub(super) fn collect_process_sections(
     scope: u8,
     ts: i64,
     due: &DueSet,
-    mut workload_memberships: Option<&mut cgroup::WorkloadMemberships>,
     os: &mut OsSources,
 ) {
     let hot_due = due.has(SourceKind::OsProcesses);
     let status_due = due.has(SourceKind::OsProcessStatus);
     let mapping_due = due.has(SourceKind::OsCgroupMapping);
-    let cgroup_due = workload_memberships.is_some();
-    if !hot_due && !status_due && !mapping_due && !cgroup_due {
+    if !hot_due && !status_due && !mapping_due {
         return;
     }
 
@@ -58,14 +56,6 @@ pub(super) fn collect_process_sections(
                     log_degraded(type_id, "process", &err);
                 }
             }
-            if let Some(memberships) = workload_memberships {
-                let mut reader = ProcessReader::new(fs);
-                for pid in pids {
-                    if let Some(content) = reader.cgroup_membership(pid) {
-                        memberships.observe(content);
-                    }
-                }
-            }
             return;
         }
     };
@@ -75,13 +65,8 @@ pub(super) fn collect_process_sections(
     let mut reader = ProcessReader::new(fs);
     let mut io_targets = Vec::new();
     for pid in pids {
-        let cgroup_path = if mapping_due || cgroup_due {
+        let cgroup_path = if mapping_due {
             let membership = reader.cgroup_membership(pid);
-            if let (Some(memberships), Some(membership)) =
-                (workload_memberships.as_deref_mut(), membership)
-            {
-                memberships.observe(membership);
-            }
             membership.and_then(kronika_source_os::proc::process::parse_cgroup_path)
         } else {
             None

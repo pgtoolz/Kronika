@@ -11,6 +11,10 @@ export const SEARCH_MAX_TOKENS = 31
 export type SearchSurface =
   | "events"
   | "os_process"
+  | "os_cgroup_v2_cpu"
+  | "os_cgroup_v2_memory"
+  | "os_cgroup_v2_io"
+  | "os_cgroup_v2_pids"
   | "pg_locks"
   | "pg_stat_activity"
   | "pg_stat_database"
@@ -175,6 +179,11 @@ const POSTGRES_QUANTITIES: readonly SearchField[] = [
 ]
 
 const SEARCH_FIELDS: Readonly<Record<SearchSurface, readonly SearchField[]>> = {
+  os_cgroup_v2_cpu: [text(["cgroup_path"]), string("path", ["cgroup_path"])],
+  os_cgroup_v2_memory: [text(["cgroup_path"]), string("path", ["cgroup_path"])],
+  os_cgroup_v2_io: [text(["cgroup_path"]), string("path", ["cgroup_path"])],
+  os_cgroup_v2_pids: [text(["cgroup_path"]), string("path", ["cgroup_path"])],
+
   events: [
     text(["category", "source", "logical_name"]),
     string("kind", ["kind"]), string("source", ["source", "logical_name"]),

@@ -83,23 +83,15 @@ pub(crate) fn push_os_sources(buffers: &mut SectionBuffers, os: &OsSources) -> R
     for row in &os.process_status {
         buffer_row(buffers, *row)?;
     }
+    push_cgroup_sources(buffers, os)
+}
+
+fn push_cgroup_sources(buffers: &mut SectionBuffers, os: &OsSources) -> Result<()> {
     for row in &os.cgroup_mapping {
         buffer_row(buffers, *row)?;
     }
     if let Some(row) = os.cgroup_context {
         buffer_row(buffers, row)?;
-    }
-    for row in &os.cgroup_cpu {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cgroup_memory {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cgroup_io {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cgroup_pids {
-        buffer_row(buffers, *row)?;
     }
     Ok(())
 }

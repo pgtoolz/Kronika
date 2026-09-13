@@ -8,7 +8,7 @@ use base64::write::EncoderWriter;
 use flate2::read::GzDecoder;
 use kronika_format::ReadAt;
 use kronika_layout::{LayoutError, SegmentId};
-use kronika_query::{SOURCE_OS, source_bit};
+use kronika_query::{SOURCE_OS, SOURCE_POSTGRESQL, source_bit};
 use kronika_reader::{FinishedReader, ReaderError};
 use kronika_store::{
     EmbeddedResource, EmbeddedSource, ImmutableSegmentSource as _, ResourceError, SegmentResource,
@@ -368,7 +368,11 @@ fn isolated_index(
     resource: &SegmentResource<EmbeddedResource>,
 ) -> Result<(Vec<u8>, u32), HtmlReportError> {
     let segment = reader.open_segment(resource)?;
-    let configured_sources = configured_sources(segment.type_ids());
+    let facts = kronika_index::collection_facts(&segment)?;
+    let configured_sources = match (facts.os_enabled, facts.postgresql_enabled) {
+        (Some(os), Some(pg)) => (u32::from(os) * SOURCE_OS) | (u32::from(pg) * SOURCE_POSTGRESQL),
+        _ => configured_sources(segment.type_ids()),
+    };
     let index = kronika_index::build(&segment)?;
     Ok((index.encode()?, configured_sources))
 }

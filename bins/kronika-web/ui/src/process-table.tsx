@@ -253,7 +253,7 @@ export function ProcessTable({
   readonly findingField?: string | null | undefined
   readonly densePageState: "idle" | "loading" | "error"
   readonly lens: Lens
-  readonly linkedPids: ReadonlySet<number>
+  readonly linkedPids: ReadonlySet<string>
   readonly locale: Locale
   readonly metadata?: SnapshotRows | undefined
   readonly onLoadMore: () => void
@@ -279,7 +279,7 @@ export function ProcessTable({
       ...(help === undefined ? {} : { help }),
       kind: entityKind(field.kind),
       label: field.label,
-      render: (row) => <CellValue field={field} locale={locale} linked={linkedPids.has(asNumber(value(row, "pid")) ?? -1)} onSearch={onPattern} row={row} t={t} ticksPerSecond={ticksPerSecond} />,
+      render: (row) => <CellValue field={field} locale={locale} linked={linkedPids.has(`${row.segmentId}:${asNumber(value(row, "pid")) ?? -1}`)} onSearch={onPattern} row={row} t={t} ticksPerSecond={ticksPerSecond} />,
       sortValue: (row) => sortable(row, field),
       sortable: lens !== "tree" && field.kind !== "user",
       ...(field.sticky === undefined ? {} : { sticky: `sticky-${field.sticky}` }),

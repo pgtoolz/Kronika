@@ -6,7 +6,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use arrow_array::{ArrayRef, RecordBatchReader, UInt32Array};
-use arrow_ord::sort::{LexicographicalComparator, SortColumn, lexsort_to_indices};
+use arrow_ord::sort::{LexicographicalComparator, SortColumn};
 use arrow_select::concat::concat;
 use arrow_select::interleave::interleave;
 use parquet::arrow::arrow_reader::{
@@ -60,9 +60,8 @@ pub fn validate_final_section(
 /// Encode validated input sections into one final Parquet body.
 ///
 /// `open` returns a fresh bounded random-access view of one compressed input
-/// body. The finalizer retains the sort-key columns while it establishes row
-/// order, then at most one decoded output column, compact row locations, and
-/// one output chunk.
+/// body. The finalizer establishes row order one column at a time, then retains
+/// one decoded output column, compact row locations, and one output chunk.
 ///
 /// # Errors
 ///
@@ -87,9 +86,8 @@ where
     }
 
     let mut metadata = SectionMetadataCache::new(expected_rows.len());
-    let mut plan = canonical_order(expected_rows, contract, &mut metadata, &mut open)?;
-    if plan.order.is_none() {
-        drop(plan);
+    let order = canonical_order(expected_rows, contract, &mut metadata, &mut open)?;
+    let Some(order) = order else {
         return encode_ordered_sections_to(
             type_id,
             expected_rows,
@@ -99,12 +97,9 @@ where
             &mut metadata,
             &mut open,
         );
-    }
-    let locations = canonical_locations(
-        expected_rows,
-        plan.order.as_ref().ok_or(CodecError::SchemaMismatch)?,
-    )?;
-    plan.order = None;
+    };
+    let locations = canonical_locations(expected_rows, &order)?;
+    drop(order);
     let schema = arrow_schema(contract);
     let properties = Arc::new(FINAL_WRITER_PROPS.clone());
     let parquet_schema = ArrowSchemaConverter::new()
@@ -126,21 +121,15 @@ where
     let mut column_index = 0_usize;
     while column_index < contract.columns.len() {
         let column = &contract.columns[column_index];
-        let projected = match plan.projected[column_index].take() {
-            Some(arrays) if column.ty != ColumnType::ListI32 => ProjectedColumn {
-                arrays,
-                list_values: 0,
-            },
-            _ => project_column(
-                expected_rows,
-                contract,
-                column_index,
-                (column.ty == ColumnType::ListI32).then_some(column.name),
-                column_index + 1 == contract.columns.len(),
-                &mut metadata,
-                &mut open,
-            )?,
-        };
+        let projected = project_column(
+            expected_rows,
+            contract,
+            column_index,
+            (column.ty == ColumnType::ListI32).then_some(column.name),
+            column_index + 1 == contract.columns.len(),
+            &mut metadata,
+            &mut open,
+        )?;
 
         let field = &schema.fields()[column_index];
         if column.ty == ColumnType::ListI32 {
@@ -484,13 +473,8 @@ fn aggregate_rows(expected_rows: &[u32]) -> Result<usize, CodecError> {
     Ok(rows)
 }
 
-struct CanonicalPlan {
-    order: Option<UInt32Array>,
-    projected: Vec<Option<Vec<ArrayRef>>>,
-}
-
-fn finish_canonical_plan(order: Vec<u32>, projected: Vec<Option<Vec<ArrayRef>>>) -> CanonicalPlan {
-    let order = if order
+fn finish_canonical_order(order: Vec<u32>) -> Option<UInt32Array> {
+    if order
         .iter()
         .enumerate()
         .all(|(expected, &actual)| actual as usize == expected)
@@ -498,8 +482,7 @@ fn finish_canonical_plan(order: Vec<u32>, projected: Vec<Option<Vec<ArrayRef>>>)
         None
     } else {
         Some(UInt32Array::from(order))
-    };
-    CanonicalPlan { order, projected }
+    }
 }
 
 fn canonical_column_indices(
@@ -525,17 +508,14 @@ fn canonical_order<R, E>(
     contract: &TypeContract,
     metadata: &mut SectionMetadataCache,
     open: &mut impl FnMut(usize) -> Result<R, E>,
-) -> Result<CanonicalPlan, E>
+) -> Result<Option<UInt32Array>, E>
 where
     R: ChunkReader + 'static,
     E: From<CodecError>,
 {
     let rows = aggregate_rows(expected_rows)?;
     if rows <= 1 || contract.columns.is_empty() {
-        return Ok(CanonicalPlan {
-            order: None,
-            projected: vec![None; contract.columns.len()],
-        });
+        return Ok(None);
     }
 
     let (sort_key_indices, column_indices) = canonical_column_indices(contract)?;
@@ -545,40 +525,13 @@ where
         max: MAX_SECTION_ROWS,
     })?;
     let mut order = identity.collect::<Vec<_>>();
-    let mut cached = vec![None; contract.columns.len()];
-    let mut ties = if sort_key_indices.is_empty() {
-        #[allow(
-            clippy::single_range_in_vec_init,
-            reason = "the first refinement pass starts with every row tied"
-        )]
-        let all = vec![0..rows];
-        all
-    } else {
-        let projected =
-            project_columns(expected_rows, contract, &sort_key_indices, metadata, open)?;
-        let sort_columns = projected
-            .values
-            .iter()
-            .map(|values| SortColumn {
-                values: Arc::clone(values),
-                options: None,
-            })
-            .collect::<Vec<_>>();
-        let indices = lexsort_to_indices(&sort_columns, None).map_err(CodecError::from)?;
-        order.copy_from_slice(indices.values());
-        let comparator =
-            LexicographicalComparator::try_new(&sort_columns).map_err(CodecError::from)?;
-        let mut tied = Vec::new();
-        collect_ties(&order, 0..rows, &comparator, &mut tied);
-        drop(comparator);
-        drop(sort_columns);
-        for (column_index, arrays) in sort_key_indices.iter().copied().zip(projected.arrays) {
-            cached[column_index] = Some(arrays);
-        }
-        tied
-    };
+    #[allow(
+        clippy::single_range_in_vec_init,
+        reason = "the first refinement pass starts with every row tied"
+    )]
+    let mut ties = vec![0..rows];
 
-    for column_index in column_indices {
+    for column_index in sort_key_indices.into_iter().chain(column_indices) {
         if ties.is_empty() {
             break;
         }
@@ -615,7 +568,7 @@ where
         ties = next_ties;
     }
 
-    Ok(finish_canonical_plan(order, cached))
+    Ok(finish_canonical_order(order))
 }
 
 fn collect_ties(
@@ -638,106 +591,6 @@ fn collect_ties(
     if range.end - start > 1 {
         ties.push(start..range.end);
     }
-}
-
-struct ProjectedColumns {
-    arrays: Vec<Vec<ArrayRef>>,
-    values: Vec<ArrayRef>,
-}
-
-fn project_columns<R, E>(
-    expected_rows: &[u32],
-    contract: &TypeContract,
-    column_indices: &[usize],
-    metadata: &mut SectionMetadataCache,
-    open: &mut impl FnMut(usize) -> Result<R, E>,
-) -> Result<ProjectedColumns, E>
-where
-    R: ChunkReader + 'static,
-    E: From<CodecError>,
-{
-    let mut projection_indices = column_indices.to_vec();
-    projection_indices.sort_unstable();
-    projection_indices.dedup();
-    if projection_indices.len() != column_indices.len() {
-        return Err(CodecError::SchemaMismatch.into());
-    }
-
-    let mut columns = (0..column_indices.len())
-        .map(|_index| Vec::<ArrayRef>::new())
-        .collect::<Vec<_>>();
-    let mut rows = 0_usize;
-    for (section_index, &expected) in expected_rows.iter().enumerate() {
-        let source = open(section_index)?;
-        let builder = section_reader_builder(
-            source,
-            contract,
-            expected as usize,
-            metadata,
-            section_index,
-            false,
-        )?;
-        let mask =
-            ProjectionMask::roots(builder.parquet_schema(), projection_indices.iter().copied());
-        let reader = builder
-            .with_projection(mask)
-            .with_batch_size(DECODE_BATCH_SIZE)
-            .build()
-            .map_err(CodecError::from)?;
-        let mut section_rows = 0_usize;
-        for batch in reader {
-            let batch = batch.map_err(CodecError::from)?;
-            section_rows =
-                section_rows
-                    .checked_add(batch.num_rows())
-                    .ok_or(CodecError::TooManyRows {
-                        rows: usize::MAX,
-                        max: MAX_SECTION_ROWS,
-                    })?;
-            if batch.num_columns() != projection_indices.len() {
-                return Err(CodecError::SchemaMismatch.into());
-            }
-            for (arrays, &column_index) in columns.iter_mut().zip(column_indices) {
-                let position = projection_indices
-                    .binary_search(&column_index)
-                    .map_err(|_missing| CodecError::SchemaMismatch)?;
-                arrays.push(Arc::clone(batch.column(position)));
-            }
-        }
-        if section_rows != expected as usize {
-            return Err(CodecError::RowCountMismatch {
-                expected: u64::from(expected),
-                got: section_rows as u64,
-            }
-            .into());
-        }
-        rows = rows
-            .checked_add(section_rows)
-            .ok_or(CodecError::TooManyRows {
-                rows: usize::MAX,
-                max: MAX_SECTION_ROWS,
-            })?;
-    }
-    let expected = aggregate_rows(expected_rows)?;
-    if rows != expected {
-        return Err(CodecError::RowCountMismatch {
-            expected: expected as u64,
-            got: rows as u64,
-        }
-        .into());
-    }
-
-    let values = columns
-        .iter()
-        .map(|arrays| {
-            let arrays = arrays.iter().map(AsRef::as_ref).collect::<Vec<_>>();
-            concat(&arrays).map_err(CodecError::from).map_err(E::from)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(ProjectedColumns {
-        arrays: columns,
-        values,
-    })
 }
 
 struct ProjectedColumn {

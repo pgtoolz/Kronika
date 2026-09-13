@@ -279,13 +279,32 @@ impl Error for StreamError {
 pub struct Session<'a> {
     client: &'a Client,
     generation: u64,
+    transport: Option<&'a crate::Transport>,
 }
 
 impl<'a> Session<'a> {
     /// Wrap a connected client.
     #[must_use]
     pub const fn new(client: &'a Client, generation: u64) -> Self {
-        Self { client, generation }
+        Self {
+            client,
+            generation,
+            transport: None,
+        }
+    }
+
+    /// Wrap a client with the transport needed for its cancellation requests.
+    #[must_use]
+    pub const fn with_transport(
+        client: &'a Client,
+        generation: u64,
+        transport: &'a crate::Transport,
+    ) -> Self {
+        Self {
+            client,
+            generation,
+            transport: Some(transport),
+        }
     }
 
     /// Generation assigned when this connection was opened.
@@ -354,7 +373,7 @@ async fn timeout_at<T>(
     match tokio::time::timeout_at(deadline, future).await {
         Ok(value) => Ok(value),
         Err(elapsed) => {
-            send_cancel(session.client.cancel_token()).await;
+            send_cancel(session.client.cancel_token(), session.transport).await;
             Err(elapsed)
         }
     }
@@ -378,8 +397,14 @@ where
     }
 }
 
-async fn send_cancel(token: CancelToken) {
-    let _result = tokio::time::timeout(CANCEL_REQUEST_TIMEOUT, token.cancel_query(NoTls)).await;
+async fn send_cancel(token: CancelToken, transport: Option<&crate::Transport>) {
+    let _result = tokio::time::timeout(CANCEL_REQUEST_TIMEOUT, async {
+        match transport {
+            Some(transport) => transport.cancel(token).await,
+            None => token.cancel_query(NoTls).await,
+        }
+    })
+    .await;
 }
 
 /// Consume a typed query into memory for a known-small result.

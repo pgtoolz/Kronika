@@ -38,12 +38,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let request = kronika_api::parse(&path, Some(&query))
         .map_err(|error| std::io::Error::other(error.to_string()))?
         .into_query()?;
+    let fixture = std::env::args().nth(3).map(std::path::PathBuf::from);
+    let (zms, idx, configured_sources) = if let Some(directory) = fixture {
+        (
+            std::fs::read(directory.join("recording.zms"))?,
+            std::fs::read(directory.join("recording.idx"))?,
+            std::fs::read_to_string(directory.join("sources"))?
+                .trim()
+                .parse()?,
+        )
+    } else {
+        (ZMS.to_vec(), IDX.to_vec(), SOURCE_OS | SOURCE_POSTGRESQL)
+    };
+    let max_zms_bytes = u64::try_from(zms.len())?;
     let engine = ReportEngine::new(ReportInput {
         segment_id: SegmentId::new(SEGMENT_ID.parse()?)?,
-        zms: ZMS.to_vec(),
-        idx: IDX.to_vec(),
-        configured_sources: SOURCE_OS | SOURCE_POSTGRESQL,
-        max_zms_bytes: u64::try_from(ZMS.len())?,
+        zms,
+        idx,
+        configured_sources,
+        max_zms_bytes,
     })?;
     let mut records = Records::default();
     engine.execute(request, &mut records)?;

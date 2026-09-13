@@ -39,6 +39,7 @@ pub mod statements;
 pub mod statements_info;
 pub mod store_plans;
 pub mod store_plans_info;
+pub mod transport;
 pub mod user_indexes;
 pub mod user_tables;
 pub mod wal;
@@ -46,6 +47,7 @@ pub mod wal_storage;
 
 pub use pool::{CONNECT_TIMEOUT, ConnectError, MAX_AGE, Pool};
 pub use query::Session;
+pub use transport::Transport;
 
 fn intern_opt<E>(
     intern: &mut impl FnMut(&[u8]) -> Result<kronika_registry::StrId, E>,

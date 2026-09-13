@@ -51,9 +51,13 @@ KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-
 
 Для PostgreSQL на машине сборщика используйте строку подключения выше и
 задайте `KRONIKA_WEB_SOURCES=3` в `web.env`, чтобы объявить Linux и PostgreSQL.
-При удалённом сервере данные Linux по-прежнему относятся к машине сборщика;
-[настройка удалённого PostgreSQL](../bins/kronika-collector/README.ru.md#remote-postgresql)
-описывает число CPU, связи процессов и Health. Полный список параметров:
+
+Для сбора только PostgreSQL задайте `KRONIKA_COLLECTOR_MODE=postgresql` в
+`collector.env` и `KRONIKA_WEB_SOURCES=2` в `web.env`. Сервер PostgreSQL может
+быть локальным или удалённым. Режим сборщика определяет, какие данные записывать;
+настройка веб-сервера объявляет источники в каталоге.
+[Параметры подключения](../bins/kronika-collector/README.ru.md#remote-postgresql).
+Полный список параметров:
 [сборщик](../bins/kronika-collector/README.ru.md) и
 [веб-сервер](../bins/kronika-web/README.ru.md).
 

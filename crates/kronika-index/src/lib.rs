@@ -16,10 +16,11 @@ mod store;
 #[cfg(feature = "posix")]
 pub use build::build_from_reader;
 pub use build::{
-    BuildError, DERIVED_HEALTH_TYPE_ID, INSTANCE_METADATA_TYPE_ID, INSTANCE_METADATA_V1_TYPE_ID,
-    OS_PSI_TYPE_ID, build, build_selected, keys, visit_health_points,
+    BuildError, CollectionFacts, DERIVED_HEALTH_TYPE_ID, INSTANCE_METADATA_TYPE_ID,
+    INSTANCE_METADATA_V1_TYPE_ID, INSTANCE_METADATA_V3_TYPE_ID, OS_PSI_TYPE_ID, build,
+    build_selected, collection_facts, keys, visit_health_points,
 };
-pub use cpu_capacity::cgroup_cpu_capacity;
+pub use cpu_capacity::{cgroup_cpu_capacity, observed_cgroup_cpu_capacity};
 pub use file::{ENTRY_LEN, HEADER_LEN, Index, IndexError, MAGIC, TargetedIndex};
 pub use findings::{Finding, FindingBlock, FindingKind, MAX_FINDINGS_PER_BLOCK};
 pub use health::{SourcePenalty, Stall, health, overall_health, postgres_penalty};

@@ -39,6 +39,7 @@ async fn shutdown_drops_in_progress_collection() {
 
 fn config(storage_dir: &Path) -> Config {
     Config {
+        mode: crate::config::CollectorMode::Local,
         storage_dir: storage_dir.to_owned(),
         tick_secs: 1,
         intervals: Intervals::default(),
@@ -112,4 +113,55 @@ fn invalid_connections_stop_before_storage_recovery() {
         );
         assert!(!storage_dir.join("1970/01/01/100.zms").exists());
     }
+}
+
+#[test]
+fn postgres_ca_is_required_only_for_postgres_targets() {
+    const CHILD_ENV: &str = "KRONIKA_TEST_PG_CA_STARTUP_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output = std::process::Command::new(
+            std::env::current_exe().expect("locate collector test binary"),
+        )
+        .args([
+            "--exact",
+            "tests::shutdown::postgres_ca_is_required_only_for_postgres_targets",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD_ENV, "1")
+        .env(
+            "KRONIKA_PG_SSL_ROOT_CERT",
+            dir.path().join("missing-ca.pem"),
+        )
+        .output()
+        .expect("run isolated CA startup child");
+        assert!(
+            output.status.success(),
+            "isolated CA startup failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let dsn = "host=127.0.0.1 port=6432 user=monitor sslmode=disable".to_owned();
+    let mut pgbouncer = config(&dir.path().join("pgbouncer"));
+    pgbouncer.pgbouncer_dsns = vec![dsn.clone()];
+    drop(initialize_collector(&pgbouncer).expect("PgBouncer does not read PostgreSQL CA"));
+    assert!(pgbouncer.storage_dir.join("active.wal").exists());
+
+    let mut postgres = config(&dir.path().join("postgres"));
+    postgres.pg_dsns = vec![dsn];
+    let wal_before = recovery_candidate(&postgres.storage_dir);
+    let error = initialize_collector(&postgres).expect_err("PostgreSQL requires a valid CA");
+    assert!(
+        format!("{error:#}")
+            .contains("KRONIKA_PG_SSL_ROOT_CERT must name a readable, valid PEM CA bundle")
+    );
+    assert_eq!(
+        std::fs::read(postgres.storage_dir.join("active.wal")).expect("read untouched journal"),
+        wal_before,
+    );
 }

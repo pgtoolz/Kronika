@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use futures_util::TryStreamExt as _;
-use kronika_source_pg::Session;
 use kronika_source_pg::query::{self, QueryStats};
+use kronika_source_pg::{Session, Transport};
 use tokio_postgres::config::Host;
 use tokio_postgres::{Config, NoTls, SimpleQueryMessage};
 
@@ -205,11 +205,12 @@ struct LogFacts {
 )]
 pub(super) async fn postgres(
     target: &ConnectionTarget,
+    transport: &Transport,
     cached_system_identifier: Option<u64>,
     observe: &mut (dyn FnMut(PgObservation) + Send),
 ) -> Result<PostgresServer> {
     let connect_started = Instant::now();
-    let connected = tokio::time::timeout(CONNECT_TIMEOUT, target.config.connect(NoTls)).await;
+    let connected = tokio::time::timeout(CONNECT_TIMEOUT, transport.connect(&target.config)).await;
     let (client, connection) = match connected {
         Ok(Ok(connected)) => connected,
         Ok(Err(error)) => {
@@ -274,7 +275,7 @@ pub(super) async fn postgres(
     }
     let mut facts_stats = QueryStats::default();
     let facts_started = Instant::now();
-    let session = Session::new(&client, 0);
+    let session = Session::with_transport(&client, 0, transport);
     let facts = query::timeout(
         session,
         QUERY_TIMEOUT,
@@ -338,7 +339,7 @@ pub(super) async fn postgres(
     } else {
         let mut stats = QueryStats::default();
         let started = Instant::now();
-        let session = Session::new(&client, 0);
+        let session = Session::with_transport(&client, 0, transport);
         let identity = query::timeout(
             session,
             QUERY_TIMEOUT,

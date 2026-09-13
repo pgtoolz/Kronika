@@ -3,18 +3,18 @@
 [English version](INSTALL.md) · [README](README.ru.md)
 
 Для записи и просмотра истории нужны две программы: `kronika-collector`
-собирает данные о машине, а `kronika-web` показывает их в браузере.
+собирает метрики Linux или PostgreSQL, а `kronika-web` показывает их в браузере.
 В архиве также есть `kronika-dump` для чтения и вырезания части записи и
 `kronika-report` для создания HTML-отчёта.
 
-Шаги 1–2 устанавливают опубликованный архив. Чтобы скомпилировать программы
+Шаги 1–2 устанавливают готовый архив. Чтобы скомпилировать программы
 самостоятельно, используйте [инструкцию сборки](docs/build.ru.md), затем перейдите
 к [запуску сборщика](#3-запуск-сборщика). Для сбора PostgreSQL понадобится
 строка подключения с правами мониторинга.
 
 ## 1. Скачивание и распаковка
 
-В [текущем релизе](https://github.com/pgtoolz/Kronika/releases/latest)
+В [релизе 1.0.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.2)
 доступны архивы и файлы контрольных сумм `.tar.gz.sha256`.
 Команда `uname -m` покажет архитектуру вашей машины:
 
@@ -28,7 +28,7 @@
 
 ```sh
 target=x86_64-unknown-linux-musl
-version=1.0.1
+version=1.0.2
 archive="kronika-$version-$target.tar.gz"
 release_url="https://github.com/pgtoolz/Kronika/releases/download/v$version"
 curl -fLO "$release_url/$archive"
@@ -51,17 +51,20 @@ sudo install -m 0755 kronika-collector kronika-web kronika-dump \
 
 ## 3. Запуск сборщика
 
-На наблюдаемой машине создайте каталог записи, доступный только root:
+Выберите режим: Linux и при необходимости PostgreSQL (`local`) либо только
+PostgreSQL на локальном или удалённом сервере (`postgresql`). Настройки читаются
+при запуске программы.
+
+<a id="3-сбор-linux"></a>
+### Linux и при необходимости PostgreSQL
+
+Для режима `local` создайте каталог записи, доступный только root:
 
 ```sh
 sudo install -d -m 0700 /var/lib/kronika
 ```
 
-Выберите один вариант запуска ниже: только Linux или Linux вместе с PostgreSQL.
-Настройки читаются при запуске программы.
-
-<a id="3-сбор-linux"></a>
-### Только Linux
+Без `KRONIKA_PG_DSNS` режим `local` собирает только Linux:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -83,7 +86,7 @@ Linux — каждые 10 секунд. Когда возраст накопле
 какие файлы учитываются и в каком порядке удаляются старые записи.
 
 <a id="5-postgresql"></a>
-### Linux и PostgreSQL
+#### Подключение PostgreSQL
 
 Используйте роль с правами мониторинга. Чтобы создать такую роль, выполните
 команды в `psql` от администратора PostgreSQL:
@@ -104,21 +107,33 @@ PostgreSQL на машине сборщика:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
+  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
   /usr/local/bin/kronika-collector
 ```
 
 | Параметр или подключение | Что он задаёт |
 | --- | --- |
-| `KRONIKA_PG_DSNS` | Строки подключения (DSN), разделённые `;`. Первая включает сбор метрик из доступных баз этого сервера. Все строки, включая первую, используются для обнаружения журналов. |
-| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Необязательное целое `1..4294967295`: число CPU, доступных наблюдаемому PostgreSQL. Без явного значения используются записанные сведения о CPU машины или контейнера сборщика. |
+| `KRONIKA_COLLECTOR_MODE` | По умолчанию `local`: Linux и настроенный локальный PostgreSQL. `postgresql`: только PostgreSQL, без чтения OS, процессов и cgroup сборщика. |
+| `KRONIKA_PG_DSNS` | Первый DSN включает метрики сервера. В режиме `local` все DSN, разделённые `;`, также ищут локальные журналы. Обязателен в режиме `postgresql`. |
+| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Необязательное целое `1..4294967295`: число CPU PostgreSQL. На общей локальной машине берётся автоматически из записи. Для удалённого сервера и контейнеров без явного значения число CPU неизвестно; SQL-метрики собираются. |
 | Расширения | Поддерживаемые варианты `pg_stat_statements` и `pg_store_plans` обнаруживаются в доступных базах. Для Activity, Locks и статистики таблиц и индексов используются встроенные представления PostgreSQL. |
-| Подключение | Клиент работает без TLS (`NoTls`). Допустимо прямое подключение к PostgreSQL или PgBouncer в режиме session pooling: одно серверное соединение закрепляется за сессией и сохраняет настройки `SET`. |
-| Журналы | Каждая строка из `KRONIKA_PG_DSNS` автоматически находит текущий журнал через `pg_current_logfile()`, даже если `KRONIKA_PG_LOGS` не задана. Файл должен быть доступен для чтения на машине сборщика. `KRONIKA_PG_LOGS` добавляет локальные пути или шаблоны имён файлов. Для PgBouncer служат `KRONIKA_PGBOUNCER_DSNS` и `KRONIKA_PGBOUNCER_LOGS`. |
+| Подключение | DSN принимает `sslmode=disable`, `prefer` (по умолчанию) или `require`; TLS проверяет CA и имя сервера. `KRONIKA_PG_SSL_ROOT_CERT` заменяет встроенные публичные CA сертификатами из PEM-файла. Прямое подключение и PgBouncer session pooling сохраняют нужные настройки сеанса. |
+| Журналы | В режиме `local` `pg_current_logfile()` находит доступные локальные файлы; `KRONIKA_PG_LOGS` добавляет пути/шаблоны. В режиме `postgresql` читаются только явно заданные файлы `KRONIKA_PG_LOGS`. Удалённые файлы не скачиваются. Настройки журналов PgBouncer действуют только в `local`. |
 
-Если PostgreSQL на другой машине, удалённо читаются только его SQL-данные;
-данные Linux поступают с машины сборщика. [Настройка удалённого PostgreSQL](bins/kronika-collector/README.ru.md#remote-postgresql)
-описывает параметры, связи процессов и смысл Health для такого размещения.
+### Только PostgreSQL — локальный или удалённый сервер
+
+Для сбора только PostgreSQL sudo не нужен.
+
+```sh
+KRONIKA_COLLECTOR_MODE=postgresql \
+  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  /usr/local/bin/kronika-collector
+```
+
+Если серверу доступны 4 CPU, добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`.
+Иначе оставьте параметр незаданным: SQL-метрики доступны, PostgreSQL Health
+неизвестен. См. [удалённый PostgreSQL](bins/kronika-collector/README.ru.md#remote-postgresql).
 
 [Настройка сервисов](docs/services.ru.md) показывает, как хранить строки
 подключения и пароль веб-сервера в файлах, доступных только root.
@@ -129,8 +144,12 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ## 4. Запуск веб-сервера
 
 Во втором терминале задайте пароль и запустите веб-сервер с тем же каталогом
-записи. Для сбора только Linux укажите `KRONIKA_WEB_SOURCES=1`, как в примере
-ниже; для Linux вместе с PostgreSQL — `3`:
+записи.
+
+### Для режима `local`
+
+Для Linux укажите `KRONIKA_WEB_SOURCES=1`, как ниже; если также собирается
+PostgreSQL, замените `1` на `3`:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -141,9 +160,19 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-web
 ```
 
+### Для режима `postgresql`
+
+```sh
+KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_USER=kronika \
+  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
+  KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
+```
+
 Откройте <http://127.0.0.1:8080/> и войдите. Веб-серверу нужен доступ на запись в тот же
 каталог: он создаёт индексы `.idx` для быстрого поиска и файл блокировки,
-который предотвращает одновременную перестройку индексов. В этом примере обе
+который предотвращает одновременную перестройку индексов. В примере с `/var/lib/kronika` обе
 программы работают от root с закрытым для других пользователей хранилищем.
 
 `KRONIKA_WEB_SOURCES` сообщает, какие источники настроены; он не включает сбор

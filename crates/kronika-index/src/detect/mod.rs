@@ -27,6 +27,7 @@ const PG_LOCKS_V2: u32 = 1_011_002;
 const PG_STAT_ARCHIVER: u32 = 1_008_001;
 const OS_CGROUP_MEMORY_V1: u32 = 1_202_001;
 const OS_CGROUP_MEMORY_V2: u32 = 1_202_002;
+const OS_CGROUP_MEMORY_V3: u32 = 1_202_003;
 const PG_LOG_SLOW_QUERIES: u32 = 2_004_001;
 const PG_LOG_EVENT_LAYOUTS: [u32; 6] = [
     PG_LOG_ERRORS_TYPE_ID,
@@ -60,6 +61,8 @@ const DATA_CORRUPTION_CATEGORY: u8 = 5;
 const WRAPAROUND_AGE_THRESHOLD: i64 = 1_600_000_000;
 const EVENT_TIMESTAMP_FIELD: u16 = 0;
 
+type CgroupOomSample = ([Option<u64>; 1], i64, Option<i64>);
+
 #[derive(Debug)]
 pub(crate) struct FindingBuilder {
     requested: BTreeSet<u32>,
@@ -72,6 +75,7 @@ pub(crate) struct FindingBuilder {
     checksum_failures_before: BTreeMap<(u32, u32), (i64, Option<i64>)>,
     sessions_before: BTreeMap<(u32, u32), (i64, i64, i64)>,
     cgroup_oom_before: BTreeMap<(u32, u64), (i64, i64)>,
+    cgroup_oom_v3_before: Option<CgroupOomSample>,
 }
 
 impl FindingBuilder {
@@ -96,6 +100,21 @@ impl FindingBuilder {
             checksum_failures_before: BTreeMap::new(),
             sessions_before: BTreeMap::new(),
             cgroup_oom_before: BTreeMap::new(),
+            cgroup_oom_v3_before: None,
+        }
+    }
+
+    fn cgroup_identities(
+        &self,
+        segment: &Segment,
+    ) -> Result<BTreeMap<i64, [Option<u64>; 1]>, BuildError> {
+        if self.requested.contains(&OS_CGROUP_MEMORY_V3) {
+            Ok(crate::build::cgroup_identities(
+                segment,
+                ["memory_identity"],
+            )?)
+        } else {
+            Ok(BTreeMap::new())
         }
     }
 
@@ -131,9 +150,10 @@ impl FindingBuilder {
                 self.observe_prior_database_counters(segment, type_id)?;
             }
         }
+        let cgroup_identities = self.cgroup_identities(segment)?;
         for type_id in cgroup_memory_layouts() {
             if self.requested.contains(&type_id) {
-                self.observe_prior_cgroup_oom(segment, type_id)?;
+                self.observe_prior_cgroup_oom(segment, type_id, &cgroup_identities)?;
             }
         }
         Ok(())
@@ -228,9 +248,10 @@ impl FindingBuilder {
                 self.find_lock_contention(segment, type_id, &mut hits)?;
             }
         }
+        let cgroup_identities = self.cgroup_identities(segment)?;
         for type_id in cgroup_memory_layouts() {
             if self.requested.contains(&type_id) {
-                self.find_cgroup_oom(segment, type_id, &mut hits)?;
+                self.find_cgroup_oom(segment, type_id, &cgroup_identities, &mut hits)?;
             }
         }
         self.find_active_backends(active_samples, postgres_cpus, &mut hits);
@@ -257,6 +278,7 @@ pub(crate) fn finding_layout(type_id: u32) -> bool {
                 | PG_STAT_ARCHIVER
                 | OS_CGROUP_MEMORY_V1
                 | OS_CGROUP_MEMORY_V2
+                | OS_CGROUP_MEMORY_V3
                 | 1_001_001
                 | 1_001_002
                 | 1_001_004
@@ -273,6 +295,7 @@ const fn needs_prior_rows(type_id: u32) -> bool {
             | PG_STAT_ARCHIVER
             | OS_CGROUP_MEMORY_V1
             | OS_CGROUP_MEMORY_V2
+            | OS_CGROUP_MEMORY_V3
             | 1_005_001..=1_005_004
     )
 }
@@ -322,8 +345,12 @@ pub(super) const fn has_sessions(type_id: u32) -> bool {
     matches!(type_id, 1_005_003 | 1_005_004)
 }
 
-const fn cgroup_memory_layouts() -> [u32; 2] {
-    [OS_CGROUP_MEMORY_V1, OS_CGROUP_MEMORY_V2]
+const fn cgroup_memory_layouts() -> [u32; 3] {
+    [
+        OS_CGROUP_MEMORY_V1,
+        OS_CGROUP_MEMORY_V2,
+        OS_CGROUP_MEMORY_V3,
+    ]
 }
 
 const fn activity_layouts() -> [u32; 3] {

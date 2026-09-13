@@ -44,6 +44,51 @@ pub struct OsCgroupCpu {
     pub scope: u8,
 }
 
+/// Selected-ancestor CPU counters with unavailable controller fields kept null.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Section)]
+#[section(
+    id = 1_201_003,
+    name = "os_cgroup_cpu",
+    semantics = snapshot_full,
+    sort_key("cgroup_path", "cgroup_identity", "ts"),
+    identity("cgroup_path", "cgroup_identity")
+)]
+pub struct OsCgroupCpuV3 {
+    /// Collection timestamp, unix microseconds.
+    #[column(t)]
+    pub ts: Ts,
+    /// Cgroup path as a string dictionary reference.
+    #[column(l)]
+    pub cgroup_path: StrId,
+    /// Recorded selected directory identity for counter continuity.
+    #[column(l)]
+    pub cgroup_identity: StrId,
+    /// Total CPU usage.
+    #[column(c, unit = microseconds)]
+    pub usage_usec: i64,
+    /// User CPU usage.
+    #[column(c, unit = microseconds)]
+    pub user_usec: i64,
+    /// System CPU usage.
+    #[column(c, unit = microseconds)]
+    pub system_usec: i64,
+    /// CPU throttled time.
+    #[column(c, unit = microseconds)]
+    pub throttled_usec: Option<i64>,
+    /// Number of CPU throttling events.
+    #[column(c, unit = count)]
+    pub nr_throttled: Option<i64>,
+    /// CPU quota per period, microseconds (`-1` means unlimited).
+    #[column(g, unit = microseconds)]
+    pub quota_usec: Option<i64>,
+    /// CPU quota period.
+    #[column(g, unit = microseconds)]
+    pub period_usec: Option<i64>,
+    /// Source scope. See `kronika_source_os::OsScope`.
+    #[column(l)]
+    pub scope: u8,
+}
+
 /// Type `1_201_002`, retained so existing WAL and ZMS with `cpuset_cpus` stay readable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Section)]
 #[section(
@@ -168,5 +213,48 @@ mod tests {
             cpuset_cpus: Some(4),
             scope: 1,
         }]);
+    }
+}
+
+#[cfg(test)]
+mod ancestor_tests {
+    use super::OsCgroupCpuV3;
+    use crate::{Section, StrId, Ts};
+
+    #[test]
+    fn ancestor_cpu_nulls_roundtrip() {
+        assert_eq!(OsCgroupCpuV3::CONTRACT.type_id.get(), 1_201_003);
+        assert_eq!(
+            OsCgroupCpuV3::CONTRACT.identity,
+            ["cgroup_path", "cgroup_identity"]
+        );
+        crate::assert_roundtrips(&[
+            OsCgroupCpuV3 {
+                ts: Ts(1),
+                cgroup_path: StrId(1),
+                cgroup_identity: StrId(2),
+                usage_usec: 100,
+                user_usec: 60,
+                system_usec: 40,
+                throttled_usec: None,
+                nr_throttled: None,
+                quota_usec: None,
+                period_usec: None,
+                scope: 4,
+            },
+            OsCgroupCpuV3 {
+                ts: Ts(2),
+                cgroup_path: StrId(1),
+                cgroup_identity: StrId(2),
+                usage_usec: 150,
+                user_usec: 90,
+                system_usec: 60,
+                throttled_usec: Some(0),
+                nr_throttled: Some(0),
+                quota_usec: Some(150_000),
+                period_usec: Some(100_000),
+                scope: 4,
+            },
+        ]);
     }
 }

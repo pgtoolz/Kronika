@@ -9,7 +9,7 @@ use crate::decode::u32_at;
 use crate::series::{SeriesBlock, SeriesKey, SeriesKind};
 
 /// Magic for the current derived-index format.
-pub const MAGIC: [u8; 8] = *b"KRNIDX1\0";
+pub const MAGIC: [u8; 8] = *b"KRNIDX2\0";
 /// Bytes before the table: magic, entry count, checksum.
 pub const HEADER_LEN: usize = 16;
 /// Bytes per TOC entry: series kind, physical input layout, offset, length.
@@ -70,12 +70,11 @@ pub struct TargetedIndex {
 impl TargetedIndex {
     /// Whether selected blocks cover every required requested key.
     ///
-    /// `PostgresHealth` is optional because a valid index omits it when
-    /// `PostgreSQL` collection was disabled for the segment.
+    /// OS and `PostgreSQL` blocks are optional when that collection family was disabled.
     #[must_use]
     pub fn contains_targets(&self, keys: &[SeriesKey]) -> bool {
         keys.iter()
-            .filter(|key| !matches!(key.kind, SeriesKind::PostgresHealth))
+            .filter(|key| !matches!(key.kind, SeriesKind::PostgresHealth | SeriesKind::OsHealth))
             .all(|key| self.blocks.iter().any(|block| block.key() == *key))
     }
 }

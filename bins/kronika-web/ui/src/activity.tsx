@@ -2,7 +2,7 @@ import { ChevronDown, ChevronRight, Maximize2, Minimize2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { createPortal } from "react-dom"
 
-import { CGROUP_CPU_CUTS, CGROUP_IO_CUTS, DATABASE_CUTS, INDEX_CUTS, PLAN_CUTS, PROCESS_CUTS, STATEMENT_CUTS, TABLE_CUTS, activityPreview, cutScale, type ActivityCut, type ActivityScales } from "./activity-cuts"
+import { DATABASE_CUTS, INDEX_CUTS, PLAN_CUTS, PROCESS_CUTS, STATEMENT_CUTS, TABLE_CUTS, activityPreview, cutScale, type ActivityCut, type ActivityScales } from "./activity-cuts"
 import { type StatementScope, loadHeatmap, type DataRow } from "./api"
 import { cgroupDeviceKey, cgroupDevicePrimary, cgroupDeviceSecondary, type CgroupDevicePresentation } from "./cgroup-device"
 import { HOUR_MICROS, collapseHeatmapView, heatmapIntensity, heatmapViewMax, type HeatmapView, type HeatmapViewRow } from "./heatmap"
@@ -411,19 +411,6 @@ export function DatabasesActivity({ blockSize, cursor, hour, layouts, locale, on
   return <ActivityLedger columns={60} cursor={cursor} cuts={cutsForLayouts(DATABASE_CUTS, layouts)} defaultCut="commits" drill={drill} hour={hour} keys={DATABASE_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} section="pg_stat_database" storageKey="kronika.activity-open.databases" t={t} />
 }
 
-export function CgroupActivity({ cursor, devices = EMPTY_CGROUP_DEVICES, hour, io, locale, onCursor, t }: {
-  readonly cursor: number
-  readonly devices?: ReadonlyMap<string, CgroupDevicePresentation>
-  readonly hour: number
-  readonly io: boolean
-  readonly locale: Locale
-  readonly onCursor: (timestamp: number) => void
-  readonly t: Translate
-}) {
-  const label = (row: HeatmapViewRow): RowLabel => cgroupActivityIdentity(row, io, devices)
-  return <ActivityLedger columns={60} cursor={cursor} cuts={io ? CGROUP_IO_CUTS : CGROUP_CPU_CUTS} defaultCut={io ? "cg_read" : "cg_cpu"} headingContext={io ? cgroupIoSharedPath : undefined} hour={hour} keys={io ? CGROUP_IO_KEYS : CGROUP_CPU_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize: null, clockTicks: null }} section={io ? "os_cgroup_io" : "os_cgroup_cpu"} storageKey={`kronika.activity-open.${io ? "cgroup-io" : "cgroup-cpu"}`} t={t} />
-}
-
 const EMPTY_CGROUP_DEVICES: ReadonlyMap<string, CgroupDevicePresentation> = new Map()
 
 // A device row is labelled by where its I/O lands: the mount point, else the
@@ -450,8 +437,6 @@ export function cgroupIoSharedPath(view: HeatmapView): string | null {
 }
 
 const DATABASE_KEYS: LedgerKeys = { title: "activity.databases", bands: "activity.databases" }
-const CGROUP_CPU_KEYS: LedgerKeys = { title: "activity.cgroup_cpu", bands: "activity.cgroups" }
-const CGROUP_IO_KEYS: LedgerKeys = { title: "activity.cgroup_io", bands: "activity.cgroups" }
 
 const PROCESS_KEYS: LedgerKeys = { title: "activity.processes", bands: "activity.processes" }
 

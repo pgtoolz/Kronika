@@ -19,13 +19,17 @@ rustix = { version = "1", features = ["fs"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 anyhow = "1"
 futures-util = "0.3"
-kronika-source-log = { version = "1.0.1", path = "../../crates/kronika-source-log" }
+kronika-source-log = { version = "1.0.2", path = "../../crates/kronika-source-log" }
 tokio-postgres = "0.7.18"
 
 [target.'cfg(target_env = "musl")'.dependencies]
 tikv-jemallocator = { version = "0.6.1", default-features = false, features = ["override_allocator_on_supported_platforms"] }
 
 [dev-dependencies]
+kronika-store = { path = "../../crates/kronika-store" }
+serde_json = "1"
+kronika-index = { path = "../../crates/kronika-index" }
+kronika-query = { path = "../../crates/kronika-query" }
 kronika-reader = { path = "../../crates/kronika-reader" }
 tempfile = "3"
 

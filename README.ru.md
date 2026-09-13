@@ -4,30 +4,34 @@
 
 Kronika сохраняет метрики Linux, статистику PostgreSQL, планы запросов и
 события из журналов PostgreSQL/PgBouncer. Сборщик работает на наблюдаемой машине
-и пишет данные на её диск. Веб-интерфейс показывает, что происходило в выбранный
+Linux либо записывает только данные PostgreSQL с локального или удалённого сервера.
+Веб-интерфейс показывает, что происходило в выбранный
 час: нагрузку, отдельные процессы и запросы, блокировки и изменения показателей.
 
 ![Использование CPU и значения показателей процессов за записанный час](docs/images/processes.png)
 
 [Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/) ·
-[Скачать HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-v1.0.1.html).
+[Скачать HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-v1.0.2.html).
 
 Запись за 5 сентября 2026 года, 19:00–20:00 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.1.html?at=1788634833931637&view=host).
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=host).
 
 ## Установка и запуск
 
-Скачайте Kronika для [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-x86_64-unknown-linux-musl.tar.gz)
-или [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.1/kronika-1.0.1-aarch64-unknown-linux-musl.tar.gz).
+Скачайте Kronika для [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz)
+или [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz).
 Проверьте и установите архив по [инструкции](INSTALL.ru.md)
 или [соберите из исходников](docs/build.ru.md). Архив содержит `kronika-collector`,
 `kronika-web`, `kronika-dump` и `kronika-report`.
 
-Выберите одну команду запуска сборщика: только Linux или Linux вместе с
-PostgreSQL. Примеры сохраняют записи в `/var/lib/kronika`; сборщик создаёт
+Выберите режим: Linux и при необходимости PostgreSQL (`local`) либо только
+PostgreSQL на локальном или удалённом сервере (`postgresql`).
+Примеры локального сбора сохраняют записи в `/var/lib/kronika`; сборщик создаёт
 каталог, если его ещё нет.
 
-### Только Linux
+### Linux и при необходимости PostgreSQL
+
+Без `KRONIKA_PG_DSNS` режим `local` собирает только Linux:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -35,27 +39,46 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```
 
 <a id="linux-и-postgresql"></a>
-### PostgreSQL на машине сборщика
-
-Для сбора данных PostgreSQL укажите строку подключения в `KRONIKA_PG_DSNS`
-при запуске сборщика. Используйте учётную запись PostgreSQL с
+Для PostgreSQL на машине сборщика укажите строку подключения в `KRONIKA_PG_DSNS`
+при запуске. Используйте учётную запись PostgreSQL с
 [правами для сбора данных](INSTALL.ru.md#5-postgresql).
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
+  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
   /usr/local/bin/kronika-collector
 ```
 
-Если PostgreSQL на другой машине, SQL-метрики поступают с того сервера,
-а данные Linux по-прежнему относятся к машине сборщика. См.
-[настройку удалённого PostgreSQL](bins/kronika-collector/README.ru.md#remote-postgresql).
+Для этого локального запуска не задавайте `KRONIKA_POSTGRES_EFFECTIVE_CPUS`:
+число CPU берётся из записанных снимков машины.
+
+### Только PostgreSQL — локальный или удалённый сервер
+
+Запустите сборщик на машине, откуда доступен сервер, с каталогом записи в домашней папке.
+
+Для сбора только PostgreSQL sudo не нужен.
+
+```sh
+KRONIKA_COLLECTOR_MODE=postgresql \
+  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  /usr/local/bin/kronika-collector
+```
+
+TLS проверяет сертификат и имя сервера. Для частного центра сертификации задайте
+`KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. Если число CPU PostgreSQL известно,
+добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, заменив `4` нужным числом.
+Без него SQL-метрики доступны, а PostgreSQL Health неизвестен. Подробнее — в [настройках сборщика](bins/kronika-collector/README.ru.md#remote-postgresql).
 
 ### Открыть веб-интерфейс
 
 Оставив выбранный сборщик работать, запустите веб-сервер во втором терминале
-с тем же каталогом данных. Для Linux укажите `KRONIKA_WEB_SOURCES=1`, для
-Linux и PostgreSQL замените значение на `3`:
+с тем же каталогом данных.
+
+#### Для режима `local`
+
+Для Linux укажите `KRONIKA_WEB_SOURCES=1`, как ниже; если также собирается
+PostgreSQL, замените `1` на `3`:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -64,6 +87,16 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_USER=kronika \
   KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   /usr/local/bin/kronika-web
+```
+
+#### Для режима `postgresql`
+
+```sh
+KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_USER=kronika \
+  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
+  KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
 Откройте <http://127.0.0.1:8080/> и войдите. Веб-сервер читает новые данные,

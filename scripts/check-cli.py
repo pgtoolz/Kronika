@@ -18,7 +18,8 @@ SECRET = "cli-check-secret-must-not-appear"
 # Required parameters and units, independent of help layout.
 HELP_CONTENT = {
     "kronika-collector": (
-        "KRONIKA_STORAGE_DIR", "KRONIKA_PG_DSNS", "sudo",
+        "KRONIKA_STORAGE_DIR", "KRONIKA_PG_DSNS", "KRONIKA_COLLECTOR_MODE",
+        "local", "postgresql", "KRONIKA_PG_SSL_ROOT_CERT", "sslmode=require",
         "KRONIKA_POSTGRES_EFFECTIVE_CPUS", "KRONIKA_INTERVAL_S", "5",
         "KRONIKA_SEGMENT_MAX_BYTES", "67108864", "KRONIKA_SEGMENT_MAX_AGE_S", "900",
         "KRONIKA_RETENTION", "KRONIKA_LOG_LEVEL", "SIGTERM",

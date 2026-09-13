@@ -11,12 +11,18 @@ Feature: Container pressure and storage reach the recorded segment
       | file line | proc/sys/kernel/random/boot_id        | 11111111-2222-4333-8444-555555555555 |
       | file line | proc/1/cgroup                         | 0::/docker/workload                  |
       | file line | proc/self/cgroup                      | 0::/docker/workload                  |
+      | file line | proc/self/mountinfo                   | 29 1 0:29 / {fixture}/sys/fs/cgroup ro - cgroup2 cgroup rw |
       | file line | sys/fs/cgroup/cgroup.controllers      | cpu memory io pids                   |
       | file line | sys/fs/cgroup/docker/workload/io.stat |                                      |
 
-  Scenario: PSI stores the exact container membership with scope 3
+  Scenario: PSI records the selected ancestor without assuming container scope
     Given a filesystem fixture with these entries
       | kind      | path                                                | value                                               |
+      | file line | sys/fs/cgroup/cpu.pressure                         | some avg10=11.5 avg60=11.0 avg300=10.5 total=111000 |
+      | file line | sys/fs/cgroup/memory.pressure                      | some avg10=12.5 avg60=12.0 avg300=10.5 total=122000 |
+      | file line | sys/fs/cgroup/memory.pressure                      | full avg10=10.5 avg60=10.25 avg300=10.125 total=12200 |
+      | file line | sys/fs/cgroup/io.pressure                          | some avg10=13.5 avg60=13.0 avg300=12.5 total=133000 |
+      | file line | sys/fs/cgroup/io.pressure                          | full avg10=11.5 avg60=11.0 avg300=10.5 total=13300 |
       | file line | sys/fs/cgroup/docker/workload/cpu.pressure          | some avg10=1.5 avg60=1.0 avg300=0.5 total=11000     |
       | file line | sys/fs/cgroup/docker/workload/memory.pressure       | some avg10=2.5 avg60=2.0 avg300=1.5 total=22000     |
       | file line | sys/fs/cgroup/docker/workload/memory.pressure       | full avg10=0.5 avg60=0.25 avg300=0.125 total=2200   |
@@ -48,17 +54,24 @@ Feature: Container pressure and storage reach the recorded segment
     Then every segment records these instance facts
       | column      | value |
       | environment | 1     |
-    And every segment holds these sections
+    And some segment records these rows
+      | type_id | column   | value |
+      | 1205002 | cpu_path | /     |
+    And some segment holds these sections
       | type_id | section | min rows |
       | 1107001 | os_psi  | 3        |
     And every snapshot of section 1107001 contains exactly these rows
       | resource | scope | some_avg10 | some_total | full_total |
-      | 0        | 3     | 1.5        | 11000      | null       |
-      | 1        | 3     | 2.5        | 22000      | 2200       |
-      | 2        | 3     | 3.5        | 33000      | 3300       |
+      | 0        | 4     | 11.5       | 111000     | null       |
+      | 1        | 4     | 12.5       | 122000     | 12200      |
+      | 2        | 4     | 13.5       | 133000     | 13300      |
     And no segment records these rows
       | type_id | column     | value  |
       | 1107001 | scope      | 0      |
+      | 1107001 | scope      | 3      |
+      | 1107001 | some_total | 11000  |
+      | 1107001 | some_total | 22000  |
+      | 1107001 | some_total | 33000  |
       | 1107001 | some_total | 910000 |
       | 1107001 | some_total | 920000 |
       | 1107001 | some_total | 930000 |
@@ -90,9 +103,9 @@ Feature: Container pressure and storage reach the recorded segment
       | file line | proc/diskstats                             | 252 9 dm-9 901 0 9010 1 911 0 9110 2 0 3 4            |
       | file line | proc/diskstats                             | 8 16 sdb 921 0 9210 1 931 0 9310 2 0 3 4              |
       | file line | proc/diskstats                             | 8 17 sdb1 941 0 9410 1 951 0 9510 2 0 3 4             |
-      | file line | sys/fs/cgroup/docker/workload/io.stat      | 8:0 rbytes=4096 wbytes=8192 rios=1 wios=2             |
-      | file line | sys/fs/cgroup/docker/workload/io.stat      | 252:2 rbytes=12288 wbytes=16384 rios=3 wios=4         |
-      | file line | sys/fs/cgroup/docker/io.stat               | 252:9 rbytes=999999 wbytes=999999 rios=99 wios=99     |
+      | file line | sys/fs/cgroup/io.stat                      | 8:0 rbytes=4096 wbytes=8192 rios=1 wios=2             |
+      | file line | sys/fs/cgroup/io.stat                      | 252:2 rbytes=12288 wbytes=16384 rios=3 wios=4         |
+      | file line | sys/fs/cgroup/docker/workload/io.stat      | 252:9 rbytes=999999 wbytes=999999 rios=99 wios=99     |
       | file line | sys/fs/cgroup/docker/io.stat               | 8:17 rbytes=999999 wbytes=999999 rios=99 wios=99      |
       | file line | sys/devices/virtual/block/dm-0/dev         | 252:0                                                 |
       | file line | sys/devices/virtual/block/dm-2/dev         | 252:2                                                 |
@@ -125,7 +138,10 @@ Feature: Container pressure and storage reach the recorded segment
     Then every segment records these instance facts
       | column      | value |
       | environment | 1     |
-    And every segment holds these sections
+    And some segment records these rows
+      | type_id | column   | value |
+      | 1205002 | cpu_path | /     |
+    And some segment holds these sections
       | type_id | section           | min rows |
       | 1108001 | os_diskstats      | 3        |
       | 1123001 | os_block_topology | 3        |

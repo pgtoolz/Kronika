@@ -228,8 +228,9 @@ fn postgres_sources(root: &std::path::Path, dsn: &str) -> LogSources {
     let connection =
         super::settings::ConnectionTarget::parse(dsn, 0).expect("parse fake connection");
     LogSources {
+        discover_postgres_paths: true,
         offsets: Offsets::load(root).expect("load offsets"),
-        pg_dsns: vec![PostgresTarget::new(connection)],
+        pg_dsns: vec![PostgresTarget::new(connection).expect("load PostgreSQL transport")],
         pg_logs: Vec::new(),
         pgbouncer_dsns: Vec::new(),
         pgbouncer_logs: Vec::new(),
@@ -260,6 +261,7 @@ fn pgbouncer_line(message: &str) -> String {
 
 fn sources(root: &std::path::Path, path: std::path::PathBuf) -> LogSources {
     LogSources {
+        discover_postgres_paths: true,
         offsets: Offsets::load(root).expect("load offsets"),
         pg_dsns: Vec::new(),
         pg_logs: Vec::new(),
@@ -476,4 +478,33 @@ fn wal_append_precedes_offset_ack_and_a_retry_replays_the_batch() {
             .get(&key(&path)),
         committed
     );
+}
+
+#[tokio::test]
+async fn postgresql_mode_follows_only_explicit_paths_without_discovery_connections() {
+    let dir = tempfile::tempdir().expect("log fixture");
+    let explicit = dir.path().join("explicit.log");
+    let unrelated = dir.path().join("remote-same-name.log");
+    std::fs::write(&explicit, b"").expect("explicit file");
+    std::fs::write(&unrelated, b"").expect("unrelated local file");
+    let mut sources = postgres_sources(
+        dir.path(),
+        "host=127.0.0.1 port=1 user=monitor dbname=postgres sslmode=disable",
+    );
+    sources.discover_postgres_paths = false;
+    sources
+        .pg_logs
+        .push(explicit.to_string_lossy().into_owned());
+    sources.pg_dsns[0].last_log = Some((unrelated, "%m [%p] ".to_owned()));
+    let mut observations = Vec::new();
+    sources
+        .rescan_postgres(&mut |observation| observations.push(observation))
+        .await;
+    assert!(
+        observations.is_empty(),
+        "remote paths must not cause SQL discovery requests"
+    );
+    assert_eq!(sources.postgres.len(), 1);
+    assert_eq!(sources.postgres[0].log.path(), explicit);
+    assert!(sources.postgres[0].system_identifier.is_none());
 }

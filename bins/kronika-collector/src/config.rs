@@ -16,6 +16,8 @@ use crate::scheduler::Intervals;
 
 /// The validated daemon contract.
 pub(crate) struct Config {
+    /// Which recorded source families this collector reads.
+    pub(crate) mode: CollectorMode,
     /// Data root: the journal, the finished segments, and the writer lock.
     pub(crate) storage_dir: PathBuf,
     /// Base tick of the internal timer, seconds; `0` disables the timer and
@@ -42,6 +44,29 @@ pub(crate) struct Config {
     pub(crate) pgbouncer_dsns: Vec<String>,
     /// `PgBouncer` logs named outright, as paths or globs.
     pub(crate) pgbouncer_logs: Vec<String>,
+}
+
+/// Collection placement explicitly selected by the operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CollectorMode {
+    /// Linux resources and `PostgreSQL` on the same machine.
+    Local,
+    /// `PostgreSQL` metrics and explicitly named `PostgreSQL` log files only.
+    Postgresql,
+}
+
+impl CollectorMode {
+    pub(crate) const fn collect_os(self) -> bool {
+        matches!(self, Self::Local)
+    }
+}
+
+fn parse_mode(raw: &str) -> Result<CollectorMode> {
+    match raw.trim() {
+        "local" => Ok(CollectorMode::Local),
+        "postgresql" => Ok(CollectorMode::Postgresql),
+        _ => anyhow::bail!("KRONIKA_COLLECTOR_MODE must be local or postgresql"),
+    }
 }
 
 /// Read a `;`-separated list, or an empty one when the variable is unset.
@@ -120,8 +145,7 @@ pub(crate) enum RetentionConfig {
 /// Parses `KRONIKA_RETENTION` into a rotation target.
 ///
 /// Accepts a raw byte budget (`<u64>`), `auto` (equivalent to `auto:80`), or
-/// `auto:<P>` with `P` in `1..=99`. The name omits a `_BYTES` suffix because a
-/// future time criterion will arrive under its own env as an OR condition.
+/// `auto:<P>` with `P` in `1..=99`.
 ///
 /// # Errors
 ///
@@ -186,6 +210,9 @@ impl Config {
             .context("KRONIKA_STORAGE_DIR is not set")?
             .into();
         validate_log_level()?;
+        let mode = parse_mode(
+            &std::env::var("KRONIKA_COLLECTOR_MODE").unwrap_or_else(|_| "local".to_owned()),
+        )?;
         let tick_secs = env_u64("KRONIKA_INTERVAL_S", 5)?;
         let segment_max_bytes = env_u64("KRONIKA_SEGMENT_MAX_BYTES", 64 * 1024 * 1024)?;
         validate_segment_max_bytes(segment_max_bytes)?;
@@ -221,7 +248,18 @@ impl Config {
             !pg_dsns.is_empty() || postgres_effective_cpus.is_none(),
             "KRONIKA_POSTGRES_EFFECTIVE_CPUS requires KRONIKA_PG_DSNS"
         );
+        anyhow::ensure!(
+            mode.collect_os() || !pg_dsns.is_empty(),
+            "KRONIKA_COLLECTOR_MODE=postgresql requires KRONIKA_PG_DSNS"
+        );
+        let pgbouncer_dsns = env_list("KRONIKA_PGBOUNCER_DSNS")?;
+        let pgbouncer_logs = env_list("KRONIKA_PGBOUNCER_LOGS")?;
+        anyhow::ensure!(
+            mode.collect_os() || (pgbouncer_dsns.is_empty() && pgbouncer_logs.is_empty()),
+            "KRONIKA_COLLECTOR_MODE=postgresql does not collect PgBouncer; remove KRONIKA_PGBOUNCER_DSNS and KRONIKA_PGBOUNCER_LOGS"
+        );
         Ok(Self {
+            mode,
             storage_dir,
             tick_secs,
             intervals: intervals_from_env()?,
@@ -232,8 +270,8 @@ impl Config {
             pg_dsns,
             postgres_effective_cpus,
             pg_logs: env_list("KRONIKA_PG_LOGS")?,
-            pgbouncer_dsns: env_list("KRONIKA_PGBOUNCER_DSNS")?,
-            pgbouncer_logs: env_list("KRONIKA_PGBOUNCER_LOGS")?,
+            pgbouncer_dsns,
+            pgbouncer_logs,
         })
     }
 }
@@ -305,3 +343,24 @@ fn intervals_from_env() -> Result<Intervals> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod mode_tests {
+    use super::{CollectorMode, parse_mode};
+
+    #[test]
+    fn only_explicit_postgresql_mode_disables_linux() {
+        assert!(parse_mode("local").expect("local mode").collect_os());
+        assert_eq!(
+            parse_mode("postgresql").expect("PostgreSQL mode"),
+            CollectorMode::Postgresql
+        );
+        assert!(!CollectorMode::Postgresql.collect_os());
+        for invalid in ["", "remote", "2", "auto"] {
+            assert!(
+                parse_mode(invalid).is_err(),
+                "reject unsupported {invalid:?}"
+            );
+        }
+    }
+}

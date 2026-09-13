@@ -4,10 +4,27 @@ import test from "node:test"
 
 import { importModule } from "./import-module.mjs"
 
-const chart = await importModule('export { alignRecordedSeries, axisTimeLabel, chartNavigationTimestamps, chartSecondsUseful, chartStatsRows, chartSummary, chartTimeRange, compactChartTime, effectiveIsolation, exactReadings, isolatedSampleIndices, navigationSampleText, nearestRecordedTimestamp, sampleText, scalePartitions, scaleRange, seriesStats } from "../src/uplot-chart.tsx"; export { createDisplayTimeFormatter } from "../src/display-time.ts"; export { compact, humanPercent } from "../src/model.ts"')
+const chart = await importModule('export { alignRecordedSeries, axisLabelWidth, axisTimeLabel, chartNavigationTimestamps, chartSecondsUseful, chartStatsRows, chartSummary, chartTimeRange, compactChartTime, effectiveIsolation, exactReadings, isolatedSampleIndices, navigationSampleText, nearestRecordedTimestamp, sampleText, scalePartitions, scaleRange, seriesStats } from "../src/uplot-chart.tsx"; export { createDisplayTimeFormatter } from "../src/display-time.ts"; export { compact, humanPercent } from "../src/model.ts"')
 
 const format = (value) => String(value)
 const line = (id, unit, scale, points) => ({ color: "cyan", helpKey: `${id}.help`, id, label: id, labelKey: `${id}.label`, points, scale, unit, value: format })
+
+test("axis sizing measures the widest formatted tick with the drawing font", () => {
+  const measured = []
+  const widths = new Map([["0", 7], ["19.1 MiB/s", 70.25], ["38,1 MiB/с", 77.5]])
+  const context = {
+    font: "16px sans-serif",
+    measureText(value) {
+      measured.push([this.font, value])
+      return { width: widths.get(value) }
+    },
+  }
+  assert.equal(chart.axisLabelWidth(context, "11px monospace", [0, "19.1 MiB/s", null, "38,1 MiB/с"]), 78)
+  assert.deepEqual(measured, [["11px monospace", "0"], ["11px monospace", "19.1 MiB/s"], ["11px monospace", "38,1 MiB/с"]])
+  assert.equal(context.font, "16px sans-serif")
+  assert.equal(chart.axisLabelWidth(context, "11px monospace", null), 0)
+  assert.equal(context.font, "16px sans-serif")
+})
 
 test("series stats are the nearest-rank percentiles of exactly the drawn samples", () => {
   assert.equal(chart.seriesStats([]), null)

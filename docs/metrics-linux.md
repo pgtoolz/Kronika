@@ -10,15 +10,15 @@ Scope identifies whether a row describes the machine, a container or its surroun
 
 | Recorded fact | Meaning and use |
 |---|---|
-| `instance_metadata.environment` | Collector's recorded machine/container environment. It controls whether the container resource rows and cgroup collection apply. A VM belongs to machine. |
-| OS `scope` | `0`: host; `1`: pod; `2`: pod network namespace; `3`: container; `4`: unknown. |
+| `instance_metadata.environment` | Collector's recorded machine/container environment. It selects the existing primary resource and PSI source; directory discovery also runs on machines. A VM belongs to machine. |
+| OS `scope` | `0`: host; `1`: legacy pod; `2`: pod network namespace; `3`: legacy container; `4`: group without an inferred host/pod label. The selected path identifies new cgroup recordings. |
 | Host CPU, memory, pressure, block devices | Kernel values visible through configured procfs/sysfs roots. Container recordings retain host resource context where those files expose it. |
 | Process table | Live PIDs visible through the configured procfs root; PID is numeric identity within the selected hour. |
 | Network in a container | Interfaces and traffic visible in the network namespace, recorded with pod-network scope. |
-| Cgroup resource lanes | Exact collector membership path for the controller and matching recorded scope. Workload tables can contain other directly populated cgroups visible to the collector. |
+| Cgroup resource lanes | Highest accessible cgroup v2 ancestor. Counters and capacity use that recorded group and identity. |
 | Filesystems | Data mounts visible in the collector's mount namespace, with capacity from `statvfs` on the visible mount path. |
 
-The collector records no workload cgroup sections on machine/VM. In a container it samples paths directly containing visible live processes, bounded to 512 controller/path candidates, 512 KiB of candidate paths, and 1,024 cgroup/device I/O rows per tick. Candidate overflow omits workload sections for that tick; I/O overflow omits I/O. Sources: [scope](../crates/kronika-source-os/src/scope.rs), [collection](../bins/kronika-collector/src/os_sources/cgroups.rs), [cgroup reader](../crates/kronika-source-os/src/cgroup.rs), [UI environment](../bins/kronika-web/ui/src/system-view.tsx).
+Linux collection is disabled in `KRONIKA_COLLECTOR_MODE=postgresql`. In `local` mode, machines, VMs and containers record all visible, accessible cgroup v2 directories. The existing container resource lanes use the highest accessible ancestor of collector membership. See [cgroup collection](#container-cgroups).
 
 ## Processes
 
@@ -69,6 +69,8 @@ Sources: [`LENS_FIELDS`](../bins/kronika-web/ui/src/process-table.tsx), [inspect
 ### Summary and history
 
 The summary operates on the complete process snapshot, independently of the table page and search. General and Tree show process count, sum of threads, count of `state = R`, and count of PIDs present in the latest recorded PostgreSQL activity snapshot at or before that process timestamp. CPU shows summed user/system cores, summed run delay in ms/s, and summed voluntary plus involuntary switches/s. Memory shows summed RSS, virtual memory, swap, and major faults/s. Disk shows summed read/write bytes/s and read/write calls/s.
+
+The PostgreSQL process count requires recorded shared-process metadata in that segment; without it, the count is unknown. The same condition gates PG badges and Activity/Vacuum links to OS processes. Older recordings do not assert sharing.
 
 Each rate is calculated per PID before summation. Only a PID present in the immediately preceding process snapshot with the same `starttime` contributes a rate. Available values contribute independently; a sum without any available value is null. Summed RSS counts shared pages once per recorded process mapping. Source: [`summaries`, `add_row`, `ExactSum`, `RateSum`](../crates/kronika-query/src/hour/process_summary.rs).
 
@@ -182,41 +184,113 @@ RX means received traffic; TX means transmitted traffic. The totals cover the re
 
 The aggregate sums each timestamp's recorded counters before differentiation. Link speed does not normalize the RX/TX values to percentages. Sources: [network parser](../crates/kronika-source-os/src/proc/net_dev.rs), [network aggregate charts](../bins/kronika-web/ui/src/system-view.tsx), [USE network lanes](../crates/kronika-query/src/hour/lanes.rs).
 
-## Container cgroups
+<a id="container-cgroups"></a>
+
+## Cgroup v2 resources
+
+### Recorded groups
+
+The cgroup pass discovers directories and reads their metrics at startup and
+every 30 s by default. It starts at exposed cgroup2 mounts, including mounts
+outside `/sys/fs/cgroup`, and includes empty, intermediate and threaded groups.
+Mount aliases are read once; symlinks are not followed. Hidden namespaces stay
+inaccessible. A group can appear and disappear between passes. The pass is not
+atomic; completed portions remain readable while later groups are collected.
+
+| Section | Recorded values |
+|---|---|
+| `os_cgroup_v2_group` | Path, directory identity, exposed mount root, exact known parent identity, `memory_localevents` and `pids_localevents` mount flags; present even without resource files |
+| `os_cgroup_v2_cpu` | Total, user and system CPU time, and time throttled, in µs; counts of periods and throttled periods; local quota/period and CPU count from `cpuset.cpus.effective` |
+| `os_cgroup_v2_memory` | `current`, `max`, `high`, `anon`, `file`, `kernel`, `slab`, in bytes; low/high/max/oom/oom_kill events from `memory.events`; high/max/oom/oom_kill/oom_group_kill from `memory.events.local` |
+| `os_cgroup_v2_pids` | Current threads, local limit, failure `max`; event source `0` unknown, `1` `pids.events.local`, `2` `pids.events` |
+| `os_cgroup_v2_io` | Each group's device `major:minor`, rbytes/wbytes/rios/wios |
+
+Absent or invalid values remain null. Literal `max` records an unlimited limit,
+separately from a missing value. Ordinary memory events retain their mount mode.
+An ordinary `pids.events` source does not by itself identify a local limiter;
+its interpretation depends on kernel and mount semantics. Parent counters may
+include children, and devices may be stacked: neither set is added together.
+A recreated directory starts a separate counter history.
+
+The rows from each cgroup pass share an observation timestamp.
+Host → Cgroups shows the recorded groups in CPU, Memory, I/O and Tasks tables.
+Search and sorting cover the matching rows before pagination. Each resource
+uses its latest observation at or before the cursor; at equal times, all-group
+records take precedence over older layouts. Missing fields remain unavailable.
+I/O keeps each group and device separate. Group limits are its own recorded
+limits, not the selected ancestor's capacity. History follows the recorded
+directory identity; a recreated path does not continue the old counters.
+Throttled periods are `100 × Δnr_throttled / Δnr_periods`, not lost CPU capacity.
+Throttling time, local OOM kills and PID failures show their counter differences
+over the observed interval. Missing predecessors, counter decreases or a changed
+directory/event-source identity leave these differences unavailable.
+The container overview and its resource charts show the selected ancestor described below.
+PSI comes from the host on a machine or the selected ancestor in a container.
+Available cgroup CPU `full` fields are recorded; system CPU `full` remains undefined.
 
 ### Capacity and membership
 
-`os_cgroup_context` records cgroup version, exact collector CPU/memory/I/O paths, effective cpuset count, tightest CPU quota/period ratio on the applicable hierarchy, and effective memory ceiling. With positive CPU-time quota `Q` and period `P` in microseconds, and usable allowed-CPU count `S` from cpuset, CPU capacity is `min(Q/P, S)`; if `S` is absent, it is `Q/P`. A recorded quota of `−1` selects `S`; unknown quota hierarchy leaves capacity null. Memory capacity is the recorded validated hierarchical ceiling. Positive local controller limits and effective ancestor limits are distinct fields.
+Collection requires cgroup v2. On v1-only systems, cgroup metrics and process
+mappings are unavailable; other enabled Linux and PostgreSQL sources continue.
 
-Cgroup v2 validates applicable files from configured hierarchy root through exact membership. A missing mount-root control file is accepted as unbounded only for non-root membership; required descendant files must be valid. Cgroup v1 binds an unambiguous controller root; memory uses validated `hierarchical_memory_limit` consistently with the leaf limit. The effective capacity/context is attached only to the table row matching collector path and scope. Sources: [hierarchy reader](../crates/kronika-source-os/src/cgroup.rs), [context contract](../crates/kronika-registry/src/codec/os_cgroup_context.rs), [`cgroup_cpu_capacity`](../crates/kronika-query/src/hour/lanes.rs), [`systemEntityRows`](../bins/kronika-web/ui/src/system-view.tsx).
+`os_cgroup_context` records the selected paths, mount roots, controller identities
+and available limits. Collector ascends from its own membership to the highest
+accessible ancestor; selection does not depend on whether a particular metric
+file exists. A missing CPU, memory or PSI file stays unknown; collector does not
+substitute its child counters or host `/proc` values. A directory denied to the
+collector does not rule out another known accessible ancestor. Reads stay inside
+the visible mount and namespace; hidden parents cannot be read.
+
+The selected group includes its descendants, including sidecars when it is a pod.
+Which counters include descendants depends on the metric. Parent counters are
+used once, without adding child counters. The visible
+`/` is a mount/namespace boundary, not proof of a node or pod. Paths and identities
+show the actual observed group. Selecting an ancestor does not establish a common
+PID namespace or identify the PostgreSQL container.
+
+Controllers refer to one selected cgroup v2 group. Missing limits are not unlimited.
+With positive quota `Q` and period `P` in microseconds and positive cpuset count
+`S`, the recorded CPU limit in cores is `min(Q/P, S)`, or `Q/P` without `S`; `150000/100000 = 1.5` cores.
+For new context records, either finite bound can be used alone, including `S`
+when the quota is missing or unlimited. Without either bound, the CPU limit is
+unknown. Older context records require a known quota before using `S`. Memory
+percentages use a finite recorded memory limit. Limits include applicable readable
+ancestor constraints; constraints above the exposed hierarchy are unavailable.
+The limits describe the selected group, not the collector child or PostgreSQL.
+Changed or recreated group identity breaks counter differences and history.
+
+Sources: [hierarchy reader](../crates/kronika-source-os/src/cgroup.rs),
+[context](../crates/kronika-registry/src/codec/os_cgroup_context.rs),
+[resource lanes](../crates/kronika-query/src/hour/lanes.rs),
+[display and history](../bins/kronika-web/ui/src/system-view.tsx).
 
 ### Controller metrics
 
-A controller accounts for its resource across the group. In the formulas, `used_cores` is CPU use in cores, `effective_capacity` is the available cores defined above, `current` is the relevant controller’s current value and `max` its local limit. `effective_memory_max` is the memory limit including ancestor restrictions.
+A controller accounts for its resource across the group. In the formulas, `used_cores` is CPU use in cores, `effective_capacity` is the CPU limit in cores defined above, `current` is the relevant controller’s current value and `max` its local limit. `effective_memory_max` is the recorded memory limit, including readable ancestor restrictions.
 
 | Display or recorded field | Calculation/source | Unit |
 |---|---|---|
-| CPU used / user / system | `R(usage_usec) / 10⁶`, `R(user_usec) / 10⁶`, `R(system_usec) / 10⁶` | Core equivalents; v2 `cpu.stat`, v1 `cpuacct` |
+| CPU used / user / system | `R(usage_usec) / 10⁶`, `R(user_usec) / 10⁶`, `R(system_usec) / 10⁶` | Core equivalents; `cpu.stat` |
 | Other CPU | `R(usage_usec − user_usec − system_usec) / 10⁶`, calculated from the three differences | Cores; null if a component difference or residual is negative |
-| CPU share | `100 × used_cores / effective_capacity` | %; unavailable without capacity |
+| CPU share | `100 × used_cores / effective_capacity` | Share of the recorded CPU limit, %; unavailable without a known limit |
 | CPU quota / period | `quota_usec`, `period_usec`; displayed quota cores `Q/P` when positive | Local controller ceiling; quota `−1` is unlimited |
 | Throttled | `100 × R(throttled_usec) / 10⁶` | % of wall interval; no capacity division or 100% cap |
 | Throttling events | Recorded cumulative `nr_throttled` | Count; cgroup CPU record |
-| CPU / memory / I/O PSI | `100 × R(some_total) / 10⁶` for collector cgroup pressure | % of sample interval |
-| Memory current | v2 `memory.current`; v1 `memory.usage_in_bytes` | Bytes |
-| Memory share | `100 × current / effective_memory_max` | % of positive hierarchical ceiling |
-| Local memory max | v2 `memory.max`; v1 `memory.limit_in_bytes` | Bytes; unlimited represented as null |
+| CPU / memory / I/O PSI | `100 × R(some_total) / 10⁶` for the selected cgroup pressure | % of sample interval |
+| Memory current | `memory.current` | Bytes |
+| Memory share | `100 × current / effective_memory_max` | % of positive recorded memory limit |
+| Local memory max | `memory.max` | Bytes; newest layout records `max_unlimited` separately; missing is unknown |
 | Anon / File / Slab | `anon`, `file`, `slab` from `memory.stat` | Bytes |
 | Other kernel | `kernel − slab` | Bytes; null for absent input or negative difference |
 | Unclassified memory | `current − anon − file − kernel` | Bytes; null for absent input or negative difference |
 | Shared memory, where recorded | `shmem` in the newer memory layout | Bytes included in `file` |
-| Memory events | Cumulative `low_events`, `high_events`, `max_events`, `oom_events`, `oom_kill`; v1 `memory.failcnt` maps to `max_events` | Counts; OOM lane is `R(oom_kill)` kills/s |
-| I/O read/write | `R(rbytes)`, `R(wbytes)` from v2 `io.stat` or v1 blkio service-byte files | B/s per cgroup and device |
+| Memory events | Cumulative `low_events`, `high_events`, `max_events`, `oom_events`, `oom_kill` | Counts; OOM lane is `R(oom_kill)` kills/s |
+| I/O read/write | `R(rbytes)`, `R(wbytes)` from `io.stat` | B/s per cgroup and device |
 | I/O operations | `R(rios)`, `R(wios)` | Operations/s per cgroup and device |
 | Threads (TIDs) / Local pids.max | Direct `pids.current`, `pids.max` | Threads (TIDs) in the cgroup subtree and local subtree limit |
 | Of pids.max | `100 × current / max` for positive local max | %; literal `max` records null unlimited limit |
 
-The cgroup I/O lane sums device counters for the collector's exact I/O path before calculating read/write rates. Each I/O counter can remain available independently. The device table records `major:minor`, stacked-device chain, visible mount associations, and folded lower-layer counters in the inspector. These associations retain the recorded cgroup/device scope. The `pids.current` count includes descendants and each process's main thread; a process-row count uses a different unit. Both `pids.current` and `pids.max` must be valid for a threads row to be recorded. Sources: [controller parsing](../crates/kronika-source-os/src/cgroup.rs), [CPU](../crates/kronika-registry/src/codec/os_cgroup_cpu.rs), [memory](../crates/kronika-registry/src/codec/os_cgroup_memory.rs), [I/O](../crates/kronika-registry/src/codec/os_cgroup_io.rs), [Threads](../crates/kronika-registry/src/codec/os_cgroup_pids.rs), [device associations](../bins/kronika-web/ui/src/cgroup-device.ts).
+The cgroup I/O lane sums device counters for the selected I/O path before calculating read/write rates. Each I/O counter can remain available independently. The device table records `major:minor`, stacked-device chain, visible mount associations, and folded lower-layer counters in the inspector. These associations retain the recorded cgroup/device scope. The `pids.current` count includes descendants and each process's main thread; a process-row count uses a different unit. Both `pids.current` and `pids.max` must be valid for a threads row to be recorded. Sources: [controller parsing](../crates/kronika-source-os/src/cgroup.rs), [CPU](../crates/kronika-registry/src/codec/os_cgroup_cpu.rs), [memory](../crates/kronika-registry/src/codec/os_cgroup_memory.rs), [I/O](../crates/kronika-registry/src/codec/os_cgroup_io.rs), [Threads](../crates/kronika-registry/src/codec/os_cgroup_pids.rs), [device associations](../bins/kronika-web/ui/src/cgroup-device.ts).
 
 ## USE table and verdicts
 
@@ -228,7 +302,7 @@ USE columns are Utilization (U), Saturation (S), and Errors (E). Cells read thei
 | Host memory | In use % | Swapped pages/s | OOM kills/s |
 | Host storage | Capped summed busy % | Summed average queue | Unavailable |
 | Host/namespace network | RX and TX B/s | Drops including FIFO/s | RX + TX errors/s |
-| Cgroup CPU | Capacity share %, fallback used cores | Throttled % and CPU PSI % | Unavailable |
+| Cgroup CPU | CPU-limit share %, otherwise used cores | Throttled % and CPU PSI % | Unavailable |
 | Cgroup memory | Effective-limit share %, fallback current bytes | Memory PSI % | OOM kills/s |
 | Cgroup I/O | Read and write B/s | I/O PSI % | Unavailable |
 | Cgroup Threads | Local-limit share %, fallback current count | Unavailable | Unavailable |

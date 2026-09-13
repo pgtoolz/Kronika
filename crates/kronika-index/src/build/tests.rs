@@ -22,6 +22,7 @@ fn reset_and_nonpositive_time_have_no_tps() {
 fn metadata() -> HealthMetadata {
     HealthMetadata {
         timestamp: 1,
+        os_enabled: Some(true),
         postgresql_enabled: Some(true),
         postgresql_interval_seconds: 30,
     }

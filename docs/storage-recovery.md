@@ -110,7 +110,7 @@ layout, limits and checksum coverage.
 
 For a finished local ZMS, web rebuilds an absent index, an opened index that
 fails format/checksum validation, or an index missing required query blocks.
-This includes obsolete headers: the current format is `KRNIDX1`. Rebuilding
+This includes obsolete headers: the current format is `KRNIDX2`. Rebuilding
 reads the ZMS, writes and synchronizes a temporary index, then replaces the
 `.idx` atomically after rechecking the source file. An index file that cannot
 be opened because of access or filesystem errors can fail the request before

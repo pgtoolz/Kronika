@@ -251,3 +251,295 @@ fn report_is_self_contained_and_deterministic() {
         );
     }
 }
+
+#[path = "../tests/support/collection_modes.rs"]
+mod collection_modes;
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "encoded collection contracts share one production report assertion path"
+)]
+fn recorded_collection_modes_generate_matching_report_artifacts() {
+    use crate::{ReportEngine, ReportInput};
+    use collection_modes::{Collection, END, START};
+    use kronika_query::{HourPart, HourRequest, QueryRequest, QuerySink, Window};
+
+    #[derive(Default)]
+    struct Records(Vec<u8>);
+    impl QuerySink for Records {
+        fn record(&mut self, bytes: Vec<u8>) -> bool {
+            self.0.extend(bytes);
+            true
+        }
+        fn cancelled(&self) -> bool {
+            false
+        }
+    }
+    for (name, collection, sources, expected) in [
+        (
+            "postgresql-unknown",
+            Collection::Postgresql(None),
+            SOURCE_POSTGRESQL,
+            None,
+        ),
+        (
+            "postgresql-explicit",
+            Collection::Postgresql(Some(2)),
+            SOURCE_POSTGRESQL,
+            Some(80),
+        ),
+        ("selected-cgroup", Collection::Cgroup, SOURCE_OS, None),
+        (
+            "legacy-cgroup",
+            Collection::LegacySelectedCgroup,
+            SOURCE_OS,
+            None,
+        ),
+        ("all-cgroups", Collection::AllCgroups, SOURCE_OS, None),
+        (
+            "all-cgroups-machine",
+            Collection::AllCgroupsMachine,
+            SOURCE_OS,
+            None,
+        ),
+        (
+            "separated-controllers",
+            Collection::SeparatedControllers,
+            SOURCE_OS,
+            None,
+        ),
+    ] {
+        let zms = collection_modes::encoded(collection);
+        let segment_id = SegmentId::new(START).expect("segment identity");
+        let reader = FinishedReader::new(
+            EmbeddedSource::from_owned(segment_id, zms.clone(), zms.len() as u64).expect("source"),
+        );
+        let resources = reader.resources().expect("resources");
+        let (idx, bits) =
+            isolated_index(&reader, &resources.resources[0]).expect("production isolated index");
+        assert_eq!(bits, sources);
+        let mut html = Vec::new();
+        let summary = write_html(
+            HtmlReportInput {
+                segment_id,
+                zms: zms.clone(),
+                max_zms_bytes: zms.len() as u64,
+                visible_range: ReportTimeRange::new(START, END).expect("range"),
+            },
+            &mut html,
+        )
+        .expect("production report");
+        assert_eq!(summary.configured_sources, sources);
+        let html_text = std::str::from_utf8(&html).expect("HTML");
+        assert!(html_text.contains(&STANDARD.encode(&idx)));
+        assert!(html_text.contains(&STANDARD.encode(&zms)));
+        let engine = ReportEngine::new(ReportInput {
+            segment_id,
+            zms: zms.clone(),
+            idx: idx.clone(),
+            configured_sources: sources,
+            max_zms_bytes: zms.len() as u64,
+        })
+        .expect("report engine");
+        let mut records = Records::default();
+        engine
+            .execute(
+                QueryRequest::Hour(HourRequest {
+                    window: Window {
+                        from: Some(START),
+                        to: Some(END - 1),
+                    },
+                    series: None,
+                    part: HourPart::Lanes,
+                    segments: Some(vec![START]),
+                    active: None,
+                }),
+                &mut records,
+            )
+            .expect("report hour");
+        let values = records
+            .0
+            .split(|byte| *byte == b'\n')
+            .filter(|row| !row.is_empty())
+            .map(|row| serde_json::from_slice::<serde_json::Value>(row).expect("record"))
+            .collect::<Vec<_>>();
+        let context = values
+            .iter()
+            .find(|row| row["record"] == "lane_context")
+            .expect("recorded context");
+        assert_eq!(context["os_enabled"], sources == SOURCE_OS);
+        assert_eq!(context["postgresql_processes_shared"], false);
+        if sources == SOURCE_POSTGRESQL {
+            let segment = reader
+                .open_segment(&resources.resources[0])
+                .expect("segment");
+            assert!(segment.type_ids().all(|id| {
+                !kronika_registry::logical_section_name(id)
+                    .is_some_and(|name| name.starts_with("os_"))
+            }));
+            let index = kronika_index::Index::decode(&idx).expect("decode generated index");
+            let mut pg = None;
+            let mut overall = None;
+            for block in index.blocks {
+                match block {
+                    kronika_index::SeriesBlock::OsHealth(_) => panic!("PG-only OS Health"),
+                    kronika_index::SeriesBlock::PostgresHealth(points) => {
+                        pg = Some(points.into_iter().map(|p| p.value).collect::<Vec<_>>());
+                    }
+                    kronika_index::SeriesBlock::OverallHealth(points) => {
+                        overall = Some(points.into_iter().map(|p| p.value).collect::<Vec<_>>());
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(pg, Some(vec![expected]));
+            assert_eq!(overall, pg);
+        }
+        if matches!(
+            collection,
+            Collection::AllCgroups | Collection::AllCgroupsMachine
+        ) {
+            let segment = reader
+                .open_segment(&resources.resources[0])
+                .expect("all-group segment");
+            for type_id in [1_206_001, 1_207_001, 1_208_001, 1_209_001, 1_210_001] {
+                let expected_rows = if type_id == 1_210_001 { 3164 } else { 1582 };
+                assert_eq!(segment.rows_of(type_id), Some(expected_rows));
+                assert_eq!(
+                    u64::try_from(segment.rows(type_id).expect("decode all groups").len())
+                        .expect("row count"),
+                    expected_rows
+                );
+            }
+            assert_all_group_snapshots(&engine);
+            if matches!(collection, Collection::AllCgroupsMachine) {
+                assert_eq!(context["environment"], 0);
+                assert!(segment.rows_of(1_205_002).is_none());
+                assert!(segment.rows_of(1_201_003).is_none());
+            }
+        }
+        if matches!(collection, Collection::LegacySelectedCgroup) {
+            let segment = reader
+                .open_segment(&resources.resources[0])
+                .expect("legacy selected segment");
+            assert_eq!(context["environment"], 1);
+            assert_eq!(segment.rows_of(1_201_003), Some(6));
+            assert_eq!(segment.rows_of(1_205_002), Some(6));
+            assert!(
+                segment
+                    .type_ids()
+                    .all(|id| !(1_206_001..=1_210_001).contains(&id))
+            );
+            for row in segment.rows(1_205_002).expect("decode legacy context") {
+                assert_eq!(row.get("cpuset_cpus"), Some(&kronika_reader::Cell::I64(8)));
+            }
+        }
+        if matches!(collection, Collection::SeparatedControllers) {
+            let oom = values
+                .iter()
+                .filter(|row| row["record"] == "lane" && row["lane"] == "cg_oom")
+                .map(|row| row["value"].as_f64())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                oom,
+                [None, Some(0.0), Some(0.0), Some(0.0), Some(1.0), None]
+            );
+            let index = kronika_index::Index::decode(&idx).expect("decode index");
+            let hits = index
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    kronika_index::SeriesBlock::Findings(block) if block.type_id == 1_202_003 => {
+                        Some(&block.findings)
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .map(|finding| finding.timestamp)
+                .collect::<Vec<_>>();
+            assert_eq!(hits, [START + 4_000_000]);
+        }
+        if let Some(output) = std::env::var_os("KRONIKA_REPORT_TEST_OUTPUT") {
+            let directory = std::path::PathBuf::from(output).join(name);
+            std::fs::create_dir_all(&directory).expect("fixture output directory");
+            for (name, bytes) in [
+                ("recording.zms", zms),
+                ("recording.idx", idx),
+                ("report.html", html),
+            ] {
+                std::fs::write(directory.join(name), bytes).expect("fixture artifact");
+            }
+            std::fs::write(directory.join("sources"), sources.to_string()).expect("family bits");
+        }
+    }
+}
+
+fn assert_all_group_snapshots(engine: &crate::ReportEngine) {
+    use kronika_query::{Order, QueryRequest, QuerySink, SnapshotRequest, StatementScope};
+
+    #[derive(Default)]
+    struct Records(Vec<serde_json::Value>);
+    impl QuerySink for Records {
+        fn record(&mut self, bytes: Vec<u8>) -> bool {
+            self.0
+                .push(serde_json::from_slice(&bytes).expect("snapshot record"));
+            true
+        }
+        fn cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    for (offset, expected) in [(3, 262), (5, 264)] {
+        for section in [
+            "os_cgroup_v2_group",
+            "os_cgroup_v2_cpu",
+            "os_cgroup_v2_memory",
+            "os_cgroup_v2_pids",
+            "os_cgroup_v2_io",
+        ] {
+            let mut records = Records::default();
+            engine
+                .execute(
+                    QueryRequest::Snapshot(SnapshotRequest {
+                        segment_id: collection_modes::START,
+                        at: collection_modes::START + offset * 1_000_000,
+                        sections: vec![section.to_owned()],
+                        fields: vec!["cgroup_path".to_owned(), "cgroup_identity".to_owned()],
+                        by: Vec::new(),
+                        direction: Order::Asc,
+                        group: None,
+                        page_size: None,
+                        cursor: None,
+                        search: None,
+                        first_match: false,
+                        text: None,
+                        filters: Vec::new(),
+                        type_id: None,
+                        row_ordinal: None,
+                        scope: StatementScope::All,
+                    }),
+                    &mut records,
+                )
+                .expect("all-group report snapshot");
+            let rows = records
+                .0
+                .iter()
+                .filter(|row| row["record"] == "row")
+                .collect::<Vec<_>>();
+            let devices = if section == "os_cgroup_v2_io" { 2 } else { 1 };
+            assert_eq!(rows.len(), expected * devices, "{section} at +{offset}s");
+            for path in [
+                "/visible",
+                "/visible/api",
+                "/visible/database",
+                "/visible/jobs",
+            ] {
+                assert!(rows.iter().any(|row| row["values"][0] == path), "{path}");
+            }
+            let timestamp = (collection_modes::START + offset * 1_000_000).to_string();
+            assert!(rows.iter().all(|row| row["timestamp"] == timestamp));
+        }
+    }
+}
