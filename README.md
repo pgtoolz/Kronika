@@ -96,8 +96,8 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```
 
 Open <http://127.0.0.1:8080/> and sign in. The web interface shows recorded
-history and data from ongoing collection. `Ctrl+C` stops either process;
-the recordings stay on disk.
+history and data from ongoing collection.
+
 [Systemd setup](docs/services.md) covers running both programs as services and
 changing an existing service's configuration.
 
