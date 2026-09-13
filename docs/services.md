@@ -58,9 +58,10 @@ All parameters:
 [collector](../bins/kronika-collector/README.md) and
 [web](../bins/kronika-web/README.md).
 
-For several PostgreSQL servers, use a separate collector service, environment
-file and storage directory per server. Each web service reads one storage
-directory and needs its own listen address. See the
+For each PostgreSQL server, create a separate systemd service that runs
+`kronika-collector`. Give each service its own name, environment file with that
+server’s DSN, and storage directory. All services use the same binary.
+Each web service reads one storage directory and needs its own listen address. See the
 [two-server example](../bins/kronika-collector/README.md#several-postgresql-servers).
 
 ## Units

@@ -23,9 +23,9 @@ this 1.1.0 source: [build and install them](docs/build.md), or use a matching
 [installation guide](INSTALL.md). Confirm `kronika-collector --version` reports
 `1.1.0` before using the new `KRONIKA_PG_DSN` setting.
 
-One collector process records one PostgreSQL server and its accessible databases
-in a separate storage directory. Choose `local` for Linux and optional PostgreSQL
-in the same VM or pod; choose `postgresql` for a remote server or when OS data is
+One collector process saves data from one PostgreSQL server and its accessible
+databases in a separate storage directory. Choose `local` for Linux and optional
+PostgreSQL in the same VM or pod; choose `postgresql` for a remote server or when OS data is
 unnecessary. Without a DSN, `local` records Linux only.
 The local examples save recordings in `/var/lib/kronika`; collector creates the
 directory if needed.
@@ -73,8 +73,9 @@ known, add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, replacing `4` with its CPU count
 Without it, SQL metrics remain available; PostgreSQL Health is unknown.
 See [collector configuration](bins/kronika-collector/README.md#remote-postgresql).
 
-For several PostgreSQL servers, run the same binary in a separate process with
-its own DSN and storage directory for each server. See the
+For each PostgreSQL server, start a separate `kronika-collector` process with
+that server’s DSN and a separate storage directory. All processes use the same
+binary. See the
 [two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
 ### Open the web interface

@@ -26,24 +26,16 @@ happens after an abrupt stop or when a recording cannot be read.
 | --- | --- | --- |
 | `KRONIKA_STORAGE_DIR` | Required | Directory in which collected data is saved; use a directory, not a symbolic link. |
 | `KRONIKA_SEGMENT_MAX_BYTES` | `67108864` (64 MiB) | Journal size in bytes at which a compressed segment becomes due. Positive whole number. |
-| `KRONIKA_SEGMENT_MAX_AGE_S` | `900` | Period in seconds for scheduled segment closing, with a fixed random phase per storage directory. A segment can become due earlier; nonnegative whole number, `0` makes it eligible immediately. |
+| `KRONIKA_SEGMENT_MAX_AGE_S` | `900` | Period in seconds for scheduled segment closing. Nonnegative whole number; `0` makes a segment eligible immediately. |
 | `KRONIKA_JOURNAL_MAX_BYTES` | `1073741824` (1 GiB) | Maximum journal size in bytes: `36..1073741824`. Reaching it saves the segment early. |
 | `KRONIKA_RETENTION` | `2147483648` (2 GiB) | Storage target in bytes, or `auto` (= `auto:80`), or `auto:P`, where `P` is a whole percentage from 1 to 99. |
 
-A random seed in `seal.seed` is created once in the actual
-`KRONIKA_STORAGE_DIR` and retained across restarts. It gives that store a fixed phase within the configured age
-period. After the first successful journal append, the next phase boundary sets
-the segment's deadline; later appends and clock changes do not move it. The
-first segment after startup or an early close can be shorter; subsequent
-ordinary boundaries keep the same period. A deadline makes a segment eligible
-for closing, not a guarantee of completion at that instant: ongoing collection
-and writing can delay it. Size, journal limits and `SIGUSR2` can close it earlier.
-`KRONIKA_INTERVAL_S=0` remains signal-only, without timed age closing.
+Scheduled ZMS closing is staggered across collectors; each storage directory’s
+offset survives restarts, though closes can coincide.
 
-Independent stores get independent seeds. Copying a populated directory copies
-its seed and phase. Staggering is probabilistic, with no coordination between
-collectors: nearby phases, recovery, size limits or forced closes can coincide.
-Collection intervals and recorded timestamps are unaffected.
+The first segment after startup or an early close may be shorter. Ongoing
+collection can delay closing; size limits and `SIGUSR2` can close it sooner.
+`KRONIKA_INTERVAL_S=0` disables timed collection and age-based closing.
 
 A fixed budget counts the active journal, compressed recordings, their `.idx`
 index files and collector temporary files. It must be at least twice
@@ -63,9 +55,9 @@ files hourly to include new indexes created by web.
 
 ### Collection mode
 
-One collector process records one PostgreSQL server in its own storage
-directory. One DSN covers that server's accessible databases; use separate
-processes for separate servers, including primary and standby with the same
+Each `kronika-collector` process saves data from one PostgreSQL server in its
+own storage directory. One DSN covers that server's accessible databases;
+use separate processes for separate servers, including primary and standby with the same
 `system_identifier`.
 
 `KRONIKA_COLLECTOR_MODE=local` is the default: Linux metrics and optional
@@ -179,8 +171,9 @@ See [Health formulas](../../docs/metrics-time.md#health) and
 <a id="several-postgresql-servers"></a>
 ### Several PostgreSQL servers
 
-Run the same `kronika-collector` binary as two separate processes, one per
-server, with distinct DSNs and storage directories. In the first terminal:
+For each PostgreSQL server, start a separate `kronika-collector` process with
+that server’s DSN and a separate storage directory. All processes use the same
+binary. For two servers, start the first process in one terminal:
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \

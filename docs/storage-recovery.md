@@ -10,11 +10,7 @@ Kronika stores collected data in three kinds of files:
 | `YYYY/MM/DD/<segment-id>.zms` | A finished compressed recording, called a segment. | Collector; `kronika-dump slice` can create a separate ZMS file. |
 | `.idx` beside a ZMS | Derived summaries and row locations used to answer queries faster. | Web |
 
-The root also contains owner locks and the collector's `seal.seed` control file;
-`seal.seed.tmp` is its publication temporary. The persisted seed keeps each
-store's scheduled closing phase across restarts. A malformed or inaccessible
-`seal.seed` stops collector startup; it is not silently replaced. Backups that
-copy the seed also copy the phase. See the [layout reference](../crates/kronika-layout/README.md).
+See the [storage layout reference](../crates/kronika-layout/README.md).
 
 `SIGINT` and `SIGTERM` retain `active.wal` without a final ZMS close. On restart,
 a valid nonempty journal is recovered immediately, without waiting for the

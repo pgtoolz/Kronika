@@ -57,10 +57,9 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 Use a real storage directory, not a symlink. Root can read protected process
 I/O counters and local logs. Processes are sampled every 5 seconds and core
-Linux metrics every 10 seconds. Scheduled segment closing uses a 900-second
-period and a persistent random phase per storage directory. The first segment
-can become due sooner; ongoing work can delay completion. A size limit can
-finish the segment earlier. Web can read `active.wal` before
+Linux metrics every 10 seconds. The scheduled segment closing period is
+900 seconds. The first segment may be shorter; ongoing work can delay closing.
+A size limit can finish the segment earlier. Web can read `active.wal` before
 it becomes a finished segment. `Ctrl+C` stops collection and retains the
 journal; the same command reopens the recording.
 
@@ -86,9 +85,10 @@ The role needs inherited `pg_monitor` membership, `CONNECT` to each collected
 database and the database-local extension permissions listed in
 [PostgreSQL role](bins/kronika-collector/README.md#postgresql-role).
 
-Use one collector process and storage directory per PostgreSQL server, including
-primary and standby. Its DSN covers accessible databases on that server; no
-separate collector per database is needed. See the
+For each PostgreSQL server, including primary and standby, start a separate
+`kronika-collector` process with its own DSN and storage directory. All processes
+use the same binary. Each process collects the accessible databases on its
+server; no separate collector per database is needed. See the
 [two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
 PostgreSQL with OS from the same VM or pod:
