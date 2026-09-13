@@ -226,7 +226,6 @@ role. The explicit `pg_current_logfile()` grant is needed on PostgreSQL 10–16.
 | `pg_stat_statements` | Supports extension `1.5+` in the `1.x` series; PostgreSQL 14+ requires `1.9+`. The newest compatible set of fields is preferred. |
 | `pg_store_plans` | OSSC and Datasentinel return different fields through a function with no arguments; the vadv boolean interface requires its four-key plan lookup function and plan-to-text converter. |
 | Settings | Read with PostgreSQL metrics. A full snapshot is recorded after the first successful read, on change and in every segment. |
-| Settings exclusions | `primary_conninfo` and `ssl_passphrase_command` are omitted; other command and custom settings are recorded. |
 
 ### Query execution
 
