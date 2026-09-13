@@ -65,7 +65,7 @@ identity or CPU capacity.
 `KRONIKA_COLLECTOR_MODE=postgresql` records only PostgreSQL data from a local or
 remote server. It does not collect Linux metrics, processes or cgroups.
 `KRONIKA_PG_DSN` is required. The process needs access to PostgreSQL and write
-access to storage; it does not need root. You can add local log files with
+access to storage. You can add local log files with
 `KRONIKA_PG_LOGS`. PgBouncer log settings are not accepted in this mode.
 Linux collection intervals do not apply.
 
@@ -138,8 +138,6 @@ reads the recorded value and has no separate CPU setting.
 
 <a id="remote-postgresql"></a>
 ### PostgreSQL only — local or remote
-
-PostgreSQL-only collection does not need sudo.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \

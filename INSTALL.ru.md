@@ -108,7 +108,6 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ### Только PostgreSQL — локальный или удалённый сервер
 
 Этот режим подходит для удалённого сервера или сбора без метрик Linux.
-Для сбора только PostgreSQL sudo не нужен.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \

@@ -13,7 +13,7 @@ Changes since the last published release, 1.0.1.
 
 ### Other changes
 
-- Add `KRONIKA_COLLECTOR_MODE=postgresql` for local or remote PostgreSQL without Linux collection or sudo. The `local` mode collects Linux metrics from the same VM or pod and, optionally, PostgreSQL. See [collector configuration](bins/kronika-collector/README.md).
+- Add `KRONIKA_COLLECTOR_MODE=postgresql` to collect PostgreSQL data from a local or remote server without Linux metrics. The `local` mode collects Linux metrics from the same VM or pod and, optionally, PostgreSQL. See [collector configuration](bins/kronika-collector/README.md).
 - Collect all visible, accessible cgroup v2 groups and show them in CPU, Memory, I/O and Tasks tables with search, sorting and history. Groups stay separate; limits distinguish unlimited from unavailable. Older recordings remain readable.
 - Read PostgreSQL 12 and older `pg_stat_statements` layouts without requesting absent fields. Hide Activity metrics unsupported by the recording.
 - Keep Activity heatmaps within their recorded time window in partial-hour HTML reports. Cell clicks and row navigation select the corresponding recorded interval instead of jumping to the report start.

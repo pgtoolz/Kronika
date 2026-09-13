@@ -52,7 +52,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ### Только PostgreSQL — локальный или удалённый сервер
 
 Запустите сборщик на любой машине, откуда доступен PostgreSQL. В этом примере
-данные сохраняются в домашний каталог, sudo не нужен.
+данные сохраняются в домашний каталог.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \

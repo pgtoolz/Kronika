@@ -51,7 +51,7 @@ comes from its recorded CPU snapshots.
 ### PostgreSQL only — local or remote
 
 Run the collector on any machine that can reach PostgreSQL. This example saves
-data in your home directory and needs no sudo.
+data in your home directory.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \

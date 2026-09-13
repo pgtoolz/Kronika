@@ -102,7 +102,6 @@ and table and index statistics use PostgreSQL's built-in views.
 ### PostgreSQL only — local or remote
 
 Choose this mode for a remote server or when you do not need Linux metrics.
-PostgreSQL-only collection does not need sudo.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \

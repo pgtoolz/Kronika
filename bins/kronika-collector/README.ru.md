@@ -66,7 +66,7 @@ PostgreSQL/PgBouncer. Данные дописываются в `active.wal` и �
 `KRONIKA_COLLECTOR_MODE=postgresql` записывает только данные PostgreSQL с локального
 или удалённого сервера. Метрики Linux, процессы и cgroup не собираются.
 Требуется `KRONIKA_PG_DSN`. Процессу нужны доступ к PostgreSQL и права записи
-в хранилище; права root не нужны. Локальные журналы можно добавить через
+в хранилище. Локальные журналы можно добавить через
 `KRONIKA_PG_LOGS`. Настройки журналов PgBouncer в этом режиме не принимаются.
 Интервалы сбора Linux не используются.
 
@@ -142,8 +142,6 @@ PostgreSQL Health и зависящие от CPU отметки неизвест
 
 <a id="remote-postgresql"></a>
 ### Только PostgreSQL — локальный или удалённый сервер
-
-Для сбора только PostgreSQL sudo не нужен.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
