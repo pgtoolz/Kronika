@@ -403,12 +403,8 @@ pub(crate) fn append_window_and_maybe_close(
     let active_id = journal
         .segment_id()
         .context("a successful journal append must persist SegmentId")?;
-    segment.on_window_appended(
-        active_id,
-        now,
-        SystemTime::now(),
-        Duration::from_secs(config.segment_max_age_secs),
-    )?;
+    let age = Duration::from_secs(config.segment_max_age_secs);
+    segment.on_window_appended(active_id, now, SystemTime::now(), age)?;
     if let Some(reason) = close_reason(
         CloseConditions {
             forced,

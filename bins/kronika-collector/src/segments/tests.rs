@@ -904,7 +904,7 @@ fn forced_close_keeps_store_seed_and_both_encoded_segments_readable() {
             .rows(OsLoadavg::CONTRACT.type_id.get())
             .expect("decode loadavg");
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("ts"), Some(&Cell::I64(ts)));
+        assert_eq!(rows[0].get("ts"), Some(&Cell::Ts(ts)));
         assert_eq!(rows[0].get("load1"), Some(&Cell::F64(1.5)));
     }
 }
@@ -941,5 +941,5 @@ fn zero_age_closes_the_successful_append_with_recorded_time_unchanged() {
         .rows(OsLoadavg::CONTRACT.type_id.get())
         .expect("decode loadavg");
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get("ts"), Some(&Cell::I64(321)));
+    assert_eq!(rows[0].get("ts"), Some(&Cell::Ts(321)));
 }

@@ -48,7 +48,7 @@ mod tests {
         );
         for seed in [0, 1, u64::MAX] {
             let period = Duration::from_secs(u64::MAX);
-            let delay = until_next_phase(seed, period, Duration::from_secs(1_800_000_000));
+            let delay = until_next_phase(seed, period, Duration::from_hours(500_000));
             assert!(!delay.is_zero());
             assert!(delay <= period);
         }
