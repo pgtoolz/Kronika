@@ -49,12 +49,11 @@ comes from its recorded CPU snapshots.
 
 ### PostgreSQL only — local or remote
 
-Run the collector on any machine that can reach PostgreSQL. This example saves
-data in your home directory.
-
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
@@ -89,7 +88,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 #### For `postgresql` mode
 
 ```sh
-KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
   KRONIKA_WEB_USER=kronika \
   KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \

@@ -143,8 +143,10 @@ PostgreSQL Health и зависящие от CPU отметки неизвест
 ### Только PostgreSQL — локальный или удалённый сервер
 
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
@@ -176,8 +178,10 @@ PostgreSQL Health; если его нельзя вычислить, общая �
 Сбор с `pg-a.example.net` в первом терминале:
 
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika-pg-a
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-pg-a" \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika-pg-a \
   KRONIKA_PG_DSN='host=pg-a.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
@@ -185,14 +189,16 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 Сбор с `pg-b.example.net` во втором терминале:
 
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika-pg-b
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-pg-b" \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika-pg-b \
   KRONIKA_PG_DSN='host=pg-b.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 
-Для просмотра обеих записей запустите `kronika-web` отдельно для `kronika-pg-a`
-и `kronika-pg-b`, указав разные адреса прослушивания.
+Для просмотра обеих записей запустите `kronika-web` отдельно для `/var/lib/kronika-pg-a`
+и `/var/lib/kronika-pg-b`, указав разные адреса прослушивания.
 
 <a id="postgresql-role"></a>
 ### Права PostgreSQL

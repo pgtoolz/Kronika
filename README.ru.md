@@ -50,12 +50,11 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ### Только PostgreSQL — локальный или удалённый сервер
 
-Запустите сборщик на любой машине, откуда доступен PostgreSQL. В этом примере
-данные сохраняются в домашний каталог.
-
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
@@ -89,7 +88,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 #### Для режима `postgresql`
 
 ```sh
-KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
   KRONIKA_WEB_USER=kronika \
   KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \

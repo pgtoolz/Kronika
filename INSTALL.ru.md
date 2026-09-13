@@ -99,8 +99,10 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 Этот режим подходит для удалённого сервера или сбора без метрик Linux.
 
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
@@ -137,7 +139,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ### Для режима `postgresql`
 
 ```sh
-KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
   KRONIKA_WEB_USER=kronika \
   KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
@@ -145,7 +147,7 @@ KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
 ```
 
 Откройте <http://127.0.0.1:8080/> и войдите. Веб-серверу нужен доступ на запись в тот же
-каталог для создания поисковых индексов `.idx`. В примере с `/var/lib/kronika`
+каталог для создания поисковых индексов `.idx`. В примере для режима `local`
 обе программы работают от root; хранилище недоступно другим пользователям.
 
 `KRONIKA_WEB_SOURCES` сообщает, какие источники настроены; он не включает сбор

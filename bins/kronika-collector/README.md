@@ -140,8 +140,10 @@ reads the recorded value and has no separate CPU setting.
 ### PostgreSQL only — local or remote
 
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
@@ -172,8 +174,10 @@ for each server with its DSN and a separate storage directory.
 Start collection from `pg-a.example.net` in one terminal:
 
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika-pg-a
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-pg-a" \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika-pg-a \
   KRONIKA_PG_DSN='host=pg-a.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
@@ -181,14 +185,16 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 Start collection from `pg-b.example.net` in another terminal:
 
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika-pg-b
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-pg-b" \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika-pg-b \
   KRONIKA_PG_DSN='host=pg-b.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 
-To view both recordings, start `kronika-web` separately for `kronika-pg-a`
-and `kronika-pg-b`, using different listen addresses.
+To view both recordings, start `kronika-web` separately for `/var/lib/kronika-pg-a`
+and `/var/lib/kronika-pg-b`, using different listen addresses.
 
 <a id="postgresql-role"></a>
 ### PostgreSQL role

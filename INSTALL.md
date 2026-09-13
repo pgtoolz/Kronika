@@ -94,8 +94,10 @@ and table and index statistics use PostgreSQL's built-in views.
 Choose this mode for a remote server or when you do not need Linux metrics.
 
 ```sh
+sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
+
 KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+  KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
@@ -131,7 +133,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ### For `postgresql` mode
 
 ```sh
-KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
+KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
   KRONIKA_WEB_USER=kronika \
   KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
@@ -139,8 +141,8 @@ KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
 ```
 
 Open <http://127.0.0.1:8080/> and sign in. Web requires write access to the
-recording directory to create search indexes (`.idx`). In the `/var/lib/kronika`
-example, both programs run as root and other users cannot access the storage.
+recording directory to create search indexes (`.idx`). In the `local` example,
+both programs run as root and other users cannot access the storage.
 
 `KRONIKA_WEB_SOURCES` reports which sources are configured; it does not enable
 collection or hide recorded data. See the [web configuration reference](bins/kronika-web/README.md)
