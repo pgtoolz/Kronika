@@ -109,6 +109,7 @@ The PostgreSQL DSN covers its initial database and other accessible databases
 on that server, excluding template databases.
 
 `KRONIKA_PG_DSNS` is deprecated and will be removed; only its first DSN is used.
+The remaining entries are ignored without validation.
 Replace it with `KRONIKA_PG_DSN` and remove the old variable. Setting both stops startup.
 
 ### Other settings
