@@ -110,12 +110,9 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
-
-В этом примере TLS обязателен; проверяются сертификат и имя сервера.
-Для частного центра сертификации задайте `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`.
 
 Если число доступных серверу CPU известно, задайте его в
 `KRONIKA_POSTGRES_EFFECTIVE_CPUS` (например, `4`). Если неизвестно, оставьте

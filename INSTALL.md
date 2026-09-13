@@ -103,12 +103,9 @@ Choose this mode for a remote server or when you do not need Linux metrics.
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
-
-The example requires TLS and validates the server certificate and hostname.
-For a private CA, set `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`.
 
 If you know the server’s available CPU count, set `KRONIKA_POSTGRES_EFFECTIVE_CPUS`
 to that number (for example, `4`). If unknown, leave it unset: SQL metrics remain

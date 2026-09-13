@@ -142,14 +142,16 @@ reads the recorded value and has no separate CPU setting.
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 
 Add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4` when that server has 4 available CPUs.
-Use `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem` for a private CA. The DSN accepts
-`sslmode=disable` (plaintext), `prefer` (TLS when available; default), or
-`require` (TLS required). Every TLS connection checks the CA and hostname. `verify-full` is not accepted DSN syntax.
+
+The DSN parameter `sslmode` controls TLS: `prefer` (default) uses TLS when
+the server supports it; `require` accepts only TLS; `disable` turns TLS off.
+TLS connections validate the server certificate and hostname. For a private CA,
+set `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. The value `verify-full` is not supported.
 
 Start web over the same recording with `KRONIKA_WEB_SOURCES=2`. This declares
 PostgreSQL in the catalog; the collector mode controls acquisition. Overall equals
@@ -172,7 +174,7 @@ Start collection from `pg-a.example.net` in one terminal:
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-pg-a" \
-  KRONIKA_PG_DSN='host=pg-a.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg-a.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 
@@ -181,7 +183,7 @@ Start collection from `pg-b.example.net` in another terminal:
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-pg-b" \
-  KRONIKA_PG_DSN='host=pg-b.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg-b.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 

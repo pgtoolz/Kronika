@@ -57,13 +57,12 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 
-TLS проверяет сертификат и имя сервера. Для частного центра сертификации задайте
-`KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. Если число CPU PostgreSQL известно,
-добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, заменив `4` нужным числом.
+Если число CPU PostgreSQL известно, добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`,
+заменив `4` нужным числом.
 Без него SQL-метрики доступны, а PostgreSQL Health неизвестен. Подробнее — в [настройках сборщика](bins/kronika-collector/README.ru.md#remote-postgresql).
 
 Чтобы собирать данные нескольких серверов PostgreSQL, запустите для каждого

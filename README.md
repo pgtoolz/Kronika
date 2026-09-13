@@ -56,13 +56,12 @@ data in your home directory.
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 
-TLS checks the server certificate and hostname. For a private CA, set
-`KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. If the PostgreSQL CPU capacity is
-known, add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, replacing `4` with its CPU count.
+If the PostgreSQL CPU capacity is known, add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`,
+replacing `4` with its CPU count.
 Without it, SQL metrics remain available; PostgreSQL Health is unknown.
 See [collector configuration](bins/kronika-collector/README.md#remote-postgresql).
 

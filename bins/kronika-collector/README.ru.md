@@ -145,16 +145,17 @@ PostgreSQL Health и зависящие от CPU отметки неизвест
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 
 Добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, если серверу доступны 4 CPU.
-Для частного CA задайте `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. DSN принимает
-`sslmode=disable` (без шифрования), `prefer` (TLS, если доступен; по умолчанию)
-или `require` (TLS обязателен). TLS проверяет CA и имя сервера при каждом
-подключении. Значение `verify-full`
-в DSN не поддерживается.
+
+Параметр DSN `sslmode` управляет TLS: `prefer` (по умолчанию) использует TLS,
+если сервер его поддерживает; `require` допускает только TLS; `disable` отключает TLS.
+При подключении по TLS проверяются сертификат и имя сервера. Для частного центра
+сертификации задайте `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`.
+Значение `verify-full` не поддерживается.
 
 Откройте эту запись веб-сервером с `KRONIKA_WEB_SOURCES=2`. Это объявляет
 PostgreSQL в каталоге; режим сборщика определяет, какие данные записывать. Overall равен
@@ -177,7 +178,7 @@ PostgreSQL Health; если его нельзя вычислить, общая �
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-pg-a" \
-  KRONIKA_PG_DSN='host=pg-a.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg-a.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 
@@ -186,7 +187,7 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-pg-b" \
-  KRONIKA_PG_DSN='host=pg-b.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg-b.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
   /usr/local/bin/kronika-collector
 ```
 
