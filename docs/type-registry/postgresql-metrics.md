@@ -6,7 +6,7 @@ Sections occupy `1_001_001`–`1_020_001`. Columns, units and keys are declared 
 
 ## Collection scope and protocol
 
-Metrics come from the first instance in `KRONIKA_PG_DSNS`; metric rows do not carry `system_identifier`. Database-local views are read from each connectable database. An absent, unsupported or unreadable source produces no section for that read.
+Metrics come from the one server selected by `KRONIKA_PG_DSN`; metric rows do not carry `system_identifier`. Database-local views are read from each connectable database. An absent, unsupported or unreadable source produces no section for that read.
 
 The collector retains one connection per database between cycles. Database and extension discovery runs approximately every five minutes and updates the connection set.
 

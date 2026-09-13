@@ -4,20 +4,25 @@
 
 ## Релиз
 
-[Релиз 1.0.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.2)
-содержит четыре программы для Linux x86-64 и ARM64.
+Версия **1.1.0 ещё не выпущена**. Для примеров с `KRONIKA_PG_DSN` используйте
+[сборку этих исходников 1.1.0](build.ru.md) или соответствующую
+[сборку для разработки](#development-builds).
+Проверьте, что `kronika-collector --version` показывает `1.1.0`.
 
 <a id="download"></a>
-## Скачивание
+## Архивы
 
-| Архитектура | Архив | Контрольная сумма |
-| --- | --- | --- |
-| x86-64 | [kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz.sha256) |
-| ARM64 | [kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz.sha256) |
+Ожидаемые имена архивов для 1.1.0:
 
-Выполните [команды скачивания и установки](../INSTALL.ru.md#1-скачивание-и-распаковка).
-[HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-v1.0.2.html)
-можно открыть без сети или [в браузере](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html).
+| Архитектура | Архив |
+| --- | --- |
+| x86-64 | `kronika-1.1.0-x86_64-unknown-linux-musl.tar.gz` |
+| ARM64 | `kronika-1.1.0-aarch64-unknown-linux-musl.tar.gz` |
+
+У каждого архива есть файл контрольной суммы `.tar.gz.sha256`. Выполните
+[скачивание сборки для разработки](#development-builds), затем
+[установите распакованные программы](../INSTALL.ru.md#2-установка).
+Существующий [интерактивный пример](https://pgtoolz.github.io/Kronika/) остаётся доступен.
 
 ## Состав и идентификация
 
@@ -81,10 +86,11 @@ PNG-иллюстрации, светлые и тёмные SVG-схемы, ре�
 окружение дистрибутива с этим ядром, а не каждое возможное ядро Linux.
 Список проверок: [release-package.yml](../.github/workflows/release-package.yml).
 
+<a id="development-builds"></a>
 ## Сборки для разработки
 
 Войдите в учётную запись через [GitHub CLI](https://cli.github.com/manual/gh_run_download)
-и выберите успешный запуск автоматической сборки:
+и выберите успешный запуск для той же ревизии исходников 1.1.0:
 
 ```sh
 gh run list --repo pgtoolz/Kronika --workflow release-package.yml --status success --limit 10

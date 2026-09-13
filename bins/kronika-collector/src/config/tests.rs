@@ -4,6 +4,95 @@ use super::{
 };
 use kronika_format::{JOURNAL_HEADER_LEN, MAX_JOURNAL_LEN};
 
+fn selected_dsn(canonical: Option<&str>, legacy: Option<&str>) -> anyhow::Result<Option<String>> {
+    super::parse_pg_dsn(
+        canonical.map(std::ffi::OsStr::new),
+        legacy.map(std::ffi::OsStr::new),
+    )
+}
+
+#[test]
+fn canonical_postgres_dsn_is_one_connection_string_including_semicolons() {
+    for dsn in [
+        "host=db.example user=monitor password='private;password' dbname=postgres",
+        "postgresql://monitor:private;password@db.example/postgres",
+    ] {
+        assert_eq!(
+            selected_dsn(Some(&format!(" {dsn} ")), None).expect("one complete DSN"),
+            Some(dsn.to_owned())
+        );
+    }
+    assert_eq!(selected_dsn(None, None).expect("OS-only default"), None);
+}
+
+#[test]
+fn legacy_postgres_dsn_uses_only_first_and_does_not_validate_ignored_tail() {
+    let first = "host=db.example user=monitor";
+    for tail in [
+        "",
+        ";",
+        ";;",
+        "; host='unterminated password=RAW_SECRET",
+        ";host=other;;",
+    ] {
+        assert_eq!(
+            selected_dsn(None, Some(&format!(" {first} {tail}"))).expect("selected first DSN"),
+            Some(first.to_owned())
+        );
+    }
+    for blank in ["", " \t\n "] {
+        assert_eq!(
+            selected_dsn(None, Some(blank)).expect("legacy blank is absent"),
+            None
+        );
+    }
+    for invalid in [";host=db.example", " ; ", "host='unterminated;host=valid"] {
+        assert!(
+            selected_dsn(None, Some(invalid)).is_err(),
+            "reject invalid first DSN"
+        );
+    }
+}
+
+#[test]
+fn postgres_dsn_conflicts_and_invalid_selected_values_never_echo_secrets() {
+    for canonical in ["", " ", "host=db.example password=RAW_SECRET"] {
+        for legacy in ["", " ", "host=other password=OTHER_SECRET"] {
+            assert_eq!(
+                selected_dsn(Some(canonical), Some(legacy))
+                    .expect_err("conflicting presence")
+                    .to_string(),
+                "KRONIKA_PG_DSN and KRONIKA_PG_DSNS must not both be set"
+            );
+        }
+    }
+    for invalid in [
+        "",
+        " \n ",
+        "host='unterminated password=RAW_SECRET dbname=PRIVATE_DATABASE",
+    ] {
+        let error = selected_dsn(Some(invalid), None).expect_err("invalid selected DSN");
+        let message = format!("{error:#}");
+        assert!(message.starts_with("KRONIKA_PG_DSN "));
+        assert!(!message.contains("RAW_SECRET"));
+        assert!(!message.contains("PRIVATE_DATABASE"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn non_unicode_legacy_tail_is_ignored_but_selected_bytes_are_validated() {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let raw = std::ffi::OsStr::from_bytes(b"host=db.example;\xffRAW_SECRET");
+    assert_eq!(
+        super::parse_pg_dsn(None, Some(raw)).expect("ignored tail"),
+        Some("host=db.example".to_owned())
+    );
+    let error = super::parse_pg_dsn(Some(raw), None).expect_err("canonical is one DSN");
+    assert!(!format!("{error:#}").contains("RAW_SECRET"));
+}
+
 #[test]
 fn a_bare_byte_budget_is_a_fixed_target() {
     assert_eq!(

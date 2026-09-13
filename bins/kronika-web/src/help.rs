@@ -29,11 +29,12 @@ KRONIKA_WEB_SOURCES (required; no default)
   PostgreSQL data has been recorded. The Linux OS flag is only API metadata.
   All recorded data remains available for every value. Health uses instance
   information saved by the collector.
-  KRONIKA_PG_DSNS on kronika-collector enables PostgreSQL metric collection.
+  KRONIKA_PG_DSN on kronika-collector enables PostgreSQL metric collection.
 
 REQUIRED ENVIRONMENT
   KRONIKA_STORAGE_DIR
-      No default. Use the collector's recording directory, containing active.wal
+      No default. One collector's recording directory; use a separate web
+      process and listen address for each server's directory. Contains active.wal
       and YYYY/MM/DD/<segment-id>.zms. An individual ZMS file or a flat directory
       of segment files is not accepted. The directory must exist. Web needs
       write access to save search indexes (.idx files) and locks that prevent

@@ -1,7 +1,11 @@
 //! Exclusive writer ownership and segment publication.
 
+use std::io::{Read as _, Write as _};
+
 use super::index::prune_empty_calendar;
 use super::*;
+
+const SEAL_SEED_HEADER: &[u8; 8] = b"KSEED\0\0\x01";
 
 /// Lifetime token for the only collector allowed to mutate one data root.
 #[derive(Debug)]
@@ -39,6 +43,101 @@ impl WriterOwner {
         Ok(WriterLease {
             _lock: self.owner_lock.try_clone()?,
         })
+    }
+
+    /// Loads this root's seed or durably publishes one from OS randomness.
+    ///
+    /// The fixed format is an eight-byte `KSEED` version 1 header followed by
+    /// a little-endian `u64`. Only the reserved regular temporary is removed
+    /// after an interrupted publication; an invalid final seed is preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LayoutError::InvalidSealSeed`] for malformed persisted state,
+    /// or an error if either control entry is unsafe or I/O fails.
+    pub fn load_or_create_seal_seed(&self) -> Result<u64, LayoutError> {
+        let directory = &self.root.directory;
+        let seed = match open_regular_at(directory, SEAL_SEED_NAME, OFlags::RDONLY) {
+            Ok(mut file) => {
+                let identity = FileIdentity::from_file(&file)?;
+                if identity.len != 16 {
+                    return Err(LayoutError::InvalidSealSeed);
+                }
+                let mut header = [0_u8; 8];
+                let mut bytes = [0_u8; 8];
+                file.read_exact(&mut header)
+                    .and_then(|()| file.read_exact(&mut bytes))
+                    .map_err(|error| {
+                        if error.kind() == io::ErrorKind::UnexpectedEof {
+                            LayoutError::InvalidSealSeed
+                        } else {
+                            LayoutError::Io(error)
+                        }
+                    })?;
+                if &header != SEAL_SEED_HEADER || FileIdentity::from_file(&file)? != identity {
+                    return Err(LayoutError::InvalidSealSeed);
+                }
+                verify_named_identity(directory, SEAL_SEED_NAME, identity, SEAL_SEED_NAME)?;
+                // A prior writer may have linked the seed but failed its root sync.
+                file.sync_all()?;
+                directory.sync_all()?;
+                u64::from_le_bytes(bytes)
+            }
+            Err(LayoutError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                self.remove_seal_seed_temp()?;
+                let seed = random_seal_seed()?;
+                let mut file = create_regular_at(
+                    directory,
+                    SEAL_SEED_TEMP_NAME,
+                    OFlags::WRONLY,
+                    DATA_FILE_MODE,
+                )?;
+                file.write_all(SEAL_SEED_HEADER)?;
+                file.write_all(&seed.to_le_bytes())?;
+                file.sync_all()?;
+                verify_named_identity(
+                    directory,
+                    SEAL_SEED_TEMP_NAME,
+                    FileIdentity::from_file(&file)?,
+                    SEAL_SEED_TEMP_NAME,
+                )?;
+                link_open_file(&file, directory, SEAL_SEED_TEMP_NAME, SEAL_SEED_NAME)
+                    .map_err(errno_to_layout)?;
+                verify_named_identity(
+                    directory,
+                    SEAL_SEED_NAME,
+                    FileIdentity::from_file(&file)?,
+                    SEAL_SEED_TEMP_NAME,
+                )?;
+                directory.sync_all()?;
+                seed
+            }
+            Err(error) => return Err(error),
+        };
+        self.remove_seal_seed_temp()?;
+        Ok(seed)
+    }
+
+    fn remove_seal_seed_temp(&self) -> Result<(), LayoutError> {
+        let directory = &self.root.directory;
+        let file = match open_regular_at(directory, SEAL_SEED_TEMP_NAME, OFlags::RDONLY) {
+            Ok(file) => file,
+            Err(LayoutError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        if !unlink_named_if_identity(
+            directory,
+            SEAL_SEED_TEMP_NAME,
+            FileIdentity::from_file(&file)?,
+        )? {
+            return Err(LayoutError::TemporaryChanged {
+                name: SEAL_SEED_TEMP_NAME.to_owned(),
+            });
+        }
+        directory.sync_all()?;
+        Ok(())
     }
 
     /// Moves a journal the writer cannot read out of the way.
@@ -197,6 +296,34 @@ impl WriterOwner {
         prune_empty_calendar(&self.root, address.day)?;
         Ok(freed.unwrap_or(0))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn random_seal_seed() -> Result<u64, LayoutError> {
+    let mut bytes = [0_u8; 8];
+    let mut filled = 0;
+    while filled < bytes.len() {
+        match rustix::rand::getrandom(&mut bytes[filled..], rustix::rand::GetRandomFlags::empty()) {
+            Ok(0) => {
+                return Err(LayoutError::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "OS randomness returned no seal seed bytes",
+                )));
+            }
+            Ok(count) => filled += count,
+            Err(rustix::io::Errno::INTR) => {}
+            Err(error) => return Err(errno_to_layout(error)),
+        }
+    }
+    Ok(u64::from_le_bytes(bytes))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn random_seal_seed() -> Result<u64, LayoutError> {
+    Err(LayoutError::Io(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "seal seed generation requires Linux getrandom",
+    )))
 }
 
 /// Exclusive, crash-safe ZMS publication in one verified day directory.

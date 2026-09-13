@@ -26,9 +26,24 @@ happens after an abrupt stop or when a recording cannot be read.
 | --- | --- | --- |
 | `KRONIKA_STORAGE_DIR` | Required | Directory in which collected data is saved; use a directory, not a symbolic link. |
 | `KRONIKA_SEGMENT_MAX_BYTES` | `67108864` (64 MiB) | Journal size in bytes at which a compressed segment becomes due. Positive whole number. |
-| `KRONIKA_SEGMENT_MAX_AGE_S` | `900` | Seconds after a segment starts before it becomes due. Nonnegative whole number; `0` makes it eligible immediately. |
+| `KRONIKA_SEGMENT_MAX_AGE_S` | `900` | Period in seconds for scheduled segment closing, with a fixed random phase per storage directory. A segment can become due earlier; nonnegative whole number, `0` makes it eligible immediately. |
 | `KRONIKA_JOURNAL_MAX_BYTES` | `1073741824` (1 GiB) | Maximum journal size in bytes: `36..1073741824`. Reaching it saves the segment early. |
 | `KRONIKA_RETENTION` | `2147483648` (2 GiB) | Storage target in bytes, or `auto` (= `auto:80`), or `auto:P`, where `P` is a whole percentage from 1 to 99. |
+
+A random seed in `seal.seed` is created once in the actual
+`KRONIKA_STORAGE_DIR` and retained across restarts. It gives that store a fixed phase within the configured age
+period. After the first successful journal append, the next phase boundary sets
+the segment's deadline; later appends and clock changes do not move it. The
+first segment after startup or an early close can be shorter; subsequent
+ordinary boundaries keep the same period. A deadline makes a segment eligible
+for closing, not a guarantee of completion at that instant: ongoing collection
+and writing can delay it. Size, journal limits and `SIGUSR2` can close it earlier.
+`KRONIKA_INTERVAL_S=0` remains signal-only, without timed age closing.
+
+Independent stores get independent seeds. Copying a populated directory copies
+its seed and phase. Staggering is probabilistic, with no coordination between
+collectors: nearby phases, recovery, size limits or forced closes can coincide.
+Collection intervals and recorded timestamps are unaffected.
 
 A fixed budget counts the active journal, compressed recordings, their `.idx`
 index files and collector temporary files. It must be at least twice
@@ -48,16 +63,22 @@ files hourly to include new indexes created by web.
 
 ### Collection mode
 
-`KRONIKA_COLLECTOR_MODE=local` is the default: Linux metrics and optional local
-PostgreSQL. Process links require PostgreSQL to run on the same machine and in
+One collector process records one PostgreSQL server in its own storage
+directory. One DSN covers that server's accessible databases; use separate
+processes for separate servers, including primary and standby with the same
+`system_identifier`.
+
+`KRONIKA_COLLECTOR_MODE=local` is the default: Linux metrics and optional
+PostgreSQL in the same VM or pod. Without a DSN it records only Linux.
+Process links require PostgreSQL to run on the same machine and in
 the same PID namespace as the collector. In containers, the selected cgroup can
 include other containers; its metrics do not establish PostgreSQL process
 identity or CPU capacity.
 
 `KRONIKA_COLLECTOR_MODE=postgresql` records only PostgreSQL data from a local or
-remote server. It does not read procfs/sysfs, host identity, Linux processes or
-cgroups. `KRONIKA_PG_DSNS` is required. Root access is unnecessary; the process needs network and storage
-access. Explicit `KRONIKA_PG_LOGS` paths are optional. PgBouncer log settings are
+remote server. Use this mode when OS data is unnecessary. It does not read
+procfs/sysfs, host identity, Linux processes or cgroups. `KRONIKA_PG_DSN` is
+required. Root access is unnecessary; the process needs network and storage access. Explicit `KRONIKA_PG_LOGS` paths are optional. PgBouncer log settings are
 not accepted in this mode. OS intervals do not apply.
 
 ### Collection intervals
@@ -83,21 +104,24 @@ CPU, memory or I/O resources.
 ### Connections and logs
 
 A DSN is a database connection string, written as `key=value` pairs or a URL.
-Separate connection strings and paths with semicolons (`;`).
+`KRONIKA_PG_DSN` accepts one connection string. Separate PgBouncer DSNs and log
+paths with semicolons (`;`).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `KRONIKA_PG_DSNS` | Unset | PostgreSQL connection strings. The first enables server metrics. In `local` mode, each also discovers its current local log. Required in `postgresql` mode. |
+| `KRONIKA_PG_DSN` | Unset | One PostgreSQL connection string for server metrics and accessible databases. In `local` mode, the same DSN discovers the current local log. Required in `postgresql` mode. |
 | `KRONIKA_PG_SSL_ROOT_CERT` | Unset | PEM CA bundle replacing the included public CA roots. When unset, the included public roots are used. TLS validates the server hostname in both cases. |
-| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Unset | Available CPUs of the first PostgreSQL server: integer `1..4294967295`; requires `KRONIKA_PG_DSNS`. Automatic only for a recorded shared local machine. Without capacity, SQL metrics continue and PostgreSQL Health is unknown. |
+| `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Unset | Available CPUs of the monitored PostgreSQL server: integer `1..4294967295`; requires `KRONIKA_PG_DSN`. Automatic only for a recorded shared local machine. Without capacity, SQL metrics continue and PostgreSQL Health is unknown. |
 | `KRONIKA_PG_LOGS` | Unset | Optional readable local paths; final filename supports `*` and `?`. In `local` mode, paths add to `pg_current_logfile()` discovery. In `postgresql` mode, only explicit paths are opened. |
 | `KRONIKA_PGBOUNCER_DSNS` | Unset | Connections to the administrative console (`dbname=pgbouncer`) to read `SHOW CONFIG`/`logfile`; the account must belong to `stats_users`. |
 | `KRONIKA_PGBOUNCER_LOGS` | Unset | Local PgBouncer log paths; filenames can use `*` and `?` wildcards. |
 
 Blank lists add no explicit entries. Blank entries between semicolons are errors.
-The first PostgreSQL DSN supplies metrics from its initial database and other
-accessible databases on that server, excluding template databases. Further
-DSNs supply log discovery only in `local` mode. PostgreSQL metric rows have no separate field identifying the server.
+The PostgreSQL DSN supplies metrics from its initial database and other accessible
+databases on that server, excluding template databases. PostgreSQL metric rows
+have no separate field identifying the server.
+
+`KRONIKA_PG_DSNS` is deprecated: only the first DSN is used; the parameter will be removed. Use `KRONIKA_PG_DSN`.
 
 ### Other settings
 
@@ -131,7 +155,7 @@ PostgreSQL-only collection does not need sudo.
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
   /usr/local/bin/kronika-collector
 ```
 
@@ -152,6 +176,34 @@ rows remain readable independently, without a link based only on matching PIDs.
 See [Health formulas](../../docs/metrics-time.md#health) and
 [container collection](../../docs/metrics-linux.md#container-cgroups).
 
+<a id="several-postgresql-servers"></a>
+### Several PostgreSQL servers
+
+Run the same `kronika-collector` binary as two separate processes, one per
+server, with distinct DSNs and storage directories. In the first terminal:
+
+```sh
+KRONIKA_COLLECTOR_MODE=postgresql \
+  KRONIKA_STORAGE_DIR="$HOME/kronika-pg-a" \
+  KRONIKA_PG_DSN='host=pg-a.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  /usr/local/bin/kronika-collector
+```
+
+In the second terminal:
+
+```sh
+KRONIKA_COLLECTOR_MODE=postgresql \
+  KRONIKA_STORAGE_DIR="$HOME/kronika-pg-b" \
+  KRONIKA_PG_DSN='host=pg-b.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  /usr/local/bin/kronika-collector
+```
+
+Each process discovers that server's accessible databases; a process per database
+is unnecessary. Primary and standby also need separate processes and stores.
+Each web process, its MCP endpoint and exports read one storage directory.
+Use a separate web process and listen address for each store; the largest-database
+label does not select a server.
+
 <a id="postgresql-role"></a>
 ### PostgreSQL role
 
@@ -166,7 +218,7 @@ show how to grant them to a monitoring role:
 | `pg_stat_statements` reader | `EXECUTE` on `pg_stat_statements(boolean)`. |
 | `pg_store_plans` reader | `EXECUTE` on installed `pg_store_plans()` or `pg_store_plans(boolean)`; vadv interface also needs `pg_store_plans_get_plan(oid, oid, bigint, bigint)` and `pg_store_plans_textplan(text)`. |
 | Installed `*_info` interface | `SELECT` on the info view and `EXECUTE` on its zero-argument function. |
-| Each PostgreSQL log-discovery database | `EXECUTE` on `pg_catalog.pg_current_logfile()` and `pg_catalog.pg_control_system()`. |
+| Initial database used for PostgreSQL log discovery | `EXECUTE` on `pg_catalog.pg_current_logfile()` and `pg_catalog.pg_control_system()`. |
 
 Schema, view and function privileges are database-local. Extension readers are
 called directly. Default PostgreSQL/extension grants supply some of these
@@ -223,8 +275,8 @@ timeouts, slow queries, fetch/encoding/WAL times, encoded/appended bytes and
 In `postgresql` mode, only log files explicitly listed in `KRONIKA_PG_LOGS`
 are read. Paths returned by SQL are not used; remote files are not downloaded.
 
-In `local` mode, for every `KRONIKA_PG_DSNS` entry, discovery reads `pg_current_logfile()`,
-`data_directory` and `log_line_prefix`. This runs even when `KRONIKA_PG_LOGS`
+In `local` mode, the same `KRONIKA_PG_DSN` used for metrics discovers logs by
+reading `pg_current_logfile()`, `data_directory` and `log_line_prefix`. This runs even when `KRONIKA_PG_LOGS`
 is unset. The SQL function returns a current log path, not historical rotation
 files; null supplies no automatic file. A relative path is resolved against
 that PostgreSQL server's `data_directory`. The resulting file must be readable
@@ -280,8 +332,9 @@ for by cgroup I/O statistics.
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika /usr/local/bin/kronika-collector
 ```
 
-`SIGINT` and `SIGTERM` stop collection and retain the journal. `SIGUSR2` collects
-immediately and requests segment publication when the cycle appends data and the
+`SIGINT` and `SIGTERM` stop collection and retain `active.wal` without a final
+ZMS close. Restarting recovers a valid nonempty journal immediately.
+`SIGUSR2` collects immediately and requests segment publication when the cycle appends data and the
 segment is nonempty. `-h`, `--help` and `--version` exit before
 configuration or storage access. Readiness and segment paths go to stdout;
 structured logs go to stderr. In local mode, each `segment_write_finish` records `rss_kib`,

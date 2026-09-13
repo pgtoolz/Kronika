@@ -10,28 +10,29 @@ Linux либо записывает только данные PostgreSQL с ло
 
 ![Использование CPU и значения показателей процессов за записанный час](docs/images/processes.png)
 
-[Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/) ·
-[Скачать HTML-пример](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-v1.0.2.html).
+[Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/).
 
 Запись за 5 сентября 2026 года, 19:00–20:00 UTC:
 [Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=host).
 
 ## Установка и запуск
 
-Скачайте Kronika для [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz)
-или [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz).
-Проверьте и установите архив по [инструкции](INSTALL.ru.md)
-или [соберите из исходников](docs/build.ru.md). Архив содержит `kronika-collector`,
-`kronika-web`, `kronika-dump` и `kronika-report`.
+Версия **1.1.0 ещё не выпущена**. Команды ниже требуют программ из этих исходников
+1.1.0: [соберите и установите их](docs/build.ru.md) либо возьмите соответствующий
+[архив для разработки](docs/releases.ru.md#development-builds) и выполните
+[установку](INSTALL.ru.md). Перед использованием нового `KRONIKA_PG_DSN`
+проверьте, что `kronika-collector --version` показывает `1.1.0`.
 
-Выберите режим: Linux и при необходимости PostgreSQL (`local`) либо только
-PostgreSQL на локальном или удалённом сервере (`postgresql`).
+Один процесс сборщика записывает один сервер PostgreSQL и его доступные базы
+в отдельный каталог хранения. Выберите `local` для Linux и PostgreSQL той же VM
+или pod; выберите `postgresql` для удалённого сервера или когда OS не нужна.
+Без DSN режим `local` записывает только Linux.
 Примеры локального сбора сохраняют записи в `/var/lib/kronika`; сборщик создаёт
 каталог, если его ещё нет.
 
 ### Linux и при необходимости PostgreSQL
 
-Без `KRONIKA_PG_DSNS` режим `local` собирает только Linux:
+Без `KRONIKA_PG_DSN` режим `local` собирает только Linux:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -39,13 +40,13 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```
 
 <a id="linux-и-postgresql"></a>
-Для PostgreSQL на машине сборщика укажите строку подключения в `KRONIKA_PG_DSNS`
+Для PostgreSQL на машине сборщика укажите строку подключения в `KRONIKA_PG_DSN`
 при запуске. Используйте учётную запись PostgreSQL с
 [правами для сбора данных](INSTALL.ru.md#5-postgresql).
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
+  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
   /usr/local/bin/kronika-collector
 ```
 
@@ -61,7 +62,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
   /usr/local/bin/kronika-collector
 ```
 
@@ -69,6 +70,10 @@ TLS проверяет сертификат и имя сервера. Для ч�
 `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. Если число CPU PostgreSQL известно,
 добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, заменив `4` нужным числом.
 Без него SQL-метрики доступны, а PostgreSQL Health неизвестен. Подробнее — в [настройках сборщика](bins/kronika-collector/README.ru.md#remote-postgresql).
+
+Для нескольких серверов PostgreSQL запустите тот же бинарник отдельным процессом
+для каждого сервера, задав свой DSN и каталог хранения. См.
+[пример двух серверов](bins/kronika-collector/README.ru.md#several-postgresql-servers).
 
 ### Открыть веб-интерфейс
 

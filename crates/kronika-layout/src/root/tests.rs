@@ -1,6 +1,7 @@
 mod discovery;
 mod ownership;
 mod publish;
+mod seal_seed;
 
 use std::fs::{FileTimes, OpenOptions};
 use std::io::Write as _;

@@ -96,7 +96,7 @@ fn pgbouncer_in_front(world: &mut BddWorld) -> Result<()> {
 #[given("the collector reaches PostgreSQL by DSN")]
 fn postgres_by_dsn(world: &mut BddWorld) {
     let dsn = world.postgres.as_ref().expect("a server").dsn.clone();
-    world.env.push(("KRONIKA_PG_DSNS".to_owned(), dsn));
+    world.env.push(("KRONIKA_PG_DSN".to_owned(), dsn));
 }
 
 #[given("the collector is told the PostgreSQL log path")]

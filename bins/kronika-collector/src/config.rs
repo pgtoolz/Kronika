@@ -27,15 +27,15 @@ pub(crate) struct Config {
     pub(crate) intervals: Intervals,
     /// Write the segment when the journal holds at least this many raw bytes.
     pub(crate) segment_max_bytes: u64,
-    /// Write an open segment at this age even if the byte cap was not reached.
+    /// Period of phased age eligibility; the first segment may close sooner.
     pub(crate) segment_max_age_secs: u64,
     /// Hard cap of the on-disk journal file; reaching it writes the open
     /// segment early instead of failing the append.
     pub(crate) journal_max_bytes: u64,
     /// Storage-rotation target for the whole storage tree.
     pub(crate) retention: Option<RetentionConfig>,
-    /// Where to ask `PostgreSQL` which log it writes and who it is.
-    pub(crate) pg_dsns: Vec<String>,
+    /// The one `PostgreSQL` server used for metrics and log discovery.
+    pub(crate) pg_dsn: Option<String>,
     /// Explicit CPU capacity of the monitored `PostgreSQL` server.
     pub(crate) postgres_effective_cpus: Option<u32>,
     /// `PostgreSQL` logs named outright, as paths or globs.
@@ -67,6 +67,41 @@ fn parse_mode(raw: &str) -> Result<CollectorMode> {
         "postgresql" => Ok(CollectorMode::Postgresql),
         _ => anyhow::bail!("KRONIKA_COLLECTOR_MODE must be local or postgresql"),
     }
+}
+
+/// Select one connection before metrics and log discovery are initialized.
+fn parse_pg_dsn(
+    canonical: Option<&std::ffi::OsStr>,
+    legacy: Option<&std::ffi::OsStr>,
+) -> Result<Option<String>> {
+    anyhow::ensure!(
+        canonical.is_none() || legacy.is_none(),
+        "KRONIKA_PG_DSN and KRONIKA_PG_DSNS must not both be set"
+    );
+    let (key, raw) = match (canonical, legacy) {
+        (Some(raw), _) => ("KRONIKA_PG_DSN", raw),
+        (_, Some(raw)) => ("KRONIKA_PG_DSNS", raw),
+        _ => return Ok(None),
+    };
+    let selected = if canonical.is_some() {
+        raw.as_encoded_bytes()
+    } else {
+        if raw.to_str().is_some_and(|value| value.trim().is_empty()) {
+            return Ok(None);
+        }
+        raw.as_encoded_bytes()
+            .split(|byte| *byte == b';')
+            .next()
+            .unwrap_or_default()
+    };
+    let selected = std::str::from_utf8(selected)
+        .with_context(|| format!("{key} must be valid Unicode"))?
+        .trim();
+    anyhow::ensure!(!selected.is_empty(), "{key} has an empty connection string");
+    selected
+        .parse::<tokio_postgres::Config>()
+        .map_err(|_error| anyhow::anyhow!("{key} is not a valid connection string"))?;
+    Ok(Some(selected.to_owned()))
 }
 
 /// Read a `;`-separated list, or an empty one when the variable is unset.
@@ -237,7 +272,10 @@ impl Config {
             .unwrap_or(RetentionConfig::Fixed(DEFAULT_RETENTION_BYTES));
         validate_retention(retention, segment_max_bytes)?;
         log_retention_config(retention);
-        let pg_dsns = env_list("KRONIKA_PG_DSNS")?;
+        let pg_dsn = parse_pg_dsn(
+            std::env::var_os("KRONIKA_PG_DSN").as_deref(),
+            std::env::var_os("KRONIKA_PG_DSNS").as_deref(),
+        )?;
         let postgres_effective_cpus = optional_positive_u32(
             "KRONIKA_POSTGRES_EFFECTIVE_CPUS",
             std::env::var("KRONIKA_POSTGRES_EFFECTIVE_CPUS")
@@ -245,12 +283,12 @@ impl Config {
                 .as_deref(),
         )?;
         anyhow::ensure!(
-            !pg_dsns.is_empty() || postgres_effective_cpus.is_none(),
-            "KRONIKA_POSTGRES_EFFECTIVE_CPUS requires KRONIKA_PG_DSNS"
+            pg_dsn.is_some() || postgres_effective_cpus.is_none(),
+            "KRONIKA_POSTGRES_EFFECTIVE_CPUS requires KRONIKA_PG_DSN"
         );
         anyhow::ensure!(
-            mode.collect_os() || !pg_dsns.is_empty(),
-            "KRONIKA_COLLECTOR_MODE=postgresql requires KRONIKA_PG_DSNS"
+            mode.collect_os() || pg_dsn.is_some(),
+            "KRONIKA_COLLECTOR_MODE=postgresql requires KRONIKA_PG_DSN"
         );
         let pgbouncer_dsns = env_list("KRONIKA_PGBOUNCER_DSNS")?;
         let pgbouncer_logs = env_list("KRONIKA_PGBOUNCER_LOGS")?;
@@ -267,7 +305,7 @@ impl Config {
             segment_max_age_secs,
             journal_max_bytes,
             retention: Some(retention),
-            pg_dsns,
+            pg_dsn,
             postgres_effective_cpus,
             pg_logs: env_list("KRONIKA_PG_LOGS")?,
             pgbouncer_dsns,

@@ -46,7 +46,7 @@ PostgreSQL, [подготовьте роль мониторинга](../INSTALL.
 добавьте строку подключения в `collector.env`:
 
 ```ini
-KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
+KRONIKA_PG_DSN="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
 ```
 
 Для PostgreSQL на машине сборщика используйте строку подключения выше и
@@ -60,6 +60,11 @@ KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-
 Полный список параметров:
 [сборщик](../bins/kronika-collector/README.ru.md) и
 [веб-сервер](../bins/kronika-web/README.ru.md).
+
+Для нескольких серверов PostgreSQL используйте отдельный сервис сборщика,
+файл настроек и каталог хранения для каждого сервера. Каждый веб-сервис читает
+один каталог хранения и требует своего адреса прослушивания. См.
+[пример двух серверов](../bins/kronika-collector/README.ru.md#several-postgresql-servers).
 
 <a id="units"></a>
 ## Описание сервисов

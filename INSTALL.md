@@ -12,30 +12,18 @@ PostgreSQL collection needs a connection with monitoring permissions.
 
 ## 1. Download and extract
 
-[Release 1.0.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.2)
-provides archives and `.tar.gz.sha256` checksum files. Check your machine's
-architecture with `uname -m`:
+Version **1.1.0 is unreleased**. For the examples below, [build and install this
+1.1.0 source](docs/build.md), then continue with [collector startup](#3-start-collector).
+If a successful development build exists for the same source revision, follow
+its [download, verification and extraction instructions](docs/releases.md#development-builds).
 
-| `uname -m` | Archive target |
-| --- | --- |
-| `x86_64` | `x86_64-unknown-linux-musl` |
-| `aarch64` | `aarch64-unknown-linux-musl` |
-
-Download, verify and extract the archive. For ARM64, change the first line to
-`target=aarch64-unknown-linux-musl`:
+In the extracted archive directory, check the binary before installing:
 
 ```sh
-target=x86_64-unknown-linux-musl
-version=1.0.2
-archive="kronika-$version-$target.tar.gz"
-release_url="https://github.com/pgtoolz/Kronika/releases/download/v$version"
-curl -fLO "$release_url/$archive"
-curl -fLO "$release_url/$archive.sha256"
-sha256sum --check "$archive.sha256"
-tar -xzf "$archive"
-cd "${archive%.tar.gz}"
-sha256sum --check SHA256SUMS
+./kronika-collector --version
 ```
+
+It must report `1.1.0` for the new `KRONIKA_PG_DSN` examples.
 
 ## 2. Install
 
@@ -60,7 +48,7 @@ For `local` mode, create a private recording directory owned by root:
 sudo install -d -m 0700 /var/lib/kronika
 ```
 
-Without `KRONIKA_PG_DSNS`, the default `local` mode collects Linux only:
+Without `KRONIKA_PG_DSN`, the default `local` mode collects Linux only:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -69,9 +57,10 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 Use a real storage directory, not a symlink. Root can read protected process
 I/O counters and local logs. Processes are sampled every 5 seconds and core
-Linux metrics every 10 seconds. When the accumulated recording reaches
-900 seconds of age, it is saved as a finished compressed file called a segment.
-A size limit can finish the segment earlier. Web can read `active.wal` before
+Linux metrics every 10 seconds. Scheduled segment closing uses a 900-second
+period and a persistent random phase per storage directory. The first segment
+can become due sooner; ongoing work can delay completion. A size limit can
+finish the segment earlier. Web can read `active.wal` before
 it becomes a finished segment. `Ctrl+C` stops collection and retains the
 journal; the same command reopens the recording.
 
@@ -97,18 +86,23 @@ The role needs inherited `pg_monitor` membership, `CONNECT` to each collected
 database and the database-local extension permissions listed in
 [PostgreSQL role](bins/kronika-collector/README.md#postgresql-role).
 
-PostgreSQL on the collector machine:
+Use one collector process and storage directory per PostgreSQL server, including
+primary and standby. Its DSN covers accessible databases on that server; no
+separate collector per database is needed. See the
+[two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
+
+PostgreSQL with OS from the same VM or pod:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
+  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
   /usr/local/bin/kronika-collector
 ```
 
 | Setting or connection | Contract |
 | --- | --- |
 | `KRONIKA_COLLECTOR_MODE` | `local` by default: Linux and optional local PostgreSQL. `postgresql`: PostgreSQL only, without local OS/process/cgroup reads. |
-| `KRONIKA_PG_DSNS` | The first DSN enables server metrics. In `local` mode, all semicolon-separated DSNs also discover local logs. Required in `postgresql` mode. |
+| `KRONIKA_PG_DSN` | One connection string selects one PostgreSQL server and its accessible databases. The same DSN discovers local logs in `local` mode. Required in `postgresql` mode. |
 | `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Optional integer `1..4294967295`: PostgreSQL CPU capacity. A shared local machine uses recorded CPUs automatically. Remote/container capacity remains unknown without an explicit value; SQL collection continues. |
 | Extension discovery | Supported `pg_stat_statements` and `pg_store_plans` interfaces are detected in connectable databases. Activity, Locks and relation statistics use PostgreSQL's built-in views. |
 | Transport | DSN `sslmode=disable`, `prefer` (default) or `require`; TLS validates the CA and server hostname. `KRONIKA_PG_SSL_ROOT_CERT` replaces included public roots with a PEM CA bundle. Direct PostgreSQL and PgBouncer session pooling retain the required session state. |
@@ -116,12 +110,13 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ### PostgreSQL only — local or remote
 
+Choose this mode for a remote server or when OS data is unnecessary.
 PostgreSQL-only collection does not need sudo.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
   /usr/local/bin/kronika-collector
 ```
 
@@ -129,7 +124,7 @@ If the server has 4 available CPUs, add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`. Oth
 unset: SQL metrics remain available and PostgreSQL Health is unknown.
 See [remote PostgreSQL](bins/kronika-collector/README.md#remote-postgresql).
 
-[Service configuration](docs/services.md) stores DSNs and web credentials in
+[Service configuration](docs/services.md) stores the DSN and web credentials in
 root-readable environment files. [Collector reference](bins/kronika-collector/README.md)
 defines intervals, supported extension layouts and log formats.
 

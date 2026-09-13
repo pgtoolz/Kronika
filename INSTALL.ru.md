@@ -14,30 +14,18 @@
 
 ## 1. Скачивание и распаковка
 
-В [релизе 1.0.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.2)
-доступны архивы и файлы контрольных сумм `.tar.gz.sha256`.
-Команда `uname -m` покажет архитектуру вашей машины:
+Версия **1.1.0 ещё не выпущена**. Для примеров ниже [соберите и установите эти
+исходники 1.1.0](docs/build.ru.md), затем перейдите к [запуску сборщика](#3-запуск-сборщика).
+Если для той же ревизии есть успешная сборка для разработки, выполните
+[скачивание, проверку и распаковку](docs/releases.ru.md#development-builds).
 
-| `uname -m` | Обозначение в имени архива |
-| --- | --- |
-| `x86_64` | `x86_64-unknown-linux-musl` |
-| `aarch64` | `aarch64-unknown-linux-musl` |
-
-Скачайте, проверьте и распакуйте архив. Для ARM64 замените первую строку на
-`target=aarch64-unknown-linux-musl`:
+В каталоге распакованного архива проверьте программу перед установкой:
 
 ```sh
-target=x86_64-unknown-linux-musl
-version=1.0.2
-archive="kronika-$version-$target.tar.gz"
-release_url="https://github.com/pgtoolz/Kronika/releases/download/v$version"
-curl -fLO "$release_url/$archive"
-curl -fLO "$release_url/$archive.sha256"
-sha256sum --check "$archive.sha256"
-tar -xzf "$archive"
-cd "${archive%.tar.gz}"
-sha256sum --check SHA256SUMS
+./kronika-collector --version
 ```
+
+Для примеров с новым `KRONIKA_PG_DSN` она должна показать `1.1.0`.
 
 ## 2. Установка
 
@@ -64,7 +52,7 @@ PostgreSQL на локальном или удалённом сервере (`po
 sudo install -d -m 0700 /var/lib/kronika
 ```
 
-Без `KRONIKA_PG_DSNS` режим `local` собирает только Linux:
+Без `KRONIKA_PG_DSN` режим `local` собирает только Linux:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -74,9 +62,10 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 Укажите обычный каталог, а не символическую ссылку. Права root позволяют читать
 защищённые счётчики дискового ввода-вывода процессов и локальные журналы.
 По умолчанию сборщик опрашивает процессы каждые 5 секунд, основные показатели
-Linux — каждые 10 секунд. Когда возраст накопленной записи достигает
-900 секунд, сборщик сохраняет её в готовый сжатый файл — сегмент. Большой
-объём данных может завершить сегмент раньше. До этого веб-сервер уже может читать текущий журнал
+Linux — каждые 10 секунд. Плановое закрытие сегментов использует период
+900 секунд и постоянную случайную фазу каталога хранения. Первый сегмент может
+стать готов к закрытию раньше; текущая работа может задержать завершение.
+Большой объём данных может завершить сегмент раньше. До этого веб-сервер уже может читать текущий журнал
 `active.wal`. `Ctrl+C` останавливает сбор и сохраняет журнал; повторный запуск
 той же команды продолжает запись в этот каталог.
 
@@ -103,18 +92,23 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_current_logfile() TO kronika_monitor;
 каждой базе; они перечислены в разделе
 [«Роль PostgreSQL»](bins/kronika-collector/README.ru.md#postgresql-role).
 
-PostgreSQL на машине сборщика:
+Для каждого сервера PostgreSQL, включая primary и standby, используйте отдельный
+процесс сборщика и каталог хранения. Его DSN охватывает доступные базы сервера;
+отдельный сборщик для каждой базы не нужен. См.
+[пример двух серверов](bins/kronika-collector/README.ru.md#several-postgresql-servers).
+
+PostgreSQL и OS той же VM или pod:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
+  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
   /usr/local/bin/kronika-collector
 ```
 
 | Параметр или подключение | Что он задаёт |
 | --- | --- |
 | `KRONIKA_COLLECTOR_MODE` | По умолчанию `local`: Linux и настроенный локальный PostgreSQL. `postgresql`: только PostgreSQL, без чтения OS, процессов и cgroup сборщика. |
-| `KRONIKA_PG_DSNS` | Первый DSN включает метрики сервера. В режиме `local` все DSN, разделённые `;`, также ищут локальные журналы. Обязателен в режиме `postgresql`. |
+| `KRONIKA_PG_DSN` | Одна строка подключения выбирает один сервер PostgreSQL и его доступные базы. Этот же DSN используется для поиска локальных журналов в режиме `local`. Обязателен в режиме `postgresql`. |
 | `KRONIKA_POSTGRES_EFFECTIVE_CPUS` | Необязательное целое `1..4294967295`: число CPU PostgreSQL. На общей локальной машине берётся автоматически из записи. Для удалённого сервера и контейнеров без явного значения число CPU неизвестно; SQL-метрики собираются. |
 | Расширения | Поддерживаемые варианты `pg_stat_statements` и `pg_store_plans` обнаруживаются в доступных базах. Для Activity, Locks и статистики таблиц и индексов используются встроенные представления PostgreSQL. |
 | Подключение | DSN принимает `sslmode=disable`, `prefer` (по умолчанию) или `require`; TLS проверяет CA и имя сервера. `KRONIKA_PG_SSL_ROOT_CERT` заменяет встроенные публичные CA сертификатами из PEM-файла. Прямое подключение и PgBouncer session pooling сохраняют нужные настройки сеанса. |
@@ -122,12 +116,13 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ### Только PostgreSQL — локальный или удалённый сервер
 
+Этот режим подходит для удалённого сервера или когда OS не нужна.
 Для сбора только PostgreSQL sudo не нужен.
 
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
   /usr/local/bin/kronika-collector
 ```
 

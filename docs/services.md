@@ -44,7 +44,7 @@ PostgreSQL, [prepare a monitoring role](../INSTALL.md#5-postgresql) and add its
 connection string to `collector.env`:
 
 ```ini
-KRONIKA_PG_DSNS="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
+KRONIKA_PG_DSN="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
 ```
 
 For PostgreSQL on the collector machine, use the connection above and set
@@ -57,6 +57,11 @@ in the catalog. See [connection settings](../bins/kronika-collector/README.md#re
 All parameters:
 [collector](../bins/kronika-collector/README.md) and
 [web](../bins/kronika-web/README.md).
+
+For several PostgreSQL servers, use a separate collector service, environment
+file and storage directory per server. Each web service reads one storage
+directory and needs its own listen address. See the
+[two-server example](../bins/kronika-collector/README.md#several-postgresql-servers).
 
 ## Units
 

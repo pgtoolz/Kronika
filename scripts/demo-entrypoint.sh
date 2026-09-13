@@ -210,7 +210,7 @@ start_kronika() {
     install -d -m 0750 -o kronika -g kronika "$STORAGE_DIR"
     export KRONIKA_DEMO_DIR="$DEMO_ROOT"
     export KRONIKA_STORAGE_DIR="$STORAGE_DIR"
-    export KRONIKA_PG_DSNS="host=127.0.0.1 port=$PG_PORT user=$MONITOR_USER dbname=postgres application_name=kronika-demo-monitor"
+    export KRONIKA_PG_DSN="host=127.0.0.1 port=$PG_PORT user=$MONITOR_USER dbname=postgres application_name=kronika-demo-monitor"
     export KRONIKA_PGBOUNCER_DSNS="host=127.0.0.1 port=$PGB_PORT user=$MONITOR_USER dbname=pgbouncer"
     export KRONIKA_POSTGRES_EFFECTIVE_CPUS="${KRONIKA_POSTGRES_EFFECTIVE_CPUS:-2}"
     export KRONIKA_PG_INTERVAL_S="${KRONIKA_PG_INTERVAL_S:-5}"

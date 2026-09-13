@@ -152,6 +152,8 @@ pub enum LayoutError {
     },
     /// No canonical active journal exists.
     ActiveJournalMissing,
+    /// The persistent seal seed has an invalid length or format.
+    InvalidSealSeed,
     /// Every bounded root recovery-name collision slot already exists.
     RecoverySlotsExhausted {
         /// Number of attempted collision slots.
@@ -233,6 +235,9 @@ impl fmt::Display for LayoutError {
                 write!(f, "segment {id} changed while its index was being built")
             }
             Self::ActiveJournalMissing => f.write_str("the canonical active journal is missing"),
+            Self::InvalidSealSeed => {
+                f.write_str("invalid seal.seed: expected 16 bytes with the KSEED version 1 header")
+            }
             Self::RecoverySlotsExhausted { limit } => {
                 write!(
                     f,
@@ -266,6 +271,7 @@ impl Error for LayoutError {
             | Self::OwnerContended { .. }
             | Self::SourceChanged { .. }
             | Self::ActiveJournalMissing
+            | Self::InvalidSealSeed
             | Self::RecoverySlotsExhausted { .. } => None,
         }
     }

@@ -48,6 +48,79 @@ fn capabilities(
     }
 }
 
+#[tokio::test]
+async fn metrics_connection_failure_never_attempts_an_ignored_legacy_target() {
+    const CHILD: &str = "KRONIKA_TEST_SINGLE_DSN_METRICS_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let config = crate::config::Config::from_env().expect("normalized PostgreSQL config");
+        assert!(!config.mode.collect_os());
+        let mut sources = PgSources::open(&config).expect("selected metrics target");
+        let mut observations = Vec::new();
+        assert!(
+            sources
+                .read_probe(true, &mut |observation| observations.push(observation))
+                .await
+                .is_none()
+        );
+        assert!(matches!(
+            observations.as_slice(),
+            [PgObservation::Connection(_)]
+        ));
+        return;
+    }
+
+    let directory = tempfile::tempdir().expect("metrics routing fixture");
+    let selected = TcpListener::bind(("127.0.0.1", 0)).expect("selected target");
+    let selected_port = selected.local_addr().expect("selected address").port();
+    let rejected = std::thread::spawn(move || {
+        let (stream, _) = selected
+            .accept()
+            .expect("selected target receives connection");
+        stream
+            .shutdown(std::net::Shutdown::Both)
+            .expect("reject selected connection");
+    });
+    let ignored = TcpListener::bind(("127.0.0.1", 0)).expect("ignored target");
+    ignored
+        .set_nonblocking(true)
+        .expect("check without waiting");
+    let legacy = format!(
+        "host=127.0.0.1 port={selected_port} user=monitor sslmode=disable;host=127.0.0.1 port={} user=monitor sslmode=disable;;host='unterminated",
+        ignored.local_addr().expect("ignored address").port()
+    );
+    let mut command = std::process::Command::new(std::env::current_exe().expect("test binary"));
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("KRONIKA_") {
+            command.env_remove(name);
+        }
+    }
+    let output = command
+        .args([
+            "--exact",
+            "pg_sources::tests::metrics_connection_failure_never_attempts_an_ignored_legacy_target",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("KRONIKA_STORAGE_DIR", directory.path())
+        .env("KRONIKA_COLLECTOR_MODE", "postgresql")
+        .env("KRONIKA_PG_DSNS", legacy)
+        .output()
+        .expect("isolated metrics routing check");
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    rejected
+        .join()
+        .expect("selected target rejected one connection");
+    assert!(
+        matches!(ignored.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "metrics never fall back to the ignored target"
+    );
+}
+
 #[test]
 fn discovery_runs_immediately_then_every_five_minutes() {
     let now = Instant::now();
@@ -1106,7 +1179,7 @@ fn invalid_ca_configuration_is_reported_without_dsn_or_file_secrets() {
         let result = command.args(["--exact", "pg_sources::tests::invalid_ca_configuration_is_reported_without_dsn_or_file_secrets", "--nocapture"])
             .env(CHILD, "1")
             .env("KRONIKA_STORAGE_DIR", directory.path().join("recording"))
-            .env("KRONIKA_PG_DSNS", "host=127.0.0.1 user=monitor password=keep-secret dbname=metrics sslmode=require")
+            .env("KRONIKA_PG_DSN", "host=127.0.0.1 user=monitor password=keep-secret dbname=metrics sslmode=require")
             .env("KRONIKA_PG_SSL_ROOT_CERT", &ca)
             .output().expect("run isolated constructor check");
         assert!(

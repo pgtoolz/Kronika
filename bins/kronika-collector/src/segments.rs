@@ -12,10 +12,11 @@ use kronika_writer::{
 };
 use std::fmt;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::os_sources::UserReferences;
 
+mod age;
 mod open;
 
 pub(crate) use open::open_collector_journal;
@@ -54,11 +55,12 @@ impl From<anyhow::Error> for AppendWindowError {
 }
 
 /// The open (not yet finished) segment: its file name comes from the first
-/// window's timestamp, its age from the moment that window was appended.
+/// window's timestamp, its age deadline from the first successful append.
 #[derive(Debug)]
 pub(crate) struct SegmentState {
     first_id: Option<SegmentId>,
-    opened_at: Option<Instant>,
+    seal_seed: u64,
+    age_deadline: Option<(Instant, Duration)>,
     interner: Interner,
     users: UserReferences,
     pg_settings_present: bool,
@@ -69,7 +71,8 @@ impl Default for SegmentState {
     fn default() -> Self {
         Self {
             first_id: None,
-            opened_at: None,
+            seal_seed: 0,
+            age_deadline: None,
             interner: Interner::new(kronika_format::DictLimits::default()),
             users: UserReferences::default(),
             pg_settings_present: false,
@@ -79,6 +82,13 @@ impl Default for SegmentState {
 }
 
 impl SegmentState {
+    pub(crate) fn with_seal_seed(seal_seed: u64) -> Self {
+        Self {
+            seal_seed,
+            ..Self::default()
+        }
+    }
+
     pub(crate) const fn is_empty(&self) -> bool {
         self.first_id.is_none()
     }
@@ -125,22 +135,32 @@ impl SegmentState {
         }
     }
 
-    /// Register the appended window; the first one opens the segment.
-    pub(crate) const fn on_window_appended(&mut self, id: SegmentId, now: Instant) {
+    /// Register the first append and retain its monotonic age deadline.
+    fn on_window_appended(
+        &mut self,
+        id: SegmentId,
+        now: Instant,
+        utc: SystemTime,
+        max_age: Duration,
+    ) -> Result<()> {
         if self.first_id.is_none() {
+            let utc = utc
+                .duration_since(UNIX_EPOCH)
+                .context("system clock is before unix epoch")?;
+            self.age_deadline = Some((now, age::until_next_phase(self.seal_seed, max_age, utc)));
             self.first_id = Some(id);
-            self.opened_at = Some(now);
         }
+        Ok(())
     }
 
-    /// Whether the open segment has reached `max_age`.
-    pub(crate) fn age_expired(&self, now: Instant, max_age: Duration) -> bool {
-        self.opened_at
-            .is_some_and(|opened| now.duration_since(opened) >= max_age)
+    pub(crate) fn age_expired(&self, now: Instant) -> bool {
+        self.time_until_age(now)
+            .is_some_and(|remaining| remaining.is_zero())
     }
 
-    pub(crate) fn time_until_age(&self, now: Instant, max_age: Duration) -> Option<Duration> {
-        Some(max_age.saturating_sub(now.saturating_duration_since(self.opened_at?)))
+    pub(crate) fn time_until_age(&self, now: Instant) -> Option<Duration> {
+        let (started, delay) = self.age_deadline?;
+        Some(delay.saturating_sub(now.saturating_duration_since(started)))
     }
 
     #[cfg(test)]
@@ -206,7 +226,7 @@ pub(crate) fn close_open_segment(
         .context("writing an open segment requires an appended window")?;
     // The journal is the durable input to this fatal operation and startup
     // recovery. Drop the in-memory dictionaries before final bodies are built.
-    *segment = SegmentState::default();
+    *segment = SegmentState::with_seal_seed(segment.seal_seed);
     let address = SegmentAddress::new(segment_id).context("derive the segment UTC address")?;
     let dest = owner.root().diagnostic_file_path(address, FileKind::Zms);
     let journal_bytes = journal.bytes();
@@ -383,12 +403,16 @@ pub(crate) fn append_window_and_maybe_close(
     let active_id = journal
         .segment_id()
         .context("a successful journal append must persist SegmentId")?;
-    segment.on_window_appended(active_id, now);
-    let age = Duration::from_secs(config.segment_max_age_secs);
+    segment.on_window_appended(
+        active_id,
+        now,
+        SystemTime::now(),
+        Duration::from_secs(config.segment_max_age_secs),
+    )?;
     if let Some(reason) = close_reason(
         CloseConditions {
             forced,
-            age_expired: segment.age_expired(now, age),
+            age_expired: segment.age_expired(now),
         },
         journal.bytes(),
         config.segment_max_bytes,

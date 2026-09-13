@@ -10,28 +10,29 @@ hour: resource use, individual processes and queries, locks and changes over tim
 
 ![Process CPU activity and the process snapshot for a recorded hour](docs/images/processes.png)
 
-[Open the interactive preview](https://pgtoolz.github.io/Kronika/) ·
-[Download the HTML example](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-v1.0.2.html).
+[Open the interactive preview](https://pgtoolz.github.io/Kronika/).
 
 A recorded hour, 5 September 2026, 19:00–20:00 UTC:
 [Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=host).
 
 ## Install and run
 
-Download Kronika for [Linux x86-64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz)
-or [Linux ARM64](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz).
-Follow the [installation guide](INSTALL.md) to verify and install the archive,
-or [build from source](docs/build.md). The archive contains `kronika-collector`,
-`kronika-web`, `kronika-dump`, and `kronika-report`.
+Version **1.1.0 is unreleased**. The commands below require binaries built from
+this 1.1.0 source: [build and install them](docs/build.md), or use a matching
+[development archive](docs/releases.md#development-builds) and follow the
+[installation guide](INSTALL.md). Confirm `kronika-collector --version` reports
+`1.1.0` before using the new `KRONIKA_PG_DSN` setting.
 
-Choose a mode: Linux and optional PostgreSQL (`local`), or PostgreSQL only
-on a local or remote server (`postgresql`).
+One collector process records one PostgreSQL server and its accessible databases
+in a separate storage directory. Choose `local` for Linux and optional PostgreSQL
+in the same VM or pod; choose `postgresql` for a remote server or when OS data is
+unnecessary. Without a DSN, `local` records Linux only.
 The local examples save recordings in `/var/lib/kronika`; collector creates the
 directory if needed.
 
 ### Linux and optional PostgreSQL
 
-Without `KRONIKA_PG_DSNS`, the default `local` mode collects Linux only:
+Without `KRONIKA_PG_DSN`, the default `local` mode collects Linux only:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -40,12 +41,12 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 <a id="linux-and-postgresql"></a>
 For PostgreSQL on the collector machine, supply its connection string in
-`KRONIKA_PG_DSNS` when starting collector. Use a PostgreSQL account with the
+`KRONIKA_PG_DSN` when starting collector. Use a PostgreSQL account with the
 [monitoring privileges](INSTALL.md#5-postgresql).
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSNS='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
+  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
   /usr/local/bin/kronika-collector
 ```
 
@@ -62,7 +63,7 @@ PostgreSQL-only collection does not need sudo.
 ```sh
 KRONIKA_COLLECTOR_MODE=postgresql \
   KRONIKA_STORAGE_DIR="$HOME/kronika-data" \
-  KRONIKA_PG_DSNS='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
+  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=require' \
   /usr/local/bin/kronika-collector
 ```
 
@@ -71,6 +72,10 @@ TLS checks the server certificate and hostname. For a private CA, set
 known, add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`, replacing `4` with its CPU count.
 Without it, SQL metrics remain available; PostgreSQL Health is unknown.
 See [collector configuration](bins/kronika-collector/README.md#remote-postgresql).
+
+For several PostgreSQL servers, run the same binary in a separate process with
+its own DSN and storage directory for each server. See the
+[two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
 ### Open the web interface
 

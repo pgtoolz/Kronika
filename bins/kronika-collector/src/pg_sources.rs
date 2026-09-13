@@ -254,29 +254,16 @@ pub(crate) struct PgSources {
 }
 
 impl PgSources {
-    /// Take the first configured DSN, or nothing when none is configured.
+    /// Take the selected DSN, or nothing when none is configured.
     pub(crate) fn open(config: &Config) -> anyhow::Result<Self> {
-        let Some(dsn) = config.pg_dsns.first() else {
+        let Some(dsn) = config.pg_dsn.as_deref() else {
             return Ok(Self::default());
         };
-        if config.pg_dsns.len() > 1 {
-            log_event(
-                LogLevel::Warn,
-                "pg_metrics_single_server",
-                &[
-                    field("configured", config.pg_dsns.len()),
-                    field(
-                        "reason",
-                        "a metric row does not name its server, so only the first DSN is collected",
-                    ),
-                ],
-            );
-        }
         let server = Pool::new(dsn).map_err(|error| {
             if error.is::<kronika_source_pg::transport::CaConfigError>() {
                 anyhow::Error::new(kronika_source_pg::transport::CaConfigError)
             } else {
-                anyhow::anyhow!("KRONIKA_PG_DSNS[0] is not a valid connection string")
+                anyhow::anyhow!("KRONIKA_PG_DSN is not a valid connection string")
             }
         })?;
         Ok(Self {

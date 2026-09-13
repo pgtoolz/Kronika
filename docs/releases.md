@@ -4,20 +4,24 @@
 
 ## Release
 
-[Release 1.0.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.0.2)
-contains four programs for Linux x86-64 and ARM64.
+Version **1.1.0 is unreleased**. Use a [build from this 1.1.0 source](build.md) or
+a matching [development build](#development-builds) for the `KRONIKA_PG_DSN`
+examples. Verify that `kronika-collector --version` reports `1.1.0`.
 
 <a id="download"></a>
-## Download
+## Archives
 
-| Architecture | Archive | Checksum |
-| --- | --- | --- |
-| x86-64 | [kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-x86_64-unknown-linux-musl.tar.gz.sha256) |
-| ARM64 | [kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz) | [SHA-256](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-1.0.2-aarch64-unknown-linux-musl.tar.gz.sha256) |
+Expected archive names for 1.1.0:
 
-Follow the [download and installation commands](../INSTALL.md#1-download-and-extract).
-The [HTML example](https://github.com/pgtoolz/Kronika/releases/download/v1.0.2/kronika-v1.0.2.html)
-can be opened offline or [in the browser](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html).
+| Architecture | Archive |
+| --- | --- |
+| x86-64 | `kronika-1.1.0-x86_64-unknown-linux-musl.tar.gz` |
+| ARM64 | `kronika-1.1.0-aarch64-unknown-linux-musl.tar.gz` |
+
+Each archive has a matching `.tar.gz.sha256` checksum file. Follow the
+[development download instructions](#development-builds), then
+[install the extracted programs](../INSTALL.md#2-install).
+The existing [interactive preview](https://pgtoolz.github.io/Kronika/) remains available.
 
 <a id="members-and-identity"></a>
 ## Archive contents and build version
@@ -81,7 +85,7 @@ distribution environments with that kernel, not with every Linux kernel. Matrix 
 ## Development builds
 
 With an authenticated [GitHub CLI](https://cli.github.com/manual/gh_run_download),
-select a successful workflow run:
+select a successful workflow run for the same 1.1.0 source revision:
 
 ```sh
 gh run list --repo pgtoolz/Kronika --workflow release-package.yml --status success --limit 10

@@ -55,6 +55,10 @@ pub const INDEX_OWNER_LOCK_NAME: &str = ".kronika-index.owner.lock";
 pub const LOG_OFFSETS_NAME: &str = "log.offsets";
 /// The temporary the offsets file is renamed from.
 pub const LOG_OFFSETS_TEMP_NAME: &str = "log.tmp";
+/// The persistent random identity used to stagger age-driven sealing.
+pub const SEAL_SEED_NAME: &str = "seal.seed";
+/// Unfinished publication of the persistent seal seed.
+pub const SEAL_SEED_TEMP_NAME: &str = "seal.seed.tmp";
 const ENTRY_METADATA_BYTES: usize = 128;
 const SCAN_RACE_ATTEMPTS: usize = 4;
 const WRITER_LOCK_HANDOFF_TIMEOUT: Duration = Duration::from_millis(100);
