@@ -204,7 +204,7 @@ fn validate_shutdown_query_summary(line: &str, payload_measure: &str) -> Result<
     Ok(())
 }
 
-fn field_value<'a>(line: &'a str, name: &str) -> Result<&'a str> {
+pub(super) fn field_value<'a>(line: &'a str, name: &str) -> Result<&'a str> {
     let prefix = format!("{name}=");
     line.split_whitespace()
         .find_map(|field| field.strip_prefix(&prefix))

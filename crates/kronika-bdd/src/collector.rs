@@ -107,6 +107,41 @@ impl Run {
         Ok(())
     }
 
+    pub(crate) fn run_until_age_publications_and_stop(
+        &mut self,
+        count: usize,
+        timeout: Duration,
+    ) -> Result<()> {
+        let started = Instant::now();
+        loop {
+            let log = self.log()?;
+            let child = self.child.as_mut().context("the collector is running")?;
+            if let Some(status) = child.try_wait().context("reap the collector")? {
+                anyhow::bail!(
+                    "collector exited early ({status}); log tail:\n{}",
+                    log.lines().rev().take(20).collect::<Vec<_>>().join("\n")
+                );
+            }
+            let publications = log
+                .lines()
+                .filter(|line| {
+                    line.split_whitespace()
+                        .any(|field| field == "action=segment_write_finish")
+                        && line.split_whitespace().any(|field| field == "reason=age")
+                })
+                .count();
+            anyhow::ensure!(
+                started.elapsed() < timeout,
+                "observed {publications}/{count} age publications within {timeout:?}; log tail:\n{}",
+                log.lines().rev().take(20).collect::<Vec<_>>().join("\n")
+            );
+            if publications >= count {
+                return self.run_for_and_stop(Duration::ZERO);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
     /// Peak resident set size over the run, kibibytes.
     pub(crate) const fn peak_rss_kib(&self) -> Option<u64> {
         self.peak_rss_kib

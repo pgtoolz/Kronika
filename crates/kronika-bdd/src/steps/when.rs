@@ -14,6 +14,12 @@ fn run_for(world: &mut BddWorld, seconds: u64) -> Result<()> {
     run.run_for_and_stop(Duration::from_secs(seconds))
 }
 
+#[when(regex = r"^it publishes (\d+) age segments within (\d+) seconds and stops$")]
+fn age_publications(world: &mut BddWorld, count: usize, seconds: u64) -> Result<()> {
+    let run = world.run.as_mut().context("a collector was started")?;
+    run.run_until_age_publications_and_stop(count, Duration::from_secs(seconds))
+}
+
 #[when(regex = r"^the demo finishes within (\d+) seconds$")]
 fn demo_finishes(world: &mut BddWorld, seconds: u64) -> Result<()> {
     let mut demo = DemoRun::spawn(&world.demo_env)?;
