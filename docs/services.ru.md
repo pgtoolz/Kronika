@@ -147,7 +147,7 @@ sudo systemctl restart kronika-collector kronika-web
 | Журнал веб-сервера | `sudo journalctl -u kronika-web -f` |
 | Собрать сейчас и сохранить сегмент, если этот сбор добавит данные | `sudo systemctl kill --kill-whom=main --signal=SIGUSR2 kronika-collector` |
 | Применить изменения настроек | `sudo systemctl restart kronika-collector kronika-web` |
-| Остановка сбора с сохранением файлов | `sudo systemctl stop kronika-collector` |
+| Остановка сбора | `sudo systemctl stop kronika-collector` |
 | Отключение автозапуска и остановка веб-сервера | `sudo systemctl disable --now kronika-web` |
 | Запуск веб-сервера | `sudo systemctl start kronika-web` |
 | Место, занятое записью | `sudo du -sh /var/lib/kronika` |

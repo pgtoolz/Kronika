@@ -139,7 +139,7 @@ sudo systemctl restart kronika-collector kronika-web
 | Web log | `sudo journalctl -u kronika-web -f` |
 | Collect now and save the segment if this collection adds data | `sudo systemctl kill --kill-whom=main --signal=SIGUSR2 kronika-collector` |
 | Apply environment changes | `sudo systemctl restart kronika-collector kronika-web` |
-| Stop collection and retain files | `sudo systemctl stop kronika-collector` |
+| Stop collection | `sudo systemctl stop kronika-collector` |
 | Disable web startup and stop web | `sudo systemctl disable --now kronika-web` |
 | Start web | `sudo systemctl start kronika-web` |
 | Storage bytes | `sudo du -sh /var/lib/kronika` |
