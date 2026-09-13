@@ -6,8 +6,6 @@
 
 Changes since the last published release, 1.0.1.
 
-### Planned
-
 - Use `KRONIKA_PG_DSN` for one PostgreSQL server. To monitor several servers, run the same `kronika-collector` binary as a separate process for each server, with its own `KRONIKA_PG_DSN` and `KRONIKA_STORAGE_DIR`. Each process collects the accessible databases on its server.
 - Stagger scheduled ZMS segment closing with a per-directory offset that survives restarts. The first segment may be shorter; later scheduled segments retain the configured period. Size limits, forced closing and recovery are unchanged. Simultaneous closes remain possible.
 
