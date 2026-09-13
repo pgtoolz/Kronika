@@ -2,10 +2,10 @@
 
 [Русская версия](services.ru.md) · [Install](../INSTALL.md)
 
-These units start collector and web at boot and restart them after a failure.
-They use `/usr/local/bin`, root-owned storage and a web listener on localhost.
-Run one collector and one web process per storage directory. Stop any manually
-started instance before starting its service.
+You can launch the programs however you prefer. This guide shows automatic
+startup and restart using systemd. The example runs one collector and one web
+process, using `/usr/local/bin`, root-owned storage and a web listener on
+localhost. Stop any manually started instance before starting its service.
 
 ## Environment files
 
@@ -57,10 +57,10 @@ All parameters:
 [collector](../bins/kronika-collector/README.md) and
 [web](../bins/kronika-web/README.md).
 
-For each PostgreSQL server, create a separate systemd service that runs
-`kronika-collector`. Give each service its own name, environment file with that
-server’s DSN, and storage directory. All services use the same binary.
-Each web service reads one storage directory and needs its own listen address. See the
+For each PostgreSQL server, run a separate `kronika-collector` process with its
+own DSN and storage directory. All processes use the same binary, regardless
+of how you start them. Each web process reads one storage directory and needs
+its own listen address. See the
 [two-server example](../bins/kronika-collector/README.md#several-postgresql-servers).
 
 ## Units
