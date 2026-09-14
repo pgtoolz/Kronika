@@ -261,29 +261,29 @@ in KiB; this is unavailable in PostgreSQL-only mode. Connections are labelled
 ## Log collection
 
 In `postgresql` mode, only log files explicitly listed in `KRONIKA_PG_LOGS`
-are read. Paths returned by SQL are not used; remote files are not downloaded.
+are read. The files must be readable on the collector host.
 
 In `local` mode, the same `KRONIKA_PG_DSN` used for metrics discovers logs by
-reading `pg_current_logfile()`, `data_directory` and `log_line_prefix`. This runs even when `KRONIKA_PG_LOGS`
+reading `pg_current_logfile()` and `data_directory`. This runs even when `KRONIKA_PG_LOGS`
 is unset. The SQL function returns a current log path, not historical rotation
-files; null supplies no automatic file. A relative path is resolved against
+files. Null supplies no automatic file. A relative path is resolved against
 that PostgreSQL server's `data_directory`. The resulting file must be readable
-on the collector host; the collector does not fetch files from a remote server.
+on the collector host.
 
-`KRONIKA_PG_LOGS` adds local paths or filename patterns to the discovered sources. An identical
-path is followed once, retaining discovered `system_identifier` and
-`log_line_prefix` when available. Files described as “path-only” below were not found through
-a database connection. Discovery requires the [function privileges](#postgresql-role)
-listed above.
+`KRONIKA_PG_LOGS` adds local paths or filename patterns. Each path is followed once.
+In both modes, the configured server supplies `log_line_prefix`, `log_timezone`
+and, when available, `system_identifier` for these files.
+Event timestamps use `log_timezone`, independently of the collector's timezone.
+Discovery requires the [function privileges](#postgresql-role) listed above.
 
 | Property | Behavior |
 | --- | --- |
-| Discovery cadence | First collection cycle, then on the first collection cycle at least five minutes after the preceding scan; retries after errors. |
+| Discovery cadence | First collection cycle, then at least five minutes after the preceding scan. Failed scans are retried. |
 | Read limit | At most 256 MiB per file per collection. |
 | PostgreSQL formats | Filename selects `.csv` → csvlog, `.json` → jsonlog, otherwise stderr. |
-| Path-only identity | `system_identifier` is null; every row records its source file. |
-| Path-only stderr | Database/user are unavailable; severity, SQLSTATE when present, message and continuations are parsed. Parsed timestamp is used when present, otherwise collection time. |
-| Source error | Logged; other collection continues. |
+| Time without a DSN | UTC/GMT/Z, numeric offsets and IANA names such as `Europe/Moscow` are accepted. Other abbreviations require the server's `log_timezone`. |
+| Timestamp errors | The error is logged and the batch remains unacknowledged for retry. A stderr prefix without an event timestamp uses collection time. |
+| Source error | Logged. Collection from other sources continues. |
 
 ## Linux collection
 
