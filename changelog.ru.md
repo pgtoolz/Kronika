@@ -5,7 +5,7 @@
 ## [1.1.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.2)
 
 - Исправлено время событий PostgreSQL при разных часовых поясах сервера и коллектора.
-- Будущие события из логов больше не сдвигают выбор метрик в MCP, веб-интерфейсе и HTML-отчётах.
+- Коллектор пропускает события PostgreSQL старше 15 минут. Лимит задаётся через `KRONIKA_PG_LOG_MAX_LAG_S`.
 
 ## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
 
