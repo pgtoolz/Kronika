@@ -77,7 +77,7 @@ import { isRelationLens, relationRequest, type RelationGroup, type RelationLens,
 import { EMPTY_PROCESS_SUMMARY, LENS_FIELDS, ProcessSummary, ProcessTable, processSummaryReducer, processTableDefaultOrder } from "./process-table"
 import { buildProcessForest } from "./process-tree"
 import { latestTimelineTimestamp, refreshedCursor, scheduleRefresh } from "./refresh"
-import { reportLatestHour, reportVisibleAt, reportVisibleCursor, reportVisibleRange } from "./report-transport"
+import { reportInitialHour, reportVisibleAt, reportVisibleCursor, reportVisibleRange } from "./report-transport"
 import type { ChartPoint } from "./series-chart"
 import { apiFetch, bootstrapSession, getSessionSnapshot, logout, subscribeSession } from "./session"
 import { activityForProcess, hasPostgresTelemetry, postgresProcessesShared, recordedLinuxEnabled } from "./source-availability"
@@ -484,7 +484,7 @@ function App({ locale, onLocale, t }: {
     if (!refresh) finishRefresh(false)
     if (hour !== null && drawn.current === hour && !refresh) return
     const controller = new AbortController()
-    const requestedHour = hour ?? reportLatestHour(reportRange)
+    const requestedHour = hour ?? reportInitialHour(reportRange)
     setRefreshFailed(false)
     if (!refresh) {
       setBackgroundTimeline(null)

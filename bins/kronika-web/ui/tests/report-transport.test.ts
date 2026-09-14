@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { readFile } from "node:fs/promises"
 
 import {
   reportFetch,
-  reportLatestHour,
+  reportInitialHour,
   reportVisibleAt,
   reportVisibleCursor,
   reportVisibleRange,
@@ -27,6 +28,7 @@ function installRuntime(
   visibleFrom?: string,
   visibleToExclusive?: string,
   locationHref = "file:///tmp/kronika-report.html",
+  initialMetricAt: unknown = null,
 ): () => void {
   const location = Object.getOwnPropertyDescriptor(globalThis, "location")
   const runtime = Object.getOwnPropertyDescriptor(globalThis, "__KRONIKA_REPORT_RUNTIME__")
@@ -36,7 +38,7 @@ function installRuntime(
   })
   Object.defineProperty(globalThis, "__KRONIKA_REPORT_RUNTIME__", {
     configurable: true,
-    value: { ready: Promise.resolve(session), visibleFrom, visibleToExclusive },
+    value: { ready: Promise.resolve(session), visibleFrom, visibleToExclusive, initialMetricAt },
   })
   return () => {
     if (location === undefined) Reflect.deleteProperty(globalThis, "location")
@@ -56,7 +58,7 @@ test("report navigation accepts only exact instants inside the embedded visible 
     assert.equal(reportVisibleAt(1788526799999999, range), 1788526799999999)
     assert.equal(reportVisibleAt(1788526800000000, range), null)
     assert.equal(reportVisibleAt(1788530400000000, range), null)
-    assert.equal(reportLatestHour(range), 1788523200000000)
+    assert.equal(reportInitialHour(range), 1788523200000000)
     assert.equal(reportVisibleCursor(1788523199999999, range), 1788523200000000)
     assert.equal(reportVisibleCursor(1788526800000000, range), 1788526799999999)
   } finally {
@@ -258,4 +260,48 @@ test("report transport observes an abort after the synchronous query returns", a
   } finally {
     restore()
   }
+})
+
+
+test("report startup selects the recorded metric hour inside a multi-hour partial export", () => {
+  const hour = 1_800_000_000_000_000
+  const from = hour + 120_000_000
+  const toExclusive = hour + 4 * 3_600_000_000 + 780_000_000
+  const session = { request() { throw new Error("hour selection performs no requests") } }
+  for (const metricAt of [from, hour + 780_000_000, toExclusive - 1, null]) {
+    const restore = installRuntime(session, String(from), String(toExclusive), undefined, metricAt === null ? null : String(metricAt))
+    try {
+      const range = reportVisibleRange()
+      assert.equal(reportInitialHour(range), Math.floor((metricAt ?? toExclusive - 1) / 3_600_000_000) * 3_600_000_000)
+      const explicit = hour + 2 * 3_600_000_000 + 1
+      assert.equal(reportVisibleAt(explicit, range), explicit)
+    } finally {
+      restore()
+    }
+  }
+  assert.equal(reportInitialHour(null), null)
+})
+
+test("report startup rejects missing, malformed, unsafe, and out-of-window metric timestamps", () => {
+  const hour = 1_800_000_000_000_000
+  const from = hour + 120_000_000
+  const toExclusive = hour + 3_600_000_000
+  const session = { request() { throw new Error("unused") } }
+  for (const metricAt of [undefined, "", "1e3", "1.5", hour, true, {}, "9007199254740992", String(from - 1), String(toExclusive)]) {
+    const restore = installRuntime(session, String(from), String(toExclusive), undefined, metricAt)
+    try {
+      if (metricAt === undefined) Reflect.deleteProperty((globalThis as any).__KRONIKA_REPORT_RUNTIME__, "initialMetricAt")
+      assert.throws(() => reportInitialHour(reportVisibleRange()), /initial metric timestamp is (invalid|outside its visible range)/)
+    } finally {
+      restore()
+    }
+  }
+})
+
+test("an explicit report address keeps precedence over the initial metric hour and cursor", async () => {
+  const app = await readFile(new URL("../src/app.tsx", import.meta.url), "utf8")
+  assert.match(app, /const initialAt = reportVisibleAt\(opened\.current\.at, reportRange\)/)
+  assert.match(app, /useState<number \| null>\(initialAt === null \? null : floorHour\(initialAt\)\)/)
+  assert.match(app, /const requestedHour = hour \?\? reportInitialHour\(reportRange\)/)
+  assert.match(app, /setCursor\(followsLatest\.current \? latest : asked \?\? latest\)/)
 })
