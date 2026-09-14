@@ -411,13 +411,14 @@ async fn streamed(
     accepted: AcceptedEncodings,
 ) -> Response<WebBody> {
     blocking_stream_with_replay(
-        move || {
+        move |cancelled| {
             api::prepare_with_demo(
                 &config.data_root,
                 config.sources,
                 config.synthetic_demo,
                 route.clone(),
                 if_none_match.as_deref(),
+                cancelled,
             )
         },
         accepted,
@@ -432,7 +433,7 @@ async fn blocking_stream(
 ) -> Response<WebBody> {
     let mut prepare = Some(prepare);
     blocking_stream_inner(
-        move || {
+        move |_cancelled| {
             let Some(prepare) = prepare.take() else {
                 return Err(ApiError::BadCursor);
             };
@@ -445,14 +446,14 @@ async fn blocking_stream(
 }
 
 async fn blocking_stream_with_replay(
-    prepare: impl FnMut() -> Result<api::Prepared, ApiError> + Send + 'static,
+    prepare: impl FnMut(&dyn Fn() -> bool) -> Result<api::Prepared, ApiError> + Send + 'static,
     accepted: AcceptedEncodings,
 ) -> Response<WebBody> {
     blocking_stream_inner(prepare, accepted, true).await
 }
 
 async fn blocking_stream_inner(
-    mut prepare: impl FnMut() -> Result<api::Prepared, ApiError> + Send + 'static,
+    mut prepare: impl FnMut(&dyn Fn() -> bool) -> Result<api::Prepared, ApiError> + Send + 'static,
     accepted: AcceptedEncodings,
     replay_source_change: bool,
 ) -> Response<WebBody> {
@@ -462,8 +463,10 @@ async fn blocking_stream_inner(
         let mut head_tx = Some(head_tx);
         let mut producer: Option<BodyProducer> = None;
         let mut replayed = false;
+        let cancellation_tx = body_tx.clone();
+        let cancelled = || cancellation_tx.is_closed();
         loop {
-            let prepared = match prepare() {
+            let prepared = match prepare(&cancelled) {
                 Ok(prepared) => prepared,
                 Err(error)
                     if replay_source_change && !replayed && error.source_changed_during_read() =>
@@ -507,8 +510,6 @@ async fn blocking_stream_inner(
                 };
                 producer = Some(BodyProducer::new(accepted, meta, head_tx, body_tx.clone()));
             }
-            let cancellation_tx = body_tx.clone();
-            let cancelled = || cancellation_tx.is_closed();
             let Some(current) = producer.as_mut() else {
                 return;
             };

@@ -177,7 +177,7 @@ fn assert_search_forms(payload: &Arc<[u8]>, type_ids: [&str; 3]) {
         .expect("source");
         let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0b11, false);
         assert!(matches!(
-            execute(&context, QueryRequest::Snapshot(request)),
+            execute(&context, QueryRequest::Snapshot(request), &|| false),
             Err(crate::QueryError::BadFilter(_))
         ));
     }

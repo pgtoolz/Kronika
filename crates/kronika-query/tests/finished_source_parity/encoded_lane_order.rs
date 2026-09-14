@@ -390,7 +390,8 @@ fn encoded_active_prefix_reorders_after_validating_current_catalog_ids() {
         matches!(
             execute(
                 &context,
-                QueryRequest::Hour(lane_request(vec![at(0), at(20), active_id], cursor))
+                QueryRequest::Hour(lane_request(vec![at(0), at(20), active_id], cursor)),
+                &|| false
             ),
             Err(QueryError::BadCursor)
         ),
@@ -406,7 +407,8 @@ fn encoded_active_prefix_reorders_after_validating_current_catalog_ids() {
                         segment_id: active_id,
                         wal_position: position - 1
                     })
-                ))
+                )),
+                &|| false
             ),
             Err(QueryError::BadCursor)
         ),

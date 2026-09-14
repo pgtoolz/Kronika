@@ -89,6 +89,7 @@ fn empty_base_execution() -> crate::QueryExecution {
             segments: None,
             active: None,
         }),
+        &|| false,
     )
     .expect("prepare empty base hour")
 }
@@ -271,6 +272,7 @@ fn pinned_prefix_restores_time_order_after_validating_listed_ids() {
         request(vec![1, 2, 3]),
         1,
         false,
+        &|| false,
     )
     .expect("valid pinned prefix");
     assert_eq!(
@@ -287,7 +289,8 @@ fn pinned_prefix_restores_time_order_after_validating_listed_ids() {
             None,
             request(vec![1, 3, 2]),
             1,
-            false
+            false,
+            &|| false
         ),
         Err(QueryError::BadCursor)
     ));

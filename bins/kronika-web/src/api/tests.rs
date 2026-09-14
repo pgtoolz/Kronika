@@ -18,8 +18,12 @@ fn heatmap_summary_change_invalidates_the_previous_representation_validator() {
         .into_query()
         .expect("heatmap query");
     let dataset = NativeDataset::from_root(fixture.root()).expect("recorded dataset");
-    let execution = execute(&QueryContext::new(Arc::new(dataset), 0b11, false), request)
-        .expect("prepare heatmap");
+    let execution = execute(
+        &QueryContext::new(Arc::new(dataset), 0b11, false),
+        request,
+        &|| false,
+    )
+    .expect("prepare heatmap");
     let Some(QueryIdentity::SegmentSet {
         resource,
         shape,

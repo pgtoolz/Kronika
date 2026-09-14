@@ -65,8 +65,12 @@ impl QuerySink for Records {
 
 fn catalog_bytes(dataset: Arc<dyn QueryDataset>) -> Vec<u8> {
     let context = QueryContext::new(dataset, 0, false);
-    let execution = execute(&context, QueryRequest::Catalog(CatalogRequest::default()))
-        .expect("prepare catalog query");
+    let execution = execute(
+        &context,
+        QueryRequest::Catalog(CatalogRequest::default()),
+        &|| false,
+    )
+    .expect("prepare catalog query");
     let mut records = Records::default();
     execution
         .stream(&mut records)
@@ -97,7 +101,8 @@ fn heatmap_bytes(dataset: Arc<dyn QueryDataset>) -> Vec<u8> {
     let context = QueryContext::new(dataset, 0, false);
     let query =
         kronika_query::validate_heatmap_request(heatmap_query(1)).expect("validate heatmap query");
-    let execution = execute(&context, QueryRequest::Heatmap(query)).expect("prepare heatmap query");
+    let execution =
+        execute(&context, QueryRequest::Heatmap(query), &|| false).expect("prepare heatmap query");
     let mut records = Records::default();
     execution
         .stream(&mut records)
@@ -107,7 +112,8 @@ fn heatmap_bytes(dataset: Arc<dyn QueryDataset>) -> Vec<u8> {
 
 fn hour_bytes(dataset: Arc<dyn QueryDataset>, request: HourRequest) -> Vec<u8> {
     let context = QueryContext::new(dataset, 0b11, false);
-    let execution = execute(&context, QueryRequest::Hour(request)).expect("prepare hour query");
+    let execution =
+        execute(&context, QueryRequest::Hour(request), &|| false).expect("prepare hour query");
     let mut records = Records::default();
     execution.stream(&mut records).expect("stream hour query");
     records.0
@@ -119,7 +125,7 @@ fn indexed_bytes(
     request: QueryRequest,
 ) -> Vec<u8> {
     let context = QueryContext::new(dataset, 0b11, false).with_index_provider(indexes);
-    let execution = execute(&context, request).expect("prepare indexed query");
+    let execution = execute(&context, request, &|| false).expect("prepare indexed query");
     let mut records = Records::default();
     execution
         .stream(&mut records)
@@ -1692,7 +1698,7 @@ fn selected_counter_identity_breaks_generic_history_and_detail_rates() {
                 after: None,
             });
             let mut sink = Records::default();
-            execute(&context, request)
+            execute(&context, request, &|| false)
                 .expect("history")
                 .stream(&mut sink)
                 .expect("stream");

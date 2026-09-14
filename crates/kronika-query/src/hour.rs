@@ -63,6 +63,7 @@ pub(crate) fn prepare(
     request: HourRequest,
     configured_sources: u32,
     synthetic_demo: bool,
+    cancelled: &(impl Fn() -> bool + ?Sized),
 ) -> Result<PreparedHour, QueryError> {
     let requested = request.window;
     let discovery = dataset.catalog()?;
@@ -75,7 +76,7 @@ pub(crate) fn prepare(
         crate::observation::latest_metric_observation(
             dataset.as_ref(),
             discovery.as_ref(),
-            &|| false,
+            cancelled,
         )?
         .map_or_else(|| latest_hour(&hours), observation_hour)
     } else {

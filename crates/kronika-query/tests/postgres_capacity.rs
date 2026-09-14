@@ -328,6 +328,7 @@ fn check_artifacts(fixture: &Fixture, expected: &[(i64, Option<u8>)], hits: &[i6
             segment_id: START,
             section: "health".to_owned(),
         }),
+        &|| false,
     )
     .expect("embedded Health query");
     let mut records = Records::default();

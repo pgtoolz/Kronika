@@ -323,6 +323,7 @@ impl QueryExecution {
 pub fn execute(
     context: &QueryContext,
     request: QueryRequest,
+    cancelled: &(impl Fn() -> bool + ?Sized),
 ) -> Result<QueryExecution, QueryError> {
     if let QueryRequest::Snapshot(request) = request {
         return snapshot::prepare_snapshot(context, request)?.finish();
@@ -352,6 +353,7 @@ pub fn execute(
             request,
             context.configured_sources,
             context.synthetic_demo,
+            cancelled,
         )?),
         QueryRequest::Snapshot(_) => unreachable!("snapshot handled before shared preparation"),
         QueryRequest::Rows(request) => {

@@ -121,7 +121,8 @@ fn snapshot_records(payload: &Arc<[u8]>, request: SnapshotRequest) -> Vec<Value>
     .expect("embedded snapshot source");
     let dataset: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(source));
     let context = QueryContext::new(dataset, 0b11, false);
-    let execution = execute(&context, QueryRequest::Snapshot(request)).expect("prepare snapshot");
+    let execution =
+        execute(&context, QueryRequest::Snapshot(request), &|| false).expect("prepare snapshot");
     let mut records = SnapshotRecords::default();
     execution
         .stream(&mut records)

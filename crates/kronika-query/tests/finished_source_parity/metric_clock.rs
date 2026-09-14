@@ -18,7 +18,7 @@ fn hour_header(dataset: Arc<dyn QueryDataset>, request: HourRequest) -> Vec<u8> 
     }
     let context = QueryContext::new(dataset, 0b11, false);
     let mut sink = Header(Vec::new());
-    execute(&context, QueryRequest::Hour(request))
+    execute(&context, QueryRequest::Hour(request), &|| false)
         .expect("prepare hour")
         .stream(&mut sink)
         .expect("hour header");
@@ -287,6 +287,7 @@ fn metric_clock_default_hour_prunes_older_bodies_once_observation_reaches_bound(
             segments: None,
             active: None,
         }),
+        &|| false,
     )
     .expect("prepare default hour");
     assert_eq!(
@@ -356,5 +357,163 @@ fn metric_clock_keeps_recorded_cadence_when_a_different_source_advances() {
             .as_of,
         Some(HEATMAP_TO),
         "100s-old activity fits recorded 60s cadence (150s lookback), not default 75s"
+    );
+}
+
+#[derive(Debug)]
+struct ClockDataset {
+    inner: FinishedDataset<PosixSource>,
+    listings: std::sync::Mutex<Vec<(kronika_query::SegmentBounds, usize)>>,
+    cancel_on_open: bool,
+    cancelled: std::sync::atomic::AtomicBool,
+}
+
+#[derive(Debug)]
+struct ClockCatalog<'a> {
+    inner: Box<dyn kronika_query::CapturedCatalog + 'a>,
+    listings: &'a std::sync::Mutex<Vec<(kronika_query::SegmentBounds, usize)>>,
+}
+impl kronika_query::CapturedCatalog for ClockCatalog<'_> {
+    fn ranges(&self) -> &[(i64, i64)] {
+        self.inner.ranges()
+    }
+    fn segments(
+        &self,
+        selection: kronika_query::SegmentSelection,
+    ) -> Result<kronika_query::DatasetListing, kronika_query::QueryError> {
+        let bounds = selection.bounds;
+        let listing = self.inner.segments(selection)?;
+        self.listings
+            .lock()
+            .map_err(|_poison| {
+                kronika_query::QueryError::Unreadable(Box::new(std::io::Error::other(
+                    "listing spy poisoned",
+                )))
+            })?
+            .push((bounds, listing.segments.len()));
+        Ok(listing)
+    }
+}
+impl QueryDataset for ClockDataset {
+    fn catalog(
+        &self,
+    ) -> Result<Box<dyn kronika_query::CapturedCatalog + '_>, kronika_query::QueryError> {
+        Ok(Box::new(ClockCatalog {
+            inner: self.inner.catalog()?,
+            listings: &self.listings,
+        }))
+    }
+    fn segment(&self, id: i64) -> Result<kronika_query::DatasetListing, kronika_query::QueryError> {
+        self.inner.segment(id)
+    }
+    fn open(
+        &self,
+        segment: &kronika_query::DatasetSegment,
+    ) -> Result<kronika_reader::Segment, kronika_query::QueryError> {
+        let opened = self.inner.open(segment)?;
+        if self.cancel_on_open {
+            self.cancelled.store(true, Ordering::Relaxed);
+        }
+        Ok(opened)
+    }
+    fn at_active_position(
+        &self,
+        segment: &kronika_query::DatasetSegment,
+        position: u64,
+    ) -> Result<kronika_query::DatasetSegment, kronika_query::QueryError> {
+        self.inner.at_active_position(segment, position)
+    }
+}
+
+#[test]
+fn metric_clock_catalog_scope_is_bounded_and_cancel_reaches_in_progress_hour_prepare() {
+    let directory = tempfile::tempdir().expect("recording");
+    for index in 0..12 {
+        write_process_segment(
+            directory.path(),
+            SegmentId::new(SEGMENT_ID + index).expect("id"),
+            HEATMAP_TO + index * HOUR_US,
+            99,
+            index,
+        );
+    }
+    for cancel_on_open in [false, true] {
+        let dataset = Arc::new(ClockDataset {
+            inner: FinishedDataset::new(PosixSource::open(directory.path()).expect("source")),
+            listings: std::sync::Mutex::new(Vec::new()),
+            cancel_on_open,
+            cancelled: std::sync::atomic::AtomicBool::new(false),
+        });
+        let context = QueryContext::new(Arc::<ClockDataset>::clone(&dataset), 0b11, false);
+        let result = execute(
+            &context,
+            QueryRequest::Hour(HourRequest {
+                window: Window::default(),
+                series: None,
+                part: HourPart::Base,
+                segments: None,
+                active: None,
+            }),
+            &|| dataset.cancelled.load(Ordering::Relaxed),
+        );
+        let listings = dataset.listings.lock().expect("listing spy").clone();
+        assert!(!listings.is_empty(), "search began before cancellation");
+        assert_eq!(
+            listings[0],
+            (
+                kronika_query::SegmentBounds::inclusive(
+                    Some(HEATMAP_TO + 11 * HOUR_US),
+                    Some(HEATMAP_TO + 11 * HOUR_US)
+                ),
+                1
+            ),
+            "only top catalog was materialized for horizon"
+        );
+        assert!(
+            listings.iter().all(|(_, count)| *count == 1),
+            "old full catalogs remain unopened in every selection"
+        );
+        if cancel_on_open {
+            assert!(
+                matches!(result, Err(kronika_query::QueryError::Cancelled)),
+                "cancel reached timestamp read after a real segment open"
+            );
+            assert_eq!(listings.len(), 1, "cancel does not start another listing");
+        } else {
+            assert!(result.is_ok(), "default hour preparation completes");
+        }
+    }
+}
+
+#[test]
+fn metric_clock_checks_other_mixed_candidates_after_finding_initial_sample() {
+    let directory = tempfile::tempdir().expect("recording");
+    let newer = HEATMAP_TO + 1_000_000;
+    write_process_segment(
+        directory.path(),
+        SegmentId::new(SEGMENT_ID).expect("first id"),
+        newer,
+        99,
+        1,
+    );
+    drop(write_heatmap_fixture_observed(
+        directory.path(),
+        SegmentId::new(SEGMENT_ID + 1).expect("mixed id"),
+        None,
+        42,
+        Some(FUTURE_EVENT),
+        |_| {},
+    ));
+    let context = QueryContext::new(
+        Arc::new(query_adapter::NativeDataset::from_root(directory.path()).expect("reader")),
+        0b11,
+        false,
+    );
+    let result = execute_processes(&context, &finder_query(FinderSurface::Processes), &|| false)
+        .expect("common maximum");
+    assert_eq!(
+        result.as_of,
+        Some(newer),
+        "larger metric sample exists outside segment with largest event maximum"
     );
 }
