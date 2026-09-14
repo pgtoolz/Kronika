@@ -113,6 +113,7 @@ pub(crate) struct LogSources {
     pg_dsn: Option<PostgresTarget>,
     discover_postgres_paths: bool,
     pg_logs: Vec<String>,
+    pg_log_max_lag_secs: u64,
     pgbouncer_dsns: Vec<settings::ConnectionTarget>,
     pgbouncer_logs: Vec<String>,
     postgres: Vec<PostgresSource>,
@@ -145,6 +146,7 @@ impl LogSources {
             pg_dsn,
             discover_postgres_paths: config.mode.collect_os(),
             pg_logs: config.pg_logs.clone(),
+            pg_log_max_lag_secs: config.pg_log_max_lag_secs,
             pgbouncer_dsns,
             pgbouncer_logs: config.pgbouncer_logs.clone(),
             postgres: Vec::new(),
@@ -245,10 +247,6 @@ impl LogSources {
                 });
             }
         }
-        self.follow_postgres(wanted);
-    }
-
-    fn follow_postgres(&mut self, wanted: BTreeMap<PathBuf, PostgresFacts>) {
         self.postgres
             .retain(|source| wanted.contains_key(source.log.path()));
         for (path, facts) in wanted {
@@ -335,14 +333,13 @@ impl LogSources {
     pub(crate) fn collect(
         &mut self,
         due: &DueSet,
-        now: i64,
         mut admit: impl FnMut(&LogRows) -> anyhow::Result<bool>,
     ) -> anyhow::Result<bool> {
         if !due.has(SourceKind::Logs) {
             return Ok(true);
         }
         let mut offsets_changed = false;
-        let result = match self.collect_postgres(now, &mut admit, &mut offsets_changed) {
+        let result = match self.collect_postgres(&mut admit, &mut offsets_changed) {
             Ok(true) => self.collect_pgbouncer(&mut admit, &mut offsets_changed),
             other => other,
         };
@@ -354,7 +351,6 @@ impl LogSources {
 
     fn collect_postgres(
         &mut self,
-        now: i64,
         admit: &mut impl FnMut(&LogRows) -> anyhow::Result<bool>,
         offsets_changed: &mut bool,
     ) -> anyhow::Result<bool> {
@@ -366,7 +362,11 @@ impl LogSources {
             let mut event_rows = 0_usize;
             let mut read_failed = false;
             while next_batch_bytes(raw_bytes) != 0 {
-                let batch = match source.log.read_batch(now, SECTION_WRITE_BATCH_ROWS) {
+                let batch = match source.log.read_batch(
+                    || crate::unix_now_us().map_err(std::io::Error::other),
+                    SECTION_WRITE_BATCH_ROWS,
+                    self.pg_log_max_lag_secs,
+                ) {
                     Ok(batch) => batch,
                     Err(error) => {
                         log_collection_failure(PG_LOG_TYPE_ID, format, &error, started.elapsed());

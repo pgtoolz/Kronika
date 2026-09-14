@@ -508,7 +508,6 @@ fn check_consumers(storage: &Path, first: i64, second: i64, devices: u32) {
                     type_id: Some(type_id),
                     after: None,
                 }),
-                &|| false,
             )
             .expect("selected history")
             .stream(&mut records)
@@ -551,7 +550,6 @@ fn check_lanes(
             segments: Some(segment_ids),
             active: None,
         }),
-        &|| false,
     )
     .expect("selected lanes")
     .stream(&mut lanes)

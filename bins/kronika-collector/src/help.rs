@@ -70,6 +70,9 @@ OPTIONAL POSTGRESQL AND LOG ENVIRONMENT (all unset by default)
       jsonlog, otherwise stderr. Paths found only through this list have no
       discovered server ID or stderr prefix; severity, message and continuations
       are parsed. Missing input timestamps use collection time.
+  KRONIKA_PG_LOG_MAX_LAG_S
+      Skip PostgreSQL log records older than this many seconds at read time.
+      Positive integer. Default: 900.
   KRONIKA_PGBOUNCER_DSNS
       Semicolon-separated PgBouncer admin-console DSNs (dbname=pgbouncer), for
       SHOW CONFIG/logfile discovery. The account needs stats_users membership.

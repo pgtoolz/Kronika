@@ -229,19 +229,26 @@ impl PgLog {
 
     /// Read and classify one bounded batch written since the last call.
     ///
-    /// `now` stands in for the timestamp of a record whose format or
-    /// `log_line_prefix` does not carry one.
+    /// `now` returns Unix microseconds once after the file batch. Records older
+    /// than `max_lag_secs` are skipped before aggregation.
     ///
     /// # Errors
     ///
-    /// Returns the operating system's error for reading the file.
-    pub fn read_batch(&mut self, now: i64, max_records: usize) -> io::Result<ReadBatch> {
+    /// Returns a file, clock or timestamp parsing error.
+    pub fn read_batch(
+        &mut self,
+        now: impl FnOnce() -> io::Result<i64>,
+        max_records: usize,
+        max_lag_secs: u64,
+    ) -> io::Result<ReadBatch> {
         let batch = if self.format.tracks_quotes() {
             self.tail.read_batch(self.format.continues(), max_records)?
         } else {
             self.tail
                 .read_batch_without_quote_tracking(self.format.continues(), max_records)?
         };
+        let now = now().inspect_err(|_| self.tail.retry())?;
+        let oldest = i128::from(now) - i128::from(max_lag_secs) * 1_000_000;
         let mut events = Events::default();
         for record in &batch.records {
             // A CSV prefix cannot be parsed safely. Tail still follows its raw
@@ -250,8 +257,8 @@ impl PgLog {
                 continue;
             }
             match self.parse(record, now) {
-                Ok(Some(parsed)) => events.add(&parsed),
-                Ok(None) => {}
+                Ok(Some(parsed)) if i128::from(parsed.ts) >= oldest => events.add(&parsed),
+                Ok(_) => {}
                 Err(error) => {
                     self.tail.retry();
                     return Err(io::Error::new(

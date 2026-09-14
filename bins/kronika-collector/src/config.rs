@@ -40,6 +40,8 @@ pub(crate) struct Config {
     pub(crate) postgres_effective_cpus: Option<u32>,
     /// `PostgreSQL` logs named outright, as paths or globs.
     pub(crate) pg_logs: Vec<String>,
+    /// Maximum PostgreSQL log age at read time, seconds.
+    pub(crate) pg_log_max_lag_secs: u64,
     /// Where to ask `PgBouncer` which log it writes and who it is.
     pub(crate) pgbouncer_dsns: Vec<String>,
     /// `PgBouncer` logs named outright, as paths or globs.
@@ -290,6 +292,11 @@ impl Config {
             mode.collect_os() || pg_dsn.is_some(),
             "KRONIKA_COLLECTOR_MODE=postgresql requires KRONIKA_PG_DSN"
         );
+        let pg_log_max_lag_secs = env_u64("KRONIKA_PG_LOG_MAX_LAG_S", 900)?;
+        anyhow::ensure!(
+            pg_log_max_lag_secs > 0,
+            "KRONIKA_PG_LOG_MAX_LAG_S must be greater than zero"
+        );
         let pgbouncer_dsns = env_list("KRONIKA_PGBOUNCER_DSNS")?;
         let pgbouncer_logs = env_list("KRONIKA_PGBOUNCER_LOGS")?;
         anyhow::ensure!(
@@ -308,6 +315,7 @@ impl Config {
             pg_dsn,
             postgres_effective_cpus,
             pg_logs: env_list("KRONIKA_PG_LOGS")?,
+            pg_log_max_lag_secs,
             pgbouncer_dsns,
             pgbouncer_logs,
         })

@@ -35,7 +35,9 @@ fn read(name: &str, prefix: Option<LinePrefix>) -> Events {
     log.set_timezone(
         kronika_source_log::postgres::LogTimezone::parse("Europe/Moscow").expect("zone"),
     );
-    let batch = log.read_batch(NOW, 1024).expect("read the fixture");
+    let batch = log
+        .read_batch(|| Ok(NOW), 1024, 900)
+        .expect("read the fixture");
     if batch.needs_ack {
         log.acknowledge().expect("acknowledge the fixture");
     }
@@ -243,7 +245,7 @@ fn all_postgres_formats_resolve_gmt_before_classifying_events() {
         let path = dir.path().join(name);
         std::fs::write(&path, format!("{content}ignored\n")).expect("fixture");
         let mut log = PgLog::new(path, Position::default(), prefix);
-        let batch = log.read_batch(NOW, 1024).expect("parse");
+        let batch = log.read_batch(|| Ok(NOW), 1024, 900).expect("parse");
         assert_eq!(batch.events.errors[0].ts, 1_789_380_780_789_000, "{name}");
     }
 }
@@ -261,24 +263,27 @@ fn unresolved_timestamp_retries_the_complete_batch_after_context_changes() {
     let mut log = PgLog::new(path, Position::default(), Some(LinePrefix::parse("%n %m ")));
     log.set_timezone(kronika_source_log::postgres::LogTimezone::parse("GMT").expect("zone"));
     // Epoch remains authoritative even while the cached timezone is stale.
-    let batch = log.read_batch(NOW, 1024).expect("epoch wins");
+    let batch = log.read_batch(|| Ok(NOW), 1024, 900).expect("epoch wins");
     assert_eq!(batch.events.rows(), 2);
     log.retry();
     log.set_prefix(LinePrefix::parse("%p %m "));
-    assert!(log.read_batch(NOW, 1024).is_err());
+    assert!(log.read_batch(|| Ok(NOW), 1024, 900).is_err());
     assert_eq!(log.position().offset, 0);
     assert!(log.acknowledge().is_none());
     log.set_timezone(
         kronika_source_log::postgres::LogTimezone::parse("America/New_York").expect("zone"),
     );
     let batch = log
-        .read_batch(NOW, 1024)
+        .read_batch(|| Ok(NOW), 1024, 900)
         .expect("retry with server timezone");
     assert_eq!(batch.events.rows(), 2);
     assert_eq!(batch.events.errors[0].ts, 1_789_380_780_789_000);
     assert!(log.acknowledge().expect("commit").offset > 0);
     assert_eq!(
-        log.read_batch(NOW, 1024).expect("next batch").events.rows(),
+        log.read_batch(|| Ok(NOW), 1024, 900)
+            .expect("next batch")
+            .events
+            .rows(),
         0
     );
 }
@@ -295,12 +300,14 @@ fn timestamp_failure_does_not_admit_the_valid_part_of_a_batch() {
         Position::default(),
         Some(LinePrefix::parse("%m ")),
     );
-    assert!(log.read_batch(NOW, 1024).is_err());
+    assert!(log.read_batch(|| Ok(NOW), 1024, 900).is_err());
     assert_eq!(log.position().offset, 0);
     assert!(log.acknowledge().is_none());
     let valid = bad.replace("01. GMT", "01.789 GMT");
     std::fs::write(&path, format!("{first}{valid}ignored\n")).expect("correct fixture");
-    let batch = log.read_batch(NOW, 1024).expect("retry whole batch");
+    let batch = log
+        .read_batch(|| Ok(NOW), 1024, 900)
+        .expect("retry whole batch");
     assert_eq!(batch.events.rows(), 2);
     assert_eq!(
         batch.events.errors.iter().map(|row| row.count).sum::<u32>(),
@@ -330,7 +337,7 @@ fn conditional_prefix_time_is_absent_only_when_the_session_suffix_is_omitted() {
             Position::default(),
             Some(LinePrefix::parse("[%p]%q %m ")),
         );
-        let batch = log.read_batch(NOW, 1024);
+        let batch = log.read_batch(|| Ok(NOW), 1024, 900);
         if let Some(expected) = expected {
             assert_eq!(
                 batch.expect("usable prefix").events.checkpoints[0].ts,
@@ -361,8 +368,83 @@ fn a_colon_after_the_timezone_does_not_block_a_postgres_batch() {
         .expect("fixture");
         let mut log = PgLog::new(path, Position::default(), Some(LinePrefix::parse(prefix)));
         log.set_timezone(kronika_source_log::postgres::LogTimezone::parse(timezone).expect("zone"));
-        let batch = log.read_batch(NOW, 1024).expect("valid prefix");
+        let batch = log.read_batch(|| Ok(NOW), 1024, 900).expect("valid prefix");
         assert_eq!(batch.events.errors[0].ts, 1_789_380_780_000_000);
         assert!(log.acknowledge().is_some());
+    }
+}
+
+#[test]
+fn max_lag_filters_records_before_grouping_in_every_pg_format() {
+    const READ_AT: i64 = 1_789_380_000_000_000; // 2026-09-14 10:00 UTC.
+    for extension in ["log", "csv", "json"] {
+        let line = |clock: &str, severity: &str| {
+            let timestamp = format!("2026-09-14 {clock} GMT");
+            match extension {
+                "csv" => {
+                    let mut fields = [""; 23];
+                    fields[0] = &timestamp;
+                    fields[11] = severity;
+                    fields[13] = "test error";
+                    format!("{}\n", fields.join(","))
+                }
+                "json" => format!(
+                    "{}\n",
+                    serde_json::json!({"timestamp": timestamp, "error_severity": severity, "message": "test error"})
+                ),
+                _ => format!("{timestamp} {severity}:  test error\n"),
+            }
+        };
+        for (clocks, count) in [
+            (vec!["09:44:59.999999"], 0),
+            (
+                vec!["09:44:59.999999", "09:45:00", "10:00:00", "14:00:00"],
+                3,
+            ),
+        ] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join(format!("postgresql.{extension}"));
+            let records: String = clocks.iter().map(|clock| line(clock, "ERROR")).collect();
+            std::fs::write(&path, format!("{records}{}", line("14:00:01", "INFO")))
+                .expect("write log");
+            let mut log = PgLog::new(
+                path.clone(),
+                Position::default(),
+                Some(LinePrefix::parse("%m ")),
+            );
+            let mut clock_reads = 0;
+            let batch = log
+                .read_batch(
+                    || {
+                        clock_reads += 1;
+                        Ok(READ_AT)
+                    },
+                    1024,
+                    900,
+                )
+                .expect("filter log");
+            assert_eq!(clock_reads, 1);
+            assert_eq!(
+                batch.events.errors.iter().map(|row| row.count).sum::<u32>(),
+                count
+            );
+            if count != 0 {
+                assert_eq!(batch.events.errors[0].ts, READ_AT - 900_000_000);
+            }
+            assert!(batch.needs_ack);
+            assert_eq!(log.position().offset, 0);
+            let committed = log
+                .acknowledge()
+                .expect("acknowledge accepted or skipped rows");
+            assert!(committed.offset >= records.len() as u64);
+            let mut resumed = PgLog::new(path, committed, Some(LinePrefix::parse("%m ")));
+            assert!(
+                resumed
+                    .read_batch(|| Ok(READ_AT), 1024, 900)
+                    .expect("resume")
+                    .events
+                    .is_empty()
+            );
+        }
     }
 }

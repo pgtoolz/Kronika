@@ -234,6 +234,7 @@ fn postgres_sources(root: &std::path::Path, dsn: &str) -> LogSources {
         offsets: Offsets::load(root).expect("load offsets"),
         pg_dsn: Some(PostgresTarget::new(connection).expect("load PostgreSQL transport")),
         pg_logs: Vec::new(),
+        pg_log_max_lag_secs: 900,
         pgbouncer_dsns: Vec::new(),
         pgbouncer_logs: Vec::new(),
         postgres: Vec::new(),
@@ -268,6 +269,7 @@ fn sources(root: &std::path::Path, path: std::path::PathBuf) -> LogSources {
         offsets: Offsets::load(root).expect("load offsets"),
         pg_dsn: None,
         pg_logs: Vec::new(),
+        pg_log_max_lag_secs: 900,
         pgbouncer_dsns: Vec::new(),
         pgbouncer_logs: Vec::new(),
         postgres: Vec::new(),
@@ -549,7 +551,7 @@ fn wal_append_precedes_offset_ack_and_a_retry_replays_the_batch() {
     let mut journal = Journal::open(&owner, JournalConfig::default()).expect("open journal");
     let body = one_wal_part();
     let completed = sources
-        .collect(&due, 0, |rows| {
+        .collect(&due, |rows| {
             assert_eq!(rows.pgbouncer[0].events.len(), 1);
             journal
                 .append(SegmentId::new(1).expect("segment id"), &body)
@@ -572,7 +574,7 @@ fn wal_append_precedes_offset_ack_and_a_retry_replays_the_batch() {
     let mut replayed = Vec::new();
     assert!(
         sources
-            .collect(&due, 0, |rows| {
+            .collect(&due, |rows| {
                 replayed.push(rows.pgbouncer[0].events[0].text.clone());
                 Ok(true)
             })
@@ -649,7 +651,7 @@ async fn explicit_postgres_logs_receive_and_refresh_the_servers_timezone() {
     sources.rescan_postgres(&mut |_| {}).await;
     assert_eq!(sources.postgres.len(), 1);
     let log = &mut sources.postgres[0].log;
-    let batch = log.read_batch(0, 100).expect("GMT record");
+    let batch = log.read_batch(|| Ok(0), 100, 900).expect("GMT record");
     assert_eq!(batch.events.errors[0].ts, 1_789_380_780_000_000);
     log.acknowledge().expect("commit GMT record");
     let mut file = std::fs::OpenOptions::new()
@@ -666,7 +668,7 @@ async fn explicit_postgres_logs_receive_and_refresh_the_servers_timezone() {
     assert_eq!(sources.postgres.len(), 1);
     let batch = sources.postgres[0]
         .log
-        .read_batch(0, 100)
+        .read_batch(|| Ok(0), 100, 900)
         .expect("cached timezone after failed refresh");
     assert_eq!(batch.events.errors[0].ts, 1_789_380_781_789_000);
     let queries = server.finish();
@@ -677,4 +679,53 @@ async fn explicit_postgres_logs_receive_and_refresh_the_servers_timezone() {
             .all(|query| !query.contains("pg_current_logfile")
                 && !query.contains("current_setting('data_directory')"))
     );
+}
+
+#[test]
+fn old_pg_records_advance_offsets_without_bypassing_mixed_batch_admission() {
+    for mixed in [false, true] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("postgresql.log");
+        let now = crate::unix_now_us().expect("system clock") / 1_000_000;
+        let old = format!("{}.000 ERROR:  old error\n", now - 3_600);
+        let current = format!("{now}.000 ERROR:  current error\n");
+        let records = if mixed {
+            format!("{old}{current}")
+        } else {
+            old
+        };
+        std::fs::write(&path, format!("{records}{now}.000 INFO:  sentinel\n")).expect("write log");
+        let mut logs = sources(dir.path(), path.clone());
+        logs.pgbouncer.clear();
+        logs.postgres.push(super::PostgresSource {
+            log: super::PgLog::new(
+                path.clone(),
+                Position::default(),
+                Some(super::LinePrefix::parse("%n ")),
+            ),
+            system_identifier: None,
+        });
+        let due = DueSet::logs();
+        let completed = logs
+            .collect(&due, |rows| {
+                assert!(mixed, "all-old batch never needs row admission");
+                assert_eq!(rows.postgres[0].events.errors.len(), 1);
+                assert_eq!(rows.postgres[0].events.errors[0].sample, "current error");
+                Ok(false)
+            })
+            .expect("read log");
+        assert_eq!(completed, !mixed);
+        if mixed {
+            assert_eq!(logs.postgres[0].log.position().offset, 0);
+            assert!(logs.collect(&due, |_| Ok(true)).expect("admit retry"));
+        }
+        let committed = logs.postgres[0].log.position();
+        assert_eq!(committed.offset, records.len() as u64);
+        assert_eq!(
+            Offsets::load(dir.path())
+                .expect("saved offsets")
+                .get(&key(&path)),
+            committed
+        );
+    }
 }

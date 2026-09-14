@@ -335,7 +335,7 @@ fn csv_quote_closing_beyond_the_line_prefix_does_not_poison_the_successor() {
     write(&path, &format!("{oversized}\n{valid}\nignored\n"));
     let mut log = PgLog::new(path, Position::default(), None);
 
-    let batch = log.read_batch(0, 16).expect("read csvlog");
+    let batch = log.read_batch(|| Ok(0), 16, 900).expect("read csvlog");
 
     assert_eq!(batch.events.errors.len(), 1);
     assert_eq!(batch.events.errors[0].sample, "valid successor");
@@ -353,7 +353,7 @@ fn truncated_multiline_csv_resynchronizes_at_its_raw_quote_boundary() {
     );
     let mut log = PgLog::new(path, Position::default(), None);
 
-    let batch = log.read_batch(0, 16).expect("read csvlog");
+    let batch = log.read_batch(|| Ok(0), 16, 900).expect("read csvlog");
 
     assert_eq!(batch.events.errors.len(), 1);
     assert_eq!(batch.events.errors[0].sample, "after multiline");
