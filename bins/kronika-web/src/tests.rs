@@ -983,7 +983,7 @@ async fn changed_journal_generation_replays_preparation_once() {
     let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&attempts);
     let response = super::blocking_stream_with_replay(
-        move |_cancelled| {
+        move || {
             if observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
                 return Err(ApiError::Unreadable(Box::new(
                     kronika_reader::ReaderError::Io(std::io::Error::new(
@@ -1026,7 +1026,7 @@ async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
     let changed_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&changed_attempts);
     let changed = super::blocking_stream_with_replay(
-        move |_cancelled| {
+        move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Err(ApiError::Unreadable(Box::new(
                 kronika_reader::ReaderError::Io(std::io::Error::from(
@@ -1046,7 +1046,7 @@ async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
     let broken_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&broken_attempts);
     let broken = super::blocking_stream_with_replay(
-        move |_cancelled| {
+        move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Err(ApiError::Unreadable(Box::new(
                 kronika_reader::ReaderError::Io(std::io::Error::from(
@@ -1066,7 +1066,7 @@ async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
     let refused_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&refused_attempts);
     let refused = super::blocking_stream_with_replay(
-        move |_cancelled| {
+        move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Err(ApiError::NoSuchSegment)
         },
@@ -1099,37 +1099,4 @@ fn mcp_access_body_carries_the_basic_value_only_when_authentication_is_on() {
     let open: serde_json::Value =
         serde_json::from_str(&crate::mcp_access_body(&config(None))).expect("json");
     assert!(open["authorization"].is_null());
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn blocking_preparation_observes_disconnect_before_response_headers() {
-    let (entered_tx, entered_rx) = oneshot::channel();
-    let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let (observed_tx, observed_rx) = oneshot::channel();
-    let mut entered_tx = Some(entered_tx);
-    let mut observed_tx = Some(observed_tx);
-    let response = tokio::spawn(super::blocking_stream_with_replay(
-        move |cancelled| {
-            let _sent = entered_tx.take().expect("single preparation").send(());
-            release_rx
-                .recv()
-                .expect("release preparation after disconnect");
-            let _sent = observed_tx
-                .take()
-                .expect("single observation")
-                .send(cancelled());
-            Err(ApiError::BadCursor)
-        },
-        AcceptedEncodings::default(),
-    ));
-    entered_rx.await.expect("preparation started");
-    response.abort();
-    assert!(
-        response
-            .await
-            .expect_err("request cancelled")
-            .is_cancelled()
-    );
-    release_tx.send(()).expect("resume preparation");
-    assert!(observed_rx.await.expect("cancellation observed"));
 }

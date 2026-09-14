@@ -226,12 +226,12 @@ fn cgroup_alias_validates_fields_and_labels_against_both_layout_families() {
         value: "1".to_owned(),
     }];
     assert!(
-        matches!(execute(&context, QueryRequest::Snapshot(request.clone()), &|| false), Err(crate::QueryError::BadFilter(field)) if field == "nr_periods")
+        matches!(execute(&context, QueryRequest::Snapshot(request.clone())), Err(crate::QueryError::BadFilter(field)) if field == "nr_periods")
     );
     request.filters.clear();
     request.fields = vec!["not_a_field".to_owned()];
     assert!(
-        matches!(execute(&context, QueryRequest::Snapshot(request.clone()), &|| false), Err(crate::QueryError::NoSuchColumn(field)) if field == "not_a_field")
+        matches!(execute(&context, QueryRequest::Snapshot(request.clone())), Err(crate::QueryError::NoSuchColumn(field)) if field == "not_a_field")
     );
     request.fields.clear();
     request.filters = vec![Filter {
@@ -524,7 +524,7 @@ fn shared_projection_preserves_old_only_cgroup_alias_in_both_request_orders() {
     let mut request = snapshot_request("os_cgroup_cpu", &["not_a_field"]);
     request.sections.push("os_cgroup_v2_cpu".to_owned());
     assert!(
-        matches!(execute(&context, QueryRequest::Snapshot(request), &|| false), Err(crate::QueryError::NoSuchColumn(field)) if field == "not_a_field")
+        matches!(execute(&context, QueryRequest::Snapshot(request)), Err(crate::QueryError::NoSuchColumn(field)) if field == "not_a_field")
     );
 }
 
@@ -590,7 +590,7 @@ fn shared_cgroup_virtual_projection_uses_own_quota_in_both_family_orders() {
         let mut request = snapshot_request("os_cgroup_cpu", &["quota_cores", "unknown_virtual"]);
         request.sections.push("os_cgroup_v2_cpu".to_owned());
         assert!(
-            matches!(execute(&context, QueryRequest::Snapshot(request), &|| false), Err(crate::QueryError::NoSuchColumn(field)) if field == "unknown_virtual")
+            matches!(execute(&context, QueryRequest::Snapshot(request)), Err(crate::QueryError::NoSuchColumn(field)) if field == "unknown_virtual")
         );
     }
 }

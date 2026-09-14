@@ -16,7 +16,6 @@ export function emptyHourStatusKey(hour: number, now = Date.now() * 1_000): "sta
 
 export function latestTimelineTimestamp(timeline: TimelineData): number {
   const end = timeline.hour + 3_600_000_000
-  if (timeline.metricAt !== null && timeline.metricAt >= timeline.hour && timeline.metricAt < end) return timeline.metricAt
   let latest = timeline.hour
   const take = (timestamp: number) => { if (timestamp >= timeline.hour && timestamp < end) latest = Math.max(latest, timestamp) }
   for (const segment of timeline.segments) take(Math.min(segment.maxTs, end - 1))

@@ -206,7 +206,7 @@ fn request_families(segment_id: SegmentId) -> Vec<(&'static str, &'static str, Q
 }
 
 fn direct_bytes(context: &QueryContext, request: QueryRequest) -> Result<Vec<u8>, QueryError> {
-    let execution = execute(context, request, &|| false)?;
+    let execution = execute(context, request)?;
     let mut sink = Records::accepting();
     execution.stream(&mut sink)?;
     Ok(sink.bytes)

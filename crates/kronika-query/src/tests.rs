@@ -108,7 +108,6 @@ fn catalog_records_are_exact_and_storage_neutral() {
                 to: Some(20),
             },
         }),
-        &|| false,
     )
     .expect("prepare catalog query");
     let mut records = Records::default();

@@ -2489,7 +2489,7 @@ async fn an_active_snapshot_restarts_from_the_finished_segment_after_rollover() 
     let observed = std::sync::Arc::clone(&attempts);
     let mut first = Some(first);
     let response = crate::blocking_stream_with_replay(
-        move |_cancelled| {
+        move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(first) = first.take() {
                 return Ok(first);
@@ -2547,7 +2547,7 @@ async fn a_started_active_response_is_not_spliced_to_a_new_generation() {
     let observed = std::sync::Arc::clone(&attempts);
     let mut first = Some(first);
     let response = crate::blocking_stream_with_replay(
-        move |_cancelled| {
+        move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(first) = first.take() {
                 return Ok(first);

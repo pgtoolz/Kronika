@@ -119,7 +119,6 @@ impl ReportEngine {
         request: QueryRequest,
         sink: &mut dyn QuerySink,
     ) -> Result<(), QueryError> {
-        let execution = kronika_query::execute(&self.context, request, &|| sink.cancelled())?;
-        execution.stream(sink)
+        kronika_query::execute(&self.context, request)?.stream(sink)
     }
 }

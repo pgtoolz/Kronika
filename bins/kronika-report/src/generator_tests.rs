@@ -57,8 +57,7 @@ fn isolated_builder_produces_the_committed_canonical_index() {
     let reader = FinishedReader::new(source);
     let listing = reader.resources().expect("fixture resources");
     let (index, configured_sources) =
-        isolated_index(&reader.open_segment(&listing.resources[0]).expect("segment"))
-            .expect("build isolated index");
+        isolated_index(&reader, &listing.resources[0]).expect("build isolated index");
     assert_eq!(index, IDX);
     assert_eq!(configured_sources, SOURCE_OS | SOURCE_POSTGRESQL);
     assert_eq!(super::configured_sources([]), SOURCE_OS);
@@ -317,12 +316,8 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
             EmbeddedSource::from_owned(segment_id, zms.clone(), zms.len() as u64).expect("source"),
         );
         let resources = reader.resources().expect("resources");
-        let (idx, bits) = isolated_index(
-            &reader
-                .open_segment(&resources.resources[0])
-                .expect("segment"),
-        )
-        .expect("production isolated index");
+        let (idx, bits) =
+            isolated_index(&reader, &resources.resources[0]).expect("production isolated index");
         assert_eq!(bits, sources);
         let mut html = Vec::new();
         let summary = write_html(
@@ -545,84 +540,6 @@ fn assert_all_group_snapshots(engine: &crate::ReportEngine) {
             }
             let timestamp = (collection_modes::START + offset * 1_000_000).to_string();
             assert!(rows.iter().all(|row| row["timestamp"] == timestamp));
-        }
-    }
-}
-
-#[test]
-fn generator_metric_clock_respects_partial_mixed_and_event_only_ranges() {
-    use kronika_format::DictLimits;
-    use kronika_layout::{DataRoot, LayoutLimits, SegmentAddress};
-    use kronika_registry::{StrId, Ts, pg_log::PgLogTempFiles, pg_wal_storage::PgWalStorage};
-    use kronika_writer::{Interner, Journal, JournalConfig, SectionBuffers, dict, write_segment};
-    for metrics in [true, false] {
-        let directory = tempfile::tempdir().expect("recording");
-        let root = DataRoot::open(directory.path()).expect("root");
-        let owner = root
-            .acquire_writer(LayoutLimits::default())
-            .expect("writer");
-        let mut journal = Journal::open(&owner, JournalConfig::default()).expect("journal");
-        let mut interner = Interner::new(DictLimits::default());
-        let source_file = StrId(interner.intern(b"postgresql.log").expect("label").get());
-        let mut rows = SectionBuffers::new();
-        if metrics {
-            for offset in [0, 10, 20] {
-                rows.push(PgWalStorage {
-                    ts: Ts(SEGMENT_ID + offset),
-                    wal_files_bytes: 100,
-                })
-                .expect("metric");
-            }
-        }
-        rows.push(PgLogTempFiles {
-            ts: Ts(SEGMENT_ID + 4 * 3_600_000_000),
-            system_identifier: Some(42),
-            source_file,
-            path: None,
-            size_bytes: 100,
-            statement: None,
-        })
-        .expect("future event");
-        let dictionary = dict::encode(interner.window()).expect("dictionary");
-        let part = rows.flush(&dictionary).expect("encode").expect("rows");
-        let id = SegmentId::new(SEGMENT_ID).expect("id");
-        let address = SegmentAddress::new(id).expect("address");
-        journal.append(id, &part).expect("append");
-        write_segment(&journal, &owner, address).expect("seal");
-        let path = directory
-            .path()
-            .join(address.day.year_component())
-            .join(address.day.month_component())
-            .join(address.day.day_component())
-            .join(address.zms_name());
-        let zms = std::fs::read(path).expect("ZMS");
-        for (from, to, expected) in [
-            (0, 4 * 3_600_000_000 + 1, Some(20)),
-            (1, 20, Some(10)),
-            (10, 11, Some(10)),
-            (21, 4 * 3_600_000_000 + 1, None),
-        ] {
-            let mut html = Vec::new();
-            write_html(
-                HtmlReportInput {
-                    segment_id: id,
-                    zms: zms.clone(),
-                    max_zms_bytes: zms.len() as u64,
-                    visible_range: ReportTimeRange::new(SEGMENT_ID + from, SEGMENT_ID + to)
-                        .expect("range"),
-                },
-                &mut html,
-            )
-            .expect("generate HTML");
-            let html = std::str::from_utf8(&html).expect("HTML");
-            let expected = expected.filter(|_| metrics).map_or_else(
-                || "null".to_owned(),
-                |offset| format!("\"{}\"", SEGMENT_ID + offset),
-            );
-            assert!(
-                html.contains(&format!(",initialMetricAt:{expected},ready:")),
-                "runtime clock uses only visible metrics"
-            );
         }
     }
 }

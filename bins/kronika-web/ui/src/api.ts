@@ -233,7 +233,6 @@ export interface TimelineLanes {
 
 export interface TimelineData {
   readonly hour: number
-  readonly metricAt: number | null
   readonly lanePoints: readonly LanePoint[]
   readonly laneContexts: readonly LaneContext[]
   readonly lanes: Readonly<Record<string, readonly DataRow[]>>
@@ -336,12 +335,7 @@ export async function loadTimeline(
   const requested = floorHour(start ?? range?.from ?? 0)
   const fixture = bundledFixtureHour(requested)
   if (fixture !== null && range !== null) {
-    const window = timelineWindow(requested, visibleRange)
-    const metricAt = [...fixture.processes, ...fixture.activities, ...fixture.points.filter((point) => point.logicalName !== HEALTH)]
-      .reduce<number | null>((latest, row) => row.timestamp >= window.from && row.timestamp < window.toExclusive
-        ? Math.max(latest ?? row.timestamp, row.timestamp) : latest, null)
     return {
-      metricAt,
       hour: requested, availableHours: unique([floorHour(range.from), floorHour(range.to)]),
       segments: [], lanePoints: fixture.lanePoints, laneContexts: [], lanes: fixture.sections, health: fixture.health, points: fixture.points,
       findings: fixture.findings,
@@ -361,9 +355,6 @@ export async function loadTimeline(
   const records = await request(`/api/hour?${query}`, signal, onBytes)
   const header = records.find((record) => record.record === "hour")
   const catalog = records.find((record) => record.record === "catalog")
-  const rawMetricAt = header?.["metric_at"]
-  if (rawMetricAt !== null && (typeof rawMetricAt !== "string" || !/^-?\d+$/.test(rawMetricAt))) throw new Error("hour metric_at is invalid")
-  const metricAt = rawMetricAt === null ? null : integer(rawMetricAt, "hour metric_at")
   const hour = header?.from === null || header?.from === undefined
     ? floorHour(Date.now() * 1_000)
     : floorHour(integer(header.from, "hour start"))
@@ -427,7 +418,6 @@ export async function loadTimeline(
   }))
   return {
     hour,
-    metricAt,
     lanePoints,
     laneContexts: [],
     lanes,

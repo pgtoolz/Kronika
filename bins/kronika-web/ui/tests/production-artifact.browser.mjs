@@ -5994,7 +5994,7 @@ function healthContractTimeline(hour) {
         { record: "point", type_id: "0", series: "overall_health", ts: String(evaluation), identity: {}, value: scenario === 0 ? 70 : null },
       ]
   return [
-    { record: "hour", metric_at: String(evaluation), from: String(hour), to: String(hour + HOUR_US - 1), available_hours: [HOUR, HOUR + HOUR_US, HOUR + 2 * HOUR_US].map(String) },
+    { record: "hour", from: String(hour), to: String(hour + HOUR_US - 1), available_hours: [HOUR, HOUR + HOUR_US, HOUR + 2 * HOUR_US].map(String) },
     {
       record: "catalog", from: String(hour), to: String(hour + HOUR_US - 1),
       source_families: [{ name: "postgresql", configured: postgresql, present: postgresql, metrics_present: postgresql }],
@@ -6023,7 +6023,7 @@ function healthMetadataRecords(at) {
 
 function productionSystemTimeline() {
   return [
-    { record: "hour", metric_at: String(AT), from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
+    { record: "hour", from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
     {
       record: "catalog", from: String(HOUR), to: String(HOUR + HOUR_US - 1),
       source_families: [{ name: "postgresql", configured: false, present: false, metrics_present: false }],
@@ -6133,7 +6133,7 @@ function processSummaryRecords(hour, count, processes) {
 
 function viewportActivityTimeline() {
   return [
-    { record: "hour", metric_at: String(AT), from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
+    { record: "hour", from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
     { record: "catalog", from: String(HOUR), to: String(HOUR + HOUR_US - 1), source_families: [{ name: "postgresql", configured: true, present: true, metrics_present: true }] },
     {
       record: "finished_segment", id: SEGMENT, min_ts: String(HOUR), max_ts: String(AFTER_AT),
@@ -6302,7 +6302,7 @@ function sourceTimelineRecords(historical) {
   const sections = [{ logical_name: "os_cpu", physical_name: "os_cpu", type_id: "1102001", implementation: "linux", source_family: "system", rows: "1", bytes: "128" }]
   if (historical) sections.push({ logical_name: "pg_stat_activity", physical_name: "pg_stat_activity", type_id: "1001004", implementation: "postgresql", source_family: "postgresql", rows: "1", bytes: "256" })
   return [
-    { record: "hour", metric_at: String(AT), from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
+    { record: "hour", from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
     { record: "catalog", from: String(HOUR), to: String(HOUR + HOUR_US - 1), source_families: [{ name: "postgresql", configured: false, present: historical, metrics_present: historical }] },
     { record: "finished_segment", id: SEGMENT, min_ts: String(HOUR), max_ts: String(AFTER_AT), sections },
     { record: "index", segment: { id: SEGMENT }, logical_name: "health", checksum: null },
@@ -6314,7 +6314,7 @@ function sourceTimelineRecords(historical) {
 
 function slowQueryTimelineRecords() {
   return [
-    { record: "hour", metric_at: String(EVENT_SCOPE_AFTER), from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
+    { record: "hour", from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
     {
       record: "catalog", from: String(HOUR), to: String(HOUR + HOUR_US - 1),
       source_families: [{ name: "postgresql", configured: true, present: true, metrics_present: true }],
@@ -7197,7 +7197,7 @@ function timelineRecords(hour = HOUR, cgroups = false) {
   const shift = hour - HOUR
   const shifted = (timestamp) => String(timestamp + shift)
   return [
-    { record: "hour", metric_at: shifted(AFTER_AT), from: String(hour), to: String(hour + HOUR_US - 1), available_hours: AVAILABLE_HOURS.map(String) },
+    { record: "hour", from: String(hour), to: String(hour + HOUR_US - 1), available_hours: AVAILABLE_HOURS.map(String) },
     { record: "lane_context", segment_id: SEGMENT, postgresql_interval_seconds: null, environment: cgroups ? 1 : 0 },
     {
       record: "catalog", from: String(hour), to: String(hour + HOUR_US - 1),
@@ -7502,7 +7502,7 @@ function aggregateRelationHistoryRecords(url) {
     exclusion_count: 0,
   })[field] ?? 0]))
   return [
-    { record: "hour", metric_at: String(AT), from: String(HOUR), to: String(AT), available_hours: [String(HOUR)] },
+    { record: "hour", from: String(HOUR), to: String(AT), available_hours: [String(HOUR)] },
     { record: "relation_layout", logical_name: logicalName, group, columns: fields.map((field) => wire(field)) },
     { record: "series_segment", segment: { id: SEGMENT } },
     {
@@ -8170,7 +8170,7 @@ test("mixed-cadence shared cursor uses one recorded domain for pointer and both 
       return { ...record, timestamp: String(timestamp), values: [String(timestamp), ...record.values.slice(1)] }
     })
   const timeline = [
-    { record: "hour", metric_at: String(base + 30_000_000), from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
+    { record: "hour", from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
     { record: "catalog", from: String(HOUR), to: String(HOUR + HOUR_US - 1), source_families: [{ name: "postgresql", configured: true, present: true, metrics_present: true }] },
     {
       record: "finished_segment", id: SEGMENT, min_ts: String(HOUR), max_ts: String(HOUR + HOUR_US - 1),

@@ -11,7 +11,6 @@ const HOUR = 1_800_000_000_000_000
 function timeline() {
   return {
     hour: HOUR,
-    metricAt: null,
     availableHours: [HOUR],
     availableSections: [],
     findingGroups: [],
@@ -290,22 +289,3 @@ function deferred() {
 async function tick() {
   for (let pending = 0; pending < 8; pending += 1) await Promise.resolve()
 }
-
-
-test("the exact metric cursor ignores later log timestamps in this hour and later hours", () => {
-  const metricAt = HOUR + 780_000_000
-  for (const maxTs of [HOUR + 3_000_000_000, HOUR + 14_400_000_000]) {
-    const data = { ...timeline(), metricAt, segments: [{ id: "a", minTs: HOUR, maxTs, sections: [] }] }
-    assert.equal(latestTimelineTimestamp(data), metricAt)
-    assert.equal(refreshedCursor(HOUR + 12, false, data), HOUR + 12)
-    assert.equal(refreshedCursor(HOUR + 12, true, data), metricAt)
-    assert.equal(refreshedCursor(metricAt, true, { ...data, metricAt: metricAt + 5_000_000 }), metricAt + 5_000_000)
-  }
-})
-
-test("event-only and out-of-hour metric clocks retain the existing bounded fallback", () => {
-  const eventOnly = { ...timeline(), metricAt: null, health: [], lanePoints: [], points: [], segments: [] }
-  assert.equal(latestTimelineTimestamp(eventOnly), HOUR + 40)
-  assert.equal(latestTimelineTimestamp({ ...eventOnly, metricAt: HOUR - 1 }), HOUR + 40)
-  assert.equal(latestTimelineTimestamp({ ...eventOnly, metricAt: HOUR + 3_600_000_000 }), HOUR + 40)
-})

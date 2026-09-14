@@ -46,7 +46,7 @@ fn selected_history(
         active: None,
     };
     let mut records = SnapshotRecords::default();
-    execute(context, QueryRequest::Hour(request), &|| false)
+    execute(context, QueryRequest::Hour(request))
         .expect("prepare history")
         .stream(&mut records)
         .expect("history");

@@ -102,7 +102,7 @@ fn read_snapshot(
     request.segment_id = latest;
     request.at = SCAN;
     let mut records = SnapshotRecords::default();
-    execute(context, QueryRequest::Snapshot(request), &|| false)
+    execute(context, QueryRequest::Snapshot(request))
         .expect("prepare discovery snapshot")
         .stream(&mut records)
         .expect("stream discovery snapshot");

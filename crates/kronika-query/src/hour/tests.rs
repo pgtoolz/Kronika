@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use kronika_reader::Segment;
 
-use super::{HOUR, hours_of_ranges, latest_hour, observation_hour, overlaps_window};
+use super::{HOUR, hours_of_ranges, latest_hour, overlaps_window};
 use crate::{
     CapturedCatalog, DatasetListing, DatasetSegment, HourPart, HourRequest, QueryContext,
     QueryDataset, QueryError, QueryRequest, QuerySink, QueryStability, SegmentSelection, Window,
@@ -89,7 +89,6 @@ fn empty_base_execution() -> crate::QueryExecution {
             segments: None,
             active: None,
         }),
-        &|| false,
     )
     .expect("prepare empty base hour")
 }
@@ -140,7 +139,7 @@ fn empty_base_hour_records_are_exact() {
     assert_eq!(
         sink.records,
         [
-            b"{\"available_hours\":[\"0\"],\"from\":\"10\",\"metric_at\":null,\"record\":\"hour\",\"to\":\"20\"}\n"
+            b"{\"available_hours\":[\"0\"],\"from\":\"10\",\"record\":\"hour\",\"to\":\"20\"}\n"
                 .to_vec(),
             concat!(
                 "{\"demo\":null,\"from\":\"10\",\"kronika_version\":\"",
@@ -272,7 +271,6 @@ fn pinned_prefix_restores_time_order_after_validating_listed_ids() {
         request(vec![1, 2, 3]),
         1,
         false,
-        &|| false,
     )
     .expect("valid pinned prefix");
     assert_eq!(
@@ -289,29 +287,8 @@ fn pinned_prefix_restores_time_order_after_validating_listed_ids() {
             None,
             request(vec![1, 3, 2]),
             1,
-            false,
-            &|| false
+            false
         ),
         Err(QueryError::BadCursor)
     ));
-}
-
-#[test]
-fn observation_hour_preserves_negative_and_extreme_metric_times() {
-    assert_eq!(
-        observation_hour(-1),
-        Window {
-            from: Some(-HOUR),
-            to: Some(-1)
-        }
-    );
-    assert_eq!(
-        observation_hour(0),
-        Window {
-            from: Some(0),
-            to: Some(HOUR - 1)
-        }
-    );
-    assert_eq!(observation_hour(i64::MIN).from, Some(i64::MIN));
-    assert_eq!(observation_hour(i64::MAX).to, Some(i64::MAX));
 }

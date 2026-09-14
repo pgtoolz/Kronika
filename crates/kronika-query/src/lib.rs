@@ -14,7 +14,6 @@ mod history;
 mod hour;
 mod index;
 mod index_provider;
-mod observation;
 mod projection;
 mod render;
 mod request;
@@ -49,7 +48,6 @@ pub use hour::{
     index_scan_rate_is_zero, key_fields, output_fields,
 };
 pub use index_provider::{IndexProvider, IndexResource, MemoryIndexProvider};
-pub use observation::latest_segment_metric_observation;
 pub use projection::{OutputField, Plan, plans, resolved_dictionary};
 pub use request::{
     ActiveCursor, CatalogRequest, DataRequest, Filter, HourPart, HourRequest, HourSeriesRequest,
@@ -324,7 +322,6 @@ impl QueryExecution {
 pub fn execute(
     context: &QueryContext,
     request: QueryRequest,
-    cancelled: &(impl Fn() -> bool + ?Sized),
 ) -> Result<QueryExecution, QueryError> {
     if let QueryRequest::Snapshot(request) = request {
         return snapshot::prepare_snapshot(context, request)?.finish();
@@ -354,7 +351,6 @@ pub fn execute(
             request,
             context.configured_sources,
             context.synthetic_demo,
-            cancelled,
         )?),
         QueryRequest::Snapshot(_) => unreachable!("snapshot handled before shared preparation"),
         QueryRequest::Rows(request) => {

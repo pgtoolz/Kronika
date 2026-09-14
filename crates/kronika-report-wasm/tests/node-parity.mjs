@@ -87,10 +87,6 @@ function records(body) {
 }
 
 compare("catalog", "/api/catalog", "");
-const defaultHour = records(compare("hour-default", "/api/hour", "part=base"))
-  .find((record) => record.record === "hour");
-assert.equal(defaultHour?.from, SEGMENT_ID);
-assert.equal(defaultHour?.metric_at, SAMPLE_TO);
 compare(
   "index",
   `/api/segments/${SEGMENT_ID}/sections/pg_stat_database/index`,

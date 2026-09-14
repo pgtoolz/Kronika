@@ -5,6 +5,9 @@ use kronika_registry::os_cgroup_context::OsCgroupContextV2;
 use kronika_registry::os_cgroup_cpu::OsCgroupCpuV3;
 use kronika_registry::os_cgroup_memory::OsCgroupMemoryV3;
 
+#[path = "../../../../bins/kronika-web/src/query_adapter.rs"]
+mod query_adapter;
+
 const fn at(seconds: i64) -> i64 {
     SEGMENT_ID + seconds * 1_000_000
 }
@@ -390,8 +393,7 @@ fn encoded_active_prefix_reorders_after_validating_current_catalog_ids() {
         matches!(
             execute(
                 &context,
-                QueryRequest::Hour(lane_request(vec![at(0), at(20), active_id], cursor)),
-                &|| false
+                QueryRequest::Hour(lane_request(vec![at(0), at(20), active_id], cursor))
             ),
             Err(QueryError::BadCursor)
         ),
@@ -407,8 +409,7 @@ fn encoded_active_prefix_reorders_after_validating_current_catalog_ids() {
                         segment_id: active_id,
                         wal_position: position - 1
                     })
-                )),
-                &|| false
+                ))
             ),
             Err(QueryError::BadCursor)
         ),

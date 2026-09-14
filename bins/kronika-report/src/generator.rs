@@ -8,12 +8,11 @@ use base64::write::EncoderWriter;
 use flate2::read::GzDecoder;
 use kronika_format::ReadAt;
 use kronika_layout::{LayoutError, SegmentId};
-use kronika_query::{
-    SOURCE_OS, SOURCE_POSTGRESQL, Window, latest_segment_metric_observation, source_bit,
-};
-use kronika_reader::{FinishedReader, ReaderError, Segment};
+use kronika_query::{SOURCE_OS, SOURCE_POSTGRESQL, source_bit};
+use kronika_reader::{FinishedReader, ReaderError};
 use kronika_store::{
-    EmbeddedSource, ImmutableSegmentSource as _, ResourceError, read_resource_catalog,
+    EmbeddedResource, EmbeddedSource, ImmutableSegmentSource as _, ResourceError, SegmentResource,
+    read_resource_catalog,
 };
 
 const SHELL_GZIP: &[u8] = include_bytes!("../assets/kronika-report-shell.html.gz");
@@ -26,8 +25,7 @@ const WASM_GZIP: &[u8] = include_bytes!("../assets/kronika-report-wasm.wasm.gz")
 const RUNTIME_MARKER: &[u8] = b"/*KRONIKA_REPORT_RUNTIME*/";
 const RUNTIME_START: &[u8] = br#";(()=>{const b=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));globalThis.__KRONIKA_REPORT_RUNTIME__={visibleFrom:""#;
 const RUNTIME_TO: &[u8] = br#"",visibleToExclusive:""#;
-const RUNTIME_METRIC_AT: &[u8] = br#"",initialMetricAt:"#;
-const RUNTIME_READY: &[u8] = br#",ready:(async()=>{const z=b(""#;
+const RUNTIME_READY: &[u8] = br#"",ready:(async()=>{const z=b(""#;
 const RUNTIME_INDEX: &[u8] = br#""),i=b(""#;
 const RUNTIME_WASM: &[u8] = br#""),g=b(""#;
 const RUNTIME_ID: &[u8] = br#"");const r=new Uint8Array(await new Response(new Blob([g]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer()),m=await WebAssembly.compile(r);await KronikaReportWasm.initEmbedded(m);return new KronikaReportWasm.ReportSession(""#;
@@ -108,8 +106,6 @@ pub enum HtmlReportError {
     Resource(ResourceError),
     /// The production reader rejected the ZMS.
     Reader(ReaderError),
-    /// The shared metric timestamp projection failed.
-    Query(kronika_query::QueryError),
     /// The production index builder rejected decoded rows.
     Build(kronika_index::BuildError),
     /// The canonical index encoder rejected the derived index.
@@ -138,7 +134,6 @@ impl std::fmt::Display for HtmlReportError {
             Self::Layout(source) => source.fmt(f),
             Self::Resource(source) => source.fmt(f),
             Self::Reader(source) => source.fmt(f),
-            Self::Query(source) => source.fmt(f),
             Self::Build(source) => source.fmt(f),
             Self::Index(source) => source.fmt(f),
             Self::Asset(source) => write!(f, "read the embedded report shell: {source}"),
@@ -160,7 +155,6 @@ impl std::error::Error for HtmlReportError {
             Self::Layout(source) => Some(source),
             Self::Resource(source) => Some(source),
             Self::Reader(source) => Some(source),
-            Self::Query(source) => Some(source),
             Self::Build(source) => Some(source),
             Self::Index(source) => Some(source),
             Self::Asset(source) | Self::Write(source) | Self::Read(source) => Some(source),
@@ -331,20 +325,7 @@ fn write_source_html(
     let zms_len = resource.captured_bytes();
     let bytes = source.open_resource(resource)?;
 
-    let (idx, configured_sources, default_metric_at) = {
-        let segment = reader.open_segment(resource)?;
-        let metric_at = latest_segment_metric_observation(
-            &segment,
-            Window {
-                from: Some(visible_range.from()),
-                to: Some(visible_range.to_exclusive() - 1),
-            },
-            &|| false,
-        )
-        .map_err(HtmlReportError::Query)?;
-        let (idx, sources) = isolated_index(&segment)?;
-        (idx, sources, metric_at)
-    };
+    let (idx, configured_sources) = isolated_index(&reader, resource)?;
     source.validate_opened(resource, &bytes)?;
     let shell = shell()?;
     let marker = marker(&shell)?;
@@ -355,11 +336,6 @@ fn write_source_html(
     write!(output, "{}", visible_range.from()).map_err(HtmlReportError::Write)?;
     write_output(output, RUNTIME_TO)?;
     write!(output, "{}", visible_range.to_exclusive()).map_err(HtmlReportError::Write)?;
-    write_output(output, RUNTIME_METRIC_AT)?;
-    match default_metric_at {
-        Some(ts) => write!(output, "\"{ts}\"").map_err(HtmlReportError::Write)?,
-        None => write_output(output, b"null")?,
-    }
     write_output(output, RUNTIME_READY)?;
     write_base64_reader(output, &bytes, zms_len)?;
     write_output(output, RUNTIME_INDEX)?;
@@ -387,13 +363,17 @@ fn write_source_html(
     })
 }
 
-fn isolated_index(segment: &Segment) -> Result<(Vec<u8>, u32), HtmlReportError> {
-    let facts = kronika_index::collection_facts(segment)?;
+fn isolated_index(
+    reader: &FinishedReader<EmbeddedSource>,
+    resource: &SegmentResource<EmbeddedResource>,
+) -> Result<(Vec<u8>, u32), HtmlReportError> {
+    let segment = reader.open_segment(resource)?;
+    let facts = kronika_index::collection_facts(&segment)?;
     let configured_sources = match (facts.os_enabled, facts.postgresql_enabled) {
         (Some(os), Some(pg)) => (u32::from(os) * SOURCE_OS) | (u32::from(pg) * SOURCE_POSTGRESQL),
         _ => configured_sources(segment.type_ids()),
     };
-    let index = kronika_index::build(segment)?;
+    let index = kronika_index::build(&segment)?;
     Ok((index.encode()?, configured_sources))
 }
 

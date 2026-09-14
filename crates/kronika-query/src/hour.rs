@@ -50,7 +50,6 @@ pub(crate) struct PreparedHour {
     listed: Vec<DatasetSegment>,
     segments: Vec<DatasetSegment>,
     window: Window,
-    metric_at: Option<i64>,
     hours: Vec<i64>,
     series: Option<HourSeriesRequest>,
     part: HourPart,
@@ -64,7 +63,6 @@ pub(crate) fn prepare(
     request: HourRequest,
     configured_sources: u32,
     synthetic_demo: bool,
-    cancelled: &(impl Fn() -> bool + ?Sized),
 ) -> Result<PreparedHour, QueryError> {
     let requested = request.window;
     let discovery = dataset.catalog()?;
@@ -73,17 +71,8 @@ pub(crate) fn prepare(
     } else {
         hours_of_ranges(discovery.ranges().iter().copied())
     };
-    let default_metric = if requested.from.is_none() {
-        crate::observation::latest_metric_observation(
-            dataset.as_ref(),
-            discovery.as_ref(),
-            cancelled,
-        )?
-    } else {
-        None
-    };
     let window = requested.from.map_or_else(
-        || default_metric.map_or_else(|| latest_hour(&hours), observation_hour),
+        || latest_hour(&hours),
         |from| Window {
             from: Some(from),
             to: Some(requested.to.unwrap_or_else(|| hour_end(from))),
@@ -108,16 +97,6 @@ pub(crate) fn prepare(
         pin_segments(dataset.as_ref(), &mut segments, expected, request.active)?;
         segments.sort_by_key(DatasetSegment::min_ts);
     }
-    let metric_at = match (request.part, request.series.as_ref(), requested.from) {
-        (HourPart::Lanes, _, _) | (_, Some(_), _) => None,
-        (_, None, None) => default_metric,
-        (_, None, Some(_)) => crate::observation::latest_metric_in_window(
-            dataset.as_ref(),
-            &segments,
-            window,
-            cancelled,
-        )?,
-    };
     let shape = format!(
         "window={window:?};hours={hours:?};series={:?};part={:?};segments={:?};active={:?};sources={configured_sources};demo={synthetic_demo}",
         request.series, request.part, request.segments, request.active,
@@ -158,7 +137,6 @@ pub(crate) fn prepare(
         listed,
         segments,
         window,
-        metric_at,
         hours,
         series: request.series,
         part: request.part,
@@ -219,14 +197,6 @@ fn hours_of_ranges(ranges: impl IntoIterator<Item = (i64, i64)>) -> Vec<i64> {
     hours
 }
 
-const fn observation_hour(ts: i64) -> Window {
-    let offset = ts.rem_euclid(HOUR);
-    Window {
-        from: Some(ts.saturating_sub(offset)),
-        to: Some(ts.saturating_add(HOUR - 1 - offset)),
-    }
-}
-
 fn latest_hour(hours: &[i64]) -> Window {
     hours.last().map_or_else(Window::default, |from| Window {
         from: Some(*from),
@@ -268,7 +238,6 @@ impl PreparedHour {
                 "record": "hour",
                 "from": self.window.from.map(|value| value.to_string()),
                 "to": self.window.to.map(|value| value.to_string()),
-                "metric_at": self.metric_at.map(|value| value.to_string()),
                 "available_hours": self.hours.iter().map(ToString::to_string).collect::<Vec<_>>(),
             }))?)
         {

@@ -65,12 +65,8 @@ impl QuerySink for Records {
 
 fn catalog_bytes(dataset: Arc<dyn QueryDataset>) -> Vec<u8> {
     let context = QueryContext::new(dataset, 0, false);
-    let execution = execute(
-        &context,
-        QueryRequest::Catalog(CatalogRequest::default()),
-        &|| false,
-    )
-    .expect("prepare catalog query");
+    let execution = execute(&context, QueryRequest::Catalog(CatalogRequest::default()))
+        .expect("prepare catalog query");
     let mut records = Records::default();
     execution
         .stream(&mut records)
@@ -101,8 +97,7 @@ fn heatmap_bytes(dataset: Arc<dyn QueryDataset>) -> Vec<u8> {
     let context = QueryContext::new(dataset, 0, false);
     let query =
         kronika_query::validate_heatmap_request(heatmap_query(1)).expect("validate heatmap query");
-    let execution =
-        execute(&context, QueryRequest::Heatmap(query), &|| false).expect("prepare heatmap query");
+    let execution = execute(&context, QueryRequest::Heatmap(query)).expect("prepare heatmap query");
     let mut records = Records::default();
     execution
         .stream(&mut records)
@@ -112,8 +107,7 @@ fn heatmap_bytes(dataset: Arc<dyn QueryDataset>) -> Vec<u8> {
 
 fn hour_bytes(dataset: Arc<dyn QueryDataset>, request: HourRequest) -> Vec<u8> {
     let context = QueryContext::new(dataset, 0b11, false);
-    let execution =
-        execute(&context, QueryRequest::Hour(request), &|| false).expect("prepare hour query");
+    let execution = execute(&context, QueryRequest::Hour(request)).expect("prepare hour query");
     let mut records = Records::default();
     execution.stream(&mut records).expect("stream hour query");
     records.0
@@ -125,7 +119,7 @@ fn indexed_bytes(
     request: QueryRequest,
 ) -> Vec<u8> {
     let context = QueryContext::new(dataset, 0b11, false).with_index_provider(indexes);
-    let execution = execute(&context, request, &|| false).expect("prepare indexed query");
+    let execution = execute(&context, request).expect("prepare indexed query");
     let mut records = Records::default();
     execution
         .stream(&mut records)
@@ -629,26 +623,15 @@ fn write_heatmap_fixture(root: &Path, segment_id: SegmentId) -> Arc<[u8]> {
     write_heatmap_fixture_with_sharing(root, segment_id, None, 42)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one shared segment fixture covers every query family without duplicate writers"
+)]
 fn write_heatmap_fixture_with_sharing(
     root: &Path,
     segment_id: SegmentId,
     shared: Option<bool>,
     activity_pid: i32,
-) -> Arc<[u8]> {
-    write_heatmap_fixture_observed(root, segment_id, shared, activity_pid, None, |_| {})
-}
-
-#[expect(
-    clippy::too_many_lines,
-    reason = "all nine source families share one real encoded capture"
-)]
-fn write_heatmap_fixture_observed(
-    root: &Path,
-    segment_id: SegmentId,
-    shared: Option<bool>,
-    activity_pid: i32,
-    future_event: Option<i64>,
-    observe_active: impl FnOnce(&Path),
 ) -> Arc<[u8]> {
     let data_root = DataRoot::open(root).expect("open heatmap data root");
     let owner = data_root
@@ -835,18 +818,6 @@ fn write_heatmap_fixture_observed(
             .push(parity_plan(timestamp, label, calls))
             .expect("plan row fits");
     }
-    if let Some(timestamp) = future_event {
-        buffers
-            .push(PgLogTempFiles {
-                ts: Ts(timestamp),
-                system_identifier: Some(42),
-                source_file: label,
-                path: None,
-                size_bytes: 100,
-                statement: None,
-            })
-            .expect("future event");
-    }
     let dictionary = dict::encode(interner.window()).expect("encode parity dictionary");
     let part = buffers
         .flush(&dictionary)
@@ -855,7 +826,6 @@ fn write_heatmap_fixture_observed(
     journal
         .append(segment_id, &part)
         .expect("append heatmap rows");
-    observe_active(root);
     let summary = write_segment(
         &journal,
         &owner,
@@ -1698,7 +1668,7 @@ fn selected_counter_identity_breaks_generic_history_and_detail_rates() {
                 after: None,
             });
             let mut sink = Records::default();
-            execute(&context, request, &|| false)
+            execute(&context, request)
                 .expect("history")
                 .stream(&mut sink)
                 .expect("stream");
@@ -1942,9 +1912,3 @@ mod controller_continuity;
 
 #[path = "finished_source_parity/encoded_lane_order.rs"]
 mod encoded_lane_order;
-
-#[path = "finished_source_parity/metric_clock.rs"]
-mod metric_clock;
-
-#[path = "../../../bins/kronika-web/src/query_adapter.rs"]
-mod query_adapter;

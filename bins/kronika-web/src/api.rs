@@ -151,7 +151,7 @@ pub(crate) fn prepare(
     route: Route,
     if_none_match: Option<&str>,
 ) -> Result<Prepared, ApiError> {
-    prepare_with_demo(root, sources, false, route, if_none_match, &|| false)
+    prepare_with_demo(root, sources, false, route, if_none_match)
 }
 
 /// Prepare a response with the deployment identity exposed in its catalog.
@@ -161,7 +161,6 @@ pub(crate) fn prepare_with_demo(
     synthetic_demo: bool,
     route: Route,
     if_none_match: Option<&str>,
-    cancelled: &dyn Fn() -> bool,
 ) -> Result<Prepared, ApiError> {
     let Route::Recorded(route) = route else {
         // Answered directly in `main.rs`.
@@ -178,7 +177,7 @@ pub(crate) fn prepare_with_demo(
             let dataset =
                 std::sync::Arc::new(crate::query_adapter::NativeDataset::from_root(root)?);
             let context = QueryContext::new(dataset, sources, synthetic_demo);
-            kronika_query::execute(&context, request, cancelled).map(prepared_query)
+            kronika_query::execute(&context, request).map(prepared_query)
         }
         request @ (QueryRequest::Index(_) | QueryRequest::Hour(_)) => {
             let dataset =
@@ -189,7 +188,7 @@ pub(crate) fn prepare_with_demo(
                 synthetic_demo,
             )
             .with_index_provider(dataset);
-            kronika_query::execute(&context, request, cancelled).map(prepared_query)
+            kronika_query::execute(&context, request).map(prepared_query)
         }
         QueryRequest::Snapshot(request) => {
             let dataset =

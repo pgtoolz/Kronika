@@ -12,7 +12,6 @@ interface ReportSession {
 }
 
 interface ReportRuntime {
-  readonly initialMetricAt: string | null
   readonly visibleFrom?: string | undefined
   readonly visibleToExclusive?: string | undefined
   readonly ready: Promise<ReportSession>
@@ -54,14 +53,8 @@ export function reportVisibleAt(at: number | null, range: ReportVisibleRange | n
   return at >= range.from && at < range.toExclusive ? at : null
 }
 
-export function reportInitialHour(range: ReportVisibleRange | null): number | null {
-  if (range === null) return null
-  const raw = runtime().initialMetricAt
-  if (raw === null) return Math.floor((range.toExclusive - 1) / HOUR_MICROS) * HOUR_MICROS
-  const timestamp = typeof raw === "string" && /^-?\d+$/.test(raw) ? Number(raw) : Number.NaN
-  if (!Number.isSafeInteger(timestamp)) throw new Error("Kronika report initial metric timestamp is invalid")
-  if (timestamp < range.from || timestamp >= range.toExclusive) throw new Error("Kronika report initial metric timestamp is outside its visible range")
-  return Math.floor(timestamp / HOUR_MICROS) * HOUR_MICROS
+export function reportLatestHour(range: ReportVisibleRange | null): number | null {
+  return range === null ? null : Math.floor((range.toExclusive - 1) / HOUR_MICROS) * HOUR_MICROS
 }
 
 export function reportVisibleCursor(cursor: number, range: ReportVisibleRange | null): number {
