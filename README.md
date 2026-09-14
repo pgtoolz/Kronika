@@ -17,7 +17,7 @@ A recorded hour, 5 September 2026, 19:00–20:00 UTC:
 
 ## Install and run
 
-[Install Kronika 1.1.0](INSTALL.md) from a [Linux release archive](docs/releases.md#download),
+[Install Kronika 1.1.1](INSTALL.md) from a [Linux release archive](docs/releases.md#download),
 or [build from source](docs/build.md).
 
 Choose `local` to record Linux and, optionally, PostgreSQL in the same VM or pod.

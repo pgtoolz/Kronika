@@ -18,7 +18,6 @@ EXAMPLES
     KRONIKA_WEB_LISTEN=0.0.0.0:8080 kronika-web
 
   With both credentials unset, open http://SERVER_IP:8080/ without signing in.
-  Anyone who can reach this listener can access the recording.
 
   Enable authentication by setting both credentials:
 

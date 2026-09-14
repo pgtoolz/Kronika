@@ -2,6 +2,12 @@
 
 [Русская версия](changelog.ru.md)
 
+## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
+
+- Web authentication now follows `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD`: leave both unset for access without sign-in, or set both to nonempty values to require authentication. Setting only one, an empty value or invalid Unicode prevents startup. This applies to the browser, API and MCP.
+- Removed `KRONIKA_WEB_AUTH`; credentials are no longer required when authentication is not used.
+- Updated English and Russian installation and startup instructions with network address examples.
+
 ## [1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
 
 - Added `KRONIKA_PG_DSN` for the PostgreSQL connection string. To collect from several servers, run `kronika-collector` for each server with its own `KRONIKA_PG_DSN` and a separate `KRONIKA_STORAGE_DIR`.
