@@ -1,18 +1,17 @@
-use super::{account, authentication_required, source_set, synthetic_demo};
+use super::{account, source_set, synthetic_demo};
 
 #[test]
-fn both_nonempty_credentials_are_required() {
-    let made = account(Some("dba".to_owned()), Some("secret".to_owned())).expect("account");
-    assert_eq!(made.user, "dba");
-    assert_eq!(made.password, "secret");
-    assert!(account(None, None).is_err());
-    assert!(account(Some(String::new()), Some("secret".to_owned())).is_err());
-    assert!(account(Some("dba".to_owned()), Some(String::new())).is_err());
+fn absent_credentials_disable_authentication() {
+    assert_eq!(account(None, None).expect("no authentication"), None);
 }
 
 #[test]
-fn account_debug_output_redacts_credentials() {
-    let made = account(Some("dba".to_owned()), Some("secret".to_owned())).expect("account");
+fn both_nonempty_credentials_enable_authentication() {
+    let made = account(Some("dba".to_owned()), Some("secret".to_owned()))
+        .expect("valid configuration")
+        .expect("account");
+    assert_eq!(made.user, "dba");
+    assert_eq!(made.password, "secret");
     let debug = format!("{made:?}");
     assert_eq!(debug, "Account { credentials: [redacted] }");
     assert!(!debug.contains("dba"));
@@ -20,12 +19,22 @@ fn account_debug_output_redacts_credentials() {
 }
 
 #[test]
-fn authentication_is_disabled_only_explicitly() {
-    assert!(authentication_required(None).expect("default"));
-    assert!(authentication_required(Some("required")).expect("required"));
-    assert!(!authentication_required(Some("disabled")).expect("disabled"));
-    assert!(authentication_required(Some("false")).is_err());
-    assert!(authentication_required(Some("")).is_err());
+fn partial_or_empty_credentials_are_configuration_errors() {
+    for (user, password, variable) in [
+        (Some("dba"), None, "KRONIKA_WEB_PASSWORD"),
+        (None, Some("secret"), "KRONIKA_WEB_USER"),
+        (Some(""), Some("secret"), "KRONIKA_WEB_USER"),
+        (Some("dba"), Some(""), "KRONIKA_WEB_PASSWORD"),
+        (Some(""), Some(""), "KRONIKA_WEB_USER"),
+        (Some(""), None, "KRONIKA_WEB_PASSWORD"),
+        (None, Some(""), "KRONIKA_WEB_USER"),
+    ] {
+        let error = account(user.map(str::to_owned), password.map(str::to_owned))
+            .expect_err("invalid credentials");
+        let message = error.to_string();
+        assert!(message.contains(variable), "{message}");
+        assert!(!message.contains("secret"), "{message}");
+    }
 }
 
 #[test]

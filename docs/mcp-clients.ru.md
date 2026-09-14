@@ -7,26 +7,28 @@
 `kronika-web` по адресу `/mcp`.
 
 Он принимает `POST /mcp` по протоколу Streamable HTTP, отвечает в JSON и
-предоставляет только инструменты MCP. Сервер не хранит сессии MCP. При
-включённой аутентификации каждый запрос передаёт заголовок
-`Authorization: Basic <BASE64>` с теми же именем и паролем, что у веб-интерфейса.
-`KRONIKA_WEB_AUTH=disabled` отключает проверку, но переменные
-`KRONIKA_WEB_USER` и `KRONIKA_WEB_PASSWORD` остаются обязательными.
+предоставляет только инструменты MCP. Сервер не хранит сессии MCP.
+Если `KRONIKA_WEB_USER` и `KRONIKA_WEB_PASSWORD` не заданы, аутентификация
+не требуется. Если обе переменные заданы и непусты, каждый запрос передаёт
+заголовок `Authorization: Basic <BASE64>` с этими учётными данными.
+Если задана только одна переменная или пустое значение, веб-сервер не запустится.
 Запросы с заголовком `Origin` и адреса со строкой параметров после `?` отклоняются.
 
 ## Параметры подключения
 
 Подставьте свои значения вместо обозначений в угловых скобках. Адрес должен
-быть доступен с машины, на которой работает MCP-клиент. Для удалённого
-веб-сервера можно использовать [туннель SSH](../INSTALL.ru.md#4-запуск-web)
+быть доступен с машины, на которой работает MCP-клиент. Для веб-сервера,
+который слушает только localhost, можно использовать [туннель SSH](../INSTALL.ru.md#4-запуск-web)
 из инструкции установки:
 
 | Значение | Что подставить |
 | --- | --- |
-| `<URL>` | Адрес MCP, например `http://127.0.0.1:8080/mcp`. |
+| `<URL>` | Адрес MCP, например `http://<server-ip>:8080/mcp`; замените `<server-ip>` адресом сервера. |
 | `kronika` | Имя, под которым клиент запомнит сервер. |
-| `<USER>`, `<PASSWORD>` | Значения `KRONIKA_WEB_USER`, `KRONIKA_WEB_PASSWORD`. |
-| `<BASE64>` | Строку `<USER>:<PASSWORD>`, закодированную в Base64 без перевода строки. |
+| `<USER>`, `<PASSWORD>` | Значения `KRONIKA_WEB_USER`, `KRONIKA_WEB_PASSWORD`, если они заданы. |
+| `<BASE64>` | Только для аутентификации: строку `<USER>:<PASSWORD>`, закодированную в Base64 без перевода строки. |
+
+Если учётные данные заданы, вычислите `<BASE64>` командой:
 
 ```bash
 printf '%s' '<USER>:<PASSWORD>' | base64 | tr -d '\n'
@@ -34,16 +36,20 @@ printf '%s' '<USER>:<PASSWORD>' | base64 | tr -d '\n'
 
 Панель **Connect an AI agent** создаёт настройки для выбранного клиента.
 Имя сервера составляется из имени крупнейшей базы в записи и адреса подключения,
-например `kronika-billing-192-168-0-22-8080`. При отключённой аутентификации
+например `kronika-billing-192-168-0-22-8080`. Если обе переменные с учётными данными не заданы,
 заголовок с учётными данными не добавляется.
+
+Примеры ниже подключаются без аутентификации. Если обе переменные с учётными
+данными заданы на сервере, добавьте `--header 'Authorization: Basic <BASE64>'`
+к команде Claude Code, `"headers": { "Authorization": "Basic <BASE64>" }` в объект
+сервера в JSON или `http_headers = { "Authorization" = "Basic <BASE64>" }` в его запись TOML.
 
 ## Claude Code
 
 Чтобы подключение было доступно во всех ваших проектах:
 
 ```bash
-claude mcp add --transport http --scope user kronika '<URL>' \
-  --header 'Authorization: Basic <BASE64>'
+claude mcp add --transport http --scope user kronika '<URL>'
 ```
 
 Для одного проекта сохраните настройки в `.mcp.json`:
@@ -53,10 +59,7 @@ claude mcp add --transport http --scope user kronika '<URL>' \
   "mcpServers": {
     "kronika": {
       "type": "http",
-      "url": "<URL>",
-      "headers": {
-        "Authorization": "Basic <BASE64>"
-      }
+      "url": "<URL>"
     }
   }
 }
@@ -70,7 +73,6 @@ claude mcp add --transport http --scope user kronika '<URL>' \
 ```toml
 [mcp_servers.kronika]
 url = "<URL>"
-http_headers = { "Authorization" = "Basic <BASE64>" }
 ```
 
 ## Cursor
@@ -82,10 +84,7 @@ http_headers = { "Authorization" = "Basic <BASE64>" }
 {
   "mcpServers": {
     "kronika": {
-      "url": "<URL>",
-      "headers": {
-        "Authorization": "Basic <BASE64>"
-      }
+      "url": "<URL>"
     }
   }
 }

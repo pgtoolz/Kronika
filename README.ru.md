@@ -78,10 +78,8 @@ PostgreSQL, замените `1` на `3`:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
   KRONIKA_WEB_SOURCES=1 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   /usr/local/bin/kronika-web
 ```
 
@@ -89,14 +87,19 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ```sh
 KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
-Откройте <http://127.0.0.1:8080/> и войдите. Веб-интерфейс показывает сохранённую
-историю измерений и данные текущего сбора.
+Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом машины,
+на которой запущен веб-сервер. Веб-интерфейс показывает сохранённую историю
+измерений и данные текущего сбора.
+
+Если `KRONIKA_WEB_USER` и `KRONIKA_WEB_PASSWORD` не заданы, вход не требуется.
+Чтобы включить вход по паролю, добавьте `KRONIKA_WEB_USER=kronika` и
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` перед
+`/usr/local/bin/kronika-web` в команде, выбрав свой пароль.
+Если задана только одна переменная или пустое значение, запуск завершится ошибкой.
 
 [Настройка systemd](docs/services.ru.md) описывает запуск
 обеих программ как служб и изменение настроек уже работающей службы.

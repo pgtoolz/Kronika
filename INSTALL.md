@@ -124,8 +124,7 @@ defines intervals, supported extension layouts and log formats.
 
 ## 4. Start web
 
-In a second terminal, set a password and start web with the same recording
-directory.
+In a second terminal, start web with the same recording directory.
 
 ### For `local` mode
 
@@ -134,10 +133,8 @@ when also collecting PostgreSQL:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
   KRONIKA_WEB_SOURCES=1 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   /usr/local/bin/kronika-web
 ```
 
@@ -145,27 +142,35 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ```sh
 KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
-Open <http://127.0.0.1:8080/> and sign in. Web requires write access to the
-recording directory to create search indexes (`.idx`). In the `local` example,
+Open `http://<server-ip>:8080`, replacing `<server-ip>` with the address of the
+machine running web. With `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` both
+unset, sign-in is not required. To require sign-in, add
+`KRONIKA_WEB_USER=kronika` and
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` before
+`/usr/local/bin/kronika-web` in the command, choosing your own password.
+Setting only one credential or an empty value prevents startup.
+
+Web requires write access to the recording directory to create search indexes
+(`.idx`). In the `local` example,
 both programs run as root and other users cannot access the storage.
 
 `KRONIKA_WEB_SOURCES` reports which sources are configured; it does not enable
 collection or hide recorded data. See the [web configuration reference](bins/kronika-web/README.md)
 for authentication settings.
 
-For access from another machine, run on that machine:
+For local access, a reverse proxy on the same machine or SSH forwarding, use
+`KRONIKA_WEB_LISTEN=127.0.0.1:8080` instead; this is also the default when unset.
+To forward that listener, run on the client machine:
 
 ```sh
 ssh -N -L 8080:127.0.0.1:8080 user@monitored-host
 ```
 
-Open <http://127.0.0.1:8080/> there. MCP uses the same listener and credentials
+Open <http://127.0.0.1:8080/> there. MCP uses the same listener and authentication
 at `/mcp`; [client setup](docs/mcp-clients.md) is also available in the **AI**
 panel. [Systemd](docs/services.md) defines persistent services.
 

@@ -8,8 +8,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     RequestError, RequestTarget, SessionTarget, SingleHeader, authorization, if_none_match_values,
-    response_from_meta, route_request, route_request_at, route_request_without_authentication,
-    session_response,
+    response_from_meta, route_request, route_request_at, session_response,
 };
 use crate::api::{ApiError, CachePolicy, Prepared, ResponseMeta};
 use crate::body::StreamHead;
@@ -94,9 +93,9 @@ fn session_request_from_origins(
 }
 
 fn session_route_response(request: &Request<()>, now: u64) -> hyper::Response<super::WebBody> {
-    match route_request_at(&account(), request, now).expect("session route") {
+    match route_request_at(Some(&account()), request, now).expect("session route") {
         RequestTarget::Session(target) => {
-            session_response(&account(), target).expect("session response")
+            session_response(Some(&account()), target).expect("session response")
         }
         other => panic!("expected session target, got {other:?}"),
     }
@@ -115,8 +114,7 @@ fn the_instance_label_names_the_largest_recorded_database() {
     let config = |root: &std::path::Path| crate::config::Config {
         data_root: root.to_path_buf(),
         listen: "127.0.0.1:0".parse().expect("listen address"),
-        account: account(),
-        authentication_required: true,
+        account: Some(account()),
         sources: crate::config::SOURCE_POSTGRESQL,
         synthetic_demo: false,
         export_gate: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
@@ -164,13 +162,13 @@ fn request_cookie(set_cookie: &str) -> &str {
 }
 
 fn rejection(method: Method, target: &str) -> hyper::Response<super::WebBody> {
-    route_request(&account(), &request(method, target))
+    route_request(Some(&account()), &request(method, target))
         .expect_err("request is rejected")
         .response()
 }
 
 #[test]
-fn authentication_is_mandatory_and_central() {
+fn configured_credentials_require_authentication_for_every_api_and_mcp_route() {
     for target in [
         "/api",
         "/api/",
@@ -179,8 +177,9 @@ fn authentication_is_mandatory_and_central() {
         "/api/mcp-access",
         "/api/instance-label",
         "/api/not-a-resource",
+        "/mcp",
     ] {
-        let response = route_request(&account(), &public_request(Method::GET, target))
+        let response = route_request(Some(&account()), &public_request(Method::GET, target))
             .expect_err("missing credentials")
             .response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{target}");
@@ -204,7 +203,7 @@ fn authentication_is_mandatory_and_central() {
 fn the_shell_is_public_even_with_invalid_authorization() {
     let root = public_request(Method::GET, "/");
     assert_eq!(
-        route_request(&account(), &root),
+        route_request(Some(&account()), &root),
         Ok(RequestTarget::Ui {
             head: false,
             coding: ContentCoding::Identity,
@@ -217,7 +216,7 @@ fn the_shell_is_public_even_with_invalid_authorization() {
         hyper::header::HeaderValue::from_static("Basic invalid"),
     );
     assert_eq!(
-        route_request(&account(), &index),
+        route_request(Some(&account()), &index),
         Ok(RequestTarget::Ui {
             head: true,
             coding: ContentCoding::Identity,
@@ -228,7 +227,7 @@ fn the_shell_is_public_even_with_invalid_authorization() {
 #[test]
 fn public_non_api_paths_are_not_found() {
     for target in ["/health", "/index.html/", "/api-not-a-resource"] {
-        let response = route_request(&account(), &public_request(Method::GET, target))
+        let response = route_request(Some(&account()), &public_request(Method::GET, target))
             .expect_err("unknown public path")
             .response();
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{target}");
@@ -245,7 +244,7 @@ fn duplicate_authorization_fields_are_refused() {
     );
     assert_eq!(authorization(request.headers()), SingleHeader::Invalid);
     assert_eq!(
-        route_request(&account(), &request)
+        route_request(Some(&account()), &request)
             .expect_err("ambiguous credentials")
             .response()
             .status(),
@@ -277,7 +276,7 @@ async fn session_get_is_query_free_empty_and_unchallenged() {
 
     let queried = public_request(Method::GET, "/auth/session?next=/");
     assert_eq!(
-        route_request_at(&account(), &queried, NOW)
+        route_request_at(Some(&account()), &queried, NOW)
             .expect_err("query is not a session route")
             .response()
             .status(),
@@ -365,7 +364,7 @@ fn session_cookie_mutations_require_one_well_formed_http_origin() {
             let request =
                 session_request_from_origins(method.clone(), authorization, None, origins);
             assert_eq!(
-                route_request_at(&account(), &request, NOW),
+                route_request_at(Some(&account()), &request, NOW),
                 Err(RequestError::InvalidOrigin),
                 "{method} {origins:?}"
             );
@@ -386,13 +385,87 @@ fn invalid_session_post_is_unchallenged_and_does_not_change_the_cookie() {
 }
 
 #[test]
-fn disabled_auth_session_post_remains_admitted_without_an_origin() {
-    let request = session_request(Method::POST, None, None);
+fn absent_credentials_admit_browser_sessions_without_issuing_cookies() {
+    for method in [Method::GET, Method::POST] {
+        let request = session_request(method, None, None);
+        let target = route_request(None, &request).expect("public session route");
+        assert_eq!(
+            target,
+            RequestTarget::Session(SessionTarget::Check { admitted: true })
+        );
+        let RequestTarget::Session(target) = target else {
+            unreachable!("asserted session target");
+        };
+        let response = session_response(None, target).expect("session response");
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get(CACHE_CONTROL)
+                .expect("cache control"),
+            "no-store"
+        );
+        assert_eq!(response.headers().get(VARY), Some(&unauthorized_vary()));
+        assert!(!response.headers().contains_key(SET_COOKIE));
+        assert!(!response.headers().contains_key(WWW_AUTHENTICATE));
+    }
+}
+
+#[test]
+fn absent_credentials_admit_ui_api_and_mcp_requests() {
+    assert!(matches!(
+        route_request(None, &public_request(Method::GET, "/")),
+        Ok(RequestTarget::Ui { .. })
+    ));
+    for target in [
+        "/api/catalog",
+        "/api/export?from=1&to=2",
+        "/api/mcp-access",
+        "/api/instance-label",
+    ] {
+        assert!(
+            matches!(
+                route_request(None, &public_request(Method::GET, target)),
+                Ok(RequestTarget::Api { .. })
+            ),
+            "{target}"
+        );
+    }
     assert_eq!(
-        route_request_without_authentication(&request),
-        Ok(RequestTarget::Session(SessionTarget::Check {
-            admitted: true,
-        }))
+        route_request(None, &public_request(Method::POST, "/mcp")),
+        Ok(RequestTarget::Mcp)
+    );
+    for target in ["/api/catalog", "/mcp"] {
+        let mut request = public_request(Method::GET, target);
+        request.headers_mut().insert(
+            hyper::header::AUTHORIZATION,
+            hyper::header::HeaderValue::from_static("Basic invalid"),
+        );
+        assert!(route_request(None, &request).is_ok(), "{target}");
+    }
+}
+
+#[test]
+fn absent_credentials_preserve_route_and_cookie_origin_validation() {
+    for target in [
+        "/mcp/",
+        "/mcp?query=1",
+        "/auth/session?next=/",
+        "/api-not-a-resource",
+    ] {
+        assert_eq!(
+            route_request(None, &public_request(Method::GET, target)),
+            Err(RequestError::Route(crate::route::RouteError::NoSuchPath)),
+            "{target}"
+        );
+    }
+    assert_eq!(
+        route_request(None, &public_request(Method::POST, "/api/catalog")),
+        Err(RequestError::MethodNotAllowed("GET"))
+    );
+    assert_eq!(
+        route_request(None, &session_request(Method::DELETE, None, None)),
+        Err(RequestError::InvalidOrigin)
     );
 }
 
@@ -443,7 +516,7 @@ fn valid_cookie_restores_session_and_authorizes_browser_api() {
     api.headers_mut()
         .insert("x-kronika-ui", hyper::header::HeaderValue::from_static("1"));
     assert!(matches!(
-        route_request_at(&account(), &api, NOW),
+        route_request_at(Some(&account()), &api, NOW),
         Ok(RequestTarget::Api { .. })
     ));
 }
@@ -469,7 +542,7 @@ fn expired_cookie_is_rejected_without_implicit_cleanup() {
     );
     api.headers_mut()
         .insert("x-kronika-ui", hyper::header::HeaderValue::from_static("1"));
-    let response = route_request_at(&account(), &api, expired_at)
+    let response = route_request_at(Some(&account()), &api, expired_at)
         .expect_err("expired session")
         .response();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -478,15 +551,30 @@ fn expired_cookie_is_rejected_without_implicit_cleanup() {
 }
 
 #[test]
-fn mcp_request_with_a_well_formed_origin_is_rejected() {
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/mcp")
-        .header(ORIGIN, "https://example.com")
-        .body(())
-        .expect("request");
-    let target = route_request_at(&account(), &request, 0);
-    assert!(matches!(target, Err(RequestError::OriginNotAllowed)));
+fn mcp_origin_validation_is_independent_of_authentication() {
+    let configured = account();
+    for account in [None, Some(&configured)] {
+        for (origins, expected) in [
+            (vec!["https://example.com"], RequestError::OriginNotAllowed),
+            (vec!["null"], RequestError::InvalidOrigin),
+            (
+                vec!["https://example.com/path"],
+                RequestError::InvalidOrigin,
+            ),
+            (
+                vec!["https://example.com", "https://example.com"],
+                RequestError::InvalidOrigin,
+            ),
+        ] {
+            let mut request = public_request(Method::POST, "/mcp");
+            for origin in origins {
+                request
+                    .headers_mut()
+                    .append(ORIGIN, hyper::header::HeaderValue::from_static(origin));
+            }
+            assert_eq!(route_request_at(account, &request, 0), Err(expected));
+        }
+    }
 }
 
 #[test]
@@ -497,7 +585,7 @@ fn mcp_request_with_no_origin_and_valid_auth_reaches_the_mcp_target() {
         .header(hyper::header::AUTHORIZATION, AUTHORIZATION)
         .body(())
         .expect("request");
-    let target = route_request_at(&account(), &request, 0);
+    let target = route_request_at(Some(&account()), &request, 0);
     assert!(matches!(target, Ok(RequestTarget::Mcp)));
 }
 
@@ -505,7 +593,7 @@ fn mcp_request_with_no_origin_and_valid_auth_reaches_the_mcp_target() {
 fn direct_basic_api_remains_available() {
     const NOW: u64 = 1_786_579_200;
     assert!(matches!(
-        route_request_at(&account(), &request(Method::GET, "/api/catalog"), NOW),
+        route_request_at(Some(&account()), &request(Method::GET, "/api/catalog"), NOW),
         Ok(RequestTarget::Api { .. })
     ));
 }
@@ -517,7 +605,7 @@ fn marked_browser_api_unauthorized_is_silent_and_does_not_clear() {
     request
         .headers_mut()
         .insert("x-kronika-ui", hyper::header::HeaderValue::from_static("1"));
-    let response = route_request_at(&account(), &request, NOW)
+    let response = route_request_at(Some(&account()), &request, NOW)
         .expect_err("missing browser session")
         .response();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -550,7 +638,7 @@ fn malformed_or_duplicate_authorization_does_not_fall_back_to_cookie() {
                 hyper::header::HeaderValue::from_static(AUTHORIZATION),
             );
         }
-        let response = route_request_at(&account(), &request, NOW)
+        let response = route_request_at(Some(&account()), &request, NOW)
             .expect_err("authorization field takes precedence")
             .response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{duplicate}");
@@ -673,28 +761,28 @@ fn route_recognition_precedes_the_method_check() {
 #[test]
 fn only_the_two_exact_ui_paths_admit_get_and_head() {
     assert_eq!(
-        route_request(&account(), &request(Method::GET, "/")),
+        route_request(Some(&account()), &request(Method::GET, "/")),
         Ok(RequestTarget::Ui {
             head: false,
             coding: ContentCoding::Identity,
         })
     );
     assert_eq!(
-        route_request(&account(), &request(Method::HEAD, "/index.html")),
+        route_request(Some(&account()), &request(Method::HEAD, "/index.html")),
         Ok(RequestTarget::Ui {
             head: true,
             coding: ContentCoding::Identity,
         })
     );
     assert!(matches!(
-        route_request(&account(), &request(Method::GET, "/api/catalog")),
+        route_request(Some(&account()), &request(Method::GET, "/api/catalog")),
         Ok(RequestTarget::Api {
             route: crate::route::Route::Recorded(kronika_api::Route::Catalog(_)),
             ..
         })
     ));
 
-    let post = route_request(&account(), &public_request(Method::POST, "/"))
+    let post = route_request(Some(&account()), &public_request(Method::POST, "/"))
         .expect_err("shell POST is rejected")
         .response();
     assert_eq!(post.status(), StatusCode::METHOD_NOT_ALLOWED);
@@ -720,7 +808,7 @@ fn a_ui_client_that_refuses_every_representation_gets_an_explicit_406() {
             ACCEPT_ENCODING,
             hyper::header::HeaderValue::from_static(value),
         );
-        let response = route_request(&account(), &request)
+        let response = route_request(Some(&account()), &request)
             .expect_err("UI request refuses both representations")
             .response();
         assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE, "{value}");
@@ -736,8 +824,8 @@ fn a_ui_client_that_refuses_every_representation_gets_an_explicit_406() {
 
 #[tokio::test]
 async fn an_ordinary_curl_request_receives_readable_identity_html() {
-    let target =
-        route_request(&account(), &public_request(Method::GET, "/")).expect("ordinary curl route");
+    let target = route_request(Some(&account()), &public_request(Method::GET, "/"))
+        .expect("ordinary curl route");
     let RequestTarget::Ui { head, coding } = target else {
         panic!("ordinary curl must select the UI")
     };
@@ -763,7 +851,7 @@ fn an_api_client_that_refuses_every_coding_gets_an_explicit_406() {
         ACCEPT_ENCODING,
         hyper::header::HeaderValue::from_static("gzip;q=0, identity;q=0"),
     );
-    let response = route_request(&account(), &request)
+    let response = route_request(Some(&account()), &request)
         .expect_err("no API representation is acceptable")
         .response();
     assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
@@ -782,7 +870,7 @@ fn an_export_client_must_accept_the_identity_artifact() {
         ACCEPT_ENCODING,
         hyper::header::HeaderValue::from_static("gzip, identity;q=0"),
     );
-    let response = route_request(&account(), &request)
+    let response = route_request(Some(&account()), &request)
         .expect_err("an HTML export is never content encoded")
         .response();
     assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
@@ -994,22 +1082,21 @@ async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
 
 #[test]
 fn mcp_access_body_carries_the_basic_value_only_when_authentication_is_on() {
-    let config = |authentication_required| crate::config::Config {
+    let config = |account| crate::config::Config {
         data_root: std::path::PathBuf::from("/nonexistent"),
         listen: "127.0.0.1:0".parse().expect("listen address"),
-        account: account(),
-        authentication_required,
+        account,
         sources: crate::config::SOURCE_OS,
         synthetic_demo: false,
         export_gate: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
     };
 
     let with_auth: serde_json::Value =
-        serde_json::from_str(&crate::mcp_access_body(&config(true))).expect("json");
+        serde_json::from_str(&crate::mcp_access_body(&config(Some(account())))).expect("json");
     assert_eq!(with_auth["record"], "mcp_access");
     assert_eq!(with_auth["authorization"], AUTHORIZATION);
 
     let open: serde_json::Value =
-        serde_json::from_str(&crate::mcp_access_body(&config(false))).expect("json");
+        serde_json::from_str(&crate::mcp_access_body(&config(None))).expect("json");
     assert!(open["authorization"].is_null());
 }

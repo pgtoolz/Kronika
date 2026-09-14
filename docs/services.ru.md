@@ -5,7 +5,7 @@
 Программы можно запускать любым удобным способом. Здесь показан автозапуск
 и перезапуск через systemd. В примере работают один сборщик и один веб-сервер:
 программы находятся в `/usr/local/bin`, хранилище принадлежит root,
-веб-сервер слушает localhost. Перед запуском сервиса остановите соответствующую
+веб-сервер слушает все IPv4-интерфейсы. Перед запуском сервиса остановите соответствующую
 программу, если она уже работает в терминале.
 
 <a id="environment-files"></a>
@@ -27,15 +27,24 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika
 KRONIKA_RETENTION=2147483648
 ```
 
-`/etc/kronika/web.env` — замените пароль:
+`/etc/kronika/web.env`:
 
 ```ini
 KRONIKA_STORAGE_DIR=/var/lib/kronika
-KRONIKA_WEB_LISTEN=127.0.0.1:8080
+KRONIKA_WEB_LISTEN=0.0.0.0:8080
 KRONIKA_WEB_SOURCES=1
+```
+
+Если `KRONIKA_WEB_USER` и `KRONIKA_WEB_PASSWORD` не заданы, браузер,
+API и MCP доступны без аутентификации. Чтобы требовать её, добавьте
+обе строки в `web.env`, выбрав свой пароль:
+
+```ini
 KRONIKA_WEB_USER=kronika
 KRONIKA_WEB_PASSWORD=replace-with-a-random-password
 ```
+
+Если задана только одна переменная или пустое значение, запуск завершится ошибкой.
 
 Каждая строка задаёт переменную окружения для программы. Значения с пробелами
 целиком заключаются в кавычки. Systemd не исполняет здесь команды оболочки: не
@@ -127,9 +136,10 @@ sudo systemctl status kronika-collector.service kronika-web.service
 sudo journalctl -u kronika-collector -u kronika-web --since '5 minutes ago'
 ```
 
-Откройте <http://127.0.0.1:8080/>. По тому же адресу с путём `/mcp` доступен MCP.
-[Перенаправление порта по SSH](../INSTALL.ru.md#4-запуск-web) позволяет
-подключиться с другой машины.
+Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом сервера.
+По тому же адресу с путём `/mcp` доступен MCP. Для локального доступа,
+обратного прокси на той же машине или [перенаправления порта по SSH](../INSTALL.ru.md#4-запуск-web)
+укажите в `web.env` `KRONIKA_WEB_LISTEN=127.0.0.1:8080`.
 
 ## Операции
 

@@ -6,17 +6,28 @@ Usage: kronika-web
        kronika-web --help | -h | --version
 
 Runs in the foreground. Configuration is environment-only. Required variables:
-KRONIKA_STORAGE_DIR, KRONIKA_WEB_USER, KRONIKA_WEB_PASSWORD, KRONIKA_WEB_SOURCES.
-The default address is 127.0.0.1:8080; sign in at http://127.0.0.1:8080/.
+KRONIKA_STORAGE_DIR and KRONIKA_WEB_SOURCES.
+Leave both KRONIKA_WEB_USER and KRONIKA_WEB_PASSWORD unset for unauthenticated
+access, or set both to nonempty values to enable authentication.
+The default address is 127.0.0.1:8080 and accepts local connections only.
 
-EXAMPLE
-  Run over an existing recording with your configured web credentials:
+EXAMPLES
+  Serve an existing recording on the server's network interfaces:
 
   sudo env KRONIKA_STORAGE_DIR=/path/to/recording KRONIKA_WEB_SOURCES=1 \
-    KRONIKA_WEB_USER=kronika KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
-    kronika-web
+    KRONIKA_WEB_LISTEN=0.0.0.0:8080 kronika-web
 
-  The process needs read/write access to the recording directory.
+  With both credentials unset, open http://SERVER_IP:8080/ without signing in.
+  Anyone who can reach this listener can access the recording.
+
+  Enable authentication by setting both credentials:
+
+  sudo env KRONIKA_STORAGE_DIR=/path/to/recording KRONIKA_WEB_SOURCES=1 \
+    KRONIKA_WEB_LISTEN=0.0.0.0:8080 KRONIKA_WEB_USER=kronika \
+    KRONIKA_WEB_PASSWORD='replace-with-a-random-password' kronika-web
+
+  Sign in at http://SERVER_IP:8080/. The process needs read/write access to the
+  recording directory. SERVER_IP is the server's address, not 0.0.0.0.
 
 KRONIKA_WEB_SOURCES (required; no default)
   0  Neither source family declared configured.
@@ -39,11 +50,6 @@ REQUIRED ENVIRONMENT
       of segment files is not accepted. The directory must exist. Web needs
       write access to save search indexes (.idx files) and locks that prevent
       two processes from building the same index at once.
-  KRONIKA_WEB_USER
-      No default. Nonempty login name, used by browser login and HTTP Basic auth.
-  KRONIKA_WEB_PASSWORD
-      No default. Nonempty password for that account.
-      Both credentials remain required even with KRONIKA_WEB_AUTH=disabled.
   KRONIKA_WEB_SOURCES
       No default. Accepted values: 0, 1, 2, 3; meanings above.
 
@@ -52,10 +58,10 @@ OPTIONAL ENVIRONMENT
       IP address and port, e.g. 127.0.0.1:8080, 0.0.0.0:8080, or [::1]:8080.
       Hostnames are not accepted. The default accepts local connections only.
       The listener serves plain HTTP.
-  KRONIKA_WEB_AUTH     default required; accepted: required, disabled
-      required enforces browser sessions and API/MCP authentication. disabled
-      permits unauthenticated access.
-      Setting disabled does not remove the required user/password configuration.
+  KRONIKA_WEB_USER and KRONIKA_WEB_PASSWORD
+      Both unset: browser, API, and MCP access is unauthenticated.
+      Both nonempty: browser sessions and HTTP Basic authentication are enabled.
+      Setting only one or an explicitly empty value is a startup error.
   KRONIKA_WEB_DEMO     unset by default; the only set value is synthetic
       Tells API catalog clients that the recording contains generated demo data.
   TMPDIR              default the system temporary directory (normally /tmp)
@@ -63,11 +69,14 @@ OPTIONAL ENVIRONMENT
       access and capacity for both files. Files are removed when closed.
 
 LOGIN, API, AND MCP
-  Browser: http://127.0.0.1:8080/ shows the sign-in form. The configured account
-  creates a browser session. API and MCP clients use the same account via HTTP
-  Basic authentication; a browser session is also accepted for API requests.
+  Browser: http://SERVER_IP:8080/ opens directly when both credentials are
+  unset. When both are configured, the sign-in form creates a browser session.
+  API and MCP clients use the same account via HTTP Basic authentication;
+  a browser session is also accepted for API requests.
 
-  MCP uses http://127.0.0.1:8080/mcp with the same HTTP Basic credentials.
+  MCP uses http://SERVER_IP:8080/mcp. Omit Authorization when both credentials
+  are unset; otherwise use the configured HTTP Basic credentials.
+  For a local-only listener, use http://127.0.0.1:8080/.
 
 LOGS AND STOPPING
   Readiness (ready IP:PORT) goes to stdout; request/connection/export errors and

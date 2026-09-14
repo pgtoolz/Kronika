@@ -5,7 +5,7 @@
 You can launch the programs however you prefer. This guide shows automatic
 startup and restart using systemd. The example runs one collector and one web
 process, using `/usr/local/bin`, root-owned storage and a web listener on
-localhost. Stop any manually started instance before starting its service.
+all IPv4 interfaces. Stop any manually started instance before starting its service.
 
 ## Environment files
 
@@ -25,15 +25,24 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika
 KRONIKA_RETENTION=2147483648
 ```
 
-`/etc/kronika/web.env` — replace the password:
+`/etc/kronika/web.env`:
 
 ```ini
 KRONIKA_STORAGE_DIR=/var/lib/kronika
-KRONIKA_WEB_LISTEN=127.0.0.1:8080
+KRONIKA_WEB_LISTEN=0.0.0.0:8080
 KRONIKA_WEB_SOURCES=1
+```
+
+With `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` both unset, the browser,
+API and MCP require no authentication. To require it, add both lines to
+`web.env`, choosing your own password:
+
+```ini
 KRONIKA_WEB_USER=kronika
 KRONIKA_WEB_PASSWORD=replace-with-a-random-password
 ```
+
+Setting only one credential or an empty value prevents startup.
 
 Systemd parses these as environment assignments. Values containing spaces are
 quoted as a whole; shell substitutions and `export` are not evaluated.
@@ -120,8 +129,10 @@ sudo systemctl status kronika-collector.service kronika-web.service
 sudo journalctl -u kronika-collector -u kronika-web --since '5 minutes ago'
 ```
 
-Open <http://127.0.0.1:8080/>. The same listener serves `/mcp`.
-[SSH forwarding](../INSTALL.md#4-start-web) provides access from another machine.
+Open `http://<server-ip>:8080`, replacing `<server-ip>` with the server's
+address. The same listener serves `/mcp`. For local access, a reverse proxy on
+the same machine or [SSH forwarding](../INSTALL.md#4-start-web), use
+`KRONIKA_WEB_LISTEN=127.0.0.1:8080` in `web.env` instead.
 
 ## Operations
 

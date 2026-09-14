@@ -1,4 +1,4 @@
-//! Serves authenticated Kronika HTTP resources and MCP tools over HTTP/1.1.
+//! Serves Kronika HTTP resources and MCP tools over HTTP/1.1.
 //!
 //! Streamed API reads and response generation, plus MCP tool dispatch, run on
 //! Tokio's blocking pool. The process retains no segment, decoded-data, or
@@ -96,12 +96,7 @@ async fn answer(
     config: Arc<Config>,
     request: Request<hyper::body::Incoming>,
 ) -> Result<Response<WebBody>, Infallible> {
-    let routed = if config.authentication_required {
-        route_request(&config.account, &request)
-    } else {
-        route_request_without_authentication(&request)
-    };
-    let target = match routed {
+    let target = match route_request(config.account.as_ref(), &request) {
         Ok(target) => target,
         Err(error) => return Ok(error.response()),
     };
@@ -113,7 +108,7 @@ async fn answer(
                 failed()
             }),
         RequestTarget::Session(session) => {
-            session_response(&config.account, session).unwrap_or_else(failed)
+            session_response(config.account.as_ref(), session).unwrap_or_else(failed)
         }
         RequestTarget::Api { route, accepted } => {
             if let route::Route::Export(range) = route {
@@ -151,27 +146,13 @@ async fn answer(
 }
 
 fn route_request<B>(
-    account: &config::Account,
+    account: Option<&config::Account>,
     request: &Request<B>,
 ) -> Result<RequestTarget, RequestError> {
     route_request_at(account, request, unix_time())
 }
 
-fn route_request_without_authentication<B>(
-    request: &Request<B>,
-) -> Result<RequestTarget, RequestError> {
-    route_request_with_authentication(None, request, unix_time())
-}
-
 fn route_request_at<B>(
-    account: &config::Account,
-    request: &Request<B>,
-    now: u64,
-) -> Result<RequestTarget, RequestError> {
-    route_request_with_authentication(Some(account), request, now)
-}
-
-fn route_request_with_authentication<B>(
     account: Option<&config::Account>,
     request: &Request<B>,
     now: u64,
@@ -641,7 +622,10 @@ fn unauthorized(challenge: bool) -> Response<WebBody> {
     response
 }
 
-fn session_response(account: &config::Account, target: SessionTarget) -> Option<Response<WebBody>> {
+fn session_response(
+    account: Option<&config::Account>,
+    target: SessionTarget,
+) -> Option<Response<WebBody>> {
     let (status, cookie, allow) = match target {
         SessionTarget::Check { admitted: true } => (StatusCode::NO_CONTENT, None, None),
         SessionTarget::Check { admitted: false }
@@ -653,7 +637,7 @@ fn session_response(account: &config::Account, target: SessionTarget) -> Option<
             secure,
         } => (
             StatusCode::NO_CONTENT,
-            Some(auth::issue_cookie(account, now, secure)),
+            Some(auth::issue_cookie(account?, now, secure)),
             None,
         ),
         SessionTarget::Clear { secure } => (
@@ -723,8 +707,8 @@ fn encoding_not_acceptable(api: bool) -> Response<WebBody> {
 /// runs without authentication.
 fn mcp_access_body(config: &Config) -> String {
     use base64::Engine as _;
-    let authorization = config.authentication_required.then(|| {
-        let credentials = format!("{}:{}", config.account.user, config.account.password);
+    let authorization = config.account.as_ref().map(|account| {
+        let credentials = format!("{}:{}", account.user, account.password);
         format!(
             "Basic {}",
             base64::engine::general_purpose::STANDARD.encode(credentials)

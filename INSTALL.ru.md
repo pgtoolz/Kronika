@@ -129,8 +129,7 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 <a id="4-запуск-web"></a>
 ## 4. Запуск веб-сервера
 
-Во втором терминале задайте пароль и запустите веб-сервер с тем же каталогом
-записи.
+Во втором терминале запустите веб-сервер с тем же каталогом записи.
 
 ### Для режима `local`
 
@@ -139,10 +138,8 @@ PostgreSQL, замените `1` на `3`:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
   KRONIKA_WEB_SOURCES=1 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   /usr/local/bin/kronika-web
 ```
 
@@ -150,21 +147,29 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ```sh
 KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
-Откройте <http://127.0.0.1:8080/> и войдите. Веб-серверу нужен доступ на запись в тот же
-каталог для создания поисковых индексов `.idx`. В примере для режима `local`
+Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом машины,
+на которой запущен веб-сервер. Если `KRONIKA_WEB_USER` и `KRONIKA_WEB_PASSWORD`
+не заданы, вход не требуется. Чтобы включить вход по паролю, добавьте
+`KRONIKA_WEB_USER=kronika` и
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` перед
+`/usr/local/bin/kronika-web` в команде, выбрав свой пароль.
+Если задана только одна переменная или пустое значение, запуск завершится ошибкой.
+
+Веб-серверу нужен доступ на запись в тот же каталог для создания поисковых
+индексов `.idx`. В примере для режима `local`
 обе программы работают от root; хранилище недоступно другим пользователям.
 
 `KRONIKA_WEB_SOURCES` сообщает, какие источники настроены; он не включает сбор
 и не скрывает записанные данные. Настройки входа описаны в
 [справочнике веб-сервера](bins/kronika-web/README.ru.md).
 
-Чтобы открыть запись с другой машины, выполните на ней:
+Для локального доступа, обратного прокси на той же машине или перенаправления
+порта по SSH укажите `KRONIKA_WEB_LISTEN=127.0.0.1:8080`; этот же адрес
+используется по умолчанию. Для перенаправления выполните на машине клиента:
 
 ```sh
 ssh -N -L 8080:127.0.0.1:8080 user@monitored-host
@@ -172,7 +177,7 @@ ssh -N -L 8080:127.0.0.1:8080 user@monitored-host
 
 Затем откройте на ней <http://127.0.0.1:8080/>. Подключение по SSH передаёт
 запросы локальному веб-серверу наблюдаемой машины. ИИ-клиенты используют тот же
-адрес и учётные данные, добавляя `/mcp`; [настройки подключения](docs/mcp-clients.ru.md)
+адрес и настройки аутентификации, добавляя `/mcp`; [настройки подключения](docs/mcp-clients.ru.md)
 также доступны в панели **AI**. [Руководство systemd](docs/services.ru.md)
 описывает автоматический запуск обеих программ.
 

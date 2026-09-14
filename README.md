@@ -78,10 +78,8 @@ when also collecting PostgreSQL:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
   KRONIKA_WEB_SOURCES=1 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   /usr/local/bin/kronika-web
 ```
 
@@ -89,14 +87,19 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ```sh
 KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
-Open <http://127.0.0.1:8080/> and sign in. The web interface shows recorded
-history and data from ongoing collection.
+Open `http://<server-ip>:8080`, replacing `<server-ip>` with the address of the
+machine running web. The web interface shows recorded history and data from
+ongoing collection.
+
+With `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` both unset, web opens without
+sign-in. To require sign-in, add `KRONIKA_WEB_USER=kronika` and
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` before
+`/usr/local/bin/kronika-web` in the command, choosing your own password.
+Setting only one credential or an empty value prevents startup.
 
 [Systemd setup](docs/services.md) covers running both programs as services and
 changing an existing service's configuration.
