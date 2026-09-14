@@ -66,8 +66,8 @@ pub(super) fn parse(
         .map(|prefix| prefix.read(head, zone))
         .unwrap_or_default();
 
-    let ts = if let Some(prefix) = prefix {
-        if prefix.has_event_time() {
+    let ts = if prefix.is_some() {
+        if fields.time_expected {
             fields.ts.ok_or(crate::timestamp::INVALID)?
         } else {
             now

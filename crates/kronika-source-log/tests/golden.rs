@@ -307,3 +307,40 @@ fn timestamp_failure_does_not_admit_the_valid_part_of_a_batch() {
         2
     );
 }
+
+#[test]
+fn conditional_prefix_time_is_absent_only_when_the_session_suffix_is_omitted() {
+    for (head, expected) in [
+        ("[123]", Some(NOW)),
+        (
+            "[123] 2026-09-14 10:13:00.789 GMT ",
+            Some(1_789_380_780_789_000),
+        ),
+        ("[123] broken ", None),
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("conditional.log");
+        std::fs::write(
+            &path,
+            format!("{head}LOG:  checkpoint starting: time\nignored\n"),
+        )
+        .expect("fixture");
+        let mut log = PgLog::new(
+            path,
+            Position::default(),
+            Some(LinePrefix::parse("[%p]%q %m ")),
+        );
+        let batch = log.read_batch(NOW, 1024);
+        if let Some(expected) = expected {
+            assert_eq!(
+                batch.expect("usable prefix").events.checkpoints[0].ts,
+                expected
+            );
+            assert!(log.acknowledge().is_some());
+        } else {
+            assert!(batch.is_err());
+            assert_eq!(log.position().offset, 0);
+            assert!(log.acknowledge().is_none());
+        }
+    }
+}

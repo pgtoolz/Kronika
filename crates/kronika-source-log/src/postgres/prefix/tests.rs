@@ -84,3 +84,10 @@ fn event_time_priority_does_not_depend_on_prefix_order() {
     assert_eq!(fields.database.as_deref(), Some("shop"));
     assert!(!prefix.has_event_time());
 }
+
+#[test]
+fn a_session_marker_does_not_discard_time_before_it() {
+    let fields = LinePrefix::parse("%m [%p]%q %n ").read("2026-09-14 10:13:00.789 GMT [123]", None);
+    assert!(fields.time_expected);
+    assert_eq!(fields.ts, Some(1_789_380_780_789_000));
+}
