@@ -20,7 +20,7 @@ Cargo и Node вместо поиска в `PATH`. Чтобы сборки на 
 скрипт задаёт одинаковые замены путей репозитория и каталога Cargo, начальное
 значение генератора `const-random` и идентификатор компилятора C.
 
-Размер WebAssembly — 10 284 022 байт, gzip — 2 500 294 байт, SHA-256 gzip:
-`34ad90157da424feaf9e1235a9e058da1e3635da1ec3cb262f2f98bad7e3504e`.
+Размер WebAssembly — 10 198 018 байт, gzip — 2 478 504 байт, SHA-256 gzip:
+`df2e9f7c90bc0b15ff2d2377f3a6e7d393dfa2e7acd3d5fe712e5e4c54515289`.
 Размер связующего JavaScript — 3 885 байт, SHA-256:
 `4635ae734e8c1e1aeb463ae1096f4fdc2a65d98e715b55cee9fe46956f29cba8`.
