@@ -4,7 +4,7 @@
 <h1>Kronika third-party licenses</h1>
 <p>This inventory follows the repository dependency inputs recorded in <a href="licenses/dependency-inputs.sha256">licenses/dependency-inputs.sha256</a>. It includes normal Cargo dependency closures for the four native utilities (kronika-collector, kronika-web, kronika-dump, kronika-report) on x86-64 and ARM64 Linux and the browser WebAssembly report engine, production npm lock entries including type support, embedded fonts, and runtime notice reference texts.</p>
 <p>The dependency inventory describes the packaging checkout. It does not establish the source revision or compiler identity of reused executables. Runtime notice source versions identify the retained license texts; they are not build provenance. See BUILDINFO for the package build mode.</p>
-<h2>Rust packages (235)</h2>
+<h2>Rust packages (238)</h2>
 <table><thead><tr><th>Package</th><th>Version</th><th>License expression</th><th>Dependency closure</th></tr></thead><tbody>
 <tr><td>adler2</td><td>2.0.1</td><td>0BSD OR MIT OR Apache-2.0</td><td>kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>ahash</td><td>0.8.12</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
@@ -104,6 +104,9 @@
 <tr><td>indexmap</td><td>2.14.0</td><td>Apache-2.0 OR MIT</td><td>kronika-web</td></tr>
 <tr><td>integer-encoding</td><td>3.0.4</td><td>MIT</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>itoa</td><td>1.0.18</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
+<tr><td>jiff-core</td><td>0.1.1</td><td>Unlicense OR MIT</td><td>kronika-collector</td></tr>
+<tr><td>jiff-tzdb</td><td>0.1.8</td><td>Unlicense OR MIT</td><td>kronika-collector</td></tr>
+<tr><td>jiff</td><td>0.2.37</td><td>Unlicense OR MIT</td><td>kronika-collector</td></tr>
 <tr><td>lexical-core</td><td>1.0.6</td><td>MIT/Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>lexical-parse-float</td><td>1.0.6</td><td>MIT/Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>lexical-parse-integer</td><td>1.0.6</td><td>MIT/Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
@@ -267,7 +270,7 @@
 </tbody></table>
 <h2>Runtime notice reference components</h2>
 <p>gcc-crt, llvm-libunwind, musl, rust-standard-library</p>
-<h2>License and notice texts (187)</h2>
+<h2>License and notice texts (188)</h2>
 <details id="005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d"><summary>LICENSE-BoringSSL — <code>005fc765ddc5115d</code></summary><p><b>Components:</b> cargo:ring@0.17.14</p><p><b>Source:</b> cargo-registry://ring@0.17.14/LICENSE-BoringSSL</p><pre>
                                  Apache License
                            Version 2.0, January 2004
@@ -541,7 +544,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 </pre></details>
-<details id="01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f"><summary>COPYING — <code>01c266bced4a434d</code></summary><p><b>Components:</b> cargo:byteorder@1.5.0, cargo:memchr@2.8.2</p><p><b>Source:</b> cargo-registry://byteorder@1.5.0/COPYING; cargo-registry://memchr@2.8.2/COPYING</p><pre>This project is dual-licensed under the Unlicense and MIT licenses.
+<details id="01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f"><summary>COPYING — <code>01c266bced4a434d</code></summary><p><b>Components:</b> cargo:byteorder@1.5.0, cargo:jiff-core@0.1.1, cargo:jiff-tzdb@0.1.8, cargo:jiff@0.2.37, cargo:memchr@2.8.2</p><p><b>Source:</b> cargo-registry://byteorder@1.5.0/COPYING; cargo-registry://jiff-core@0.1.1/COPYING; cargo-registry://jiff-tzdb@0.1.8/COPYING; cargo-registry://jiff@0.2.37/COPYING; cargo-registry://memchr@2.8.2/COPYING</p><pre>This project is dual-licensed under the Unlicense and MIT licenses.
 
 You may use this code under the terms of either license.
 </pre></details>
@@ -1204,7 +1207,7 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 </pre></details>
-<details id="0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"><summary>LICENSE-MIT — <code>0f96a83840e146e4</code></summary><p><b>Components:</b> cargo:byteorder@1.5.0, cargo:memchr@2.8.2</p><p><b>Source:</b> cargo-registry://byteorder@1.5.0/LICENSE-MIT; cargo-registry://memchr@2.8.2/LICENSE-MIT</p><pre>The MIT License (MIT)
+<details id="0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f"><summary>LICENSE-MIT — <code>0f96a83840e146e4</code></summary><p><b>Components:</b> cargo:byteorder@1.5.0, cargo:jiff-core@0.1.1, cargo:jiff-tzdb@0.1.8, cargo:jiff@0.2.37, cargo:memchr@2.8.2</p><p><b>Source:</b> cargo-registry://byteorder@1.5.0/LICENSE-MIT; cargo-registry://jiff-core@0.1.1/LICENSE-MIT; cargo-registry://jiff-tzdb@0.1.8/LICENSE-MIT; cargo-registry://jiff@0.2.37/LICENSE-MIT; cargo-registry://memchr@2.8.2/LICENSE-MIT</p><pre>The MIT License (MIT)
 
 Copyright (c) 2015 Andrew Gallant
 
@@ -20328,5 +20331,30 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+</pre></details>
+<details id="7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"><summary>UNLICENSE — <code>7e12e5df4bae12cb</code></summary><p><b>Components:</b> cargo:jiff-core@0.1.1, cargo:jiff-tzdb@0.1.8, cargo:jiff@0.2.37</p><p><b>Source:</b> cargo-registry://jiff-core@0.1.1/UNLICENSE; cargo-registry://jiff-tzdb@0.1.8/UNLICENSE; cargo-registry://jiff@0.2.37/UNLICENSE</p><pre>This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to &lt;http://unlicense.org/&gt;
 </pre></details>
 </body></html>
