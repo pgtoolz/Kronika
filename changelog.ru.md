@@ -4,8 +4,8 @@
 
 ## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
 
-- Аутентификация в веб-интерфейсе, API и MCP необязательна: если `KRONIKA_WEB_USER` и `KRONIKA_WEB_PASSWORD` не заданы, вход не требуется. Чтобы включить её, задайте обе переменные непустыми. Если задана только одна переменная или пустое значение, запуск завершается ошибкой.
-- Удалён `KRONIKA_WEB_AUTH`. Если в 1.1.0 использовался `KRONIKA_WEB_AUTH=disabled`, удалите его вместе с `KRONIKA_WEB_USER` и `KRONIKA_WEB_PASSWORD`, чтобы сохранить доступ без аутентификации.
+- Пароль для веб-интерфейса теперь необязателен.
+- Удалена настройка `KRONIKA_WEB_AUTH`.
 
 ## [1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
 

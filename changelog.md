@@ -4,8 +4,8 @@
 
 ## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
 
-- Web, API and MCP authentication is optional: leave `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` unset for access without authentication, or set both to nonempty values to enable it. Setting only one or an empty value prevents startup.
-- Removed `KRONIKA_WEB_AUTH`. If you used `KRONIKA_WEB_AUTH=disabled` in 1.1.0, remove it along with `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` to keep access without authentication.
+- Web authentication is now optional.
+- Removed `KRONIKA_WEB_AUTH`.
 
 ## [1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
 

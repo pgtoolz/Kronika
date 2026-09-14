@@ -31,6 +31,9 @@ When both credentials are unset, the browser, API and MCP require no
 authentication. When both are nonempty, authentication is required.
 Setting only one credential or an explicitly empty value prevents startup.
 
+On upgrade from 1.1.0, remove `KRONIKA_WEB_AUTH` and, for passwordless access,
+both dummy credentials.
+
 The source bitset sets catalog `configured` fields. In the browser, the
 PostgreSQL bit suppresses its no-data tooltip. Recorded PostgreSQL data also
 suppresses it. The OS bit remains catalog metadata. All tabs and recorded
