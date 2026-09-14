@@ -458,20 +458,32 @@ fn every_plain_postgresql_finder_accepts_an_explicit_point() {
 }
 
 #[test]
-fn omitted_at_uses_the_global_store_bound_and_drops_an_old_vacuum() {
-    let mut fixture = Fixture::new();
-    fixture.append_postgres_vacuum_rows(&[(100, 42, "scanning heap", 10, 5, 0)]);
-    fixture.append_log_error(75_000_101);
-    fixture.finish();
-    let config = test_config(fixture.root().to_path_buf());
+fn omitted_at_ignores_log_time_but_keeps_the_metric_age_limit() {
+    for fresh_metric in [false, true] {
+        let mut fixture = Fixture::new();
+        fixture.append_postgres_vacuum_rows(&[(100, 42, "scanning heap", 10, 5, 0)]);
+        fixture.append_log_error(75_000_101);
+        if fresh_metric {
+            fixture.append_process_gauge_rows(&[(75_000_101, 101, 50, "alpha")]);
+        }
+        fixture.finish();
+        let config = test_config(fixture.root().to_path_buf());
 
-    let result = structured(super::postgresql::call_vacuum(
-        &config,
-        arguments(&json!({ "limit": 10 })),
-        &|| false,
-    ));
+        let result = structured(super::postgresql::call_vacuum(
+            &config,
+            arguments(&json!({ "limit": 10 })),
+            &|| false,
+        ));
 
-    assert_eq!(result, json!({"rows": [], "truncated": false}));
+        if fresh_metric {
+            assert_eq!(result, json!({"rows": [], "truncated": false}));
+        } else {
+            assert_eq!(result["rows"].as_array().map(Vec::len), Some(1));
+            assert_eq!(result["rows"][0]["ts"], "100");
+            assert_eq!(result["rows"][0]["pid"], 42);
+            assert_eq!(result["truncated"], false);
+        }
+    }
 }
 
 #[test]
