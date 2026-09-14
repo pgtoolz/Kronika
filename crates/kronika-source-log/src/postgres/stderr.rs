@@ -45,21 +45,39 @@ pub(super) fn continues(_open: &[String], line: &str, _raw_quotes_odd: bool) -> 
     line.starts_with('\t') || find_marker(line, PARTS).is_some()
 }
 
-pub(super) fn parse(record: &Record, prefix: Option<&LinePrefix>, now: i64) -> Option<PgRecord> {
+pub(super) fn parse(
+    record: &Record,
+    prefix: Option<&LinePrefix>,
+    zone: Option<&crate::timestamp::LogTimezone>,
+    now: i64,
+) -> Result<Option<PgRecord>, &'static str> {
     let first = record.first();
-    let (at, marker, severity) = find_marker(first, SEVERITIES)?;
-    let head = first.get(..at)?;
-    let (sqlstate, message) = strip_sqlstate(first.get(at + marker.len()..)?.trim());
-    let fields = prefix.map(|prefix| prefix.read(head)).unwrap_or_default();
-
-    let mut parsed = PgRecord::new(
-        fields
-            .ts
-            .or_else(|| crate::timestamp::parse_local(head).map(|(ts, _rest)| ts))
-            .unwrap_or(now),
-        severity,
-        message,
+    let Some((at, marker, severity)) = find_marker(first, SEVERITIES) else {
+        return Ok(None);
+    };
+    let head = first.get(..at).ok_or(crate::timestamp::INVALID)?;
+    let (sqlstate, message) = strip_sqlstate(
+        first
+            .get(at + marker.len()..)
+            .ok_or(crate::timestamp::INVALID)?
+            .trim(),
     );
+    let fields = prefix
+        .map(|prefix| prefix.read(head, zone))
+        .unwrap_or_default();
+
+    let ts = if let Some(prefix) = prefix {
+        if prefix.has_event_time() {
+            fields.ts.ok_or(crate::timestamp::INVALID)?
+        } else {
+            now
+        }
+    } else if head.as_bytes().get(4) == Some(&b'-') {
+        crate::timestamp::parse(head, zone)?.0
+    } else {
+        now
+    };
+    let mut parsed = PgRecord::new(ts, severity, message);
     parsed.sqlstate = sqlstate.map(str::to_owned);
     parsed.database = fields.database;
     parsed.username = fields.username;
@@ -78,7 +96,7 @@ pub(super) fn parse(record: &Record, prefix: Option<&LinePrefix>, now: i64) -> O
             extend(&mut parsed, open, text);
         }
     }
-    Some(parsed)
+    Ok(Some(parsed))
 }
 
 /// Add a continuation's text to the field it belongs to; a wrapped line with no

@@ -8,6 +8,7 @@
 // Dependencies of other targets of this crate; anchored for the
 // `unused_crate_dependencies` lint, which checks each target separately.
 use chrono as _;
+use jiff as _;
 use memchr as _;
 use serde_json as _;
 use std::path::PathBuf;
@@ -31,6 +32,9 @@ fn fixture(name: &str) -> PathBuf {
 
 fn read(name: &str, prefix: Option<LinePrefix>) -> Events {
     let mut log = PgLog::new(fixture(name), Position::default(), prefix);
+    log.set_timezone(
+        kronika_source_log::postgres::LogTimezone::parse("Europe/Moscow").expect("zone"),
+    );
     let batch = log.read_batch(NOW, 1024).expect("read the fixture");
     if batch.needs_ack {
         log.acknowledge().expect("acknowledge the fixture");
@@ -214,4 +218,92 @@ fn a_pgbouncer_log_yields_one_row_per_event_and_no_duplicates() {
     assert_eq!(events[3].level, Level::Warning);
     assert_eq!(events[4].host, None, "a janitor line carries no socket");
     assert_eq!(events[5].host.as_deref(), Some("[2001:db8::1]"));
+}
+
+#[test]
+fn all_postgres_formats_resolve_gmt_before_classifying_events() {
+    for (name, content, prefix) in [
+        (
+            "case.log",
+            "2026-09-14 10:13:00.789 GMT [1] ERROR:  test error\n",
+            Some(LinePrefix::parse("%m [%p] ")),
+        ),
+        (
+            "case.csv",
+            "2026-09-14 10:13:00.789 GMT,alice,shop,1,,session,1,SELECT,,3/1,0,ERROR,42P01,test error,,,,,,select 1,0,,psql\n",
+            None,
+        ),
+        (
+            "case.json",
+            "{\"timestamp\":\"2026-09-14 10:13:00.789 GMT\",\"error_severity\":\"ERROR\",\"message\":\"test error\"}\n",
+            None,
+        ),
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(name);
+        std::fs::write(&path, format!("{content}ignored\n")).expect("fixture");
+        let mut log = PgLog::new(path, Position::default(), prefix);
+        let batch = log.read_batch(NOW, 1024).expect("parse");
+        assert_eq!(batch.events.errors[0].ts, 1_789_380_780_789_000, "{name}");
+    }
+}
+
+#[test]
+fn unresolved_timestamp_retries_the_complete_batch_after_context_changes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("case.log");
+    let contents = concat!(
+        "1789380780.789 2026-09-14 06:13:00.789 EDT ERROR:  first error\n",
+        "1789380781.789 2026-09-14 06:13:01.789 EDT ERROR:  second error\n",
+        "ignored\n",
+    );
+    std::fs::write(&path, contents).expect("fixture");
+    let mut log = PgLog::new(path, Position::default(), Some(LinePrefix::parse("%n %m ")));
+    log.set_timezone(kronika_source_log::postgres::LogTimezone::parse("GMT").expect("zone"));
+    // Epoch remains authoritative even while the cached timezone is stale.
+    let batch = log.read_batch(NOW, 1024).expect("epoch wins");
+    assert_eq!(batch.events.rows(), 2);
+    log.retry();
+    log.set_prefix(LinePrefix::parse("%p %m "));
+    assert!(log.read_batch(NOW, 1024).is_err());
+    assert_eq!(log.position().offset, 0);
+    assert!(log.acknowledge().is_none());
+    log.set_timezone(
+        kronika_source_log::postgres::LogTimezone::parse("America/New_York").expect("zone"),
+    );
+    let batch = log
+        .read_batch(NOW, 1024)
+        .expect("retry with server timezone");
+    assert_eq!(batch.events.rows(), 2);
+    assert_eq!(batch.events.errors[0].ts, 1_789_380_780_789_000);
+    assert!(log.acknowledge().expect("commit").offset > 0);
+    assert_eq!(
+        log.read_batch(NOW, 1024).expect("next batch").events.rows(),
+        0
+    );
+}
+
+#[test]
+fn timestamp_failure_does_not_admit_the_valid_part_of_a_batch() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("case.log");
+    let first = "2026-09-14 10:13:00 GMT ERROR:  first error\n";
+    let bad = "2026-09-14 10:13:01. GMT ERROR:  second error\n";
+    std::fs::write(&path, format!("{first}{bad}ignored\n")).expect("fixture");
+    let mut log = PgLog::new(
+        path.clone(),
+        Position::default(),
+        Some(LinePrefix::parse("%m ")),
+    );
+    assert!(log.read_batch(NOW, 1024).is_err());
+    assert_eq!(log.position().offset, 0);
+    assert!(log.acknowledge().is_none());
+    let valid = bad.replace("01. GMT", "01.789 GMT");
+    std::fs::write(&path, format!("{first}{valid}ignored\n")).expect("correct fixture");
+    let batch = log.read_batch(NOW, 1024).expect("retry whole batch");
+    assert_eq!(batch.events.rows(), 2);
+    assert_eq!(
+        batch.events.errors.iter().map(|row| row.count).sum::<u32>(),
+        2
+    );
 }

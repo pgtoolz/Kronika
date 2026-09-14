@@ -11,8 +11,8 @@ use crate::timestamp;
 enum Token {
     /// Text printed as it stands.
     Literal(String),
-    /// `%m`, `%t` or `%s`: a timestamp.
-    Time,
+    /// Event time priority: `%n`, `%m`, `%t`. Zero is session start.
+    Time(u8),
     /// `%u`: the user name.
     User,
     /// `%d`: the database name.
@@ -61,7 +61,10 @@ impl LinePrefix {
                 tokens.push(Token::Literal(std::mem::take(&mut literal)));
             }
             tokens.push(match escape {
-                'm' | 't' | 's' | 'n' => Token::Time,
+                'n' => Token::Time(3),
+                'm' => Token::Time(2),
+                't' => Token::Time(1),
+                's' => Token::Time(0),
                 'u' => Token::User,
                 'd' => Token::Database,
                 'q' => Token::SessionOnly,
@@ -74,14 +77,21 @@ impl LinePrefix {
         Self { tokens }
     }
 
+    pub(super) fn has_event_time(&self) -> bool {
+        self.tokens
+            .iter()
+            .any(|token| matches!(token, Token::Time(1..=3)))
+    }
+
     /// Read the prefix out of `head`, the text before the severity marker.
     ///
     /// Matching stops at the first literal the text does not carry, and at the
     /// `%q` a background process wrote nothing after, keeping whatever was read
     /// before it.
-    pub(super) fn read(&self, head: &str) -> PrefixFields {
+    pub(super) fn read(&self, head: &str, zone: Option<&timestamp::LogTimezone>) -> PrefixFields {
         let mut fields = PrefixFields::default();
         let mut rest = head;
+        let mut priority = 0;
         for (index, token) in self.tokens.iter().enumerate() {
             match token {
                 Token::Literal(text) => {
@@ -95,11 +105,22 @@ impl LinePrefix {
                         break;
                     }
                 }
-                Token::Time => {
-                    let Some((ts, tail)) = timestamp::parse_local(rest) else {
-                        break;
+                Token::Time(rank) => {
+                    let parsed = if *rank == 3 {
+                        timestamp::epoch(rest).map(|(ts, tail)| (Some(ts), tail))
+                    } else if *rank == 0 || *rank < priority {
+                        timestamp::calendar(rest).map(|(_, _, _, tail)| (None, tail))
+                    } else {
+                        match timestamp::parse(rest, zone) {
+                            Ok((ts, tail)) => Some((Some(ts), tail)),
+                            Err(_) => timestamp::calendar(rest).map(|(_, _, _, tail)| (None, tail)),
+                        }
                     };
-                    fields.ts = Some(ts);
+                    if *rank != 0 && *rank >= priority {
+                        fields.ts = parsed.and_then(|(ts, _)| ts);
+                        priority = *rank;
+                    }
+                    let Some((_, tail)) = parsed else { break };
                     rest = tail;
                 }
                 other => {

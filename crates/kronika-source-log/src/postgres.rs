@@ -7,6 +7,7 @@ mod normalize;
 mod prefix;
 mod stderr;
 
+pub use crate::timestamp::LogTimezone;
 pub use events::{
     AutovacuumEvent, AutovacuumKind, CheckpointEvent, CheckpointPhase, ErrorGroup, Events,
     LifecycleEvent, LifecycleKind, LockWait, LockWaitKind, SlowQuery, TempFile,
@@ -160,6 +161,7 @@ pub struct PgLog {
     tail: Tail,
     format: Format,
     prefix: Option<LinePrefix>,
+    timezone: Option<LogTimezone>,
 }
 
 /// One bounded read from a followed `PostgreSQL` log.
@@ -187,6 +189,7 @@ impl PgLog {
             format: Format::of(&path),
             tail: Tail::new(path, position),
             prefix,
+            timezone: None,
         }
     }
 
@@ -199,6 +202,11 @@ impl PgLog {
     /// Use `prefix` for the records read from now on.
     pub fn set_prefix(&mut self, prefix: LinePrefix) {
         self.prefix = Some(prefix);
+    }
+
+    /// Use the server's `log_timezone` for subsequent records.
+    pub fn set_timezone(&mut self, timezone: LogTimezone) {
+        self.timezone = Some(timezone);
     }
 
     /// The format this file is being read as.
@@ -241,8 +249,16 @@ impl PgLog {
             if self.format == Format::Csvlog && record.truncated() {
                 continue;
             }
-            if let Some(parsed) = self.parse(record, now) {
-                events.add(&parsed);
+            match self.parse(record, now) {
+                Ok(Some(parsed)) => events.add(&parsed),
+                Ok(None) => {}
+                Err(error) => {
+                    self.tail.retry();
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{}: {error}", self.path().display()),
+                    ));
+                }
             }
         }
         events.finish();
@@ -267,11 +283,13 @@ impl PgLog {
         self.tail.retry();
     }
 
-    fn parse(&self, record: &Record, now: i64) -> Option<PgRecord> {
+    fn parse(&self, record: &Record, now: i64) -> Result<Option<PgRecord>, &'static str> {
         match self.format {
-            Format::Csvlog => csvlog::parse(&record.joined(), now),
-            Format::Jsonlog => jsonlog::parse(record.first(), now),
-            Format::Stderr => stderr::parse(record, self.prefix.as_ref(), now),
+            Format::Csvlog => csvlog::parse(&record.joined(), self.timezone.as_ref()),
+            Format::Jsonlog => jsonlog::parse(record.first(), self.timezone.as_ref()),
+            Format::Stderr => {
+                stderr::parse(record, self.prefix.as_ref(), self.timezone.as_ref(), now)
+            }
         }
     }
 }
