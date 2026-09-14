@@ -40,7 +40,7 @@ pub(crate) struct Config {
     pub(crate) postgres_effective_cpus: Option<u32>,
     /// `PostgreSQL` logs named outright, as paths or globs.
     pub(crate) pg_logs: Vec<String>,
-    /// Maximum PostgreSQL log age at read time, seconds.
+    /// Maximum `PostgreSQL` log age at read time, seconds.
     pub(crate) pg_log_max_lag_secs: u64,
     /// Where to ask `PgBouncer` which log it writes and who it is.
     pub(crate) pgbouncer_dsns: Vec<String>,

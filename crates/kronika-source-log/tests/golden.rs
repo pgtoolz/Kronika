@@ -21,7 +21,7 @@ use kronika_source_log::postgres::{
     LockWaitKind, PgLog, Severity,
 };
 
-/// A timestamp for records that carry none; every fixture carries its own.
+/// Read time for parser fixtures.
 const NOW: i64 = 1_780_000_000_000_000;
 
 fn fixture(name: &str) -> PathBuf {

@@ -247,6 +247,10 @@ impl LogSources {
                 });
             }
         }
+        self.follow_postgres(wanted);
+    }
+
+    fn follow_postgres(&mut self, wanted: BTreeMap<PathBuf, PostgresFacts>) {
         self.postgres
             .retain(|source| wanted.contains_key(source.log.path()));
         for (path, facts) in wanted {
