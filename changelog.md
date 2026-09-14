@@ -4,8 +4,8 @@
 
 ## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
 
-- Web authentication now follows `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD`: leave both unset for access without sign-in, or set both to nonempty values to require authentication. Setting only one, an empty value or invalid Unicode prevents startup. This applies to the browser, API and MCP.
-- Removed `KRONIKA_WEB_AUTH`; credentials are no longer required when authentication is not used.
+- Web authentication now follows `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD`: leave both unset for access without sign-in, or set both to nonempty values to require authentication. Setting only one or an empty value prevents startup. This applies to the browser, API and MCP.
+- Removed `KRONIKA_WEB_AUTH`. To keep passwordless access after upgrading from 1.1.0, remove this variable and both dummy `KRONIKA_WEB_USER` / `KRONIKA_WEB_PASSWORD` values previously required with `disabled`.
 - Updated English and Russian installation and startup instructions with network address examples.
 
 ## [1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
