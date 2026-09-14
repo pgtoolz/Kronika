@@ -26,7 +26,7 @@ const WASM_GZIP: &[u8] = include_bytes!("../assets/kronika-report-wasm.wasm.gz")
 const RUNTIME_MARKER: &[u8] = b"/*KRONIKA_REPORT_RUNTIME*/";
 const RUNTIME_START: &[u8] = br#";(()=>{const b=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));globalThis.__KRONIKA_REPORT_RUNTIME__={visibleFrom:""#;
 const RUNTIME_TO: &[u8] = br#"",visibleToExclusive:""#;
-const RUNTIME_METRIC_AT: &[u8] = br#"",defaultMetricAt:"#;
+const RUNTIME_METRIC_AT: &[u8] = br#"",initialMetricAt:"#;
 const RUNTIME_READY: &[u8] = br#",ready:(async()=>{const z=b(""#;
 const RUNTIME_INDEX: &[u8] = br#""),i=b(""#;
 const RUNTIME_WASM: &[u8] = br#""),g=b(""#;

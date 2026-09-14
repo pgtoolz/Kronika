@@ -620,7 +620,7 @@ fn generator_metric_clock_respects_partial_mixed_and_event_only_ranges() {
                 |offset| format!("\"{}\"", SEGMENT_ID + offset),
             );
             assert!(
-                html.contains(&format!(",defaultMetricAt:{expected},ready:")),
+                html.contains(&format!(",initialMetricAt:{expected},ready:")),
                 "runtime clock uses only visible metrics"
             );
         }
