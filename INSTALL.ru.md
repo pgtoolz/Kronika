@@ -152,12 +152,8 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```
 
 Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом машины,
-на которой запущен веб-сервер. Если `KRONIKA_WEB_USER` и `KRONIKA_WEB_PASSWORD`
-не заданы, вход не требуется. Чтобы включить вход по паролю, добавьте
-`KRONIKA_WEB_USER=kronika` и
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` перед
-`/usr/local/bin/kronika-web` в команде.
-Если задана только одна переменная или пустое значение, запуск завершится ошибкой.
+на которой запущен веб-сервер. Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.
 
 Веб-серверу нужен доступ на запись в тот же каталог для создания поисковых
 индексов `.idx`. В примере для режима `local`

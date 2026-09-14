@@ -22,8 +22,8 @@ Source: [config.rs](src/config.rs).
 | `KRONIKA_STORAGE_DIR` | Required | Existing real collector storage root. Requires read/write access for `.idx` files and `.kronika-index.owner.lock`. |
 | `KRONIKA_WEB_LISTEN` | `127.0.0.1:8080` | IP address and port, including IPv6 as `[::1]:8080`. Plain HTTP. |
 | `KRONIKA_WEB_SOURCES` | Required | Decimal bitset `0..3`: bit 0 marks OS configured. Bit 1 marks PostgreSQL configured. `0` neither, `1` OS, `2` PostgreSQL, `3` both. |
-| `KRONIKA_WEB_USER` | Unset | Nonempty user name. Set together with `KRONIKA_WEB_PASSWORD` to require authentication. |
-| `KRONIKA_WEB_PASSWORD` | Unset | Nonempty password. Set together with `KRONIKA_WEB_USER` to require authentication. |
+| `KRONIKA_WEB_USER` | Unset | Nonempty user name. |
+| `KRONIKA_WEB_PASSWORD` | Unset | Nonempty password. |
 | `KRONIKA_WEB_DEMO` | Unset | Only set value: `synthetic`, which marks the catalog and interface as a synthetic recording. |
 | `TMPDIR` | System temporary directory, normally `/tmp` | Writable filesystem location for export temporary files. |
 
@@ -52,8 +52,7 @@ On startup, stdout receives `ready <addr>`. Open `http://<server-ip>:8080`,
 replacing `<server-ip>` with the address of the machine running web.
 
 To require sign-in, add `KRONIKA_WEB_USER=kronika` and
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` before
-`/usr/local/bin/kronika-web` in the command.
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` to the launch command.
 API and MCP then accept HTTP Basic credentials. Protected API requests also
 accept the browser session cookie.
 
@@ -66,9 +65,9 @@ For local access or a reverse proxy on the same machine, use
 | --- | --- | --- |
 | `/` | `GET`, `HEAD` | Embedded browser interface. |
 | `/auth/session` | `GET`, `POST`, `DELETE` | Check, create from Basic credentials, or clear a browser session. Cookies receive `Secure` over HTTPS. |
-| `/api/export?from=<unix_second>&to=<unix_second>` | `GET` | HTML attachment for inclusive whole-second bounds. Authentication is required when credentials are configured. |
+| `/api/export?from=<unix_second>&to=<unix_second>` | `GET` | HTML attachment for inclusive whole-second bounds. |
 | Other `/api/*` | `GET` | JSON/NDJSON resources for recorded data. |
-| `/mcp` | `POST` | Stateless Streamable HTTP with the same authentication. Query strings and `Origin` headers are rejected. [MCP reference](../../docs/mcp-clients.md). |
+| `/mcp` | `POST` | Stateless Streamable HTTP. Query strings and `Origin` headers are rejected. [MCP reference](../../docs/mcp-clients.md). |
 
 ## Export files
 

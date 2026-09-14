@@ -33,16 +33,12 @@ KRONIKA_WEB_LISTEN=0.0.0.0:8080
 KRONIKA_WEB_SOURCES=1
 ```
 
-With `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` both unset, the browser,
-API and MCP require no authentication. To enable password authentication, add
-the following to `web.env` and replace the example password:
+To require sign-in, add these credentials to `web.env`:
 
 ```ini
 KRONIKA_WEB_USER=kronika
 KRONIKA_WEB_PASSWORD=replace-with-a-random-password
 ```
-
-Setting only one credential or an empty value prevents startup.
 
 Systemd parses these as environment assignments. Values containing spaces are
 quoted as a whole. Shell substitutions and `export` are not evaluated.

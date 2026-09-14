@@ -95,11 +95,8 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 на которой запущен веб-сервер. Веб-интерфейс показывает сохранённую историю
 измерений и данные текущего сбора.
 
-Если `KRONIKA_WEB_USER` и `KRONIKA_WEB_PASSWORD` не заданы, вход не требуется.
-Чтобы включить вход по паролю, добавьте `KRONIKA_WEB_USER=kronika` и
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` перед
-`/usr/local/bin/kronika-web` в команде.
-Если задана только одна переменная или пустое значение, запуск завершится ошибкой.
+Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.
 
 [Настройка systemd](docs/services.ru.md) описывает запуск
 обеих программ как служб и изменение настроек уже работающей службы.

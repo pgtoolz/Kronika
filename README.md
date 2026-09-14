@@ -95,11 +95,8 @@ Open `http://<server-ip>:8080`, replacing `<server-ip>` with the address of the
 machine running web. The web interface shows recorded history and data from
 ongoing collection.
 
-With `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` both unset, web opens without
-sign-in. To require sign-in, add `KRONIKA_WEB_USER=kronika` and
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` before
-`/usr/local/bin/kronika-web` in the command.
-Setting only one credential or an empty value prevents startup.
+To require sign-in, add `KRONIKA_WEB_USER=kronika` and
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` to the launch command.
 
 [Systemd setup](docs/services.md) covers running both programs as services and
 changing an existing service's configuration.

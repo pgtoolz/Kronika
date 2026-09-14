@@ -23,8 +23,8 @@
 | `KRONIKA_STORAGE_DIR` | Обязательна | Существующий обычный каталог записи сборщика. Нужны права чтения и записи для индексов `.idx` и файла блокировки `.kronika-index.owner.lock`. |
 | `KRONIKA_WEB_LISTEN` | `127.0.0.1:8080` | IP-адрес и порт, в том числе IPv6 вида `[::1]:8080`. Соединение использует HTTP без TLS. |
 | `KRONIKA_WEB_SOURCES` | Обязательна | Число `0..3`, указывающее настроенные источники: `0` — ни одного, `1` — Linux, `2` — PostgreSQL, `3` — оба. В двоичном представлении бит 0 означает Linux, бит 1 — PostgreSQL. |
-| `KRONIKA_WEB_USER` | Не задана | Непустое имя пользователя. Задайте вместе с `KRONIKA_WEB_PASSWORD`, чтобы требовать аутентификацию. |
-| `KRONIKA_WEB_PASSWORD` | Не задана | Непустой пароль. Задайте вместе с `KRONIKA_WEB_USER`, чтобы требовать аутентификацию. |
+| `KRONIKA_WEB_USER` | Не задана | Непустое имя пользователя. |
+| `KRONIKA_WEB_PASSWORD` | Не задана | Непустой пароль. |
 | `KRONIKA_WEB_DEMO` | Не задана | Единственное допустимое значение — `synthetic`: помечает запись в каталоге и интерфейсе как синтетическую. |
 | `TMPDIR` | Системный временный каталог, обычно `/tmp` | Каталог с правом записи для временных файлов экспорта. |
 
@@ -54,9 +54,8 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 (stdout). Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом
 машины, на которой запущен веб-сервер.
 
-Чтобы включить вход по паролю, добавьте `KRONIKA_WEB_USER=kronika` и
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` перед
-`/usr/local/bin/kronika-web` в команде.
+Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.
 Тогда API и MCP принимают учётные данные через HTTP Basic, а защищённые
 запросы API также принимают cookie сессии браузера.
 
@@ -70,9 +69,9 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 | --- | --- | --- |
 | `/` | `GET`, `HEAD` | Встроенный веб-интерфейс. |
 | `/auth/session` | `GET`, `POST`, `DELETE` | Проверить сессию браузера, создать её по учётным данным Basic или удалить. При HTTPS cookie получает атрибут `Secure`. |
-| `/api/export?from=<unix_second>&to=<unix_second>` | `GET` | Скачать HTML-отчёт. Аутентификация обязательна, если заданы учётные данные. Границы задаются целыми Unix-секундами, обе включены. |
+| `/api/export?from=<unix_second>&to=<unix_second>` | `GET` | Скачать HTML-отчёт. Границы задаются целыми Unix-секундами, обе включены. |
 | Другие `/api/*` | `GET` | Записанные данные в JSON или NDJSON — по одному объекту JSON в строке. |
-| `/mcp` | `POST` | MCP по Streamable HTTP без серверных сессий, с той же аутентификацией. Строка параметров после `?` и заголовок `Origin` отклоняются. [Настройка MCP](../../docs/mcp-clients.ru.md). |
+| `/mcp` | `POST` | MCP по Streamable HTTP без серверных сессий. Строка параметров после `?` и заголовок `Origin` отклоняются. [Настройка MCP](../../docs/mcp-clients.ru.md). |
 
 <a id="файлы-export"></a>
 ## Файлы экспорта

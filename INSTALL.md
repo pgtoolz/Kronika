@@ -147,12 +147,8 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```
 
 Open `http://<server-ip>:8080`, replacing `<server-ip>` with the address of the
-machine running web. With `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` both
-unset, sign-in is not required. To require sign-in, add
-`KRONIKA_WEB_USER=kronika` and
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` before
-`/usr/local/bin/kronika-web` in the command.
-Setting only one credential or an empty value prevents startup.
+machine running web. To require sign-in, add `KRONIKA_WEB_USER=kronika` and
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` to the launch command.
 
 Web requires write access to the recording directory to create search indexes
 (`.idx`). In the `local` example,
