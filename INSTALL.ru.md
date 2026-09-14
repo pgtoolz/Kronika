@@ -151,8 +151,9 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
-Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом машины,
-на которой запущен веб-сервер. Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
+Откройте `http://<server-ip>:8080`.
+
+Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.
 
 Веб-серверу нужен доступ на запись в тот же каталог для создания поисковых

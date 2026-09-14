@@ -50,9 +50,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-web
 ```
 
-После запуска программа выводит `ready <addr>` в стандартный поток вывода
-(stdout). Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом
-машины, на которой запущен веб-сервер.
+Откройте `http://<server-ip>:8080`.
 
 Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.

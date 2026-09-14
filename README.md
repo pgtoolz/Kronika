@@ -91,9 +91,7 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
-Open `http://<server-ip>:8080`, replacing `<server-ip>` with the address of the
-machine running web. The web interface shows recorded history and data from
-ongoing collection.
+Open `http://<server-ip>:8080`.
 
 To require sign-in, add `KRONIKA_WEB_USER=kronika` and
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` to the launch command.

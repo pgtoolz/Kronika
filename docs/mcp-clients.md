@@ -6,7 +6,7 @@ For connections with Basic Auth, copy the client settings from **Connect an AI a
 
 ## Connection parameters
 
-Replace `<URL>` with `http://<server-ip>:8080/mcp`, using the web server’s IP address.
+`<URL>`: `http://<server-ip>:8080/mcp`.
 For a server listening only on localhost, use an [SSH tunnel](../INSTALL.md#4-start-web).
 
 ## Claude Code

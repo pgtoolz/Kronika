@@ -91,9 +91,7 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
-Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом машины,
-на которой запущен веб-сервер. Веб-интерфейс показывает сохранённую историю
-измерений и данные текущего сбора.
+Откройте `http://<server-ip>:8080`.
 
 Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.

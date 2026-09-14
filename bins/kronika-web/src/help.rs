@@ -20,7 +20,7 @@ EXAMPLES
     KRONIKA_WEB_LISTEN=0.0.0.0:8080 KRONIKA_WEB_USER=kronika \
     KRONIKA_WEB_PASSWORD='replace-with-a-random-password' kronika-web
 
-  Open http://SERVER_IP:8080/, replacing SERVER_IP with the server's address.
+  Open http://SERVER_IP:8080/.
 
 KRONIKA_WEB_SOURCES (required, no default)
   0  Neither source family declared configured.
