@@ -2,6 +2,11 @@
 
 [Русская версия](changelog.ru.md)
 
+## [1.1.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.2)
+
+- Fixed PostgreSQL event timestamps when the server and collector use different time zones.
+- Log events no longer affect current metric selection in MCP.
+
 ## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
 
 - Web authentication is now optional.

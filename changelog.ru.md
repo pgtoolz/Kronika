@@ -2,6 +2,11 @@
 
 [English version](changelog.md)
 
+## [1.1.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.2)
+
+- Исправлено время событий PostgreSQL при разных часовых поясах сервера и коллектора.
+- События из логов больше не влияют на выбор текущих метрик в MCP.
+
 ## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
 
 - Пароль для веб-интерфейса теперь необязателен.
