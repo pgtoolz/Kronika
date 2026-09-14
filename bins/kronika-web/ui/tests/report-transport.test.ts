@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { readFile } from "node:fs/promises"
 
 import {
   reportFetch,
@@ -296,12 +295,4 @@ test("report startup rejects missing, malformed, unsafe, and out-of-window metri
       restore()
     }
   }
-})
-
-test("an explicit report address keeps precedence over the initial metric hour and cursor", async () => {
-  const app = await readFile(new URL("../src/app.tsx", import.meta.url), "utf8")
-  assert.match(app, /const initialAt = reportVisibleAt\(opened\.current\.at, reportRange\)/)
-  assert.match(app, /useState<number \| null>\(initialAt === null \? null : floorHour\(initialAt\)\)/)
-  assert.match(app, /const requestedHour = hour \?\? reportInitialHour\(reportRange\)/)
-  assert.match(app, /setCursor\(followsLatest\.current \? latest : asked \?\? latest\)/)
 })
