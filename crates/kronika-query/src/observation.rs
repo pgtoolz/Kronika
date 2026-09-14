@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::ops::Bound;
 
-use kronika_reader::Cell;
+use kronika_reader::{Cell, Segment};
 use kronika_registry::{ColumnClass, Semantics, contract, registry};
 
 use crate::{
@@ -144,38 +144,56 @@ fn scan(
         if !visited.insert(descriptor.id()) {
             continue;
         }
-        let layouts: Vec<_> = descriptor
+        if !descriptor
             .sections()
             .iter()
-            .filter_map(|section| {
-                (section.rows > 0)
-                    .then(|| metric_timestamp(section.type_id))?
-                    .map(|timestamp| (section.type_id, timestamp))
-            })
-            .collect();
-        if layouts.is_empty() {
+            .any(|section| section.rows > 0 && metric_timestamp(section.type_id).is_some())
+        {
             continue;
         }
         let segment = dataset.open(&descriptor)?;
-        for (type_id, timestamp) in layouts {
-            segment.visit_rows(type_id, &[timestamp], 0, usize::MAX, |_ordinal, row| {
-                if cancelled() {
-                    return false;
-                }
-                if let Some(Cell::Ts(ts)) = row.get(timestamp)
-                    && window.contains(*ts)
-                {
-                    *latest = Some(latest.map_or(*ts, |previous: i64| previous.max(*ts)));
-                }
-                *latest != Some(descriptor.max_ts())
-            })?;
-            if cancelled() {
-                return Err(QueryError::Cancelled);
-            }
-            if *latest == Some(descriptor.max_ts()) {
-                break;
-            }
+        if let Some(ts) = latest_segment_metric_observation(&segment, window, cancelled)? {
+            *latest = Some(latest.map_or(ts, |previous| previous.max(ts)));
         }
     }
     Ok(())
+}
+
+/// Latest actual metric sample in one already opened segment and inclusive window.
+/// Event streams and reference refreshes do not advance this clock.
+///
+/// # Errors
+/// Returns a timestamp projection failure or cancellation.
+pub fn latest_segment_metric_observation(
+    segment: &Segment,
+    window: Window,
+    cancelled: &(impl Fn() -> bool + ?Sized),
+) -> Result<Option<i64>, QueryError> {
+    if cancelled() {
+        return Err(QueryError::Cancelled);
+    }
+    let mut latest = None;
+    for type_id in segment.type_ids() {
+        let Some(timestamp) = metric_timestamp(type_id) else {
+            continue;
+        };
+        segment.visit_rows(type_id, &[timestamp], 0, usize::MAX, |_ordinal, row| {
+            if cancelled() {
+                return false;
+            }
+            if let Some(Cell::Ts(ts)) = row.get(timestamp)
+                && window.contains(*ts)
+            {
+                latest = Some(latest.map_or(*ts, |previous: i64| previous.max(*ts)));
+            }
+            latest != Some(segment.max_ts())
+        })?;
+        if cancelled() {
+            return Err(QueryError::Cancelled);
+        }
+        if latest == Some(segment.max_ts()) {
+            break;
+        }
+    }
+    Ok(latest)
 }

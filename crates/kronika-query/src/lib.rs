@@ -49,6 +49,7 @@ pub use hour::{
     index_scan_rate_is_zero, key_fields, output_fields,
 };
 pub use index_provider::{IndexProvider, IndexResource, MemoryIndexProvider};
+pub use observation::latest_segment_metric_observation;
 pub use projection::{OutputField, Plan, plans, resolved_dictionary};
 pub use request::{
     ActiveCursor, CatalogRequest, DataRequest, Filter, HourPart, HourRequest, HourSeriesRequest,
