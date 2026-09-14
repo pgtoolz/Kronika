@@ -113,13 +113,13 @@ impl LinePrefix {
                 Token::Time(rank) => {
                     let parsed = if *rank == 3 {
                         timestamp::epoch(rest).map(|(ts, tail)| (Some(ts), tail))
-                    } else if *rank == 0 || *rank < priority {
-                        timestamp::calendar(rest).map(|(_, _, _, tail)| (None, tail))
                     } else {
-                        match timestamp::parse(rest, zone) {
-                            Ok((ts, tail)) => Some((Some(ts), tail)),
-                            Err(_) => timestamp::calendar(rest).map(|(_, _, _, tail)| (None, tail)),
-                        }
+                        read_calendar(
+                            rest,
+                            self.tokens.get(index + 1..).unwrap_or_default(),
+                            zone,
+                            *rank != 0 && *rank >= priority,
+                        )
                     };
                     if *rank != 0 && *rank >= priority {
                         fields.ts = parsed.and_then(|(ts, _)| ts);
@@ -141,6 +141,65 @@ impl LinePrefix {
         }
         fields
     }
+}
+
+fn read_calendar<'a>(
+    head: &'a str,
+    remaining: &[Token],
+    zone: Option<&timestamp::LogTimezone>,
+    resolve: bool,
+) -> Option<(Option<i64>, &'a str)> {
+    let parsed = if resolve {
+        timestamp::parse(head, zone)
+            .ok()
+            .map(|(ts, tail)| (Some(ts), tail))
+    } else {
+        timestamp::calendar(head).map(|(_, _, _, tail)| (None, tail))
+    };
+    if let Some((_, tail)) = parsed
+        && matches_following_fields(tail, remaining)
+    {
+        return parsed;
+    }
+    let (_, _, label, tail) = timestamp::calendar(head)?;
+    let mut fallback = Some((parsed.and_then(|(ts, _)| ts), tail));
+    if let Some(Token::Literal(text)) = remaining.first() {
+        if label.contains(text.as_str()) {
+            fallback = Some((None, tail));
+        }
+        for (at, _) in label.rmatch_indices(text.as_str()) {
+            let at = head.len() - tail.len() - label.len() + at;
+            let time = head.get(..at)?;
+            let candidate_tail = head.get(at..)?;
+            if !matches_following_fields(candidate_tail, remaining) {
+                continue;
+            }
+            let ts = resolve
+                .then(|| timestamp::parse(time, zone).ok().map(|(ts, _)| ts))
+                .flatten();
+            if !resolve || ts.is_some() {
+                return Some((ts, candidate_tail));
+            }
+            fallback = Some((None, candidate_tail));
+        }
+    }
+    fallback
+}
+
+fn matches_following_fields(mut head: &str, tokens: &[Token]) -> bool {
+    for (index, token) in tokens.iter().enumerate() {
+        let tail = match token {
+            Token::Literal(text) => head.strip_prefix(text.as_str()),
+            Token::SessionOnly if head.is_empty() => return true,
+            Token::SessionOnly => Some(head),
+            Token::Time(3) => return timestamp::epoch(head).is_some(),
+            Token::Time(_) => return timestamp::calendar(head).is_some(),
+            _ => Some(take_value(head, tokens.get(index + 1)).1),
+        };
+        let Some(tail) = tail else { return false };
+        head = tail;
+    }
+    head.is_empty()
 }
 
 /// Take an escape's value: it runs up to the literal that follows it, or up to

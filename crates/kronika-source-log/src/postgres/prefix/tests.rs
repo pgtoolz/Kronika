@@ -137,3 +137,50 @@ fn a_colon_literal_ends_an_abbreviated_timezone_before_the_next_field() {
         );
     }
 }
+
+#[test]
+fn a_numeric_timezone_label_does_not_consume_a_two_digit_pid() {
+    let zone = crate::timestamp::LogTimezone::parse("Etc/GMT-3").expect("zone");
+    for (setting, head) in [
+        ("%t:%p ", "2026-09-14 13:13:00 +03:34 "),
+        ("%t:%p:%d ", "2026-09-14 13:13:00 +03:34:shop "),
+    ] {
+        let fields = LinePrefix::parse(setting).read(head, Some(&zone));
+        assert_eq!(fields.ts, Some(1_789_380_780_000_000));
+        if setting.contains("%d") {
+            assert_eq!(fields.database.as_deref(), Some("shop"));
+        }
+    }
+    let fields = LinePrefix::parse("%t:%p ").read("2026-09-14 15:43:00 +05:30:34 ", None);
+    assert_eq!(fields.ts, Some(1_789_380_780_000_000));
+}
+
+#[test]
+fn repeated_literals_cannot_turn_a_pid_into_offset_minutes_or_seconds() {
+    for (head, expected) in [
+        ("2026-09-14 13:13:00 +03:34:shop ", 1_789_380_780_000_000),
+        ("2026-09-14 15:43:00 +05:30:34:shop ", 1_789_380_780_000_000),
+        (
+            "2026-09-14 15:43:34 +05:30:34:123:shop ",
+            1_789_380_780_000_000,
+        ),
+    ] {
+        let fields = LinePrefix::parse("%t:%p:%d ").read(head, None);
+        assert_eq!(fields.ts, Some(expected), "{head}");
+        assert_eq!(fields.database.as_deref(), Some("shop"), "{head}");
+    }
+}
+
+#[test]
+fn numeric_fields_and_later_timestamps_use_their_own_boundaries() {
+    let zone = crate::timestamp::LogTimezone::parse("Etc/GMT-3").expect("zone");
+    let fields = LinePrefix::parse("%t:%p:%l ").read("2026-09-14 13:13:00 +03:12:55 ", Some(&zone));
+    assert_eq!(fields.ts, Some(1_789_380_780_000_000));
+    for zone in [None, Some(&zone)] {
+        let fields = LinePrefix::parse("%s:%p %m:%p ").read(
+            "2026-09-01 13:13:00 +03:34 2026-09-14 13:13:00.789 +03:34 ",
+            zone,
+        );
+        assert_eq!(fields.ts, Some(1_789_380_780_789_000));
+    }
+}

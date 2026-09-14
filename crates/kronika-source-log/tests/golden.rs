@@ -347,19 +347,19 @@ fn conditional_prefix_time_is_absent_only_when_the_session_suffix_is_omitted() {
 
 #[test]
 fn a_colon_after_the_timezone_does_not_block_a_postgres_batch() {
-    for (timezone, clock, label) in [("GMT", "10:13:00", "GMT"), ("Etc/GMT-3", "13:13:00", "+03")] {
+    for (timezone, clock, label, prefix, suffix) in [
+        ("GMT", "10:13:00", "GMT", "%t: [%p] ", ": [1] "),
+        ("Etc/GMT-3", "13:13:00", "+03", "%t: [%p] ", ": [1] "),
+        ("Etc/GMT-3", "13:13:00", "+03", "%t:%p ", ":34 "),
+    ] {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("colon.log");
         std::fs::write(
             &path,
-            format!("2026-09-14 {clock} {label}: [1] ERROR:  test error\nignored\n"),
+            format!("2026-09-14 {clock} {label}{suffix}ERROR:  test error\nignored\n"),
         )
         .expect("fixture");
-        let mut log = PgLog::new(
-            path,
-            Position::default(),
-            Some(LinePrefix::parse("%t: [%p] ")),
-        );
+        let mut log = PgLog::new(path, Position::default(), Some(LinePrefix::parse(prefix)));
         log.set_timezone(kronika_source_log::postgres::LogTimezone::parse(timezone).expect("zone"));
         let batch = log.read_batch(NOW, 1024).expect("valid prefix");
         assert_eq!(batch.events.errors[0].ts, 1_789_380_780_000_000);
