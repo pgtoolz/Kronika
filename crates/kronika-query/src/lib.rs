@@ -14,6 +14,7 @@ mod history;
 mod hour;
 mod index;
 mod index_provider;
+mod observation;
 mod projection;
 mod render;
 mod request;

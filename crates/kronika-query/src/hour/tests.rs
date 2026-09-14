@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use kronika_reader::Segment;
 
-use super::{HOUR, hours_of_ranges, latest_hour, overlaps_window};
+use super::{HOUR, hours_of_ranges, latest_hour, observation_hour, overlaps_window};
 use crate::{
     CapturedCatalog, DatasetListing, DatasetSegment, HourPart, HourRequest, QueryContext,
     QueryDataset, QueryError, QueryRequest, QuerySink, QueryStability, SegmentSelection, Window,
@@ -291,4 +291,24 @@ fn pinned_prefix_restores_time_order_after_validating_listed_ids() {
         ),
         Err(QueryError::BadCursor)
     ));
+}
+
+#[test]
+fn observation_hour_preserves_negative_and_extreme_metric_times() {
+    assert_eq!(
+        observation_hour(-1),
+        Window {
+            from: Some(-HOUR),
+            to: Some(-1)
+        }
+    );
+    assert_eq!(
+        observation_hour(0),
+        Window {
+            from: Some(0),
+            to: Some(HOUR - 1)
+        }
+    );
+    assert_eq!(observation_hour(i64::MIN).from, Some(i64::MIN));
+    assert_eq!(observation_hour(i64::MAX).to, Some(i64::MAX));
 }

@@ -71,8 +71,18 @@ pub(crate) fn prepare(
     } else {
         hours_of_ranges(discovery.ranges().iter().copied())
     };
+    let default_hour = if requested.from.is_none() {
+        crate::observation::latest_metric_observation(
+            dataset.as_ref(),
+            discovery.as_ref(),
+            &|| false,
+        )?
+        .map_or_else(|| latest_hour(&hours), observation_hour)
+    } else {
+        Window::default()
+    };
     let window = requested.from.map_or_else(
-        || latest_hour(&hours),
+        || default_hour,
         |from| Window {
             from: Some(from),
             to: Some(requested.to.unwrap_or_else(|| hour_end(from))),
@@ -195,6 +205,14 @@ fn hours_of_ranges(ranges: impl IntoIterator<Item = (i64, i64)>) -> Vec<i64> {
     hours.sort_unstable();
     hours.dedup();
     hours
+}
+
+const fn observation_hour(ts: i64) -> Window {
+    let offset = ts.rem_euclid(HOUR);
+    Window {
+        from: Some(ts.saturating_sub(offset)),
+        to: Some(ts.saturating_add(HOUR - 1 - offset)),
+    }
 }
 
 fn latest_hour(hours: &[i64]) -> Window {

@@ -5,9 +5,6 @@ use kronika_registry::os_cgroup_context::OsCgroupContextV2;
 use kronika_registry::os_cgroup_cpu::OsCgroupCpuV3;
 use kronika_registry::os_cgroup_memory::OsCgroupMemoryV3;
 
-#[path = "../../../../bins/kronika-web/src/query_adapter.rs"]
-mod query_adapter;
-
 const fn at(seconds: i64) -> i64 {
     SEGMENT_ID + seconds * 1_000_000
 }

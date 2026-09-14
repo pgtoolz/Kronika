@@ -39,7 +39,7 @@ const DERIVED_SORT_TOKENS: [(&str, &str); 7] = [
 /// Timestamp selection for one current-state finder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotPoint {
-    /// Select the latest recorded timestamp across the captured catalog.
+    /// Select the latest recorded metric observation across all source families.
     LatestRecorded,
     /// Select the latest eligible sample at or before this timestamp.
     At(i64),
@@ -382,7 +382,12 @@ fn prepare(
     let catalog = dataset.catalog()?;
     let at = match query.point {
         SnapshotPoint::LatestRecorded => {
-            let Some(at) = catalog.ranges().iter().map(|(_from, to)| *to).max() else {
+            let Some(at) = crate::observation::latest_metric_observation(
+                dataset.as_ref(),
+                catalog.as_ref(),
+                cancelled,
+            )?
+            else {
                 return Ok(None);
             };
             at
