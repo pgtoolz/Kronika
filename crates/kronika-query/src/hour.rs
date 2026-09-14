@@ -50,6 +50,7 @@ pub(crate) struct PreparedHour {
     listed: Vec<DatasetSegment>,
     segments: Vec<DatasetSegment>,
     window: Window,
+    metric_at: Option<i64>,
     hours: Vec<i64>,
     series: Option<HourSeriesRequest>,
     part: HourPart,
@@ -72,18 +73,17 @@ pub(crate) fn prepare(
     } else {
         hours_of_ranges(discovery.ranges().iter().copied())
     };
-    let default_hour = if requested.from.is_none() {
+    let default_metric = if requested.from.is_none() {
         crate::observation::latest_metric_observation(
             dataset.as_ref(),
             discovery.as_ref(),
             cancelled,
         )?
-        .map_or_else(|| latest_hour(&hours), observation_hour)
     } else {
-        Window::default()
+        None
     };
     let window = requested.from.map_or_else(
-        || default_hour,
+        || default_metric.map_or_else(|| latest_hour(&hours), observation_hour),
         |from| Window {
             from: Some(from),
             to: Some(requested.to.unwrap_or_else(|| hour_end(from))),
@@ -108,6 +108,16 @@ pub(crate) fn prepare(
         pin_segments(dataset.as_ref(), &mut segments, expected, request.active)?;
         segments.sort_by_key(DatasetSegment::min_ts);
     }
+    let metric_at = match (request.part, request.series.as_ref(), requested.from) {
+        (HourPart::Lanes, _, _) | (_, Some(_), _) => None,
+        (_, None, None) => default_metric,
+        (_, None, Some(_)) => crate::observation::latest_metric_in_window(
+            dataset.as_ref(),
+            &segments,
+            window,
+            cancelled,
+        )?,
+    };
     let shape = format!(
         "window={window:?};hours={hours:?};series={:?};part={:?};segments={:?};active={:?};sources={configured_sources};demo={synthetic_demo}",
         request.series, request.part, request.segments, request.active,
@@ -148,6 +158,7 @@ pub(crate) fn prepare(
         listed,
         segments,
         window,
+        metric_at,
         hours,
         series: request.series,
         part: request.part,
@@ -257,6 +268,7 @@ impl PreparedHour {
                 "record": "hour",
                 "from": self.window.from.map(|value| value.to_string()),
                 "to": self.window.to.map(|value| value.to_string()),
+                "metric_at": self.metric_at.map(|value| value.to_string()),
                 "available_hours": self.hours.iter().map(ToString::to_string).collect::<Vec<_>>(),
             }))?)
         {

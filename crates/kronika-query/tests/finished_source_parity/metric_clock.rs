@@ -95,6 +95,11 @@ fn assert_metric_defaults(dataset: Arc<dyn QueryDataset>) {
         (HEATMAP_TO.div_euclid(HOUR_US) * HOUR_US).to_string(),
         "default hour follows the common metric observation"
     );
+    assert_eq!(
+        hour["metric_at"],
+        HEATMAP_TO.to_string(),
+        "default cursor uses the metric observation"
+    );
     let explicit = ndjson(&hour_header(
         Arc::clone(&dataset),
         HourRequest {
@@ -113,6 +118,11 @@ fn assert_metric_defaults(dataset: Arc<dyn QueryDataset>) {
         FUTURE_EVENT.to_string(),
         "explicit hour is never moved to metric time"
     );
+    assert!(
+        explicit[0]["metric_at"].is_null(),
+        "event-only window has no metric cursor"
+    );
+    assert_window_metric_clock(Arc::clone(&dataset));
     let facts =
         kronika_query::catalog_facts(&context, CatalogRequest::default()).expect("whole catalog");
     assert_eq!(
@@ -248,6 +258,7 @@ fn metric_clock_event_only_dataset_keeps_default_hour_and_has_no_current_metrics
         .iter()
         .find(|record| record["record"] == "hour")
         .expect("hour");
+    assert!(hour["metric_at"].is_null());
     assert_eq!(
         hour["from"],
         (SEGMENT_ID.div_euclid(HOUR_US) * HOUR_US).to_string()
@@ -515,5 +526,120 @@ fn metric_clock_checks_other_mixed_candidates_after_finding_initial_sample() {
         result.as_of,
         Some(newer),
         "larger metric sample exists outside segment with largest event maximum"
+    );
+}
+
+fn assert_window_metric_clock(dataset: Arc<dyn QueryDataset>) {
+    for (from, to, expected) in [
+        (HEATMAP_FROM, HEATMAP_TO, Some(HEATMAP_TO)),
+        (HEATMAP_FROM, HEATMAP_TO - 1, Some(HEATMAP_FROM)),
+        (HEATMAP_FROM + 1, HEATMAP_TO - 1, None),
+        (HEATMAP_TO + 1, HEATMAP_TO + 2, None),
+    ] {
+        let header = ndjson(&hour_header(
+            Arc::clone(&dataset),
+            HourRequest {
+                window: Window {
+                    from: Some(from),
+                    to: Some(to),
+                },
+                series: None,
+                part: HourPart::Base,
+                segments: None,
+                active: None,
+            },
+        ));
+        assert_eq!(
+            header[0]["metric_at"],
+            serde_json::json!(expected.map(|ts| ts.to_string())),
+            "metric cursor is confined to the inclusive response window"
+        );
+        assert_eq!(
+            header[0]["from"],
+            from.to_string(),
+            "start remains explicit"
+        );
+        assert_eq!(header[0]["to"], to.to_string(), "end remains explicit");
+    }
+    let header = ndjson(&hour_header(
+        dataset,
+        HourRequest {
+            window: Window::default(),
+            series: None,
+            part: HourPart::Base,
+            segments: None,
+            active: None,
+        },
+    ));
+    assert_eq!(
+        header[0]["metric_at"],
+        HEATMAP_TO.to_string(),
+        "default cursor ignores later events"
+    );
+}
+
+#[test]
+fn metric_clock_hour_header_ignores_later_same_hour_event() {
+    let directory = tempfile::tempdir().expect("recording");
+    let id = SegmentId::new(SEGMENT_ID).expect("id");
+    let payload = write_heatmap_fixture_observed(
+        directory.path(),
+        id,
+        None,
+        42,
+        Some(HEATMAP_TO + 1_000_000),
+        |root| {
+            assert_window_metric_clock(Arc::new(
+                query_adapter::NativeDataset::from_root(root).expect("WAL"),
+            ));
+        },
+    );
+    assert_window_metric_clock(Arc::new(
+        query_adapter::NativeDataset::from_root(directory.path()).expect("ZMS"),
+    ));
+    let embedded =
+        EmbeddedSource::from_owned(id, payload.to_vec(), payload.len() as u64).expect("embedded");
+    assert_window_metric_clock(Arc::new(FinishedDataset::new(embedded)));
+}
+
+#[test]
+fn metric_clock_explicit_base_cancels_during_selected_segment_read() {
+    let directory = tempfile::tempdir().expect("recording");
+    write_process_segment(
+        directory.path(),
+        SegmentId::new(SEGMENT_ID).expect("id"),
+        HEATMAP_TO,
+        99,
+        1,
+    );
+    let dataset = Arc::new(ClockDataset {
+        inner: FinishedDataset::new(PosixSource::open(directory.path()).expect("source")),
+        listings: std::sync::Mutex::new(Vec::new()),
+        cancel_on_open: true,
+        cancelled: std::sync::atomic::AtomicBool::new(false),
+    });
+    let context = QueryContext::new(Arc::<ClockDataset>::clone(&dataset), 0b11, false);
+    let result = execute(
+        &context,
+        QueryRequest::Hour(HourRequest {
+            window: Window {
+                from: Some(HEATMAP_FROM),
+                to: Some(HEATMAP_TO),
+            },
+            series: None,
+            part: HourPart::Base,
+            segments: None,
+            active: None,
+        }),
+        &|| dataset.cancelled.load(Ordering::Relaxed),
+    );
+    assert!(matches!(result, Err(kronika_query::QueryError::Cancelled)));
+    assert_eq!(
+        *dataset.listings.lock().expect("listings"),
+        vec![(
+            kronika_query::SegmentBounds::inclusive(Some(HEATMAP_FROM), Some(HEATMAP_TO)),
+            1,
+        )],
+        "explicit metric clock reuses its single window listing"
     );
 }

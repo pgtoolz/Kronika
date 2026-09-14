@@ -8,7 +8,7 @@ use kronika_registry::{ColumnClass, Semantics, contract, registry};
 
 use crate::{
     CapturedCatalog, DatasetSegment, PredecessorSelection, QueryDataset, QueryError, SegmentBounds,
-    SegmentSelection,
+    SegmentSelection, Window,
 };
 
 /// Find the latest recorded metric sample, never a mixed segment bound or wall time.
@@ -29,7 +29,14 @@ pub(crate) fn latest_metric_observation(
     let mut latest = None;
     let mut visited = HashSet::new();
     let candidates = catalog.segments(SegmentSelection::new(bounds))?.segments;
-    scan(dataset, candidates, &mut latest, &mut visited, cancelled)?;
+    scan(
+        dataset,
+        candidates,
+        Window::default(),
+        &mut latest,
+        &mut visited,
+        cancelled,
+    )?;
     if latest.is_none() {
         // Summary-based predecessor selection skips event-only catalogs and
         // establishes a real lower bound, not a per-source final answer.
@@ -47,7 +54,14 @@ pub(crate) fn latest_metric_observation(
                 predecessor: PredecessorSelection::ForLayouts(type_ids),
             })?
             .segments;
-        scan(dataset, candidates, &mut latest, &mut visited, cancelled)?;
+        scan(
+            dataset,
+            candidates,
+            Window::default(),
+            &mut latest,
+            &mut visited,
+            cancelled,
+        )?;
     }
     if let Some(lower) = latest.filter(|lower| *lower < upper) {
         if cancelled() {
@@ -60,8 +74,34 @@ pub(crate) fn latest_metric_observation(
                 end: Bound::Included(upper),
             }))?
             .segments;
-        scan(dataset, candidates, &mut latest, &mut visited, cancelled)?;
+        scan(
+            dataset,
+            candidates,
+            Window::default(),
+            &mut latest,
+            &mut visited,
+            cancelled,
+        )?;
     }
+    Ok(latest)
+}
+
+/// Find the metric clock inside an already selected inclusive response window.
+pub(crate) fn latest_metric_in_window(
+    dataset: &dyn QueryDataset,
+    segments: &[DatasetSegment],
+    window: Window,
+    cancelled: &(impl Fn() -> bool + ?Sized),
+) -> Result<Option<i64>, QueryError> {
+    let mut latest = None;
+    scan(
+        dataset,
+        segments.to_vec(),
+        window,
+        &mut latest,
+        &mut HashSet::new(),
+        cancelled,
+    )?;
     Ok(latest)
 }
 
@@ -85,10 +125,14 @@ fn metric_timestamp(type_id: u32) -> Option<&'static str> {
 fn scan(
     dataset: &dyn QueryDataset,
     mut segments: Vec<DatasetSegment>,
+    window: Window,
     latest: &mut Option<i64>,
     visited: &mut HashSet<i64>,
     cancelled: &(impl Fn() -> bool + ?Sized),
 ) -> Result<(), QueryError> {
+    if cancelled() {
+        return Err(QueryError::Cancelled);
+    }
     segments.sort_unstable_by_key(|segment| std::cmp::Reverse(segment.max_ts()));
     for descriptor in segments {
         if cancelled() {
@@ -118,7 +162,9 @@ fn scan(
                 if cancelled() {
                     return false;
                 }
-                if let Some(Cell::Ts(ts)) = row.get(timestamp) {
+                if let Some(Cell::Ts(ts)) = row.get(timestamp)
+                    && window.contains(*ts)
+                {
                     *latest = Some(latest.map_or(*ts, |previous: i64| previous.max(*ts)));
                 }
                 *latest != Some(descriptor.max_ts())

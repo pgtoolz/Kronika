@@ -140,7 +140,7 @@ fn empty_base_hour_records_are_exact() {
     assert_eq!(
         sink.records,
         [
-            b"{\"available_hours\":[\"0\"],\"from\":\"10\",\"record\":\"hour\",\"to\":\"20\"}\n"
+            b"{\"available_hours\":[\"0\"],\"from\":\"10\",\"metric_at\":null,\"record\":\"hour\",\"to\":\"20\"}\n"
                 .to_vec(),
             concat!(
                 "{\"demo\":null,\"from\":\"10\",\"kronika_version\":\"",
