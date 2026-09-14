@@ -5,7 +5,7 @@
 `kronika-web` lets you browse the history recorded by collector and read it
 through HTTP API and MCP. It reads the current journal (`active.wal`) and
 finished compressed files (`.zms`), and creates search indexes (`.idx`) in the
-same directory. The reading library is `kronika-reader`.
+same directory.
 
 [Storage failures and recovery](../../docs/storage-recovery.md) explains what
 happens after an abrupt stop or when a recording cannot be read.
@@ -50,11 +50,10 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 On startup, stdout receives `ready <addr>`. Open `http://<server-ip>:8080`,
 replacing `<server-ip>` with the address of the machine running web.
-With both credentials unset, this opens without sign-in.
 
 To require sign-in, add `KRONIKA_WEB_USER=kronika` and
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` before
-`/usr/local/bin/kronika-web` in the command, choosing your own password.
+`/usr/local/bin/kronika-web` in the command.
 API and MCP then accept HTTP Basic credentials; protected API requests also
 accept the browser session cookie.
 

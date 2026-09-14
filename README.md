@@ -98,7 +98,7 @@ ongoing collection.
 With `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` both unset, web opens without
 sign-in. To require sign-in, add `KRONIKA_WEB_USER=kronika` and
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` before
-`/usr/local/bin/kronika-web` in the command, choosing your own password.
+`/usr/local/bin/kronika-web` in the command.
 Setting only one credential or an empty value prevents startup.
 
 [Systemd setup](docs/services.md) covers running both programs as services and

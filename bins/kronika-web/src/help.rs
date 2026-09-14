@@ -7,26 +7,20 @@ Usage: kronika-web
 
 Runs in the foreground. Configuration is environment-only. Required variables:
 KRONIKA_STORAGE_DIR and KRONIKA_WEB_SOURCES.
-Leave both KRONIKA_WEB_USER and KRONIKA_WEB_PASSWORD unset for unauthenticated
-access, or set both to nonempty values to enable authentication.
-The default address is 127.0.0.1:8080 and accepts local connections only.
 
 EXAMPLES
-  Serve an existing recording on the server's network interfaces:
+  Without authentication, leave both credentials unset:
 
   sudo env KRONIKA_STORAGE_DIR=/path/to/recording KRONIKA_WEB_SOURCES=1 \
     KRONIKA_WEB_LISTEN=0.0.0.0:8080 kronika-web
 
-  With both credentials unset, open http://SERVER_IP:8080/ without signing in.
-
-  Enable authentication by setting both credentials:
+  To require a login, set both credentials:
 
   sudo env KRONIKA_STORAGE_DIR=/path/to/recording KRONIKA_WEB_SOURCES=1 \
     KRONIKA_WEB_LISTEN=0.0.0.0:8080 KRONIKA_WEB_USER=kronika \
     KRONIKA_WEB_PASSWORD='replace-with-a-random-password' kronika-web
 
-  Sign in at http://SERVER_IP:8080/. The process needs read/write access to the
-  recording directory. SERVER_IP is the server's address, not 0.0.0.0.
+  Open http://SERVER_IP:8080/, replacing SERVER_IP with the server's address.
 
 KRONIKA_WEB_SOURCES (required; no default)
   0  Neither source family declared configured.
@@ -68,18 +62,13 @@ OPTIONAL ENVIRONMENT
       access and capacity for both files. Files are removed when closed.
 
 LOGIN, API, AND MCP
-  Browser: http://SERVER_IP:8080/ opens directly when both credentials are
-  unset. When both are configured, the sign-in form creates a browser session.
-  API and MCP clients use the same account via HTTP Basic authentication;
-  a browser session is also accepted for API requests.
-
-  MCP uses http://SERVER_IP:8080/mcp. Omit Authorization when both credentials
-  are unset; otherwise use the configured HTTP Basic credentials.
-  For a local-only listener, use http://127.0.0.1:8080/.
+  With credentials configured, browser login creates a session. API requests
+  accept that session or HTTP Basic. MCP uses HTTP Basic at
+  http://SERVER_IP:8080/mcp. With credentials unset, omit Authorization.
 
 LOGS AND STOPPING
   Readiness (ready IP:PORT) goes to stdout; request/connection/export errors and
   export timings go to stderr. There is no web log-level environment setting.
-  Ctrl+C or SIGTERM terminates web; the stored recording remains available on
-  restart. Invalid configuration or listener failure exits nonzero.
+  Ctrl+C or SIGTERM terminates web. Invalid configuration or listener failure
+  exits nonzero.
 ";

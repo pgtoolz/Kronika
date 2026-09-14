@@ -4,7 +4,11 @@
 
 MCP lets an AI client read saved Kronika snapshots, metric histories and recorded rows. The running `kronika-web` serves this connection at `/mcp`.
 
-It accepts `POST /mcp` using Streamable HTTP, returns JSON and provides MCP tools only. It keeps no MCP sessions. With `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` both unset, no authentication is required. When both are nonempty, every request carries `Authorization: Basic <BASE64>` using those credentials. Setting only one credential or an empty value prevents web startup. Requests carrying `Origin` and URLs with a query string are rejected.
+`POST /mcp` uses Streamable HTTP, returns JSON and provides tools without MCP sessions.
+It uses the [web credentials](../bins/kronika-web/README.md#configuration):
+leave both unset for access without authentication. When both are nonempty,
+send `Authorization: Basic <BASE64>` with each request.
+Requests with `Origin` or a query string are rejected.
 
 ## Connection parameters
 
@@ -26,7 +30,7 @@ When credentials are configured, compute `<BASE64>` with:
 printf '%s' '<USER>:<PASSWORD>' | base64 | tr -d '\n'
 ```
 
-The **Connect an AI agent** panel generates configuration for the selected client. The server name combines the largest database name in the recording with the connection address, for example `kronika-billing-192-168-0-22-8080`. With both credentials unset, the header is omitted.
+The **Connect an AI agent** panel generates configuration for the selected client. The server name combines the largest database name in the recording with the connection address, for example `kronika-billing-192-168-0-22-8080`.
 
 The examples below connect without authentication. When both server credentials
 are configured, add `--header 'Authorization: Basic <BASE64>'` to the Claude Code

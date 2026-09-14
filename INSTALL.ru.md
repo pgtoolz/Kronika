@@ -156,7 +156,7 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 не заданы, вход не требуется. Чтобы включить вход по паролю, добавьте
 `KRONIKA_WEB_USER=kronika` и
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` перед
-`/usr/local/bin/kronika-web` в команде, выбрав свой пароль.
+`/usr/local/bin/kronika-web` в команде.
 Если задана только одна переменная или пустое значение, запуск завершится ошибкой.
 
 Веб-серверу нужен доступ на запись в тот же каталог для создания поисковых

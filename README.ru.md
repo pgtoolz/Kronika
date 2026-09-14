@@ -98,7 +98,7 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 Если `KRONIKA_WEB_USER` и `KRONIKA_WEB_PASSWORD` не заданы, вход не требуется.
 Чтобы включить вход по паролю, добавьте `KRONIKA_WEB_USER=kronika` и
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` перед
-`/usr/local/bin/kronika-web` в команде, выбрав свой пароль.
+`/usr/local/bin/kronika-web` в команде.
 Если задана только одна переменная или пустое значение, запуск завершится ошибкой.
 
 [Настройка systemd](docs/services.ru.md) описывает запуск

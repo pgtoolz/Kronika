@@ -112,7 +112,7 @@ Sources: [event query and fields](../crates/kronika-query/src/events.rs), [group
 
 ## MCP
 
-`POST /mcp` exposes fourteen stored-data tools over stateless Streamable HTTP. Each tool returns structured JSON. When `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` are both unset, no authentication is required. When both are nonempty, HTTP Basic uses those credentials. Setting only one credential or an empty value prevents web startup. The endpoint rejects `Origin` and query strings. The tools read stored files and execute no host or PostgreSQL administration commands.
+`POST /mcp` exposes fourteen stored-data tools over stateless Streamable HTTP. Each tool returns structured JSON. MCP uses the [web authentication settings](../bins/kronika-web/README.md#configuration): no authentication when both credentials are unset, HTTP Basic when both are nonempty. The endpoint rejects `Origin` and query strings. The tools read stored files and execute no host or PostgreSQL administration commands.
 
 | Tool | Inputs | Result |
 | --- | --- | --- |

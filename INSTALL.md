@@ -151,7 +151,7 @@ machine running web. With `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` both
 unset, sign-in is not required. To require sign-in, add
 `KRONIKA_WEB_USER=kronika` and
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` before
-`/usr/local/bin/kronika-web` in the command, choosing your own password.
+`/usr/local/bin/kronika-web` in the command.
 Setting only one credential or an empty value prevents startup.
 
 Web requires write access to the recording directory to create search indexes

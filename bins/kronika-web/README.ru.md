@@ -52,12 +52,11 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 После запуска программа выводит `ready <addr>` в стандартный поток вывода
 (stdout). Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом
-машины, на которой запущен веб-сервер. Если обе переменные с учётными данными
-не заданы, вход не требуется.
+машины, на которой запущен веб-сервер.
 
 Чтобы включить вход по паролю, добавьте `KRONIKA_WEB_USER=kronika` и
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` перед
-`/usr/local/bin/kronika-web` в команде, выбрав свой пароль.
+`/usr/local/bin/kronika-web` в команде.
 Тогда API и MCP принимают учётные данные через HTTP Basic, а защищённые
 запросы API также принимают cookie сессии браузера.
 

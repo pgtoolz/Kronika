@@ -34,8 +34,8 @@ KRONIKA_WEB_SOURCES=1
 ```
 
 With `KRONIKA_WEB_USER` and `KRONIKA_WEB_PASSWORD` both unset, the browser,
-API and MCP require no authentication. To require it, add both lines to
-`web.env`, choosing your own password:
+API and MCP require no authentication. To enable password authentication, add
+the following to `web.env` and replace the example password:
 
 ```ini
 KRONIKA_WEB_USER=kronika
