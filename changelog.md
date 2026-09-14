@@ -2,6 +2,11 @@
 
 [Русская версия](changelog.ru.md)
 
+## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
+
+- Web authentication is now optional.
+- Removed `KRONIKA_WEB_AUTH`.
+
 ## [1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
 
 - Added `KRONIKA_PG_DSN` for the PostgreSQL connection string. To collect from several servers, run `kronika-collector` for each server with its own `KRONIKA_PG_DSN` and a separate `KRONIKA_STORAGE_DIR`.

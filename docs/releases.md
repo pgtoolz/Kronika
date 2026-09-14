@@ -4,19 +4,19 @@
 
 ## Release
 
-Download [Kronika 1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
+Download [Kronika 1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
 for Linux x86-64 or ARM64. You can also [build from source](build.md) or use a
 [development build](#development-builds).
 
 <a id="download"></a>
 ## Archives
 
-Release archives for 1.1.0:
+Release archives for 1.1.1:
 
 | Architecture | Archive |
 | --- | --- |
-| x86-64 | [kronika-1.1.0-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.0/kronika-1.1.0-x86_64-unknown-linux-musl.tar.gz) |
-| ARM64 | [kronika-1.1.0-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.0/kronika-1.1.0-aarch64-unknown-linux-musl.tar.gz) |
+| x86-64 | [kronika-1.1.1-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.1/kronika-1.1.1-x86_64-unknown-linux-musl.tar.gz) |
+| ARM64 | [kronika-1.1.1-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.1/kronika-1.1.1-aarch64-unknown-linux-musl.tar.gz) |
 
 Each archive has a matching `.tar.gz.sha256` checksum file. See
 [download and extraction](../INSTALL.md#1-download-and-extract), then
@@ -43,7 +43,7 @@ files outside the archive resolve to the packaging commit on GitHub.
 | --- | --- |
 | Filename | Workspace version and target. |
 | `BUILDINFO.package_source_revision` | Full commit of the clean packaging checkout. |
-| `BUILDINFO.build_mode` | `source`: compiled by the packaging command. `prebuilt`: supplied with `--bin-dir`; binary source/compiler identity is not recorded by this mode. |
+| `BUILDINFO.build_mode` | `source`: compiled by the packaging command. `prebuilt`: supplied with `--bin-dir`. Binary source/compiler identity is not recorded by this mode. |
 | `BUILDINFO.source_date_epoch` | Packaging commit timestamp, Unix seconds. |
 | `BUILDINFO` source-build fields | Build command, Rust compiler, Rust flags and C flags. |
 | `SHA256SUMS` | SHA-256 of every file except the manifest itself. |
@@ -78,7 +78,7 @@ Each row checks archive/member checksums, documentation membership, ELF
 architecture, absence of `INTERP`/`NEEDED`, and the four programs' help/version
 and argument handling. The `portability-*` artifact records the resolved image
 digest, `/etc/os-release`, kernel/architecture and checker output. Containers
-use the build machine's kernel; these checks establish execution in the listed
+use the build machine's kernel. These checks establish execution in the listed
 distribution environments with that kernel, not with every Linux kernel. Matrix definition:
 [release-package.yml](../.github/workflows/release-package.yml).
 
@@ -105,7 +105,7 @@ sha256sum --check SHA256SUMS
 
 For ARM64, set `target=aarch64-unknown-linux-musl`. `gh run view` lists both
 builds on their matching architectures and the 22 distribution checks. The downloaded artifact contains
-`.tar.gz` and `.tar.gz.sha256`; after verification and extraction, continue with
+`.tar.gz` and `.tar.gz.sha256`. After verification and extraction, continue with
 [installation](../INSTALL.md#2-install).
 
 ## Package
@@ -148,9 +148,9 @@ scripts/check-release.sh dist/kronika-*-x86_64-unknown-linux-musl.tar.gz
 
 | Mode | Checks |
 | --- | --- |
-| Default | Archive checks; CLI checks; real OS collection followed by dump; fixture slicing; two identical HTML reports; authenticated web catalog; MCP discovery; direct-file browser interactivity and network-request checks. |
-| `--no-browser` | All default checks except the browser step; used by native ARM64 CI. |
-| `--cli-only` | Archive and CLI checks; used by each userspace row. |
+| Default | Archive checks, CLI checks, real OS collection followed by dump, fixture slicing, two identical HTML reports, authenticated web catalog, MCP discovery, direct-file browser interactivity and network-request checks. |
+| `--no-browser` | All default checks except the browser step. Used by native ARM64 CI. |
+| `--cli-only` | Archive and CLI checks. Used by each userspace row. |
 
 CLI checks execute unprivileged processes in a read-only working directory with
 empty and invalid configuration environments, deadlines and exact stdout,

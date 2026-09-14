@@ -27,8 +27,8 @@ HELP_CONTENT = {
     ),
     "kronika-web": (
         "KRONIKA_STORAGE_DIR", "KRONIKA_WEB_SOURCES", "127.0.0.1:8080",
-        "KRONIKA_WEB_USER", "KRONIKA_WEB_PASSWORD", "KRONIKA_WEB_AUTH",
-        "required", "disabled", "catalog", "health", "/mcp", "TMPDIR",
+        "KRONIKA_WEB_USER", "KRONIKA_WEB_PASSWORD", "0.0.0.0:8080",
+        "http://SERVER_IP:8080/", "Both unset", "Both nonempty", "startup error", "catalog", "health", "/mcp", "TMPDIR",
         "kronika-collector", "KRONIKA_PG_DSN", "No default",
         "0", "1", "2", "3", "Health uses instance information saved by the collector",
         "All recorded data remains available for every value",
@@ -155,7 +155,6 @@ def check(binary, version, root, strace):
         "KRONIKA_PG_DSN": f"invalid-postgresql-dsn-{SECRET}",
         "KRONIKA_WEB_LISTEN": "not-an-address",
         "KRONIKA_WEB_SOURCES": "not-a-number",
-        "KRONIKA_WEB_AUTH": "invalid",
         "KRONIKA_WEB_USER": "cli-check-user",
         "KRONIKA_WEB_PASSWORD": SECRET,
         # Tokio rejects zero worker threads when its runtime is constructed.
@@ -219,11 +218,28 @@ def check(binary, version, root, strace):
                        config_errors[binary.name]))
     else:
         normal.append(("missing input", {}, b"usage:"))
+    if binary.name == "kronika-web":
+        web_base = {"KRONIKA_STORAGE_DIR": str(storage), "KRONIKA_WEB_SOURCES": "1",
+                    "KRONIKA_WEB_LISTEN": "127.0.0.1:0", "TOKIO_WORKER_THREADS": "1"}
+        for credentials, message in (
+            ({"KRONIKA_WEB_USER": "cli-check-user"}, b"KRONIKA_WEB_PASSWORD"),
+            ({"KRONIKA_WEB_PASSWORD": SECRET}, b"KRONIKA_WEB_USER"),
+            ({"KRONIKA_WEB_USER": "", "KRONIKA_WEB_PASSWORD": SECRET}, b"KRONIKA_WEB_USER is empty"),
+            ({"KRONIKA_WEB_USER": "cli-check-user", "KRONIKA_WEB_PASSWORD": ""},
+             b"KRONIKA_WEB_PASSWORD is empty"),
+            ({"KRONIKA_WEB_USER": "", "KRONIKA_WEB_PASSWORD": ""}, b"KRONIKA_WEB_USER is empty"),
+        ):
+            normal.append(("invalid credentials", dict(web_base, **credentials), message))
+        if os.name == "posix":
+            for variable in ("KRONIKA_WEB_USER", "KRONIKA_WEB_PASSWORD"):
+                normal.append(("non-Unicode credential", dict(web_base, **{variable: os.fsdecode(b"\xff")}),
+                               (variable + " is not valid Unicode").encode()))
     for label, environment, message in normal:
         status, stdout, stderr = run([str(binary)], cwd, environment)
         assert status != 0 and stdout == b"" and message in stderr, (
             f"{binary.name} [{label}]: normal error changed: {(status, stdout, stderr)!r}"
         )
+        assert SECRET.encode() not in stdout + stderr, f"{binary.name} printed a credential"
         assert list(cwd.iterdir()) == [], f"{binary.name} wrote before rejecting {label}"
         print(f"{binary.name} [no arguments, {label}]: status={status}, expected {message.decode()} error", flush=True)
 

@@ -2,6 +2,11 @@
 
 [English version](changelog.md)
 
+## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
+
+- Пароль для веб-интерфейса теперь необязателен.
+- Удалена настройка `KRONIKA_WEB_AUTH`.
+
 ## [1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
 
 - Добавлен `KRONIKA_PG_DSN` — строка подключения к PostgreSQL. Для сбора с нескольких серверов запускайте `kronika-collector` для каждого сервера, указав его `KRONIKA_PG_DSN` и отдельный каталог `KRONIKA_STORAGE_DIR`.

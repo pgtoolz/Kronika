@@ -5,7 +5,7 @@
 You can launch the programs however you prefer. This guide shows automatic
 startup and restart using systemd. The example runs one collector and one web
 process, using `/usr/local/bin`, root-owned storage and a web listener on
-localhost. Stop any manually started instance before starting its service.
+all IPv4 interfaces. Stop any manually started instance before starting its service.
 
 ## Environment files
 
@@ -25,18 +25,23 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika
 KRONIKA_RETENTION=2147483648
 ```
 
-`/etc/kronika/web.env` — replace the password:
+`/etc/kronika/web.env`:
 
 ```ini
 KRONIKA_STORAGE_DIR=/var/lib/kronika
-KRONIKA_WEB_LISTEN=127.0.0.1:8080
+KRONIKA_WEB_LISTEN=0.0.0.0:8080
 KRONIKA_WEB_SOURCES=1
+```
+
+To require sign-in, add these credentials to `web.env`:
+
+```ini
 KRONIKA_WEB_USER=kronika
 KRONIKA_WEB_PASSWORD=replace-with-a-random-password
 ```
 
 Systemd parses these as environment assignments. Values containing spaces are
-quoted as a whole; shell substitutions and `export` are not evaluated.
+quoted as a whole. Shell substitutions and `export` are not evaluated.
 
 For Linux-only collection, these settings are sufficient. To also collect
 PostgreSQL, [prepare a monitoring role](../INSTALL.md#5-postgresql) and add its
@@ -51,7 +56,7 @@ For PostgreSQL on the collector machine, use the connection above and set
 
 For PostgreSQL-only collection, set `KRONIKA_COLLECTOR_MODE=postgresql` in
 `collector.env` and `KRONIKA_WEB_SOURCES=2` in `web.env`. PostgreSQL may be local
-or remote. Collector mode controls recording; the web setting declares sources
+or remote. Collector mode controls recording. The web setting declares sources
 in the catalog. See [connection settings](../bins/kronika-collector/README.md#remote-postgresql).
 All parameters:
 [collector](../bins/kronika-collector/README.md) and
@@ -120,8 +125,10 @@ sudo systemctl status kronika-collector.service kronika-web.service
 sudo journalctl -u kronika-collector -u kronika-web --since '5 minutes ago'
 ```
 
-Open <http://127.0.0.1:8080/>. The same listener serves `/mcp`.
-[SSH forwarding](../INSTALL.md#4-start-web) provides access from another machine.
+Open `http://<server-ip>:8080`, replacing `<server-ip>` with the server's
+address. The same listener serves `/mcp`. For local access, a reverse proxy on
+the same machine or [SSH forwarding](../INSTALL.md#4-start-web), use
+`KRONIKA_WEB_LISTEN=127.0.0.1:8080` in `web.env` instead.
 
 ## Operations
 
@@ -156,7 +163,7 @@ sudo install -m 0755 kronika-collector kronika-web kronika-dump \
 sudo systemctl start kronika-collector kronika-web
 ```
 
-Configuration remains in `/etc/kronika`; recordings remain in `/var/lib/kronika`.
+Configuration remains in `/etc/kronika`. Recordings remain in `/var/lib/kronika`.
 
 ## Remove services
 

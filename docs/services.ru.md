@@ -5,7 +5,7 @@
 Программы можно запускать любым удобным способом. Здесь показан автозапуск
 и перезапуск через systemd. В примере работают один сборщик и один веб-сервер:
 программы находятся в `/usr/local/bin`, хранилище принадлежит root,
-веб-сервер слушает localhost. Перед запуском сервиса остановите соответствующую
+веб-сервер слушает все IPv4-интерфейсы. Перед запуском сервиса остановите соответствующую
 программу, если она уже работает в терминале.
 
 <a id="environment-files"></a>
@@ -27,12 +27,17 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika
 KRONIKA_RETENTION=2147483648
 ```
 
-`/etc/kronika/web.env` — замените пароль:
+`/etc/kronika/web.env`:
 
 ```ini
 KRONIKA_STORAGE_DIR=/var/lib/kronika
-KRONIKA_WEB_LISTEN=127.0.0.1:8080
+KRONIKA_WEB_LISTEN=0.0.0.0:8080
 KRONIKA_WEB_SOURCES=1
+```
+
+Для входа по паролю добавьте учётные данные в `web.env`:
+
+```ini
 KRONIKA_WEB_USER=kronika
 KRONIKA_WEB_PASSWORD=replace-with-a-random-password
 ```
@@ -54,8 +59,8 @@ KRONIKA_PG_DSN="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-w
 
 Для сбора только PostgreSQL задайте `KRONIKA_COLLECTOR_MODE=postgresql` в
 `collector.env` и `KRONIKA_WEB_SOURCES=2` в `web.env`. Сервер PostgreSQL может
-быть локальным или удалённым. Режим сборщика определяет, какие данные записывать;
-настройка веб-сервера объявляет источники в каталоге.
+быть локальным или удалённым. Режим сборщика определяет, какие данные записывать.
+Настройка веб-сервера объявляет источники в каталоге.
 [Параметры подключения](../bins/kronika-collector/README.ru.md#remote-postgresql).
 Полный список параметров:
 [сборщик](../bins/kronika-collector/README.ru.md) и
@@ -127,9 +132,10 @@ sudo systemctl status kronika-collector.service kronika-web.service
 sudo journalctl -u kronika-collector -u kronika-web --since '5 minutes ago'
 ```
 
-Откройте <http://127.0.0.1:8080/>. По тому же адресу с путём `/mcp` доступен MCP.
-[Перенаправление порта по SSH](../INSTALL.ru.md#4-запуск-web) позволяет
-подключиться с другой машины.
+Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом сервера.
+По тому же адресу с путём `/mcp` доступен MCP. Для локального доступа,
+обратного прокси на той же машине или [перенаправления порта по SSH](../INSTALL.ru.md#4-запуск-web)
+укажите в `web.env` `KRONIKA_WEB_LISTEN=127.0.0.1:8080`.
 
 ## Операции
 
@@ -165,7 +171,7 @@ sudo install -m 0755 kronika-collector kronika-web kronika-dump \
 sudo systemctl start kronika-collector kronika-web
 ```
 
-Конфигурация остаётся в `/etc/kronika`; записи остаются в `/var/lib/kronika`.
+Конфигурация остаётся в `/etc/kronika`. Записи остаются в `/var/lib/kronika`.
 
 ## Удаление сервисов
 

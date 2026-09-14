@@ -9,14 +9,14 @@
 
 ## 1. Скачивание и распаковка
 
-Скачайте [архив 1.1.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.0)
-для своей архитектуры. Команды ниже — для x86-64; для ARM64 задайте
+Скачайте [архив 1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
+для своей архитектуры. Команды ниже — для x86-64. Для ARM64 задайте
 `target=aarch64-unknown-linux-musl`.
 
 ```sh
 target=x86_64-unknown-linux-musl
-archive="kronika-1.1.0-$target.tar.gz"
-curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.1.0/$archive"
+archive="kronika-1.1.1-$target.tar.gz"
+curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.1.1/$archive"
 tar -xzf "$archive"
 cd "${archive%.tar.gz}"
 ```
@@ -82,7 +82,7 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_current_logfile() TO kronika_monitor;
 
 Роль должна наследовать права `pg_monitor` и иметь право `CONNECT` к каждой
 базе, из которой собираются данные. Права на расширения выдаются отдельно в
-каждой базе; они перечислены в разделе
+каждой базе. Они перечислены в разделе
 [«Роль PostgreSQL»](bins/kronika-collector/README.ru.md#postgresql-role).
 
 Для сбора с нескольких серверов PostgreSQL запустите `kronika-collector`
@@ -98,8 +98,8 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-На общей с PostgreSQL машине число CPU определяется автоматически;
-оставьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS` незаданным. Установленные расширения
+На общей с PostgreSQL машине число CPU определяется автоматически.
+Оставьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS` незаданным. Установленные расширения
 `pg_stat_statements` и `pg_store_plans` дают статистику запросов и планы.
 Для Activity, Locks и статистики таблиц и индексов используются встроенные
 представления PostgreSQL.
@@ -129,20 +129,17 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 <a id="4-запуск-web"></a>
 ## 4. Запуск веб-сервера
 
-Во втором терминале задайте пароль и запустите веб-сервер с тем же каталогом
-записи.
+Во втором терминале запустите веб-сервер с тем же каталогом записи.
 
 ### Для режима `local`
 
-Для Linux укажите `KRONIKA_WEB_SOURCES=1`, как ниже; если также собирается
+Для Linux укажите `KRONIKA_WEB_SOURCES=1`, как ниже. Если также собирается
 PostgreSQL, замените `1` на `3`:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
   KRONIKA_WEB_SOURCES=1 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
   /usr/local/bin/kronika-web
 ```
 
@@ -150,21 +147,26 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 ```sh
 KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=127.0.0.1:8080 \
-  KRONIKA_WEB_USER=kronika \
-  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
   KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
 ```
 
-Откройте <http://127.0.0.1:8080/> и войдите. Веб-серверу нужен доступ на запись в тот же
-каталог для создания поисковых индексов `.idx`. В примере для режима `local`
-обе программы работают от root; хранилище недоступно другим пользователям.
+Откройте `http://<server-ip>:8080`.
 
-`KRONIKA_WEB_SOURCES` сообщает, какие источники настроены; он не включает сбор
+Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
+`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.
+
+Веб-серверу нужен доступ на запись в тот же каталог для создания поисковых
+индексов `.idx`. В примере для режима `local`
+обе программы работают от root. Хранилище недоступно другим пользователям.
+
+`KRONIKA_WEB_SOURCES` сообщает, какие источники настроены. Он не включает сбор
 и не скрывает записанные данные. Настройки входа описаны в
 [справочнике веб-сервера](bins/kronika-web/README.ru.md).
 
-Чтобы открыть запись с другой машины, выполните на ней:
+Для локального доступа, обратного прокси на той же машине или перенаправления
+порта по SSH укажите `KRONIKA_WEB_LISTEN=127.0.0.1:8080`. Этот же адрес
+используется по умолчанию. Для перенаправления выполните на машине клиента:
 
 ```sh
 ssh -N -L 8080:127.0.0.1:8080 user@monitored-host
@@ -172,7 +174,7 @@ ssh -N -L 8080:127.0.0.1:8080 user@monitored-host
 
 Затем откройте на ней <http://127.0.0.1:8080/>. Подключение по SSH передаёт
 запросы локальному веб-серверу наблюдаемой машины. ИИ-клиенты используют тот же
-адрес и учётные данные, добавляя `/mcp`; [настройки подключения](docs/mcp-clients.ru.md)
+адрес и настройки аутентификации, добавляя `/mcp`. [Настройки подключения](docs/mcp-clients.ru.md)
 также доступны в панели **AI**. [Руководство systemd](docs/services.ru.md)
 описывает автоматический запуск обеих программ.
 
