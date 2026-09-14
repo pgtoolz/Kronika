@@ -26,9 +26,9 @@ only that entry point and `ReportSession` in the classic-script
 The report compiles its embedded bytes and passes the resulting
 `WebAssembly.Module` to `initEmbedded`, which instantiates asynchronously.
 
-The raw generated WebAssembly is 10,198,255 bytes. Its committed gzip form is
-2,478,453 bytes with SHA-256
-`b6399abfddd1b209ce5b185ab8e28776048e212b6fd0956f0704ba5187ba453a`.
+The raw generated WebAssembly is 10,282,246 bytes. Its committed gzip form is
+2,499,741 bytes with SHA-256
+`0c7f7ea1c2dd4549a125524a9b3f389bd26463afa8fef708f060ad14d2628edd`.
 The 3,885-byte JavaScript binding has SHA-256
 `4635ae734e8c1e1aeb463ae1096f4fdc2a65d98e715b55cee9fe46956f29cba8`.
 
