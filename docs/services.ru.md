@@ -63,8 +63,8 @@ KRONIKA_PG_DSN="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-w
 
 Для сбора только PostgreSQL задайте `KRONIKA_COLLECTOR_MODE=postgresql` в
 `collector.env` и `KRONIKA_WEB_SOURCES=2` в `web.env`. Сервер PostgreSQL может
-быть локальным или удалённым. Режим сборщика определяет, какие данные записывать;
-настройка веб-сервера объявляет источники в каталоге.
+быть локальным или удалённым. Режим сборщика определяет, какие данные записывать.
+Настройка веб-сервера объявляет источники в каталоге.
 [Параметры подключения](../bins/kronika-collector/README.ru.md#remote-postgresql).
 Полный список параметров:
 [сборщик](../bins/kronika-collector/README.ru.md) и
@@ -175,7 +175,7 @@ sudo install -m 0755 kronika-collector kronika-web kronika-dump \
 sudo systemctl start kronika-collector kronika-web
 ```
 
-Конфигурация остаётся в `/etc/kronika`; записи остаются в `/var/lib/kronika`.
+Конфигурация остаётся в `/etc/kronika`. Записи остаются в `/var/lib/kronika`.
 
 ## Удаление сервисов
 

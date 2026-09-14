@@ -19,7 +19,7 @@ from the install guide.
 
 | Value | Definition |
 | --- | --- |
-| `<URL>` | Endpoint URL, for example `http://<server-ip>:8080/mcp`; replace `<server-ip>` with the server's address. |
+| `<URL>` | Endpoint URL, for example `http://<server-ip>:8080/mcp`. Replace `<server-ip>` with the server's address. |
 | `kronika` | Server name in the client configuration. |
 | `<USER>`, `<PASSWORD>` | Values of `KRONIKA_WEB_USER`, `KRONIKA_WEB_PASSWORD`, if configured. |
 | `<BASE64>` | For authentication only: Base64 encoding of `<USER>:<PASSWORD>` without a trailing newline. |

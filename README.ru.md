@@ -22,7 +22,7 @@ Linux либо записывает только данные PostgreSQL с ло
 
 Выберите `local` для метрик Linux и, при необходимости, PostgreSQL в той же VM
 или pod. Режим `postgresql` подходит для удалённого сервера или сбора только
-метрик базы данных. Локальные примеры используют `/var/lib/kronika`; сборщик
+метрик базы данных. Локальные примеры используют `/var/lib/kronika`. Сборщик
 создаёт каталог, если его ещё нет.
 
 ### Linux и при необходимости PostgreSQL
@@ -73,7 +73,7 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 
 #### Для режима `local`
 
-Для Linux укажите `KRONIKA_WEB_SOURCES=1`, как ниже; если также собирается
+Для Linux укажите `KRONIKA_WEB_SOURCES=1`, как ниже. Если также собирается
 PostgreSQL, замените `1` на `3`:
 
 ```sh
@@ -123,12 +123,12 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 | Область | Что можно посмотреть | Справочник |
 | --- | --- | --- |
-| Processes — процессы | Команда, состояние и номер процесса (PID), использование CPU, память, чтение и запись на диск; дерево процессов и активность за час. | [Метрики Linux](docs/metrics-linux.ru.md) |
-| Host — система | CPU, память, ожидание ресурсов (PSI), сеть и диски, свободное место и связи устройств; лимиты и использование ресурсов cgroup. | [Метрики Linux](docs/metrics-linux.ru.md) |
+| Processes — процессы | Команда, состояние и номер процесса (PID), использование CPU, память, чтение и запись на диск, дерево процессов и активность за час. | [Метрики Linux](docs/metrics-linux.ru.md) |
+| Host — система | CPU, память, ожидание ресурсов (PSI), сеть и диски, свободное место и связи устройств, лимиты и использование ресурсов cgroup. | [Метрики Linux](docs/metrics-linux.ru.md) |
 | Overview, Activity, Locks, Vacuum — работа PostgreSQL | Общая нагрузка, сеансы и ожидания, цепочки блокировок, длительность запросов и транзакций, ход очистки таблиц. | [Метрики PostgreSQL](docs/metrics-postgresql.ru.md) |
 | Statements и Plans — запросы и планы | Число вызовов, время выполнения и планирования, чтение страниц и временных файлов, запись журнала WAL, текст SQL и плана. | [Метрики PostgreSQL](docs/metrics-postgresql.ru.md) |
-| Databases, Tables, Indexes — объекты PostgreSQL | Настройки, размеры, чтение и изменение данных, обслуживание и возраст транзакций; объединение объектов по базе, схеме и табличному пространству. | [Метрики PostgreSQL](docs/metrics-postgresql.ru.md) |
-| Events — события | Группы похожих сообщений PostgreSQL/PgBouncer, время, длительность и записанный контекст событий; отметки метрик. | [Управление интерфейсом](docs/features.ru.md) |
+| Databases, Tables, Indexes — объекты PostgreSQL | Настройки, размеры, чтение и изменение данных, обслуживание и возраст транзакций. Объединение объектов по базе, схеме и табличному пространству. | [Метрики PostgreSQL](docs/metrics-postgresql.ru.md) |
+| Events — события | Группы похожих сообщений PostgreSQL/PgBouncer, время, длительность и записанный контекст событий, отметки метрик. | [Управление интерфейсом](docs/features.ru.md) |
 | Время и графики | Выбор часа и момента внутри него, изменение показателей, карты активности, итоговые значения и распределение измерений. | [Время и вычисления](docs/metrics-time.ru.md) |
 
 [Руководство по интерфейсу](docs/features.ru.md) описывает выбор показателей,
@@ -144,7 +144,7 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-ru-dark.svg">
-  <img alt="Сборщик получает данные Linux и PostgreSQL; веб-сервер передаёт запись браузеру и MCP-клиентам" src="docs/images/architecture-ru.svg">
+  <img alt="Сборщик получает данные Linux и PostgreSQL, а веб-сервер передаёт запись браузеру и MCP-клиентам" src="docs/images/architecture-ru.svg">
 </picture>
 
 Интервалы сбора по умолчанию: процессы — 5 секунд, основные метрики Linux —
@@ -171,7 +171,7 @@ HTML-файл. Он содержит интерфейс и данные: таб�
 </picture>
 
 [kronika-dump](bins/kronika-dump/README.ru.md) читает хранилище и извлекает
-интервал в отдельный файл записи ZMS; [kronika-report](bins/kronika-report/README.ru.md) преобразует
+интервал в отдельный файл записи ZMS, а [kronika-report](bins/kronika-report/README.ru.md) преобразует
 ZMS в HTML.
 
 ## Документация

@@ -14,17 +14,17 @@ happens after an abrupt stop or when a recording cannot be read.
 
 Environment variables are read and validated at startup, before the network
 port is opened. To apply changed settings to a running process, stop it and
-start it again; for systemd use the [service instructions](../../docs/services.md#operations).
+start it again. For systemd use the [service instructions](../../docs/services.md#operations).
 Source: [config.rs](src/config.rs).
 
 | Variable | Default | Accepted value and meaning |
 | --- | --- | --- |
-| `KRONIKA_STORAGE_DIR` | Required | Existing real collector storage root; read/write access for `.idx` files and `.kronika-index.owner.lock`. |
+| `KRONIKA_STORAGE_DIR` | Required | Existing real collector storage root. Requires read/write access for `.idx` files and `.kronika-index.owner.lock`. |
 | `KRONIKA_WEB_LISTEN` | `127.0.0.1:8080` | IP address and port, including IPv6 as `[::1]:8080`. Plain HTTP. |
-| `KRONIKA_WEB_SOURCES` | Required | Decimal bitset `0..3`: bit 0 marks OS configured; bit 1 marks PostgreSQL configured. `0` neither, `1` OS, `2` PostgreSQL, `3` both. |
-| `KRONIKA_WEB_USER` | Unset | Nonempty user name; set together with `KRONIKA_WEB_PASSWORD` to require authentication. |
-| `KRONIKA_WEB_PASSWORD` | Unset | Nonempty password; set together with `KRONIKA_WEB_USER` to require authentication. |
-| `KRONIKA_WEB_DEMO` | Unset | Only set value: `synthetic`; marks the catalog and interface as a synthetic recording. |
+| `KRONIKA_WEB_SOURCES` | Required | Decimal bitset `0..3`: bit 0 marks OS configured. Bit 1 marks PostgreSQL configured. `0` neither, `1` OS, `2` PostgreSQL, `3` both. |
+| `KRONIKA_WEB_USER` | Unset | Nonempty user name. Set together with `KRONIKA_WEB_PASSWORD` to require authentication. |
+| `KRONIKA_WEB_PASSWORD` | Unset | Nonempty password. Set together with `KRONIKA_WEB_USER` to require authentication. |
+| `KRONIKA_WEB_DEMO` | Unset | Only set value: `synthetic`, which marks the catalog and interface as a synthetic recording. |
 | `TMPDIR` | System temporary directory, normally `/tmp` | Writable filesystem location for export temporary files. |
 
 When both credentials are unset, the browser, API and MCP require no
@@ -32,14 +32,14 @@ authentication. When both are nonempty, authentication is required.
 Setting only one credential or an explicitly empty value prevents startup.
 
 The source bitset sets catalog `configured` fields. In the browser, the
-PostgreSQL bit suppresses its no-data tooltip; recorded PostgreSQL data also
+PostgreSQL bit suppresses its no-data tooltip. Recorded PostgreSQL data also
 suppresses it. The OS bit remains catalog metadata. All tabs and recorded
 sections remain available. Recorded health uses collector metadata.
 
 ## Run
 
 Use the collector's recording directory. The example
-marks Linux as configured; use `KRONIKA_WEB_SOURCES=3` for Linux and PostgreSQL.
+marks Linux as configured. Use `KRONIKA_WEB_SOURCES=3` for Linux and PostgreSQL.
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
@@ -54,7 +54,7 @@ replacing `<server-ip>` with the address of the machine running web.
 To require sign-in, add `KRONIKA_WEB_USER=kronika` and
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` before
 `/usr/local/bin/kronika-web` in the command.
-API and MCP then accept HTTP Basic credentials; protected API requests also
+API and MCP then accept HTTP Basic credentials. Protected API requests also
 accept the browser session cookie.
 
 For local access or a reverse proxy on the same machine, use
@@ -66,9 +66,9 @@ For local access or a reverse proxy on the same machine, use
 | --- | --- | --- |
 | `/` | `GET`, `HEAD` | Embedded browser interface. |
 | `/auth/session` | `GET`, `POST`, `DELETE` | Check, create from Basic credentials, or clear a browser session. Cookies receive `Secure` over HTTPS. |
-| `/api/export?from=<unix_second>&to=<unix_second>` | `GET` | HTML attachment for inclusive whole-second bounds; authentication required when credentials are configured. |
+| `/api/export?from=<unix_second>&to=<unix_second>` | `GET` | HTML attachment for inclusive whole-second bounds. Authentication is required when credentials are configured. |
 | Other `/api/*` | `GET` | JSON/NDJSON resources for recorded data. |
-| `/mcp` | `POST` | Stateless Streamable HTTP; same authentication. Query strings and `Origin` headers are rejected. [MCP reference](../../docs/mcp-clients.md). |
+| `/mcp` | `POST` | Stateless Streamable HTTP with the same authentication. Query strings and `Origin` headers are rejected. [MCP reference](../../docs/mcp-clients.md). |
 
 ## Export files
 
@@ -101,5 +101,5 @@ directory. Each process prepares at most one export at a time. Sources: [export.
 
 `-h`, `--help` and `--version` print to stdout and exit before configuration,
 storage access or listener startup. Request, connection and export errors and
-export timings go to stderr; web has no log-level setting. `Ctrl+C` or
+export timings go to stderr. Web has no log-level setting. `Ctrl+C` or
 `SIGTERM` terminates web. Startup/configuration errors exit nonzero.

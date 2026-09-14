@@ -9,7 +9,7 @@ inspect or extract part of a recording and `kronika-report` to create an HTML re
 ## 1. Download and extract
 
 Download the [1.1.1 release archive](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
-for your architecture. The commands below use x86-64; for ARM64, set
+for your architecture. The commands below use x86-64. For ARM64, set
 `target=aarch64-unknown-linux-musl`.
 
 ```sh
@@ -95,8 +95,8 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   /usr/local/bin/kronika-collector
 ```
 
-On a machine shared with PostgreSQL, the CPU count is determined automatically;
-leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset. Installed `pg_stat_statements` and
+On a machine shared with PostgreSQL, the CPU count is determined automatically.
+Leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset. Installed `pg_stat_statements` and
 `pg_store_plans` extensions supply query and plan statistics. Activity, Locks,
 and table and index statistics use PostgreSQL's built-in views.
 
@@ -128,7 +128,7 @@ In a second terminal, start web with the same recording directory.
 
 ### For `local` mode
 
-Use `KRONIKA_WEB_SOURCES=1` for Linux only, as below; change `1` to `3`
+Use `KRONIKA_WEB_SOURCES=1` for Linux only, as below. Change `1` to `3`
 when also collecting PostgreSQL:
 
 ```sh
@@ -158,12 +158,12 @@ Web requires write access to the recording directory to create search indexes
 (`.idx`). In the `local` example,
 both programs run as root and other users cannot access the storage.
 
-`KRONIKA_WEB_SOURCES` reports which sources are configured; it does not enable
+`KRONIKA_WEB_SOURCES` reports which sources are configured. It does not enable
 collection or hide recorded data. See the [web configuration reference](bins/kronika-web/README.md)
 for authentication settings.
 
 For local access, a reverse proxy on the same machine or SSH forwarding, use
-`KRONIKA_WEB_LISTEN=127.0.0.1:8080` instead; this is also the default when unset.
+`KRONIKA_WEB_LISTEN=127.0.0.1:8080` instead. This is also the default when unset.
 To forward that listener, run on the client machine:
 
 ```sh
@@ -171,7 +171,7 @@ ssh -N -L 8080:127.0.0.1:8080 user@monitored-host
 ```
 
 Open <http://127.0.0.1:8080/> there. MCP uses the same listener and authentication
-at `/mcp`; [client setup](docs/mcp-clients.md) is also available in the **AI**
+at `/mcp`. [Client setup](docs/mcp-clients.md) is also available in the **AI**
 panel. [Systemd](docs/services.md) defines persistent services.
 
 ## Reference

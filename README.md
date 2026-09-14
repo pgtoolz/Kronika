@@ -22,7 +22,7 @@ or [build from source](docs/build.md).
 
 Choose `local` to record Linux and, optionally, PostgreSQL in the same VM or pod.
 Choose `postgresql` for a remote server or when you only need database metrics.
-The local examples use `/var/lib/kronika`; the collector creates it if needed.
+The local examples use `/var/lib/kronika`. The collector creates it if needed.
 
 ### Linux and optional PostgreSQL
 
@@ -60,7 +60,7 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 
 If the PostgreSQL CPU capacity is known, add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`,
 replacing `4` with its CPU count.
-Without it, SQL metrics remain available; PostgreSQL Health is unknown.
+Without it, SQL metrics remain available. PostgreSQL Health is unknown.
 See [collector configuration](bins/kronika-collector/README.md#remote-postgresql).
 
 To collect from several PostgreSQL servers, run a `kronika-collector` process
@@ -73,7 +73,7 @@ Start `kronika-web` in a second terminal with the collector’s data directory.
 
 #### For `local` mode
 
-Use `KRONIKA_WEB_SOURCES=1` for Linux only, as below; change `1` to `3`
+Use `KRONIKA_WEB_SOURCES=1` for Linux only, as below. Change `1` to `3`
 when also collecting PostgreSQL:
 
 ```sh
@@ -123,13 +123,13 @@ for the rotation rules and automatic mode.
 
 | Domain | What you can inspect | Reference |
 | --- | --- | --- |
-| Processes | Command, state and process number (PID), CPU use, memory and disk reads/writes; process tree and hourly activity. | [Linux metrics](docs/metrics-linux.md) |
-| Host | CPU, memory, time waiting for resources (PSI), network and disks, free space and device relationships; cgroup resource limits and use. | [Linux metrics](docs/metrics-linux.md) |
-| PostgreSQL sessions | Overview, Activity, Locks, Vacuum; session states and waits, blocking chains, query/transaction durations and table cleanup progress. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
-| Queries and plans | Statements and Plans; calls, execution/planning time, page and temporary-file reads, write-ahead log (WAL) output, SQL and plan text. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
-| PostgreSQL objects | Databases, Tables, Indexes and settings; size, reads and changes, maintenance and transaction ages; grouping by database, schema and tablespace. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
-| Events | Grouped PostgreSQL/PgBouncer log events, occurrences, durations and recorded context; metric marks. | [Views and controls](docs/features.md) |
-| Time and charts | Choose an hour and a time within it; view changes, activity maps, totals and the distribution of measurements. | [Time and calculations](docs/metrics-time.md) |
+| Processes | Command, state and process number (PID), CPU use, memory and disk reads/writes, process tree and hourly activity. | [Linux metrics](docs/metrics-linux.md) |
+| Host | CPU, memory, time waiting for resources (PSI), network and disks, free space and device relationships, cgroup resource limits and use. | [Linux metrics](docs/metrics-linux.md) |
+| PostgreSQL sessions | Overview, Activity, Locks, Vacuum: session states and waits, blocking chains, query/transaction durations and table cleanup progress. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
+| Queries and plans | Statements and Plans: calls, execution/planning time, page and temporary-file reads, write-ahead log (WAL) output, SQL and plan text. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
+| PostgreSQL objects | Databases, Tables and Indexes: settings, size, reads and changes, maintenance and transaction ages. Grouping by database, schema and tablespace. | [PostgreSQL metrics](docs/metrics-postgresql.md) |
+| Events | Grouped PostgreSQL/PgBouncer log events, occurrences, durations and recorded context, metric marks. | [Views and controls](docs/features.md) |
+| Time and charts | Choose an hour and a time within it. View changes, activity maps, totals and the distribution of measurements. | [Time and calculations](docs/metrics-time.md) |
 
 [Views and controls](docs/features.md) explains how to select measurements, group,
 search and sort rows, inspect details in Inspector, view charts and export. The
@@ -144,7 +144,7 @@ the preview recording.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
-  <img alt="Linux and PostgreSQL feed the collector; web reads its recording for the browser and MCP clients" src="docs/images/architecture.svg">
+  <img alt="Linux and PostgreSQL feed the collector, and web reads its recording for the browser and MCP clients" src="docs/images/architecture.svg">
 </picture>
 
 The default collection intervals are 5 seconds for processes, 10 seconds for
@@ -171,7 +171,7 @@ a server or network connection.
 </picture>
 
 [kronika-dump](bins/kronika-dump/README.md) inspects storage and extracts an
-interval into a standalone ZMS recording; [kronika-report](bins/kronika-report/README.md)
+interval into a standalone ZMS recording, and [kronika-report](bins/kronika-report/README.md)
 converts that recording into HTML.
 
 ## Documentation

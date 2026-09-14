@@ -45,7 +45,7 @@ KRONIKA_WEB_PASSWORD=replace-with-a-random-password
 Setting only one credential or an empty value prevents startup.
 
 Systemd parses these as environment assignments. Values containing spaces are
-quoted as a whole; shell substitutions and `export` are not evaluated.
+quoted as a whole. Shell substitutions and `export` are not evaluated.
 
 For Linux-only collection, these settings are sufficient. To also collect
 PostgreSQL, [prepare a monitoring role](../INSTALL.md#5-postgresql) and add its
@@ -60,7 +60,7 @@ For PostgreSQL on the collector machine, use the connection above and set
 
 For PostgreSQL-only collection, set `KRONIKA_COLLECTOR_MODE=postgresql` in
 `collector.env` and `KRONIKA_WEB_SOURCES=2` in `web.env`. PostgreSQL may be local
-or remote. Collector mode controls recording; the web setting declares sources
+or remote. Collector mode controls recording. The web setting declares sources
 in the catalog. See [connection settings](../bins/kronika-collector/README.md#remote-postgresql).
 All parameters:
 [collector](../bins/kronika-collector/README.md) and
@@ -167,7 +167,7 @@ sudo install -m 0755 kronika-collector kronika-web kronika-dump \
 sudo systemctl start kronika-collector kronika-web
 ```
 
-Configuration remains in `/etc/kronika`; recordings remain in `/var/lib/kronika`.
+Configuration remains in `/etc/kronika`. Recordings remain in `/var/lib/kronika`.
 
 ## Remove services
 
