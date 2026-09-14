@@ -2,13 +2,12 @@
 
 [Русская версия](mcp-clients.ru.md)
 
-Copy the client configuration from Kronika’s **Connect an AI agent** panel.
+For connections with Basic Auth, copy the client settings from **Connect an AI agent**.
 
 ## Connection parameters
 
 Replace `<URL>` with `http://<server-ip>:8080/mcp`, using the web server’s IP address.
 For a server listening only on localhost, use an [SSH tunnel](../INSTALL.md#4-start-web).
-If the server requires a password, add the [authentication header](#authentication).
 
 ## Claude Code
 
@@ -53,20 +52,5 @@ Entry in the project's `.cursor/mcp.json` or `~/.cursor/mcp.json`:
   }
 }
 ```
-
-## Authentication
-
-`<USER>` and `<PASSWORD>` are the server’s [web credentials](../bins/kronika-web/README.md#configuration).
-Compute `<BASE64>` with:
-
-```bash
-printf '%s' '<USER>:<PASSWORD>' | base64 | tr -d '\n'
-```
-
-Add the header for your client:
-
-- Claude Code command: `--header 'Authorization: Basic <BASE64>'`.
-- JSON server object: `"headers": { "Authorization": "Basic <BASE64>" }`.
-- TOML server entry: `http_headers = { "Authorization" = "Basic <BASE64>" }`.
 
 [MCP tools and parameters](features.md#mcp).
