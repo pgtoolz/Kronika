@@ -5,7 +5,7 @@
 ## [1.1.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.2)
 
 - Fixed PostgreSQL event timestamps when the server and collector use different time zones.
-- Log events no longer affect current metric selection in MCP.
+- Future log events no longer shift metric selection in MCP, the web interface or HTML reports.
 
 ## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
 
