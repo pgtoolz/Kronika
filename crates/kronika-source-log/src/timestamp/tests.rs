@@ -94,15 +94,35 @@ fn pgbouncer_without_a_zone_keeps_the_local_contract_and_tail() {
 fn pgbouncer_local_abbreviations_keep_the_writers_clock() {
     const CHILD: &str = "KRONIKA_TEST_PGBOUNCER_LOCAL_ZONE";
     if let Ok(line) = std::env::var(CHILD) {
-        assert_eq!(
-            parse_local(&line).map(|(ts, _)| ts),
-            Some(1_789_380_780_000_000)
-        );
+        let (expected, line) = line.split_once('|').expect("expected and line");
+        let expected = if expected == "local" {
+            let naive = chrono::NaiveDateTime::parse_from_str(
+                line.get(..19).expect("wall clock"),
+                "%Y-%m-%d %H:%M:%S",
+            )
+            .expect("wall clock");
+            chrono::TimeZone::from_local_datetime(&chrono::Local, &naive)
+                .earliest()
+                .expect("prior local policy retains the record")
+                .timestamp_micros()
+        } else {
+            expected.parse().expect("epoch")
+        };
+        assert_eq!(parse_local(line).map(|(ts, _)| ts), Some(expected));
         return;
     }
-    for (zone, line) in [
-        ("America/New_York", "2026-09-14 06:13:00 EDT [1]"),
-        ("Europe/Moscow", "2026-09-14 13:13:00 MSK [1]"),
+    for (zone, line, expected) in [
+        (
+            "America/New_York",
+            "2026-09-14 06:13:00 EDT [1]",
+            "1789380780000000",
+        ),
+        (
+            "Europe/Moscow",
+            "2026-09-14 13:13:00 MSK [1]",
+            "1789380780000000",
+        ),
+        ("America/New_York", "2026-11-01 01:30:00 EDT [1]", "local"),
     ] {
         let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
             .args([
@@ -110,7 +130,7 @@ fn pgbouncer_local_abbreviations_keep_the_writers_clock() {
                 "timestamp::tests::pgbouncer_local_abbreviations_keep_the_writers_clock",
             ])
             .env("TZ", zone)
-            .env(CHILD, line)
+            .env(CHILD, format!("{expected}|{line}"))
             .output()
             .expect("child");
         assert!(

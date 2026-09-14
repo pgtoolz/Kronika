@@ -90,7 +90,7 @@ pub(crate) fn parse_local(text: &str) -> Option<(i64, &str)> {
     {
         return parse(text, None).ok();
     }
-    let at = Local.from_local_datetime(&naive).single()?;
+    let at = Local.from_local_datetime(&naive).earliest()?;
     Some((
         at.timestamp().checked_mul(1_000_000)?.checked_add(micros)?,
         rest,
@@ -141,11 +141,24 @@ pub(crate) fn calendar(text: &str) -> Option<(NaiveDateTime, i64, &str, &str)> {
     };
     let mut label = "";
     if let Some(tail) = rest.strip_prefix(' ') {
+        let numeric = tail.starts_with(['+', '-']);
         let end = tail
-            .find(|c: char| {
-                !(c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | ':' | '/' | '_'))
+            .char_indices()
+            .find(|(at, c)| {
+                let offset_colon = numeric
+                    && *c == ':'
+                    && matches!(*at, 3 | 6)
+                    && tail
+                        .as_bytes()
+                        .get(at + 1..at + 3)
+                        .is_some_and(|digits| digits.iter().all(u8::is_ascii_digit))
+                    && tail
+                        .as_bytes()
+                        .get(at + 3)
+                        .is_none_or(|next| !next.is_ascii_digit());
+                !(c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '/' | '_') || offset_colon)
             })
-            .unwrap_or(tail.len());
+            .map_or(tail.len(), |(at, _)| at);
         if end != 0 {
             label = tail.get(..end)?;
             rest = tail.get(end..)?;
