@@ -796,6 +796,11 @@ test("the bundled review fixture answers detail reads without HTTP", async () =>
   }
   try {
     const timeline = await api.loadTimeline(START, new AbortController().signal)
+    assert.equal(timeline.metricAt, START + 2)
+    const partial = await api.loadTimeline(START, new AbortController().signal, undefined, { from: START, toExclusive: START + 2 })
+    assert.equal(partial.metricAt, START + 1)
+    const empty = await api.loadTimeline(START, new AbortController().signal, undefined, { from: START + 3, toExclusive: START + 4 })
+    assert.equal(empty.metricAt, null)
     assert.deepEqual(
       [...new Set(timeline.lanePoints.map((point) => point.lane))].sort(),
       ["cpu_busy", "memory", "pg_oldest_xact", "pg_running", "pg_waiting"],
@@ -928,7 +933,7 @@ test("the current view replaces every prior snapshot while the hour line remains
   })
   const health = row("health", START + 1)
   const timeline = api.hourOf({
-    hour: START, availableHours: [START], segments: [], lanes: { health: [health] }, health: [health],
+    hour: START, metricAt: null, availableHours: [START], segments: [], lanes: { health: [health] }, health: [health],
     points: [], lanePoints: [], laneContexts: [], findings: [], availableSections: ["os_process", "pg_stat_activity"],
   })
   const processView = api.viewData(timeline, {
@@ -955,7 +960,7 @@ test("the timeline carries every finding without per-section index requests", as
     const url = new URL(String(input), "http://kronika.invalid")
     seen.push(url)
     return ndjson([
-      { record: "hour", from: String(START + 1), to: String(START + 9), available_hours: [String(START)] },
+      { record: "hour", metric_at: null, from: String(START + 1), to: String(START + 9), available_hours: [String(START)] },
       {
         record: "finished_segment", id: "7", min_ts: String(START), max_ts: String(START + 10),
         sections: [
@@ -1001,7 +1006,7 @@ test("timeline base is lane-free and the atomic background result retains segmen
   Reflect.deleteProperty(globalThis, "__KRONIKA_REAL_HOUR__")
   const originalFetch = globalThis.fetch
   globalThis.fetch = async () => ndjson([
-    { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
+    { record: "hour", metric_at: null, from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
     {
       record: "finished_segment", id: "segment-a", min_ts: String(START), max_ts: String(START + 10),
       sections: [{ logical_name: "pg_stat_statements", type_id: "1002002" }],
@@ -1039,10 +1044,10 @@ test("background lanes carry the exact ordered base segments and lossless active
     const url = new URL(String(input), "http://kronika.invalid")
     seen.push(url)
     if (url.searchParams.get("part") === "lanes") return ndjson([
-      { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1) },
+      { record: "hour", metric_at: null, from: String(START), to: String(START + 3_600_000_000 - 1) },
     ])
     return ndjson([
-      { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
+      { record: "hour", metric_at: null, from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
       { record: "finished_segment", id: "41", min_ts: String(START), max_ts: String(START + 1), sections: [] },
       {
         record: "active_segment", id: "42", min_ts: String(START + 2), max_ts: String(START + 3), sections: [],
@@ -1073,7 +1078,7 @@ test("timeline source presence does not trust a straddling segment inventory", a
   Reflect.deleteProperty(globalThis, "__KRONIKA_REAL_HOUR__")
   const originalFetch = globalThis.fetch
   globalThis.fetch = async () => ndjson([
-    { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
+    { record: "hour", metric_at: null, from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
     {
       record: "catalog", from: String(START), to: String(START + 3_600_000_000 - 1), demo: "synthetic",
       kronika_version: "9.9.9",
@@ -1103,7 +1108,7 @@ test("the timeline carries the serving version and the layouts each section reco
     record: "finished_segment", id, min_ts: String(START + 1), max_ts: String(START + 2), sections,
   })
   globalThis.fetch = async () => ndjson([
-    { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
+    { record: "hour", metric_at: null, from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
     { record: "catalog", from: String(START), to: String(START + 3_600_000_000 - 1), demo: null, kronika_version: "9.9.9", source_families: [] },
     segment("segment-a", [{ logical_name: "pg_stat_statements", type_id: "1002001" }, { logical_name: null, type_id: "3001001" }]),
     segment("segment-b", [{ logical_name: "pg_stat_statements", type_id: "1002001" }, { logical_name: "pg_stat_statements", type_id: "1002003" }]),
@@ -1114,7 +1119,7 @@ test("the timeline carries the serving version and the layouts each section reco
     assert.deepEqual(api.recordedLayouts(timeline.segments, "pg_stat_statements"), ["1002001", "1002003"])
     assert.deepEqual(api.recordedLayouts(timeline.segments, "pg_stat_database"), [])
     globalThis.fetch = async () => ndjson([
-      { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
+      { record: "hour", metric_at: null, from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
       { record: "catalog", from: String(START), to: String(START + 3_600_000_000 - 1), demo: null, source_families: [] },
     ])
     assert.equal("kronikaVersion" in await api.loadTimeline(START, new AbortController().signal), false, "an older server leaves the version absent")
@@ -1173,11 +1178,11 @@ test("timeline reads the stored PostgreSQL freshness interval for combined healt
     const url = new URL(String(input), "http://kronika.invalid")
     seen.push(`${url.pathname}?${url.searchParams}`)
     if (url.searchParams.get("part") === "lanes") return ndjson([
-      { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1) },
+      { record: "hour", metric_at: null, from: String(START), to: String(START + 3_600_000_000 - 1) },
       { record: "lane_context", segment_id: "a", postgresql_interval_seconds: "1", environment: 1 },
     ])
     return ndjson([
-      { record: "hour", from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
+      { record: "hour", metric_at: null, from: String(START), to: String(START + 3_600_000_000 - 1), available_hours: [String(START)] },
       { record: "finished_segment", id: "a", min_ts: String(START), max_ts: String(START + 2_000_001), sections: [] },
       { record: "index", segment: { id: "a" }, logical_name: "health", checksum: null },
       { record: "point", type_id: "0", series: "postgres_health", ts: String(START), identity: {}, value: 72 },
@@ -1920,4 +1925,26 @@ test("simultaneous old and all-group snapshots route exact section names before 
       assert.deepEqual(result.sections.os_cgroup_v2_cpu?.map((row) => [row.typeId, row.values.cgroup_path]), [["1207001", "/all/child"]])
     }
   } finally { globalThis.fetch = oldFetch }
+})
+
+
+test("hour headers require an exact decimal metric clock or explicit null", async () => {
+  const api = await bundledApi()
+  Reflect.deleteProperty(globalThis, "__KRONIKA_REAL_HOUR__")
+  const originalFetch = globalThis.fetch
+  const header = { record: "hour", from: String(START + 1), to: String(START + 9), available_hours: [String(START)] }
+  try {
+    for (const metricAt of [String(START + 7), null]) {
+      globalThis.fetch = async () => ndjson([{ ...header, metric_at: metricAt }])
+      const timeline = await api.loadTimeline(START, new AbortController().signal, undefined, { from: START + 1, toExclusive: START + 10 })
+      assert.equal(timeline.metricAt, metricAt === null ? null : START + 7)
+      assert.equal(timeline.hour, START)
+    }
+    for (const metricAt of [undefined, START + 7, true, {}, "", "1.5", "1e3", "9007199254740992"]) {
+      globalThis.fetch = async () => ndjson([{ ...header, metric_at: metricAt }])
+      await assert.rejects(api.loadTimeline(START, new AbortController().signal), /hour metric_at is invalid/)
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
