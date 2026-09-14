@@ -21,12 +21,12 @@ happens after an abrupt stop or when a recording cannot be read.
 | --- | --- | --- |
 | `KRONIKA_STORAGE_DIR` | Required | Directory in which collected data is saved. Use a directory, not a symbolic link. |
 | `KRONIKA_SEGMENT_MAX_BYTES` | `67108864` (64 MiB) | Journal size in bytes at which a compressed segment becomes due. Positive whole number. |
-| `KRONIKA_SEGMENT_MAX_AGE_S` | `900` | Period in seconds for scheduled segment closing. Nonnegative whole number; `0` makes a segment eligible immediately. |
+| `KRONIKA_SEGMENT_MAX_AGE_S` | `900` | Period in seconds for scheduled segment closing. Nonnegative whole number. `0` makes a segment eligible immediately. |
 | `KRONIKA_JOURNAL_MAX_BYTES` | `1073741824` (1 GiB) | Maximum journal size in bytes: `36..1073741824`. Reaching it saves the segment early. |
 | `KRONIKA_RETENTION` | `2147483648` (2 GiB) | Storage target in bytes, or `auto` (= `auto:80`), or `auto:P`, where `P` is a whole percentage from 1 to 99. |
 
 Collectors close ZMS files on a schedule with a random time offset. The offset
-survives restarts. Closes can still coincide.
+survives restarts.
 
 The first segment after startup or an early close may be shorter. Ongoing
 collection can delay closing. Size limits and `SIGUSR2` can close it sooner.
@@ -73,7 +73,7 @@ CPU, memory or I/O resources.
 
 | Variable | Default, s | Data |
 | --- | ---: | --- |
-| `KRONIKA_INTERVAL_S` | 5 | Maximum timer sleep; `0` disables timed collection. A shorter positive source interval can wake the timer earlier. |
+| `KRONIKA_INTERVAL_S` | 5 | Maximum timer sleep. `0` disables timed collection. A shorter positive source interval can wake the timer earlier. |
 | `KRONIKA_OS_CORE_INTERVAL_S` | 10 | CPU, memory, disks, network, PSI. |
 | `KRONIKA_OS_MOUNTTOPO_INTERVAL_S` | 60 | Mounts, filesystem capacity and device topology. |
 | `KRONIKA_OS_PROCESS_INTERVAL_S` | 5 | Process counters. |
@@ -145,7 +145,7 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 Add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4` when that server has 4 available CPUs.
 
 The DSN parameter `sslmode` controls TLS: `prefer` (default) uses TLS when
-the server supports it; `require` accepts only TLS; `disable` turns TLS off.
+the server supports it. `require` accepts only TLS. `disable` turns TLS off.
 TLS connections validate the server certificate and hostname. For a private CA,
 set `KRONIKA_PG_SSL_ROOT_CERT=/path/to/ca.pem`. The value `verify-full` is not supported.
 
@@ -260,7 +260,7 @@ In `local` mode, the same `KRONIKA_PG_DSN` used for metrics discovers logs by
 reading `pg_current_logfile()` and `data_directory`. This runs even when `KRONIKA_PG_LOGS`
 is unset. Relative paths are resolved against that server's `data_directory`. A null result adds no path.
 
-`KRONIKA_PG_LOGS` adds local paths or filename patterns. Each path is followed once.
+`KRONIKA_PG_LOGS` adds local paths or filename patterns.
 In both modes, the configured server supplies `log_line_prefix`, `log_timezone`
 and, when available, `system_identifier` for these files.
 Event timestamps use `log_timezone`, independently of the collector's timezone.
@@ -272,7 +272,7 @@ Discovery requires the [function privileges](#postgresql-role) listed above.
 | Read limit | At most 256 MiB per file per collection. |
 | PostgreSQL formats | Filename selects `.csv` → csvlog, `.json` → jsonlog, otherwise stderr. |
 | Time without a DSN | UTC/GMT/Z, numeric offsets and IANA names such as `Europe/Moscow` are accepted. Other abbreviations require the server's `log_timezone`. |
-| Timestamp errors | The error is logged and reading is retried. A stderr prefix without a timestamp uses collection time. |
+| Timestamp errors | The error is logged and reading is retried. A stderr prefix without a timestamp uses read time. |
 | Source error | Logged. Collection from other sources continues. |
 
 ## Linux collection
