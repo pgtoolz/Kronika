@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use kronika_registry::SECTION_WRITE_BATCH_ROWS;
 use kronika_source_log::pgbouncer::PgBouncerLog;
-use kronika_source_log::postgres::{Events, LinePrefix, PgLog};
+use kronika_source_log::postgres::{Events, LinePrefix, LogTimezone, PgLog};
 use kronika_source_log::{MAX_READ_BYTES, Offsets, pgbouncer};
 
 use crate::config::Config;
@@ -77,10 +77,11 @@ struct PostgresSource {
 }
 
 /// What a rescan decided one `PostgreSQL` file should be read as.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct PostgresFacts {
     system_identifier: Option<u64>,
     line_prefix: Option<String>,
+    log_timezone: Option<LogTimezone>,
 }
 
 /// One configured server and the facts that survive a failed refresh.
@@ -89,7 +90,8 @@ struct PostgresTarget {
     connection: settings::ConnectionTarget,
     transport: kronika_source_pg::Transport,
     system_identifier: Option<u64>,
-    last_log: Option<(PathBuf, String)>,
+    last_log: Option<PathBuf>,
+    facts: PostgresFacts,
 }
 
 impl PostgresTarget {
@@ -99,6 +101,7 @@ impl PostgresTarget {
             transport: kronika_source_pg::Transport::from_env()?,
             system_identifier: None,
             last_log: None,
+            facts: PostgresFacts::default(),
         })
     }
 }
@@ -110,6 +113,7 @@ pub(crate) struct LogSources {
     pg_dsn: Option<PostgresTarget>,
     discover_postgres_paths: bool,
     pg_logs: Vec<String>,
+    pg_log_max_lag_secs: u64,
     pgbouncer_dsns: Vec<settings::ConnectionTarget>,
     pgbouncer_logs: Vec<String>,
     postgres: Vec<PostgresSource>,
@@ -142,6 +146,7 @@ impl LogSources {
             pg_dsn,
             discover_postgres_paths: config.mode.collect_os(),
             pg_logs: config.pg_logs.clone(),
+            pg_log_max_lag_secs: config.pg_log_max_lag_secs,
             pgbouncer_dsns,
             pgbouncer_logs: config.pgbouncer_logs.clone(),
             postgres: Vec::new(),
@@ -167,12 +172,13 @@ impl LogSources {
         for target in self
             .pg_dsn
             .iter_mut()
-            .filter(|_| self.discover_postgres_paths)
+            .filter(|_| self.discover_postgres_paths || !self.pg_logs.is_empty())
         {
             match settings::postgres(
                 &target.connection,
                 &target.transport,
                 target.system_identifier,
+                self.discover_postgres_paths,
                 observe,
             )
             .await
@@ -186,6 +192,14 @@ impl LogSources {
                             target.connection.label(),
                             target.connection.source_index(),
                         );
+                    }
+                    target.facts = PostgresFacts {
+                        system_identifier: target.system_identifier,
+                        line_prefix: Some(server.line_prefix),
+                        log_timezone: Some(server.log_timezone),
+                    };
+                    if !self.discover_postgres_paths {
+                        continue;
                     }
                     let Some(path) = server.log_path else {
                         target.last_log = None;
@@ -206,14 +220,8 @@ impl LogSources {
                         );
                         continue;
                     }
-                    target.last_log = Some((path.clone(), server.line_prefix.clone()));
-                    wanted.insert(
-                        path,
-                        PostgresFacts {
-                            system_identifier: target.system_identifier,
-                            line_prefix: Some(server.line_prefix),
-                        },
-                    );
+                    target.last_log = Some(path.clone());
+                    wanted.insert(path, target.facts.clone());
                 }
                 Err(_error) => {
                     log_source_unreachable(
@@ -221,23 +229,28 @@ impl LogSources {
                         target.connection.label(),
                         target.connection.source_index(),
                     );
-                    if let Some((path, line_prefix)) = &target.last_log {
-                        wanted.insert(
-                            path.clone(),
-                            PostgresFacts {
-                                system_identifier: target.system_identifier,
-                                line_prefix: Some(line_prefix.clone()),
-                            },
-                        );
+                    if let Some(path) = &target.last_log
+                        && self.discover_postgres_paths
+                    {
+                        wanted.insert(path.clone(), target.facts.clone());
                     }
                 }
             }
         }
         for entry in &self.pg_logs {
             for path in paths::expand(entry) {
-                wanted.entry(path).or_default();
+                wanted.entry(path).or_insert_with(|| {
+                    self.pg_dsn
+                        .as_ref()
+                        .map(|target| target.facts.clone())
+                        .unwrap_or_default()
+                });
             }
         }
+        self.follow_postgres(wanted);
+    }
+
+    fn follow_postgres(&mut self, wanted: BTreeMap<PathBuf, PostgresFacts>) {
         self.postgres
             .retain(|source| wanted.contains_key(source.log.path()));
         for (path, facts) in wanted {
@@ -251,10 +264,16 @@ impl LogSources {
                 if let Some(prefix) = prefix {
                     existing.log.set_prefix(prefix);
                 }
+                if let Some(timezone) = facts.log_timezone {
+                    existing.log.set_timezone(timezone);
+                }
                 continue;
             }
             let position = self.offsets.get(&key(&path));
-            let log = PgLog::new(path, position, prefix);
+            let mut log = PgLog::new(path, position, prefix);
+            if let Some(timezone) = facts.log_timezone {
+                log.set_timezone(timezone);
+            }
             log_source_opened("postgresql", log.path(), log.format().as_str());
             self.postgres.push(PostgresSource {
                 log,
@@ -318,14 +337,13 @@ impl LogSources {
     pub(crate) fn collect(
         &mut self,
         due: &DueSet,
-        now: i64,
         mut admit: impl FnMut(&LogRows) -> anyhow::Result<bool>,
     ) -> anyhow::Result<bool> {
         if !due.has(SourceKind::Logs) {
             return Ok(true);
         }
         let mut offsets_changed = false;
-        let result = match self.collect_postgres(now, &mut admit, &mut offsets_changed) {
+        let result = match self.collect_postgres(&mut admit, &mut offsets_changed) {
             Ok(true) => self.collect_pgbouncer(&mut admit, &mut offsets_changed),
             other => other,
         };
@@ -337,7 +355,6 @@ impl LogSources {
 
     fn collect_postgres(
         &mut self,
-        now: i64,
         admit: &mut impl FnMut(&LogRows) -> anyhow::Result<bool>,
         offsets_changed: &mut bool,
     ) -> anyhow::Result<bool> {
@@ -349,7 +366,11 @@ impl LogSources {
             let mut event_rows = 0_usize;
             let mut read_failed = false;
             while next_batch_bytes(raw_bytes) != 0 {
-                let batch = match source.log.read_batch(now, SECTION_WRITE_BATCH_ROWS) {
+                let batch = match source.log.read_batch(
+                    || crate::unix_now_us().map_err(std::io::Error::other),
+                    SECTION_WRITE_BATCH_ROWS,
+                    self.pg_log_max_lag_secs,
+                ) {
                     Ok(batch) => batch,
                     Err(error) => {
                         log_collection_failure(PG_LOG_TYPE_ID, format, &error, started.elapsed());

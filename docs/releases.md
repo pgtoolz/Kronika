@@ -4,24 +4,24 @@
 
 ## Release
 
-Download [Kronika 1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
+Download [Kronika 1.1.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.2)
 for Linux x86-64 or ARM64. You can also [build from source](build.md) or use a
 [development build](#development-builds).
 
 <a id="download"></a>
 ## Archives
 
-Release archives for 1.1.1:
+Release archives for 1.1.2:
 
 | Architecture | Archive |
 | --- | --- |
-| x86-64 | [kronika-1.1.1-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.1/kronika-1.1.1-x86_64-unknown-linux-musl.tar.gz) |
-| ARM64 | [kronika-1.1.1-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.1/kronika-1.1.1-aarch64-unknown-linux-musl.tar.gz) |
+| x86-64 | [kronika-1.1.2-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.2/kronika-1.1.2-x86_64-unknown-linux-musl.tar.gz) |
+| ARM64 | [kronika-1.1.2-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.1.2/kronika-1.1.2-aarch64-unknown-linux-musl.tar.gz) |
 
 Each archive has a matching `.tar.gz.sha256` checksum file. See
 [download and extraction](../INSTALL.md#1-download-and-extract), then
 [install the extracted programs](../INSTALL.md#2-install).
-The existing [interactive preview](https://pgtoolz.github.io/Kronika/) remains available.
+[Interactive preview](https://pgtoolz.github.io/Kronika/).
 
 <a id="members-and-identity"></a>
 ## Archive contents and build version

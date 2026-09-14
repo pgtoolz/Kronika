@@ -9,14 +9,14 @@
 
 ## 1. Скачивание и распаковка
 
-Скачайте [архив 1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
+Скачайте [архив 1.1.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.2)
 для своей архитектуры. Команды ниже — для x86-64. Для ARM64 задайте
 `target=aarch64-unknown-linux-musl`.
 
 ```sh
 target=x86_64-unknown-linux-musl
-archive="kronika-1.1.1-$target.tar.gz"
-curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.1.1/$archive"
+archive="kronika-1.1.2-$target.tar.gz"
+curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.1.2/$archive"
 tar -xzf "$archive"
 cd "${archive%.tar.gz}"
 ```
@@ -59,7 +59,6 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 Процессы опрашиваются каждые 5 секунд, основные метрики Linux — каждые 10 секунд.
 
-Веб-интерфейс показывает сохранённую историю измерений и данные текущего сбора.
 `Ctrl+C` останавливает сбор. Для продолжения запустите ту же команду.
 
 Целевой объём хранения `KRONIKA_RETENTION` по умолчанию равен `2147483648` байт
@@ -157,8 +156,7 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.
 
 Веб-серверу нужен доступ на запись в тот же каталог для создания поисковых
-индексов `.idx`. В примере для режима `local`
-обе программы работают от root. Хранилище недоступно другим пользователям.
+индексов `.idx`.
 
 `KRONIKA_WEB_SOURCES` сообщает, какие источники настроены. Он не включает сбор
 и не скрывает записанные данные. Настройки входа описаны в
@@ -172,8 +170,7 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ssh -N -L 8080:127.0.0.1:8080 user@monitored-host
 ```
 
-Затем откройте на ней <http://127.0.0.1:8080/>. Подключение по SSH передаёт
-запросы локальному веб-серверу наблюдаемой машины. ИИ-клиенты используют тот же
+Затем откройте на ней <http://127.0.0.1:8080/>. ИИ-клиенты используют тот же
 адрес и настройки аутентификации, добавляя `/mcp`. [Настройки подключения](docs/mcp-clients.ru.md)
 также доступны в панели **AI**. [Руководство systemd](docs/services.ru.md)
 описывает автоматический запуск обеих программ.

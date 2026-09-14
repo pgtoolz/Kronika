@@ -17,12 +17,11 @@ A recorded hour, 5 September 2026, 19:00–20:00 UTC:
 
 ## Install and run
 
-[Install Kronika 1.1.1](INSTALL.md) from a [Linux release archive](docs/releases.md#download),
+[Install Kronika 1.1.2](INSTALL.md) from a [Linux release archive](docs/releases.md#download),
 or [build from source](docs/build.md).
 
 Choose `local` to record Linux and, optionally, PostgreSQL in the same VM or pod.
 Choose `postgresql` for a remote server or when you only need database metrics.
-The local examples use `/var/lib/kronika`. The collector creates it if needed.
 
 ### Linux and optional PostgreSQL
 
@@ -149,8 +148,7 @@ tables and indexes.
 selection, intervals, access permissions and removal of old recordings.
 
 The web server serves the browser, HTTP API and MCP at one address and port.
-MCP is a protocol through which an AI client can read stored data. The **AI**
-panel provides connection settings. [MCP tools](docs/features.md#mcp) return
+The **AI** panel provides connection settings. [MCP tools](docs/features.md#mcp) return
 values at a chosen time, objects ranked by a measurement, field descriptions,
 events and row details.
 

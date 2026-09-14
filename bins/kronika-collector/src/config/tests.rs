@@ -208,3 +208,54 @@ fn postgres_capacity_is_positive_or_unknown() {
     assert!(super::optional_positive_u32("KRONIKA_POSTGRES_EFFECTIVE_CPUS", Some("0")).is_err());
     assert!(super::optional_positive_u32("KRONIKA_POSTGRES_EFFECTIVE_CPUS", Some("two")).is_err());
 }
+
+#[test]
+fn pg_log_max_lag_is_a_positive_configurable_duration() {
+    const CHILD: &str = "KRONIKA_TEST_MAX_LOG_LAG";
+    if let Ok(expected) = std::env::var(CHILD) {
+        let result = super::Config::from_env();
+        if expected == "invalid" {
+            assert!(
+                result
+                    .err()
+                    .expect("invalid config")
+                    .to_string()
+                    .contains("KRONIKA_PG_LOG_MAX_LAG_S")
+            );
+        } else {
+            assert_eq!(
+                result
+                    .expect("valid config")
+                    .pg_log_max_lag_secs
+                    .to_string(),
+                expected
+            );
+        }
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    for (value, expected) in [
+        (None, "900"),
+        (Some("300"), "300"),
+        (Some("0"), "invalid"),
+        (Some("-1"), "invalid"),
+        (Some("abc"), "invalid"),
+    ] {
+        let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"));
+        child
+            .env_clear()
+            .env("KRONIKA_STORAGE_DIR", dir.path())
+            .env(CHILD, expected)
+            .arg("--exact")
+            .arg("config::tests::pg_log_max_lag_is_a_positive_configurable_duration");
+        if let Some(value) = value {
+            child.env("KRONIKA_PG_LOG_MAX_LAG_S", value);
+        }
+        let output = child.output().expect("config child");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}

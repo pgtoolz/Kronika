@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use futures_util::TryStreamExt as _;
+use kronika_source_log::postgres::LogTimezone;
 use kronika_source_pg::query::{self, QueryStats};
 use kronika_source_pg::{Session, Transport};
 use tokio_postgres::config::Host;
@@ -30,8 +31,18 @@ const POSTGRES_LOG_FACTS_QUERY: &str = concat!(
     " bins/kronika-collector/src/log_sources/settings.rs */ ",
     "SELECT session_user AS user_name, current_database() AS database_name, ",
     "current_setting('log_line_prefix') AS line_prefix, ",
+    "current_setting('log_timezone') AS log_timezone, ",
     "current_setting('data_directory') AS data_directory, ",
     "pg_current_logfile() AS log_path"
+);
+const POSTGRES_LOG_SETTINGS_QUERY: &str = concat!(
+    "/* kronika:",
+    env!("CARGO_PKG_VERSION"),
+    " bins/kronika-collector/src/log_sources/settings.rs */ ",
+    "SELECT session_user AS user_name, current_database() AS database_name, ",
+    "current_setting('log_line_prefix') AS line_prefix, ",
+    "current_setting('log_timezone') AS log_timezone, ",
+    "'' AS data_directory, NULL AS log_path"
 );
 const POSTGRES_SYSTEM_IDENTIFIER_QUERY: &str = concat!(
     "/* kronika:",
@@ -172,6 +183,7 @@ pub(super) struct PostgresServer {
     pub(super) log_path: Option<String>,
     /// The layout of a `stderr` line's prefix.
     pub(super) line_prefix: String,
+    pub(super) log_timezone: LogTimezone,
     /// Generated at `initdb`, so it survives restarts, renames and moves.
     pub(super) system_identifier: Option<u64>,
 }
@@ -189,6 +201,7 @@ struct LogFacts {
     user_name: String,
     database_name: String,
     line_prefix: String,
+    log_timezone: LogTimezone,
     data_directory: String,
     log_path: Option<String>,
 }
@@ -207,6 +220,7 @@ pub(super) async fn postgres(
     target: &ConnectionTarget,
     transport: &Transport,
     cached_system_identifier: Option<u64>,
+    discover_paths: bool,
     observe: &mut (dyn FnMut(PgObservation) + Send),
 ) -> Result<PostgresServer> {
     let connect_started = Instant::now();
@@ -279,7 +293,7 @@ pub(super) async fn postgres(
     let facts = query::timeout(
         session,
         QUERY_TIMEOUT,
-        read_log_facts(session, &mut facts_stats),
+        read_log_facts(session, &mut facts_stats, discover_paths),
     )
     .await;
     let facts = match facts {
@@ -403,6 +417,7 @@ pub(super) async fn postgres(
             .log_path
             .map(|name| absolute(&facts.data_directory, &name)),
         line_prefix: facts.line_prefix,
+        log_timezone: facts.log_timezone,
         system_identifier,
     })
 }
@@ -432,9 +447,20 @@ fn observe_query(
     }));
 }
 
-async fn read_log_facts(session: Session<'_>, stats: &mut QueryStats) -> Result<LogFacts> {
+async fn read_log_facts(
+    session: Session<'_>,
+    stats: &mut QueryStats,
+    discover_paths: bool,
+) -> Result<LogFacts> {
     let stream = session
-        .simple_stream(POSTGRES_LOG_FACTS_QUERY, stats)
+        .simple_stream(
+            if discover_paths {
+                POSTGRES_LOG_FACTS_QUERY
+            } else {
+                POSTGRES_LOG_SETTINGS_QUERY
+            },
+            stats,
+        )
         .await
         .context("read PostgreSQL log settings")?;
     let mut stream = std::pin::pin!(stream);
@@ -458,6 +484,11 @@ async fn read_log_facts(session: Session<'_>, stats: &mut QueryStats) -> Result<
         .get("line_prefix")
         .context("PostgreSQL log settings omitted line_prefix")?
         .to_owned();
+    let log_timezone = LogTimezone::parse(
+        row.get("log_timezone")
+            .context("PostgreSQL log settings omitted log_timezone")?,
+    )
+    .context("resolve PostgreSQL log_timezone")?;
     let data_directory = row
         .get("data_directory")
         .context("PostgreSQL log settings omitted data_directory")?
@@ -467,6 +498,7 @@ async fn read_log_facts(session: Session<'_>, stats: &mut QueryStats) -> Result<
         user_name,
         database_name,
         line_prefix,
+        log_timezone,
         data_directory,
         log_path,
     })

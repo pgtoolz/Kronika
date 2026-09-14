@@ -14,13 +14,23 @@ pub(super) const fn continues(_open: &[String], _line: &str, _raw_quotes_odd: bo
     false
 }
 
-pub(super) fn parse(line: &str, now: i64) -> Option<PgRecord> {
-    let value: Value = serde_json::from_str(line).ok()?;
-    let severity = Severity::parse(text(&value, "error_severity")?)?;
-    let message = text(&value, "message")?;
-    let ts = text(&value, "timestamp")
-        .and_then(timestamp::parse_local)
-        .map_or(now, |(ts, _rest)| ts);
+pub(super) fn parse(
+    line: &str,
+    zone: Option<&timestamp::LogTimezone>,
+) -> Result<Option<PgRecord>, &'static str> {
+    let Ok(value) = serde_json::from_str::<Value>(line) else {
+        return Ok(None);
+    };
+    let Some(severity) = text(&value, "error_severity").and_then(Severity::parse) else {
+        return Ok(None);
+    };
+    let Some(message) = text(&value, "message") else {
+        return Ok(None);
+    };
+    let (ts, rest) = timestamp::parse(text(&value, "timestamp").ok_or(timestamp::INVALID)?, zone)?;
+    if !rest.is_empty() {
+        return Err(timestamp::INVALID);
+    }
     let mut parsed = PgRecord::new(ts, severity, message);
     parsed.sqlstate = text(&value, "state_code").and_then(bounded);
     parsed.detail = text(&value, "detail").and_then(bounded);
@@ -29,7 +39,7 @@ pub(super) fn parse(line: &str, now: i64) -> Option<PgRecord> {
     parsed.statement = text(&value, "statement").and_then(bounded);
     parsed.database = text(&value, "dbname").and_then(bounded);
     parsed.username = text(&value, "user").and_then(bounded);
-    Some(parsed)
+    Ok(Some(parsed))
 }
 
 fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

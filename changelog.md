@@ -2,6 +2,11 @@
 
 [Русская версия](changelog.ru.md)
 
+## [1.1.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.2)
+
+- Fixed PostgreSQL event timestamps when the server and collector use different time zones.
+- The collector skips PostgreSQL log events older than 15 minutes. Set `KRONIKA_PG_LOG_MAX_LAG_S` to change the limit.
+
 ## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
 
 - Web authentication is now optional.

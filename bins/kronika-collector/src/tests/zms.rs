@@ -134,6 +134,7 @@ fn config(root: &Path, journal_max_bytes: u64) -> Config {
         pg_dsn: None,
         postgres_effective_cpus: None,
         pg_logs: Vec::new(),
+        pg_log_max_lag_secs: 900,
         pgbouncer_dsns: Vec::new(),
         pgbouncer_logs: Vec::new(),
     }

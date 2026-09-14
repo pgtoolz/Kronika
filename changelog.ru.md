@@ -2,6 +2,11 @@
 
 [English version](changelog.md)
 
+## [1.1.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.2)
+
+- Исправлено время событий PostgreSQL при разных часовых поясах сервера и коллектора.
+- Коллектор пропускает события PostgreSQL старше 15 минут. Лимит задаётся через `KRONIKA_PG_LOG_MAX_LAG_S`.
+
 ## [1.1.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.1)
 
 - Пароль для веб-интерфейса теперь необязателен.

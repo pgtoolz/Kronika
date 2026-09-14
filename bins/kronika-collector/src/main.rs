@@ -650,14 +650,11 @@ fn run_collection_cycle(
     already_appended: bool,
     cgroup_pass: Option<&cgroup_discovery::CgroupPass>,
 ) -> Result<Vec<PathBuf>> {
-    let Some(parse_now) = collection_timestamp() else {
-        return Ok(Vec::new());
-    };
     let mut first_window = true;
     let mut last_ts = None;
     let mut written = Vec::new();
     let mut appended = already_appended;
-    let completed = logs.collect(due, parse_now, |rows| {
+    let completed = logs.collect(due, |rows| {
         let batch_due = if first_window {
             first_window = false;
             due.clone()
