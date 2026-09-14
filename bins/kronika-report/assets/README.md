@@ -19,21 +19,8 @@ The build fixes path remaps for the repository and Cargo home, the
 `const-random` seed, and C compiler identification so bytes remain identical
 across build hosts.
 
-wasm-bindgen first emits its `web` target. The build inserts one bounded
-`initEmbedded` entry point at pinned generated-code markers, then esbuild keeps
-only that entry point and `ReportSession` in the classic-script
-`KronikaReportWasm` global. The committed binding has no URL or network loader.
-The report compiles its embedded bytes and passes the resulting
-`WebAssembly.Module` to `initEmbedded`, which instantiates asynchronously.
-
 The raw generated WebAssembly is 10,284,022 bytes. Its committed gzip form is
 2,500,294 bytes with SHA-256
 `34ad90157da424feaf9e1235a9e058da1e3635da1ec3cb262f2f98bad7e3504e`.
 The 3,885-byte JavaScript binding has SHA-256
 `4635ae734e8c1e1aeb463ae1096f4fdc2a65d98e715b55cee9fe46956f29cba8`.
-
-Each input `Uint8Array` is copied once into WebAssembly linear memory by the
-generated binding. Rust adopts those allocations as `Vec<u8>` values and moves
-them into the retained `ReportEngine` without another complete ZMS or IDX
-copy. Returned NDJSON is assembled from the existing streamed records and is
-copied once from WebAssembly into JavaScript.

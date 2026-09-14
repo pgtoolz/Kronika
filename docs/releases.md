@@ -21,7 +21,7 @@ Release archives for 1.1.2:
 Each archive has a matching `.tar.gz.sha256` checksum file. See
 [download and extraction](../INSTALL.md#1-download-and-extract), then
 [install the extracted programs](../INSTALL.md#2-install).
-The existing [interactive preview](https://pgtoolz.github.io/Kronika/) remains available.
+[Interactive preview](https://pgtoolz.github.io/Kronika/).
 
 <a id="members-and-identity"></a>
 ## Archive contents and build version

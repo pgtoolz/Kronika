@@ -58,7 +58,6 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 
 Processes are sampled every 5 seconds and core Linux metrics every 10 seconds.
 
-The web interface shows recorded history and data from ongoing collection.
 `Ctrl+C` stops collection. Run the same command to resume.
 
 `KRONIKA_RETENTION` defaults to `2147483648` bytes (2 GiB). For a fixed 10 GiB
@@ -152,8 +151,7 @@ To require sign-in, add `KRONIKA_WEB_USER=kronika` and
 `KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` to the launch command.
 
 Web requires write access to the recording directory to create search indexes
-(`.idx`). In the `local` example,
-both programs run as root and other users cannot access the storage.
+(`.idx`).
 
 `KRONIKA_WEB_SOURCES` reports which sources are configured. It does not enable
 collection or hide recorded data. See the [web configuration reference](bins/kronika-web/README.md)
