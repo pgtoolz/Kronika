@@ -106,7 +106,7 @@ No contributing value produces null. A single counter observation cannot form a 
 
 ### RSS Grid mean
 
-For `os_process.rmem_kb` in Grid mode, let `T` be the set of distinct timestamps at which the query observes a usable RSS value, and `N = |T|`. The summary of PID `p` is `meanRSS(p) = Σ recordedRSS(p,t) / N`. A PID absent at a timestamp contributes nothing to the numerator; the denominator is shared by all PIDs. Group, Total, and Other summaries sum these means and retain the same denominator. Multiply KiB by 1,024 for bytes. This is a sample mean, without time weighting. Cells retain their gauge rule. `RankingOnly`, including MCP rankings, retains gauge maxima. Source: [`RssMean`, `score`, `additive_summary`](../crates/kronika-query/src/heatmap/execution.rs); existing checks: [RSS artifact test](../bins/kronika-web/src/tests/artifacts/heatmap_rss.rs).
+For `os_process.rmem_kb` in Grid mode, let `T` be the set of distinct timestamps at which the query observes a usable RSS value, and `N = |T|`. The summary of PID `p` is `meanRSS(p) = Σ recordedRSS(p,t) / N`. A PID absent at a timestamp contributes nothing to the numerator; the denominator is shared by all PIDs. Group, Total, and Other summaries sum these means and retain the same denominator. Multiply KiB by 1,024 for bytes. This is a sample mean, without time weighting. Cells retain their gauge rule. `RankingOnly`, including MCP rankings, retains gauge maxima. Source: [`RssMean`, `score`, `additive_summary`](../crates/kronika-query/src/heatmap/execution.rs); existing checks: [RSS artifact test](../bins/kronika-web/src/tests/heatmap_rss.rs).
 
 ### Cuts, grouping, and scales
 

@@ -176,4 +176,5 @@ fn system_now_micros() -> Result<i64, TimeSpecError> {
 }
 
 #[cfg(test)]
+#[path = "../tests/mcp/time.rs"]
 mod tests;

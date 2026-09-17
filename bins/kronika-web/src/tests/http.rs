@@ -6,17 +6,16 @@ use hyper::header::{
 use hyper::{Method, Request, StatusCode};
 use tokio::sync::{mpsc, oneshot};
 
-use super::{
-    RequestError, RequestTarget, SessionTarget, SingleHeader, authorization, if_none_match_values,
-    response_from_meta, route_request, route_request_at, session_response,
-};
 use crate::api::{ApiError, CachePolicy, Prepared, ResponseMeta};
 use crate::body::StreamHead;
 use crate::config::Account;
 use crate::encoding::{AcceptedEncodings, ContentCoding};
+use crate::{
+    RequestError, RequestTarget, SessionTarget, SingleHeader, authorization, if_none_match_values,
+    response_from_meta, route_request, route_request_at, session_response,
+};
 
-pub(crate) mod artifacts;
-mod multi_layout;
+use super::artifacts;
 
 const AUTHORIZATION: &str = "Basic ZGJhOnNlY3JldA==";
 
@@ -92,7 +91,7 @@ fn session_request_from_origins(
     request
 }
 
-fn session_route_response(request: &Request<()>, now: u64) -> hyper::Response<super::WebBody> {
+fn session_route_response(request: &Request<()>, now: u64) -> hyper::Response<crate::WebBody> {
     match route_request_at(Some(&account()), request, now).expect("session route") {
         RequestTarget::Session(target) => {
             session_response(Some(&account()), target).expect("session response")
@@ -161,7 +160,7 @@ fn request_cookie(set_cookie: &str) -> &str {
     set_cookie.split(';').next().expect("request cookie")
 }
 
-fn rejection(method: Method, target: &str) -> hyper::Response<super::WebBody> {
+fn rejection(method: Method, target: &str) -> hyper::Response<crate::WebBody> {
     route_request(Some(&account()), &request(method, target))
         .expect_err("request is rejected")
         .response()
@@ -948,7 +947,7 @@ const fn unauthorized_vary() -> hyper::header::HeaderValue {
 async fn blocking_resource_work_does_not_stall_the_current_thread_runtime() {
     let (entered_tx, entered_rx) = oneshot::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let response = tokio::spawn(super::blocking_stream(
+    let response = tokio::spawn(crate::blocking_stream(
         move || {
             let _sent = entered_tx.send(());
             release_rx.recv().expect("release blocking producer");
@@ -982,7 +981,7 @@ async fn blocking_resource_work_does_not_stall_the_current_thread_runtime() {
 async fn changed_journal_generation_replays_preparation_once() {
     let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&attempts);
-    let response = super::blocking_stream_with_replay(
+    let response = crate::blocking_stream_with_replay(
         move || {
             if observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
                 return Err(ApiError::Unreadable(Box::new(
@@ -1025,7 +1024,7 @@ fn source_change_detection_reaches_reader_errors_inside_index_wrappers() {
 async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
     let changed_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&changed_attempts);
-    let changed = super::blocking_stream_with_replay(
+    let changed = crate::blocking_stream_with_replay(
         move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Err(ApiError::Unreadable(Box::new(
@@ -1045,7 +1044,7 @@ async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
 
     let broken_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&broken_attempts);
-    let broken = super::blocking_stream_with_replay(
+    let broken = crate::blocking_stream_with_replay(
         move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Err(ApiError::Unreadable(Box::new(
@@ -1065,7 +1064,7 @@ async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
 
     let refused_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&refused_attempts);
-    let refused = super::blocking_stream_with_replay(
+    let refused = crate::blocking_stream_with_replay(
         move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Err(ApiError::NoSuchSegment)

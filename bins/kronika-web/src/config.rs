@@ -123,4 +123,5 @@ fn source_set(raw: Option<String>) -> Result<u32> {
 }
 
 #[cfg(test)]
+#[path = "tests/config.rs"]
 mod tests;

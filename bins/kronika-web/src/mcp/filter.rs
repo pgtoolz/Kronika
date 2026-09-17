@@ -334,4 +334,5 @@ fn quantity_value(value: &FilterAtom) -> Option<SearchValue> {
 }
 
 #[cfg(test)]
+#[path = "../tests/mcp/filter.rs"]
 mod tests;

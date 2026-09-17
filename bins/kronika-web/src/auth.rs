@@ -179,4 +179,5 @@ fn same(left: &[u8; 32], right: &[u8; 32]) -> bool {
 }
 
 #[cfg(test)]
+#[path = "tests/auth.rs"]
 mod tests;

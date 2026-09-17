@@ -36,6 +36,7 @@ use crate::api::{ApiError, CachePolicy, Prepared, ResponseMeta};
 use crate::config::SOURCE_OS;
 use crate::encoding::AcceptedEncodings;
 
+#[path = "heatmap_rss.rs"]
 mod heatmap_rss;
 
 const SEGMENT_ID: i64 = 1_709_164_800_000_000;

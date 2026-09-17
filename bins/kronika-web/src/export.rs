@@ -342,5 +342,5 @@ fn stream_file(file: &mut File, len: u64, sender: &mpsc::Sender<BodyItem>) {
 }
 
 #[cfg(test)]
-#[path = "export/tests.rs"]
+#[path = "tests/export.rs"]
 mod tests;

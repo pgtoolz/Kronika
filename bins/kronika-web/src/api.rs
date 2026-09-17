@@ -12,6 +12,7 @@ use crate::encoding::etag_matches;
 use crate::route::Route;
 
 #[cfg(test)]
+#[path = "tests/api.rs"]
 mod tests;
 
 /// Cache policy applied centrally after preparation.

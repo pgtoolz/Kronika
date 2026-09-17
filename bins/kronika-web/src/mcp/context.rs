@@ -112,4 +112,5 @@ fn exclusive_recorded_range(range: Option<(i64, i64)>) -> Result<Option<(i64, i6
 }
 
 #[cfg(test)]
+#[path = "../tests/mcp/context.rs"]
 mod tests;

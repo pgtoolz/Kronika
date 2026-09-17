@@ -43,8 +43,10 @@ mod semantics;
 mod time;
 
 #[cfg(test)]
+#[path = "tests/mcp/finders.rs"]
 mod finder_tests;
 #[cfg(test)]
+#[path = "tests/mcp/transport.rs"]
 mod tests;
 
 #[cfg(test)]

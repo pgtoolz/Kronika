@@ -148,4 +148,5 @@ fn newest_rows(
 }
 
 #[cfg(test)]
+#[path = "../tests/mcp/instance.rs"]
 mod tests;

@@ -314,4 +314,5 @@ pub(crate) fn set_vary(response: &mut Response<WebBody>) {
 }
 
 #[cfg(test)]
+#[path = "tests/ui.rs"]
 mod tests;

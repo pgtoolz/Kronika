@@ -999,4 +999,5 @@ fn rewrite_detail_schema(value: &mut Value) {
 }
 
 #[cfg(test)]
+#[path = "../tests/mcp/catalog.rs"]
 mod tests;

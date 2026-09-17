@@ -151,4 +151,5 @@ pub(crate) fn etag_matches(offered: &str, current: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "tests/encoding.rs"]
 mod tests;

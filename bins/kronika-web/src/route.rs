@@ -33,4 +33,5 @@ fn native(query: &str, route: Route) -> Result<Route, RouteError> {
 }
 
 #[cfg(test)]
+#[path = "tests/route.rs"]
 mod tests;
