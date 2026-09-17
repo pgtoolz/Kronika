@@ -24,8 +24,7 @@ use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 
 use kronika_query::{QueryContext, QueryError};
 
-use crate::WebBody;
-use crate::body::BodyError;
+use crate::body::{BodyError, WebBody};
 use crate::config::Config;
 use crate::query_adapter::NativeDataset;
 

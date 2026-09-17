@@ -302,7 +302,7 @@ fn strong_etag(bytes: &[u8]) -> String {
     format!("\"{:x}\"", Sha256::digest(bytes))
 }
 
-async fn collect_frames(response: hyper::Response<crate::WebBody>) -> (Vec<u8>, Vec<usize>) {
+async fn collect_frames(response: hyper::Response<crate::body::WebBody>) -> (Vec<u8>, Vec<usize>) {
     let mut body = response.into_body();
     let mut bytes = Vec::new();
     let mut frames = Vec::new();

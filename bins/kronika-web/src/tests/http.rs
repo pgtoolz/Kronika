@@ -10,10 +10,11 @@ use crate::api::{ApiError, CachePolicy, Prepared, ResponseMeta};
 use crate::body::StreamHead;
 use crate::config::Account;
 use crate::encoding::{AcceptedEncodings, ContentCoding};
-use crate::{
+use crate::request::{
     RequestError, RequestTarget, SessionTarget, SingleHeader, authorization, if_none_match_values,
-    response_from_meta, route_request, route_request_at, session_response,
+    route_request, route_request_at, session_response,
 };
+use crate::streaming::response_from_meta;
 
 use super::artifacts;
 
@@ -91,7 +92,10 @@ fn session_request_from_origins(
     request
 }
 
-fn session_route_response(request: &Request<()>, now: u64) -> hyper::Response<crate::WebBody> {
+fn session_route_response(
+    request: &Request<()>,
+    now: u64,
+) -> hyper::Response<crate::body::WebBody> {
     match route_request_at(Some(&account()), request, now).expect("session route") {
         RequestTarget::Session(target) => {
             session_response(Some(&account()), target).expect("session response")
@@ -100,8 +104,19 @@ fn session_route_response(request: &Request<()>, now: u64) -> hyper::Response<cr
     }
 }
 
-#[test]
-fn the_instance_label_names_the_largest_recorded_database() {
+fn label_config(root: &std::path::Path) -> std::sync::Arc<crate::config::Config> {
+    std::sync::Arc::new(crate::config::Config {
+        data_root: root.to_path_buf(),
+        listen: "127.0.0.1:0".parse().expect("listen address"),
+        account: Some(account()),
+        sources: crate::config::SOURCE_POSTGRESQL,
+        synthetic_demo: false,
+        export_gate: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+    })
+}
+
+#[tokio::test]
+async fn the_instance_label_names_the_largest_recorded_database() {
     let mut fixture = artifacts::Fixture::new();
     fixture.append_placed_table_snapshots(&[
         (
@@ -110,57 +125,45 @@ fn the_instance_label_names_the_largest_recorded_database() {
         (100, 2, 21, 0, "big", "public", "t2", None, None, 900, None),
     ]);
     fixture.finish();
-    let config = |root: &std::path::Path| crate::config::Config {
-        data_root: root.to_path_buf(),
-        listen: "127.0.0.1:0".parse().expect("listen address"),
-        account: Some(account()),
-        sources: crate::config::SOURCE_POSTGRESQL,
-        synthetic_demo: false,
-        export_gate: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
-    };
-    assert_eq!(
-        crate::largest_database(&config(fixture.root())),
-        Some("big".to_owned())
-    );
-    let empty = artifacts::Fixture::new();
-    assert_eq!(crate::largest_database(&config(empty.root())), None);
-
-    let body: serde_json::Value =
-        serde_json::from_str(&crate::instance_label_body(Some("big"))).expect("json");
+    let response = crate::server::instance_label(label_config(fixture.root())).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[CACHE_CONTROL], "private,max-age=86400");
+    assert_eq!(response.headers()[VARY], "Authorization, Cookie");
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
     assert_eq!(body["record"], "instance_label");
     assert_eq!(body["database"], "big");
-    let body: serde_json::Value =
-        serde_json::from_str(&crate::instance_label_body(None)).expect("json");
-    assert!(body["database"].is_null());
 }
 
-#[test]
-fn the_day_cache_header_overrides_no_store() {
-    let cached = crate::day_cached_private(crate::json_response(StatusCode::OK, "{}".to_owned()));
-    assert_eq!(
-        cached.headers().get(CACHE_CONTROL),
-        Some(&hyper::header::HeaderValue::from_static(
-            "private,max-age=86400"
-        ))
-    );
-    assert_eq!(
-        cached.headers().get(VARY),
-        Some(&hyper::header::HeaderValue::from_static(
-            "Authorization, Cookie"
-        ))
-    );
-    let plain = crate::json_response(StatusCode::OK, "{}".to_owned());
-    assert_eq!(
-        plain.headers().get(CACHE_CONTROL),
-        Some(&hyper::header::HeaderValue::from_static("private,no-store"))
-    );
+#[tokio::test]
+async fn missing_instance_labels_are_not_cached() {
+    let empty = artifacts::Fixture::new();
+    for root in [empty.root().to_path_buf(), empty.root().join("missing")] {
+        let response = crate::server::instance_label(label_config(&root)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[CACHE_CONTROL], "private,no-store");
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(body["record"], "instance_label");
+        assert!(body["database"].is_null());
+    }
 }
 
 fn request_cookie(set_cookie: &str) -> &str {
     set_cookie.split(';').next().expect("request cookie")
 }
 
-fn rejection(method: Method, target: &str) -> hyper::Response<crate::WebBody> {
+fn rejection(method: Method, target: &str) -> hyper::Response<crate::body::WebBody> {
     route_request(Some(&account()), &request(method, target))
         .expect_err("request is rejected")
         .response()
@@ -947,7 +950,7 @@ const fn unauthorized_vary() -> hyper::header::HeaderValue {
 async fn blocking_resource_work_does_not_stall_the_current_thread_runtime() {
     let (entered_tx, entered_rx) = oneshot::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let response = tokio::spawn(crate::blocking_stream(
+    let response = tokio::spawn(crate::tests::stream_once(
         move || {
             let _sent = entered_tx.send(());
             release_rx.recv().expect("release blocking producer");
@@ -981,7 +984,7 @@ async fn blocking_resource_work_does_not_stall_the_current_thread_runtime() {
 async fn changed_journal_generation_replays_preparation_once() {
     let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&attempts);
-    let response = crate::blocking_stream_with_replay(
+    let response = crate::streaming::prepare_response(
         move || {
             if observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
                 return Err(ApiError::Unreadable(Box::new(
@@ -1024,7 +1027,7 @@ fn source_change_detection_reaches_reader_errors_inside_index_wrappers() {
 async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
     let changed_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&changed_attempts);
-    let changed = crate::blocking_stream_with_replay(
+    let changed = crate::streaming::prepare_response(
         move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Err(ApiError::Unreadable(Box::new(
@@ -1044,7 +1047,7 @@ async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
 
     let broken_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&broken_attempts);
-    let broken = crate::blocking_stream_with_replay(
+    let broken = crate::streaming::prepare_response(
         move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Err(ApiError::Unreadable(Box::new(
@@ -1064,7 +1067,7 @@ async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
 
     let refused_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&refused_attempts);
-    let refused = crate::blocking_stream_with_replay(
+    let refused = crate::streaming::prepare_response(
         move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Err(ApiError::NoSuchSegment)
@@ -1079,8 +1082,8 @@ async fn changed_source_replay_is_bounded_and_does_not_repeat_refusals() {
     );
 }
 
-#[test]
-fn mcp_access_body_carries_the_basic_value_only_when_authentication_is_on() {
+#[tokio::test]
+async fn mcp_access_body_carries_the_basic_value_only_when_authentication_is_on() {
     let config = |account| crate::config::Config {
         data_root: std::path::PathBuf::from("/nonexistent"),
         listen: "127.0.0.1:0".parse().expect("listen address"),
@@ -1090,12 +1093,25 @@ fn mcp_access_body_carries_the_basic_value_only_when_authentication_is_on() {
         export_gate: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
     };
 
-    let with_auth: serde_json::Value =
-        serde_json::from_str(&crate::mcp_access_body(&config(Some(account())))).expect("json");
+    let response = crate::server::mcp_access(&config(Some(account())));
+    assert_eq!(response.headers()[CACHE_CONTROL], "private,no-store");
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let with_auth: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
     assert_eq!(with_auth["record"], "mcp_access");
     assert_eq!(with_auth["authorization"], AUTHORIZATION);
 
-    let open: serde_json::Value =
-        serde_json::from_str(&crate::mcp_access_body(&config(None))).expect("json");
+    let response = crate::server::mcp_access(&config(None));
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let open: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
     assert!(open["authorization"].is_null());
 }

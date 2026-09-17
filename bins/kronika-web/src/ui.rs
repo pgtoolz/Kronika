@@ -13,8 +13,7 @@ use hyper::header::{
 };
 use hyper::{Response, StatusCode};
 
-use crate::WebBody;
-use crate::body::BodyError;
+use crate::body::{BodyError, WebBody};
 use crate::encoding::{ContentCoding, etag_matches};
 
 const UI_GZIP: &[u8] = include_bytes!("../ui/kronika-ui.html.gz");

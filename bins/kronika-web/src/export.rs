@@ -16,9 +16,9 @@ use kronika_report::{HtmlReportError, ReportTimeRange, write_html_from_file_with
 use tokio::sync::{Semaphore, mpsc};
 
 use crate::api::CachePolicy;
-use crate::body::{BodyError, BodyItem, ChannelBody, ChunkWriter};
+use crate::body::{BodyError, BodyItem, ChannelBody, ChunkWriter, WebBody};
+use crate::response::{common_headers, refused};
 use crate::route::{MAX_QUERY_BYTES, RouteError};
-use crate::{WebBody, common_headers, refused};
 
 const FILE_BUFFER_BYTES: usize = 64 * 1_024;
 

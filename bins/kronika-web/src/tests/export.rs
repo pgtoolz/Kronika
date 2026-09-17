@@ -48,7 +48,7 @@ fn test_prepared_export() -> PreparedExport {
 async fn start_blocked_export(
     gate: Arc<tokio::sync::Semaphore>,
 ) -> (
-    tokio::task::JoinHandle<hyper::Response<crate::WebBody>>,
+    tokio::task::JoinHandle<hyper::Response<crate::body::WebBody>>,
     mpsc::Sender<()>,
 ) {
     let (started_send, started_receive) = tokio::sync::oneshot::channel();
@@ -74,7 +74,7 @@ fn poll_ready<F: Future>(future: Pin<&mut F>) -> F::Output {
 }
 
 async fn assert_error_response(
-    response: hyper::Response<crate::WebBody>,
+    response: hyper::Response<crate::body::WebBody>,
     status: StatusCode,
     body: &[u8],
 ) {

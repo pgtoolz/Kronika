@@ -7,6 +7,7 @@ use std::task::{Context, Poll};
 
 use flate2::write::GzEncoder;
 use flate2::{Compression, GzBuilder};
+use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::{Bytes, Frame, SizeHint};
 use tokio::sync::{mpsc, oneshot};
 
@@ -34,6 +35,7 @@ impl From<Infallible> for BodyError {
 }
 
 pub(crate) type BodyItem = Result<Vec<u8>, BodyError>;
+pub(crate) type WebBody = UnsyncBoxBody<Bytes, BodyError>;
 
 pub(crate) struct StreamHead {
     pub(crate) meta: ResponseMeta,

@@ -2386,7 +2386,8 @@ async fn large_ndjson_gzip_round_trips_to_the_identity_representation() {
     let resource = target("history", "field=reads");
 
     let prepared = fixture.prepare(&resource, None);
-    let response = crate::blocking_stream(move || Ok(prepared), AcceptedEncodings::default()).await;
+    let response =
+        crate::tests::stream_once(move || Ok(prepared), AcceptedEncodings::default()).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.headers().get(CONTENT_ENCODING),
@@ -2415,7 +2416,7 @@ async fn large_ndjson_gzip_round_trips_to_the_identity_representation() {
         .expect("decode response gzip");
 
     let prepared = fixture.prepare(&resource, None);
-    let identity = crate::blocking_stream(move || Ok(prepared), accepted("identity")).await;
+    let identity = crate::tests::stream_once(move || Ok(prepared), accepted("identity")).await;
     assert_eq!(identity.status(), StatusCode::OK);
     assert!(!identity.headers().contains_key(CONTENT_ENCODING));
     let identity = identity
@@ -2433,7 +2434,8 @@ async fn below_threshold_ndjson_stays_identity_when_it_is_allowed() {
     let mut fixture = Fixture::new();
     fixture.append_diskstats(&[(100, 0, 7)]);
     let prepared = fixture.prepare(&target("history", "field=reads"), None);
-    let response = crate::blocking_stream(move || Ok(prepared), AcceptedEncodings::default()).await;
+    let response =
+        crate::tests::stream_once(move || Ok(prepared), AcceptedEncodings::default()).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert!(!response.headers().contains_key(CONTENT_ENCODING));
     let body = response
@@ -2454,7 +2456,7 @@ async fn below_threshold_ndjson_stays_identity_when_it_is_allowed() {
 
     let prepared = fixture.prepare(&target("history", "field=reads"), None);
     let response =
-        crate::blocking_stream(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
+        crate::tests::stream_once(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
     assert_eq!(
         response.headers().get(CONTENT_ENCODING),
         Some(&HeaderValue::from_static("gzip"))
@@ -2489,7 +2491,7 @@ async fn an_active_snapshot_restarts_from_the_finished_segment_after_rollover() 
     let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&attempts);
     let mut first = Some(first);
-    let response = crate::blocking_stream_with_replay(
+    let response = crate::streaming::prepare_response(
         move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(first) = first.take() {
@@ -2547,7 +2549,7 @@ async fn a_started_active_response_is_not_spliced_to_a_new_generation() {
     let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&attempts);
     let mut first = Some(first);
-    let response = crate::blocking_stream_with_replay(
+    let response = crate::streaming::prepare_response(
         move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(first) = first.take() {
@@ -2574,7 +2576,8 @@ async fn a_small_real_read_failure_returns_500_before_success_headers() {
     let mut fixture = Fixture::new();
     fixture.append_diskstats(&[(100, 0, 7)]);
     let prepared = fixture.prepare(&target("history", "field=device"), None);
-    let response = crate::blocking_stream(move || Ok(prepared), AcceptedEncodings::default()).await;
+    let response =
+        crate::tests::stream_once(move || Ok(prepared), AcceptedEncodings::default()).await;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(
         response.headers().get(CONTENT_TYPE),
@@ -2600,7 +2603,7 @@ async fn a_real_read_failure_after_a_valid_prefix_fails_the_body_without_a_trail
     let resource = target("history", "field=device");
 
     let prepared = fixture.prepare(&resource, None);
-    let response = crate::blocking_stream(move || Ok(prepared), accepted("identity")).await;
+    let response = crate::tests::stream_once(move || Ok(prepared), accepted("identity")).await;
     assert_eq!(response.status(), StatusCode::OK);
     let error = response
         .into_body()
@@ -2611,7 +2614,7 @@ async fn a_real_read_failure_after_a_valid_prefix_fails_the_body_without_a_trail
 
     let prepared = fixture.prepare(&resource, None);
     let response =
-        crate::blocking_stream(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
+        crate::tests::stream_once(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
     assert_eq!(
         response.headers().get(CONTENT_ENCODING),
         Some(&HeaderValue::from_static("gzip"))
@@ -2623,7 +2626,7 @@ async fn a_real_read_failure_after_a_valid_prefix_fails_the_body_without_a_trail
         .expect_err("late read failure also aborts gzip");
 
     let prepared = fixture.prepare(&resource, None);
-    let response = crate::blocking_stream(move || Ok(prepared), accepted("identity")).await;
+    let response = crate::tests::stream_once(move || Ok(prepared), accepted("identity")).await;
     let mut prefix = Vec::new();
     let mut failure = None;
     let mut body = response.into_body();
@@ -3799,7 +3802,7 @@ async fn weak_index_etag_revalidates_both_representations_without_a_304_body() {
     let resource = format!("/api/segments/{SEGMENT_ID}/sections/health/index");
 
     let prepared = fixture.prepare(&resource, None);
-    let response = crate::blocking_stream(move || Ok(prepared), accepted("identity")).await;
+    let response = crate::tests::stream_once(move || Ok(prepared), accepted("identity")).await;
     assert_eq!(response.status(), StatusCode::OK);
     let etag = response
         .headers()
@@ -3829,7 +3832,7 @@ async fn weak_index_etag_revalidates_both_representations_without_a_304_body() {
     for offered in [format!("\"stale\", {strong}"), "*".to_owned()] {
         let prepared = fixture.prepare(&resource, Some(&offered));
         let response =
-            crate::blocking_stream(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
+            crate::tests::stream_once(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
         assert_eq!(response.status(), StatusCode::NOT_MODIFIED, "{offered}");
         assert_eq!(
             response
