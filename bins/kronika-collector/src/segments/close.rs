@@ -27,6 +27,17 @@ pub(crate) fn close_open_segment(
     // recovery. Drop the in-memory dictionaries before final bodies are built.
     *segment = SegmentState::with_seal_seed(segment.seal_seed);
     let address = SegmentAddress::new(segment_id).context("derive the segment UTC address")?;
+    publish_journal(journal, owner, address, reason, "the segment")
+}
+
+/// Publish the journal before resetting it, with the caller's failure context.
+pub(super) fn publish_journal(
+    journal: &mut Journal,
+    owner: &WriterOwner,
+    address: SegmentAddress,
+    reason: &'static str,
+    description: &'static str,
+) -> Result<PathBuf> {
     let dest = owner.root().diagnostic_file_path(address, FileKind::Zms);
     let journal_bytes = journal.bytes();
     let journal_parts = journal.parts().len();
@@ -37,7 +48,7 @@ pub(crate) fn close_open_segment(
             "segment_close_failure",
             &[
                 field("segment_path", dest.display()),
-                field("segment_id", segment_id.get()),
+                field("segment_id", address.id.get()),
                 field("reason", reason),
                 field("stage", stage),
                 field("journal_bytes", journal_bytes),
@@ -49,14 +60,14 @@ pub(crate) fn close_open_segment(
     };
     let summary = write_segment(journal, owner, address).map_err(|error| {
         log_failure("write", &error);
-        anyhow::Error::new(error).context("write the segment")
+        anyhow::Error::new(error).context(format!("write {description}"))
     })?;
     log_event(
         LogLevel::Info,
         "segment_write_finish",
         &[
             field("segment_path", dest.display()),
-            field("segment_id", segment_id.get()),
+            field("segment_id", address.id.get()),
             field("reason", reason),
             field("sections", summary.sections),
             field("segment_bytes", summary.bytes),
@@ -70,7 +81,7 @@ pub(crate) fn close_open_segment(
     );
     journal.reset().map_err(|error| {
         log_failure("journal-reset", &error);
-        anyhow::Error::new(error).context("reset the journal after the segment write")
+        anyhow::Error::new(error).context(format!("reset the journal after {description} write"))
     })?;
     Ok(dest)
 }

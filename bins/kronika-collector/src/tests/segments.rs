@@ -494,9 +494,10 @@ fn failed_close_drops_segment_memory_and_preserves_the_journal() {
         .expect("create segment day");
     fs::write(&destination, b"conflicting segment").expect("write conflicting segment");
 
-    close_open_segment(&mut journal, &owner, &mut segment, "test")
+    let error = close_open_segment(&mut journal, &owner, &mut segment, "test")
         .expect_err("a conflicting destination stops close");
 
+    assert_eq!(error.to_string(), "write the segment");
     assert!(segment.is_empty());
     assert_eq!(segment.interner.stats(), DictStats::default());
     assert_eq!(fs::read(&path).expect("read active.wal"), bytes_before);
@@ -542,9 +543,10 @@ fn recovery_publication_failure_keeps_the_readable_journal_canonical() {
         .expect("create segment day");
     fs::write(&destination, b"conflicting segment").expect("write conflicting segment");
 
-    write_recovered_journal(&mut journal, &owner)
+    let error = write_recovered_journal(&mut journal, &owner)
         .expect_err("a conflicting destination stops recovery");
 
+    assert_eq!(error.to_string(), "write the recovered segment");
     assert_eq!(fs::read(&path).expect("read active.wal"), bytes_before);
     assert_eq!(
         fs::read(destination).expect("read existing segment"),
