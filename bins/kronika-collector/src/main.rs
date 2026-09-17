@@ -15,6 +15,17 @@
 #[global_allocator]
 static GLOBAL_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+#[cfg(target_env = "musl")]
+#[allow(
+    unsafe_code,
+    reason = "jemalloc reads this C configuration pointer before main"
+)]
+// This replaces jemalloc's unprefixed weak malloc_conf pointer.
+#[unsafe(export_name = "malloc_conf")]
+static JEMALLOC_CONF: Option<&std::ffi::c_char> =
+    // SAFETY: The C literal is non-null, NUL-terminated, and has static storage.
+    Some(unsafe { &*c"thp:never".as_ptr() });
+
 mod buffering;
 mod cgroup_discovery;
 mod clock;
@@ -59,11 +70,8 @@ fn main() -> Result<()> {
     }
     let config = Config::from_env()?;
     logging::configure_process_diagnostics(config.mode.collect_os());
-    let mut runtime = tokio::runtime::Builder::new_multi_thread();
-    if !config.mode.collect_os() {
-        runtime.worker_threads(1);
-    }
-    runtime
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
         .context("initialize collector runtime")?
