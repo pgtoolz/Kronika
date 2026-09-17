@@ -5,6 +5,7 @@ mod pg_session;
 mod then_demo;
 mod then_dump;
 mod then_log;
+mod then_ranges;
 mod then_rows;
 mod then_segment;
 mod when;

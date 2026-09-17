@@ -18,8 +18,11 @@ mod thrift_input;
 
 use metadata::{parse_footer, validate_file_metadata};
 use thrift_input::{BoundedCompactInput, compact_type, invalid_data};
+// Required at both ends of a Parquet file.
 const MAGIC: &[u8; 4] = b"PAR1";
+// Fixed stack depth for nested footer structs; bounds parser recursion.
 const MAX_THRIFT_NESTING: usize = 16;
+// Bound collection lengths before Thrift allocates memory for their entries.
 const MAX_THRIFT_ITEMS: usize = SECTION_WRITE_BATCH_ROWS;
 
 /// Exact bounded work declared by a validated Parquet section.
@@ -212,4 +215,5 @@ impl<'a> BoundedCompactInput<'a> {
 }
 
 #[cfg(test)]
+#[path = "tests/parquet_preflight.rs"]
 mod tests;

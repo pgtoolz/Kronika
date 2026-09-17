@@ -13,6 +13,7 @@ use std::path::Path;
 use crate::{SysFs, parse_dev_pair};
 
 #[cfg(test)]
+#[path = "tests/block_topology.rs"]
 mod tests;
 
 const MAX_BLOCK_DEVICES: usize = 4096;

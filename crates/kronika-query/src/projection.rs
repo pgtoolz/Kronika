@@ -538,4 +538,5 @@ fn cells_equal(actual: &Cell, wanted: &Cell) -> bool {
 }
 
 #[cfg(test)]
+#[path = "tests/projection.rs"]
 mod tests;

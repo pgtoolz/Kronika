@@ -170,4 +170,5 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
+#[path = "tests/render.rs"]
 mod tests;

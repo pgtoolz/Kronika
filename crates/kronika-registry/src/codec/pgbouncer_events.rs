@@ -44,4 +44,5 @@ pub struct PgBouncerEvents {
 }
 
 #[cfg(test)]
+#[path = "../tests/codec/pgbouncer_events.rs"]
 mod tests;

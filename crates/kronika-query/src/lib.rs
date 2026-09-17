@@ -1,8 +1,5 @@
 //! Storage-neutral execution of recorded-data queries.
 
-#[cfg(test)]
-use kronika_writer as _;
-
 mod catalog;
 mod dataset;
 mod error;
@@ -186,6 +183,20 @@ impl<'a> QueryMetadata<'a> {
         self.identity
     }
 
+    fn segment_set(
+        stability: QueryStability,
+        validator: Option<(&'a str, &'a str, &'a [DatasetSegment])>,
+    ) -> Self {
+        Self {
+            stability,
+            identity: validator.map(|(resource, shape, segments)| QueryIdentity::SegmentSet {
+                resource,
+                shape,
+                segments,
+            }),
+        }
+    }
+
     const fn revalidate() -> Self {
         Self {
             stability: QueryStability::Revalidate,
@@ -232,16 +243,9 @@ impl QueryExecution {
     pub fn metadata(&self) -> QueryMetadata<'_> {
         match &self.prepared {
             Prepared::Catalog(_) => QueryMetadata::revalidate(),
-            Prepared::Heatmap(prepared) => QueryMetadata {
-                stability: prepared.stability(),
-                identity: prepared
-                    .validator_input()
-                    .map(|(resource, shape, segments)| QueryIdentity::SegmentSet {
-                        resource,
-                        shape,
-                        segments,
-                    }),
-            },
+            Prepared::Heatmap(prepared) => {
+                QueryMetadata::segment_set(prepared.stability(), prepared.validator_input())
+            }
             Prepared::Index(prepared) => QueryMetadata {
                 stability: match prepared.kind() {
                     kronika_reader::SegmentKind::Finished => QueryStability::Immutable,
@@ -253,40 +257,19 @@ impl QueryExecution {
                 stability: prepared.stability(),
                 identity: None,
             },
-            Prepared::Hour(prepared) => QueryMetadata {
-                stability: prepared.stability(),
-                identity: prepared
-                    .validator_input()
-                    .map(|(resource, shape, segments)| QueryIdentity::SegmentSet {
-                        resource,
-                        shape,
-                        segments,
-                    }),
-            },
-            Prepared::Snapshot(prepared) => QueryMetadata {
-                stability: prepared.stability(),
-                identity: prepared
-                    .validator_input()
-                    .map(|(resource, shape, segments)| QueryIdentity::SegmentSet {
-                        resource,
-                        shape,
-                        segments,
-                    }),
-            },
+            Prepared::Hour(prepared) => {
+                QueryMetadata::segment_set(prepared.stability(), prepared.validator_input())
+            }
+            Prepared::Snapshot(prepared) => {
+                QueryMetadata::segment_set(prepared.stability(), prepared.validator_input())
+            }
             Prepared::Rows(prepared) => QueryMetadata {
                 stability: prepared.stability(),
                 identity: None,
             },
-            Prepared::Events(prepared) => QueryMetadata {
-                stability: prepared.stability(),
-                identity: prepared
-                    .validator_input()
-                    .map(|(resource, shape, segments)| QueryIdentity::SegmentSet {
-                        resource,
-                        shape,
-                        segments,
-                    }),
-            },
+            Prepared::Events(prepared) => {
+                QueryMetadata::segment_set(prepared.stability(), prepared.validator_input())
+            }
             Prepared::RowDetail(_) => QueryMetadata {
                 stability: QueryStability::Mutable,
                 identity: None,
@@ -323,9 +306,6 @@ pub fn execute(
     context: &QueryContext,
     request: QueryRequest,
 ) -> Result<QueryExecution, QueryError> {
-    if let QueryRequest::Snapshot(request) = request {
-        return snapshot::prepare_snapshot(context, request)?.finish();
-    }
     let prepared = match request {
         QueryRequest::Catalog(request) => Prepared::Catalog(PreparedCatalog::prepare(
             context.dataset.as_ref(),
@@ -352,7 +332,9 @@ pub fn execute(
             context.configured_sources,
             context.synthetic_demo,
         )?),
-        QueryRequest::Snapshot(_) => unreachable!("snapshot handled before shared preparation"),
+        QueryRequest::Snapshot(request) => {
+            return snapshot::prepare_snapshot(context, request)?.finish();
+        }
         QueryRequest::Rows(request) => {
             Prepared::Rows(rows::prepare(context.dataset.as_ref(), request)?)
         }
@@ -368,5 +350,7 @@ pub fn execute(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+use kronika_writer as _;
+#[cfg(test)]
+#[path = "tests/lib.rs"]
 mod tests;

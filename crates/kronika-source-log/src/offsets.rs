@@ -103,4 +103,5 @@ fn parse(text: &str) -> BTreeMap<String, Position> {
 }
 
 #[cfg(test)]
+#[path = "tests/offsets.rs"]
 mod tests;

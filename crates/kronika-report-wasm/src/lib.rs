@@ -151,7 +151,7 @@ impl ReportResponse {
         }
     }
 
-    fn bad_parameter(parameter: &'static str) -> Self {
+    fn bad_parameter(parameter: &str) -> Self {
         Self::refusal(
             BAD_REQUEST,
             "bad_parameter",
@@ -165,12 +165,7 @@ impl ReportResponse {
             RouteError::NoSuchPath => {
                 Self::refusal(NOT_FOUND, "no_such_path", None, "no such path".to_owned())
             }
-            RouteError::BadParameter(parameter) => Self::refusal(
-                BAD_REQUEST,
-                "bad_parameter",
-                Some(parameter.clone()),
-                format!("invalid parameter {parameter}"),
-            ),
+            RouteError::BadParameter(parameter) => Self::bad_parameter(&parameter),
         }
     }
 
@@ -211,4 +206,5 @@ impl QuerySink for NdjsonSink {
 }
 
 #[cfg(test)]
+#[path = "tests/lib.rs"]
 mod tests;

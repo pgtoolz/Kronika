@@ -74,8 +74,17 @@ pub(super) fn serve_enumeration_denied(listener: &TcpListener) {
     loop {
         let mut tag = [0];
         match stream.read_exact(&mut tag) {
-            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(error) => panic!("read frontend: {error}"),
+            // Tests close the pool after collection. Cancelling the driver can
+            // reset TCP when a ReadyForQuery reply remains unread at this boundary.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
+                ) =>
+            {
+                break;
+            }
+            Err(error) => panic!("read frontend after response to {sql:?}: {error}"),
             Ok(()) => {}
         }
         let mut length = [0; 4];

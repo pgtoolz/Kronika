@@ -335,4 +335,5 @@ impl Drop for Pool {
 }
 
 #[cfg(test)]
+#[path = "tests/pool.rs"]
 mod tests;

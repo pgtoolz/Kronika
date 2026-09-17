@@ -3,11 +3,12 @@
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
+use kronika_layout::{DataRoot, LayoutError, LayoutLimits, OwnerKind, SegmentAddress, SegmentId};
+use kronika_reader::{Reader, ReaderError, SegmentKind, SegmentRef};
+
 use crate::build::{BuildError, build_from_reader, build_selected_from_reader};
 use crate::file::{Index, IndexError, TargetedIndex, read_all, read_target};
 use crate::series::SeriesKey;
-use kronika_layout::{DataRoot, LayoutError, LayoutLimits, OwnerKind, SegmentAddress, SegmentId};
-use kronika_reader::{Reader, ReaderError, SegmentKind, SegmentRef};
 
 /// Extension of an index file.
 pub const EXTENSION: &str = "idx";
@@ -206,4 +207,5 @@ fn encoded_checksum(bytes: &[u8]) -> Result<u32, LoadError> {
 }
 
 #[cfg(test)]
+#[path = "tests/store.rs"]
 mod tests;

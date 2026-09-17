@@ -3,13 +3,14 @@
 use std::io;
 use std::os::unix::fs::MetadataExt;
 
-use super::parse::parse_i64;
 use super::{
-    CgroupCollection, CgroupContextRow, CpuQuota, MAX_CGROUP_IO_ROWS, MemoryLimit, ProcFs, PsiRow,
-    SysFs, hierarchy_paths, normalize_self_cgroup_path, parse_cpu_max_strict,
-    parse_io_stat_bounded, parse_pressure_at, parse_unified_cgroup_path,
+    CgroupContextRow, ProcFs, SysFs, hierarchy_paths, normalize_self_cgroup_path,
+    parse_unified_cgroup_path,
 };
-use crate::proc::stat::ParseError;
+
+mod metrics;
+pub use metrics::{charged_ancestor_devices, collect_ancestor_pressure, collect_ancestor_rows};
+use metrics::{effective_memory, observed_cpu_limit};
 
 /// A directory selected without requiring any controller metric file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,10 +88,6 @@ pub fn collect_ancestor_context(
 ) -> io::Result<AncestorContext> {
     let mut out = select_ancestor_context(procfs, sys, ts)?;
     if let Some(group) = &out.group {
-        out.context.cgroup_version = 2;
-        out.context.cpu_path = Some(group.path.clone());
-        out.context.memory_path = Some(group.path.clone());
-        out.context.io_path = Some(group.path.clone());
         out.context.cpuset_cpus = group
             .read(sys, "cpuset.cpus.effective")
             .and_then(|value| super::parse_cpuset_count(&value));
@@ -195,6 +192,7 @@ pub(super) fn exposed_mounts(procfs: &ProcFs) -> io::Result<Vec<Mount>> {
     Ok(out)
 }
 
+// Selection rejects malformed mount paths; display-only mountinfo parsing is permissive.
 fn unescape_mount(value: &str) -> Option<String> {
     let mut out = Vec::new();
     let bytes = value.as_bytes();
@@ -302,234 +300,6 @@ fn select(sys: &SysFs, mount: &Mount, own: &str) -> Option<SelectedCgroup> {
     None
 }
 
-// These are observed limits of the selected object, not assertions about
-// unseen constraints or PostgreSQL's resource scope.
-fn observed_cpu_limit(sys: &SysFs, group: &SelectedCgroup) -> Option<(i64, i64)> {
-    if !group.is_current(sys) {
-        return None;
-    }
-    let mut finite = None;
-    let mut unlimited_period = None;
-    for path in hierarchy_paths(&group.path)? {
-        let quota = sys
-            .read(&group.relative(&path, "cpu.max"))
-            .ok()
-            .and_then(|value| parse_cpu_max_strict(&value));
-        if let Some(quota) = quota {
-            if let CpuQuota::Unlimited { period_usec } = quota {
-                unlimited_period = Some(period_usec);
-            }
-            super::update_effective_cpu(&mut finite, quota);
-        }
-    }
-    if !group.is_current(sys) {
-        return None;
-    }
-    finite.or_else(|| unlimited_period.map(|period| (-1, period)))
-}
-
-fn effective_memory(sys: &SysFs, group: &SelectedCgroup) -> Option<i64> {
-    if !group.is_current(sys) {
-        return None;
-    }
-    let finite = |limit| match limit {
-        MemoryLimit::Limited(value) => Some(value),
-        MemoryLimit::Unlimited => None,
-    };
-    let limit = hierarchy_paths(&group.path)?
-        .into_iter()
-        .filter_map(|path| {
-            sys.read(&group.relative(&path, "memory.max"))
-                .ok()
-                .and_then(|value| super::parse_memory_max_strict(&value))
-                .and_then(finite)
-        })
-        .min();
-    if !group.is_current(sys) {
-        return None;
-    }
-    limit
-}
-
-/// Read one selected aggregate per controller, omitting incomplete non-null rows.
-#[must_use]
-pub fn collect_ancestor_rows(sys: &SysFs, selected: &AncestorContext, ts: i64) -> CgroupCollection {
-    let mut out = CgroupCollection::default();
-    if let Some(group) = &selected.group
-        && group.is_current(sys)
-        && let Some(row) = read_cpu(sys, group, ts)
-        && group.is_current(sys)
-    {
-        out.ancestor_cpu.push(row);
-    }
-    if let Some(group) = &selected.group
-        && group.is_current(sys)
-        && let Some(row) = read_memory(sys, group, ts)
-        && group.is_current(sys)
-    {
-        out.ancestor_memory.push(row);
-    }
-    if let Some(group) = &selected.group
-        && group.is_current(sys)
-        && let Some(content) = group.read(sys, "io.stat")
-    {
-        match parse_io_stat_bounded(&content, ts, &group.path, MAX_CGROUP_IO_ROWS) {
-            Some(rows) => out.io = rows,
-            None => out.io_omitted = true,
-        }
-    }
-
-    if selected
-        .group
-        .as_ref()
-        .is_some_and(|group| !group.is_current(sys))
-    {
-        out.io.clear();
-    }
-    if let Some(group) = &selected.group
-        && group.is_current(sys)
-        && let Some((current, max)) = group
-            .read(sys, "pids.current")
-            .zip(group.read(sys, "pids.max"))
-            .and_then(|(current, max)| super::parse_pids_values(&current, &max))
-        && group.is_current(sys)
-    {
-        out.pids.push(super::CgroupPidsRow {
-            ts,
-            cgroup_path: group.path.clone(),
-            current,
-            max,
-        });
-    }
-
-    out
-}
-
-fn read_cpu(sys: &SysFs, group: &SelectedCgroup, ts: i64) -> Option<super::AncestorCpuRow> {
-    let stat = group.read(sys, "cpu.stat");
-    let value = |key| {
-        stat.as_deref()
-            .and_then(|text| super::parse_exact_stat_value(text, key))
-            .filter(|value| *value >= 0)
-    };
-    let usage = value("usage_usec")?;
-    let user = value("user_usec")?;
-    let system = value("system_usec")?;
-    let throttled = value("throttled_usec");
-    let quota = group
-        .read(sys, "cpu.max")
-        .and_then(|value| parse_cpu_max_strict(&value));
-    let pair = quota.map(CpuQuota::pair);
-
-    Some(super::AncestorCpuRow {
-        ts,
-        cgroup_path: group.path.clone(),
-        usage_usec: usage,
-        user_usec: user,
-        system_usec: system,
-        throttled_usec: throttled,
-        nr_throttled: value("nr_throttled"),
-        quota_usec: pair.map(|pair| pair.0),
-        period_usec: pair.map(|pair| pair.1),
-    })
-}
-
-fn read_memory(sys: &SysFs, group: &SelectedCgroup, ts: i64) -> Option<super::AncestorMemoryRow> {
-    let current = parse_i64(&group.read(sys, "memory.current")?)?;
-    if current < 0 {
-        return None;
-    }
-    let limit = group
-        .read(sys, "memory.max")
-        .and_then(|value| super::parse_memory_max_strict(&value));
-    let stat = group.read(sys, "memory.stat");
-    let events = group.read(sys, "memory.events");
-    let stat_value = |key| {
-        stat.as_deref()
-            .and_then(|text| super::parse_exact_stat_value(text, key))
-            .filter(|value| *value >= 0)
-    };
-    let event = |key| {
-        events
-            .as_deref()
-            .and_then(|text| super::parse_exact_stat_value(text, key))
-            .filter(|value| *value >= 0)
-    };
-    let (anon, file, kernel, slab) = (
-        stat_value("anon"),
-        stat_value("file"),
-        stat_value("kernel"),
-        stat_value("slab"),
-    );
-    Some(super::AncestorMemoryRow {
-        ts,
-        cgroup_path: group.path.clone(),
-        current,
-        max: match limit {
-            Some(MemoryLimit::Limited(value)) => Some(value),
-            _ => None,
-        },
-        max_unlimited: limit.map(|limit| matches!(limit, MemoryLimit::Unlimited)),
-        anon,
-        file,
-        kernel,
-        slab,
-        low_events: event("low"),
-        high_events: event("high"),
-        max_events: event("max"),
-        oom_events: event("oom"),
-        oom_kill: event("oom_kill"),
-    })
-}
-
-/// Read PSI only from the selected v2 ancestor.
-///
-/// # Errors
-/// Returns membership/selection or present pressure parsing errors.
-pub fn collect_ancestor_pressure(
-    sys: &SysFs,
-    selected: &AncestorContext,
-    ts: i64,
-) -> Result<Vec<PsiRow>, ParseError> {
-    let Some(group) = selected.group.as_ref() else {
-        return Ok(Vec::new());
-    };
-    if !group.is_current(sys) {
-        return Ok(Vec::new());
-    }
-    let cpu = group.read(sys, "cpu.pressure");
-    let memory = group.read(sys, "memory.pressure");
-    let io = group.read(sys, "io.pressure");
-    if !group.is_current(sys) {
-        return Ok(Vec::new());
-    }
-    parse_pressure_at(
-        cpu.as_deref(),
-        memory.as_deref(),
-        io.as_deref(),
-        ts,
-        &group.path,
-        ["cpu.pressure", "memory.pressure", "io.pressure"],
-        true,
-    )
-}
-
-/// Device IDs charged to the selected v2 ancestor, without a child fallback.
-#[must_use]
-pub fn charged_ancestor_devices(sys: &SysFs, selected: &AncestorContext) -> Vec<(i32, i32)> {
-    let Some(group) = selected.group.as_ref() else {
-        return Vec::new();
-    };
-    if !group.is_current(sys) {
-        return Vec::new();
-    }
-    let devices = super::discovery::charged_devices(sys, group).unwrap_or_default();
-    if group.is_current(sys) {
-        devices
-    } else {
-        Vec::new()
-    }
-}
-
 #[cfg(test)]
+#[path = "../tests/cgroup/selected.rs"]
 mod tests;

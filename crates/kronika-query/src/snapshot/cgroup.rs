@@ -1,11 +1,13 @@
-use super::{
-    CounterReadings, PageContext, PageOrder, PageOrderKind, SectionPlans, StructuredSearch,
-};
-use crate::projection::Plan;
-use crate::{DataRequest, DatasetSegment, QueryDataset, QueryError, SnapshotRequest};
 use kronika_reader::{Cell, Row, Segment};
 use kronika_registry::{logical_section_name, registry};
 use serde_json::{Value, json};
+
+use super::{
+    CounterReadings, PageContext, PageOrder, PageOrderKind, SectionPlans, StructuredSearch,
+};
+
+use crate::projection::Plan;
+use crate::{DataRequest, DatasetSegment, QueryDataset, QueryError, SnapshotRequest};
 
 pub(super) fn legacy(name: &str) -> Option<&'static str> {
     match name {
@@ -123,7 +125,7 @@ pub(super) fn extend_plans(
             continue;
         }
         let source = dataset.open(candidate)?;
-        for found in super::section_plans(&source, &selected, &[], search)? {
+        for found in super::preparation::section_plans(&source, &selected, &[], search)? {
             if let Some(existing) = sections
                 .iter_mut()
                 .find(|section| section.logical_name == found.logical_name)

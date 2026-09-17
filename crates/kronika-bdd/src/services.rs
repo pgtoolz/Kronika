@@ -4,9 +4,12 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, Ordering};
 
+// Owned by this BDD process inside its disposable container. Scenarios run serially.
 const PG_DATA: &str = "/tmp/kronika-pgdata";
 const PGB_DIR: &str = "/tmp/kronika-pgbouncer";
+// PostgreSQL refuses to start as root; both test services run as this OS user.
 const PG_USER: &str = "postgres";
+// The test container has its own network namespace; no host database is contacted.
 const PG_PORT: &str = "5432";
 // Process-derived ports separate parallel suite processes.
 fn next_pgb_port() -> u16 {

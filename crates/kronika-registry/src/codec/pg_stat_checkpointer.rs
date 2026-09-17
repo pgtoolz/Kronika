@@ -94,4 +94,5 @@ pub struct PgStatCheckpointerV2 {
 }
 
 #[cfg(test)]
+#[path = "../tests/codec/pg_stat_checkpointer.rs"]
 mod tests;

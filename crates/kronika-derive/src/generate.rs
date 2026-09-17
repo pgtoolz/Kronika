@@ -1,6 +1,10 @@
 //! Emitting the contract, encoder and decoder for one section.
 
-use super::{ColumnDef, Header, Ident, Span, TokenStream2, quote};
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::quote;
+use syn::Ident;
+
+use super::{ColumnDef, Header};
 
 pub(super) fn build_contract(header: &Header, columns: &[ColumnDef]) -> TokenStream2 {
     let id = &header.id;
@@ -94,30 +98,26 @@ pub(super) fn build_encode(columns: &[ColumnDef]) -> TokenStream2 {
 
 /// Generate `Section::ts_range` from the non-nullable `#[column(t)]` field.
 pub(super) fn build_ts_range(columns: &[ColumnDef]) -> TokenStream2 {
-    columns
+    let Some(column) = columns
         .iter()
         .find(|column| column.column_class == "Timestamp" && !column.nullable)
-        .map_or_else(
-            || {
-                quote! {
-                    fn ts_range(_rows: &[Self]) -> ::core::option::Option<(i64, i64)> {
-                        ::core::option::Option::None
-                    }
-                }
-            },
-            |column| {
-                let field = &column.field;
-                quote! {
-                    fn ts_range(rows: &[Self]) -> ::core::option::Option<(i64, i64)> {
-                        let mut values = rows.iter().map(|row| row.#field.0);
-                        let first = values.next()?;
-                        ::core::option::Option::Some(
-                            values.fold((first, first), |(lo, hi), v| (lo.min(v), hi.max(v))),
-                        )
-                    }
-                }
-            },
-        )
+    else {
+        return quote! {
+            fn ts_range(_rows: &[Self]) -> ::core::option::Option<(i64, i64)> {
+                ::core::option::Option::None
+            }
+        };
+    };
+    let field = &column.field;
+    quote! {
+        fn ts_range(rows: &[Self]) -> ::core::option::Option<(i64, i64)> {
+            let mut values = rows.iter().map(|row| row.#field.0);
+            let first = values.next()?;
+            ::core::option::Option::Some(
+                values.fold((first, first), |(lo, hi), v| (lo.min(v), hi.max(v))),
+            )
+        }
+    }
 }
 
 /// Generate conservative accounting for child values in every `ListI32`

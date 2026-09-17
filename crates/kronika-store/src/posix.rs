@@ -23,23 +23,19 @@ std::thread_local! {
     };
 }
 
-const fn metadata_limit(limit: usize) -> ResourceError {
-    ResourceError::MetadataLimit { limit }
-}
-
 fn vector_bytes<T>(capacity: usize, limit: usize) -> Result<usize, ResourceError> {
     capacity
         .checked_mul(size_of::<T>())
-        .ok_or_else(|| metadata_limit(limit))
+        .ok_or(ResourceError::MetadataLimit { limit })
 }
 
 fn admitted_total(parts: &[usize], limit: usize) -> Result<usize, ResourceError> {
     let total = parts
         .iter()
         .try_fold(0_usize, |total, part| total.checked_add(*part))
-        .ok_or_else(|| metadata_limit(limit))?;
+        .ok_or(ResourceError::MetadataLimit { limit })?;
     if total > limit {
-        Err(metadata_limit(limit))
+        Err(ResourceError::MetadataLimit { limit })
     } else {
         Ok(total)
     }
@@ -54,7 +50,7 @@ fn try_reserve_listing<T>(
     LISTING_RESERVE_ATTEMPTS.with(|attempts| attempts.set(attempts.get().saturating_add(1)));
     values
         .try_reserve_exact(additional)
-        .map_err(|_error| metadata_limit(limit))
+        .map_err(|_error| ResourceError::MetadataLimit { limit })
 }
 
 fn resource_scan_error(error: io::Error) -> ResourceError {
@@ -137,7 +133,7 @@ impl PosixSource {
         let requested_warning_bytes = vector_bytes::<ResourceWarning>(warning_count, limit)?;
         let retained_summary_bytes = resource_count
             .checked_mul(summary_allocation_bytes())
-            .ok_or_else(|| metadata_limit(limit))?;
+            .ok_or(ResourceError::MetadataLimit { limit })?;
 
         // Admit both the conversion peak and the returned listing before
         // requesting either output allocation.
@@ -294,5 +290,5 @@ impl ImmutableSegmentSource for PosixSource {
 }
 
 #[cfg(test)]
-#[path = "posix/tests.rs"]
+#[path = "tests/posix.rs"]
 mod tests;

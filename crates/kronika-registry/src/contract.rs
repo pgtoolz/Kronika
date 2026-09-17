@@ -448,4 +448,5 @@ pub fn lint(contracts: &[TypeContract]) -> Result<(), Vec<LintError>> {
 }
 
 #[cfg(test)]
+#[path = "tests/contract.rs"]
 mod tests;

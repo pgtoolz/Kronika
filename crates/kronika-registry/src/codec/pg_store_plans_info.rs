@@ -23,4 +23,5 @@ pub struct PgStorePlansInfo {
 }
 
 #[cfg(test)]
+#[path = "../tests/codec/pg_store_plans_info.rs"]
 mod tests;

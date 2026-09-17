@@ -1,6 +1,10 @@
 //! Reading the `#[section]` and `#[column]` attributes off the struct.
 
-use super::{ColumnDef, DeriveInput, Header, Ident, LitInt, LitStr, Span, Spanned, Token, Type};
+use proc_macro2::Span;
+use syn::spanned::Spanned;
+use syn::{DeriveInput, Ident, LitInt, LitStr, Token, Type};
+
+use super::{ColumnDef, Header};
 
 pub(super) fn parse_header(input: &DeriveInput) -> syn::Result<Header> {
     let attr = input
@@ -27,16 +31,16 @@ pub(super) fn parse_header(input: &DeriveInput) -> syn::Result<Header> {
             name = Some(meta.value()?.parse::<LitStr>()?);
         } else if meta.path.is_ident("semantics") {
             semantics = Some(meta.value()?.parse::<Ident>()?);
-        } else if meta.path.is_ident("sort_key") {
+        } else if meta.path.is_ident("sort_key") || meta.path.is_ident("identity") {
             let content;
             syn::parenthesized!(content in meta.input);
             let keys = content.parse_terminated(<LitStr as syn::parse::Parse>::parse, Token![,])?;
-            sort_key = keys.into_iter().collect();
-        } else if meta.path.is_ident("identity") {
-            let content;
-            syn::parenthesized!(content in meta.input);
-            let keys = content.parse_terminated(<LitStr as syn::parse::Parse>::parse, Token![,])?;
-            identity = keys.into_iter().collect();
+            let destination = if meta.path.is_ident("sort_key") {
+                &mut sort_key
+            } else {
+                &mut identity
+            };
+            *destination = keys.into_iter().collect();
         } else {
             return Err(meta.error("unknown #[section(..)] key"));
         }
@@ -124,8 +128,8 @@ impl syn::parse::Parse for ColumnArgs {
             let value: Ident = input.parse()?;
             unit = Some(unit_variant(&value)?);
         }
-        // A counter or gauge without a declared unit is a number nobody can
-        // read, so the macro refuses it rather than defaulting.
+        // Units drive query scaling and display; require an explicit unit even
+        // for dimensionless counts (`unit = none`).
         if matches!(class.to_string().as_str(), "c" | "g") && unit.is_none() {
             return Err(syn::Error::new(
                 class.span(),
@@ -275,3 +279,7 @@ pub(super) fn type_ident(ty: &Type) -> syn::Result<Ident> {
     }
     Err(syn::Error::new(ty.span(), "expected a simple base type"))
 }
+
+#[cfg(test)]
+#[path = "tests/parse.rs"]
+mod tests;

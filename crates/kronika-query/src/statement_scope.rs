@@ -5,9 +5,6 @@ use std::collections::HashSet;
 use kronika_reader::{ReaderError, Row, Segment};
 use kronika_registry::{Cell, logical_section_name};
 
-#[cfg(test)]
-mod tests;
-
 /// Exact byte prefix in front of every statement the collector runs itself.
 pub const COLLECTOR_STATEMENT_PREFIX: &[u8] = b"/* kronika:";
 
@@ -109,3 +106,7 @@ pub(crate) const fn plan_statement_query_id_columns(type_id: u32) -> &'static [&
         _ => &["queryid"],
     }
 }
+
+#[cfg(test)]
+#[path = "tests/statement_scope.rs"]
+mod tests;

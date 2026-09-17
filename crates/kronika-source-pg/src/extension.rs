@@ -387,4 +387,5 @@ pub async fn inventory(
 }
 
 #[cfg(test)]
+#[path = "tests/extension.rs"]
 mod tests;

@@ -260,4 +260,5 @@ impl StatMiscRow {
 }
 
 #[cfg(test)]
+#[path = "../tests/proc/stat.rs"]
 mod tests;

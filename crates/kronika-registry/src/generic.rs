@@ -508,4 +508,5 @@ fn typed<'a, A: Array + 'static>(
 }
 
 #[cfg(test)]
+#[path = "tests/generic.rs"]
 mod tests;

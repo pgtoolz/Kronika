@@ -167,14 +167,6 @@ pub(crate) fn calendar(text: &str) -> Option<(NaiveDateTime, i64, &str, &str)> {
     Some((naive, micros, label, rest))
 }
 
-#[cfg(test)]
-pub(crate) fn utc_micros(text: &str) -> i64 {
-    NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
-        .expect("wall clock")
-        .and_utc()
-        .timestamp_micros()
-}
-
 fn parse_naive(date: &str, clock: &str) -> Option<NaiveDateTime> {
     let year = date.get(..4)?.parse().ok()?;
     let month = date.get(5..7)?.parse().ok()?;
@@ -203,4 +195,5 @@ fn fractional_micros(digits: &str) -> i64 {
 }
 
 #[cfg(test)]
+#[path = "tests/timestamp.rs"]
 mod tests;

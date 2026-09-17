@@ -152,14 +152,6 @@ impl IoRead {
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    static TEST_SWITCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static TEST_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static TEST_READS: std::cell::RefCell<std::collections::VecDeque<IoRead>> =
-        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
-}
-
 enum Discovered {
     Value(ProcIo, FsCredentials),
     Gone,
@@ -196,7 +188,7 @@ fn discover_io(
 
 fn read_io(reader: &mut ProcessReader<'_>, pid: i32) -> IoRead {
     #[cfg(test)]
-    if let Some(result) = TEST_READS.with(|reads| reads.borrow_mut().pop_front()) {
+    if let Some(result) = tests::TEST_READS.with(|reads| reads.borrow_mut().pop_front()) {
         return result;
     }
     match reader.read_io_raw(pid) {
@@ -230,7 +222,7 @@ fn with_credentials(
 #[cfg(target_os = "linux")]
 fn current_fs_credentials() -> FsCredentials {
     #[cfg(test)]
-    TEST_QUERIES.with(|queries| queries.set(queries.get().saturating_add(1)));
+    tests::TEST_QUERIES.with(|queries| queries.set(queries.get().saturating_add(1)));
     FsCredentials {
         uid: nix::unistd::setfsuid(nix::unistd::Uid::from_raw(u32::MAX)).as_raw(),
         gid: nix::unistd::setfsgid(nix::unistd::Gid::from_raw(u32::MAX)).as_raw(),
@@ -240,7 +232,7 @@ fn current_fs_credentials() -> FsCredentials {
 #[cfg(not(target_os = "linux"))]
 fn current_fs_credentials() -> FsCredentials {
     #[cfg(test)]
-    TEST_QUERIES.with(|queries| queries.set(queries.get().saturating_add(1)));
+    tests::TEST_QUERIES.with(|queries| queries.set(queries.get().saturating_add(1)));
     FsCredentials {
         uid: rustix::process::geteuid().as_raw(),
         gid: rustix::process::getegid().as_raw(),
@@ -257,7 +249,7 @@ struct FsCredGuard {
 impl FsCredGuard {
     fn switch(credentials: FsCredentials) -> Self {
         #[cfg(test)]
-        TEST_SWITCHES.with(|switches| switches.set(switches.get().saturating_add(1)));
+        tests::TEST_SWITCHES.with(|switches| switches.set(switches.get().saturating_add(1)));
         let gid = nix::unistd::setfsgid(nix::unistd::Gid::from_raw(credentials.gid));
         let uid = nix::unistd::setfsuid(nix::unistd::Uid::from_raw(credentials.uid));
         Self { uid, gid }
@@ -279,29 +271,11 @@ struct FsCredGuard;
 impl FsCredGuard {
     fn switch(_credentials: FsCredentials) -> Self {
         #[cfg(test)]
-        TEST_SWITCHES.with(|switches| switches.set(switches.get().saturating_add(1)));
+        tests::TEST_SWITCHES.with(|switches| switches.set(switches.get().saturating_add(1)));
         Self
     }
 }
 
 #[cfg(test)]
-fn reset_test_io(reads: impl IntoIterator<Item = IoRead>) {
-    TEST_SWITCHES.with(|switches| switches.set(0));
-    TEST_QUERIES.with(|queries| queries.set(0));
-    TEST_READS.with(|script| {
-        let mut script = script.borrow_mut();
-        script.clear();
-        script.extend(reads);
-    });
-}
-
-#[cfg(test)]
-fn test_io_counts() -> (usize, usize) {
-    (
-        TEST_SWITCHES.with(std::cell::Cell::get),
-        TEST_QUERIES.with(std::cell::Cell::get),
-    )
-}
-
-#[cfg(test)]
+#[path = "../../tests/proc/process/process_io.rs"]
 mod tests;

@@ -414,4 +414,5 @@ fn truncate_owned(mut value: String, max_bytes: usize) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/postgres/normalize.rs"]
 mod tests;

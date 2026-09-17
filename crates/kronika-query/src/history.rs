@@ -16,6 +16,7 @@ use super::projection::{
 };
 use super::render::{cell, projected_layout, record};
 use super::selection::{active_tail, exact_segment as explicit_segment};
+
 use crate::request::{ActiveCursor, DataRequest, Window};
 use crate::{DatasetSegment, QueryDataset, QueryError, QuerySink, QueryStability};
 

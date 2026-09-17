@@ -7,9 +7,12 @@ use anyhow::{Context as _, Result};
 use cucumber::gherkin::Step;
 use cucumber::then;
 
+// Summary rates and MiB values are rounded to six decimal places.
 const SIX_DECIMAL_PLACES: u128 = 1_000_000;
+// Reconstruct rates from the log's millisecond interval without float rounding.
 const NANOS_PER_MILLISECOND: u128 = 1_000_000;
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
+// The payload MiB fields use binary megabytes.
 const MIB: u128 = 1_048_576;
 
 /// Everything the run wrote to stdout and stderr.
@@ -309,4 +312,5 @@ fn format_fixed_six(scaled: u128) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/steps/then_log.rs"]
 mod tests;

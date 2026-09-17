@@ -1,5 +1,16 @@
 //! One composed hour of catalog, series, index, and lane records.
 
+mod cgroup;
+mod lanes;
+mod postgres_summary;
+pub(crate) mod process_summary;
+mod relation;
+
+pub use relation::{
+    GroupKey, Metric, RelationAggregate, RelationField, RelationKind, RelationSource,
+    index_scan_rate_is_zero, key_fields, output_fields,
+};
+
 use std::sync::Arc;
 
 use kronika_index::{finding_keys_for_sections, series_keys_for_sections};
@@ -18,20 +29,6 @@ use crate::{
     HourSeriesRequest, IndexProvider, QueryDataset, QueryError, QuerySink, QueryStability,
     SegmentBounds, SegmentRequest, SegmentSelection, Window,
 };
-
-mod cgroup;
-mod lanes;
-mod postgres_summary;
-pub(crate) mod process_summary;
-mod relation;
-
-pub use relation::{
-    GroupKey, Metric, RelationAggregate, RelationField, RelationKind, RelationSource,
-    index_scan_rate_is_zero, key_fields, output_fields,
-};
-
-#[cfg(test)]
-mod tests;
 
 const SERIES: &str = "health";
 const HOUR: i64 = 3_600_000_000;
@@ -527,3 +524,7 @@ fn emit_lanes(
     }
     Ok(true)
 }
+
+#[cfg(test)]
+#[path = "tests/hour.rs"]
+mod tests;

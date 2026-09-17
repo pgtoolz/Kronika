@@ -335,4 +335,5 @@ fn count_and_body(bytes: &[u8], point_len: usize) -> Result<(usize, &[u8]), Inde
 }
 
 #[cfg(test)]
+#[path = "tests/series.rs"]
 mod tests;

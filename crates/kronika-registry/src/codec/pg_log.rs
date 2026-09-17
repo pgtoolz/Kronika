@@ -379,4 +379,5 @@ pub struct PgLogTempFiles {
 }
 
 #[cfg(test)]
+#[path = "../tests/codec/pg_log.rs"]
 mod tests;

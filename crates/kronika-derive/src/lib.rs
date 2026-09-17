@@ -2,7 +2,7 @@
 //!
 //! `#[derive(Section)]` accepts a named-field struct with one
 //! `#[section(id = ..., name = ..., semantics = ..., sort_key(...),
-//! identity(...))]` attribute. Every field needs `#[column(class)]`; a column
+//! identity(...))]` attribute. Every field needs `#[column(class)]`.
 //!
 //! The generated finished `kronika_registry::Section` implementation exposes
 //! one `TypeContract`, encodes at most `MAX_SECTION_ROWS`, decodes only a
@@ -22,12 +22,8 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use syn::spanned::Spanned;
-use syn::{Data, DeriveInput, Fields, Ident, LitInt, LitStr, Token, Type, parse_macro_input};
+use syn::{Data, DeriveInput, Fields, Ident, LitInt, LitStr, parse_macro_input};
 
-/// Derive the section contract and Parquet codec for a typed struct.
-///
-/// See the crate docs for the attribute grammar.
 mod generate;
 mod parse;
 
@@ -76,25 +72,21 @@ struct ColumnDef {
 
 fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let header = parse_header(input)?;
-    let fields = match &input.data {
-        Data::Struct(data) => match &data.fields {
-            Fields::Named(named) => &named.named,
-            _ => {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "Section requires a struct with named fields",
-                ));
-            }
-        },
-        _ => {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                "Section can only be derived for a struct",
-            ));
-        }
+    let Data::Struct(data) = &input.data else {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "Section can only be derived for a struct",
+        ));
+    };
+    let Fields::Named(fields) = &data.fields else {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "Section requires a struct with named fields",
+        ));
     };
 
     let columns: Vec<ColumnDef> = fields
+        .named
         .iter()
         .map(parse_column)
         .collect::<syn::Result<_>>()?;

@@ -214,4 +214,5 @@ fn parse_pids_values(current: &str, max: &str) -> Option<(i64, Option<i64>)> {
 }
 
 #[cfg(test)]
+#[path = "tests/cgroup.rs"]
 mod tests;

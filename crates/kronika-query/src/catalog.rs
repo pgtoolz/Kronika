@@ -357,5 +357,5 @@ fn warning_value(warning: DatasetWarning) -> Value {
 }
 
 #[cfg(test)]
-#[path = "catalog/tests.rs"]
+#[path = "tests/catalog.rs"]
 mod tests;

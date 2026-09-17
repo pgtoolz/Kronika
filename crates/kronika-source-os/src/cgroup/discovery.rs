@@ -292,4 +292,5 @@ impl DiscoveryStats {
 }
 
 #[cfg(test)]
+#[path = "../tests/cgroup/discovery.rs"]
 mod tests;

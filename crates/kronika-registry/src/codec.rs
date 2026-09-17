@@ -248,12 +248,6 @@ impl VerifiedSection {
         }
     }
 
-    /// Wrap bytes without a CRC check, for tests that decode their own output.
-    #[cfg(test)]
-    pub(crate) const fn for_test(bytes: Bytes) -> Self {
-        Self(bytes)
-    }
-
     /// Unwrap the verified bytes.
     #[must_use]
     pub fn into_bytes(self) -> Bytes {
@@ -272,18 +266,6 @@ impl VerifiedSection {
         self.0.is_empty()
     }
 }
-
-#[cfg(test)]
-mod verified_section_tests;
-
-#[cfg(test)]
-mod final_profile_tests;
-
-#[cfg(test)]
-mod bounds_tests;
-
-#[cfg(test)]
-mod codec_error_tests;
 
 /// What a section decode processed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -449,7 +431,25 @@ pub(crate) fn decode_batches(
 }
 
 #[cfg(test)]
+#[path = "tests/verified_section.rs"]
+mod verified_section_tests;
+
+#[cfg(test)]
+#[path = "tests/final_profile.rs"]
+mod final_profile_tests;
+
+#[cfg(test)]
+#[path = "tests/bounds.rs"]
+mod bounds_tests;
+
+#[cfg(test)]
+#[path = "tests/codec_error.rs"]
+mod codec_error_tests;
+
+#[cfg(test)]
+#[path = "tests/list_i32.rs"]
 mod list_i32_tests;
 
 #[cfg(test)]
+#[path = "tests/hygiene.rs"]
 mod hygiene_tests;

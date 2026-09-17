@@ -83,4 +83,5 @@ pub fn refresh(pools: &mut BTreeMap<String, Pool>, found: &[Database], primary: 
 }
 
 #[cfg(test)]
+#[path = "tests/databases.rs"]
 mod tests;

@@ -273,4 +273,5 @@ pub async fn collect_user_indexes<E>(
 }
 
 #[cfg(test)]
+#[path = "tests/user_indexes.rs"]
 mod tests;

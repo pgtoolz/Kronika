@@ -130,10 +130,7 @@ impl ProcFs {
     /// Returns the underlying `io::Error` (with the path) or an empty-file error.
     pub fn read(&self, rel: &str) -> io::Result<String> {
         let mut content = self.read_raw(rel)?;
-        trim_string(&mut content);
-        if content.is_empty() {
-            return Err(io::Error::other(format!("{rel}: empty")));
-        }
+        trim_content(&mut content, rel)?;
         Ok(content)
     }
 
@@ -159,18 +156,7 @@ impl ProcFs {
         path.clear();
         path.push(&self.root);
         path.push(rel_path);
-        let mut file = std::fs::File::open(&path).map_err(|err| tag_io_error(rel, &err))?;
-        content.clear();
-        file.by_ref()
-            .take((MAX_PROC_FILE_BYTES + 1) as u64)
-            .read_to_string(content)
-            .map_err(|err| tag_io_error(rel, &err))?;
-        if content.len() > MAX_PROC_FILE_BYTES {
-            return Err(io::Error::other(format!(
-                "{rel}: exceeds {MAX_PROC_FILE_BYTES} byte procfs read limit"
-            )));
-        }
-        Ok(())
+        read_bounded(path, rel, "procfs", content)
     }
 
     /// Every numeric `/proc` directory name, sorted ascending.
@@ -233,21 +219,9 @@ impl SysFs {
     pub fn read(&self, rel: &str) -> io::Result<String> {
         let rel_path = checked_relative_path(rel)?;
         let path = self.root.join(rel_path);
-        let mut file = std::fs::File::open(&path).map_err(|err| tag_io_error(rel, &err))?;
         let mut content = String::new();
-        file.by_ref()
-            .take((MAX_PROC_FILE_BYTES + 1) as u64)
-            .read_to_string(&mut content)
-            .map_err(|err| tag_io_error(rel, &err))?;
-        if content.len() > MAX_PROC_FILE_BYTES {
-            return Err(io::Error::other(format!(
-                "{rel}: exceeds {MAX_PROC_FILE_BYTES} byte sysfs read limit"
-            )));
-        }
-        trim_string(&mut content);
-        if content.is_empty() {
-            return Err(io::Error::other(format!("{rel}: empty")));
-        }
+        read_bounded(&path, rel, "sysfs", &mut content)?;
+        trim_content(&mut content, rel)?;
         Ok(content)
     }
 
@@ -303,7 +277,23 @@ impl SysFs {
     }
 }
 
-fn trim_string(value: &mut String) {
+fn read_bounded(path: &Path, rel: &str, source: &str, content: &mut String) -> io::Result<()> {
+    let mut file = std::fs::File::open(path).map_err(|error| tag_io_error(rel, &error))?;
+    content.clear();
+    // One extra byte distinguishes an exact fit from a file above the cap.
+    file.by_ref()
+        .take((MAX_PROC_FILE_BYTES + 1) as u64)
+        .read_to_string(content)
+        .map_err(|error| tag_io_error(rel, &error))?;
+    if content.len() > MAX_PROC_FILE_BYTES {
+        return Err(io::Error::other(format!(
+            "{rel}: exceeds {MAX_PROC_FILE_BYTES} byte {source} read limit"
+        )));
+    }
+    Ok(())
+}
+
+fn trim_content(value: &mut String, rel: &str) -> io::Result<()> {
     let trimmed = value.trim();
     let start = trimmed.as_ptr() as usize - value.as_ptr() as usize;
     let end = start + trimmed.len();
@@ -311,6 +301,10 @@ fn trim_string(value: &mut String) {
     if start != 0 {
         value.drain(..start);
     }
+    if value.is_empty() {
+        return Err(io::Error::other(format!("{rel}: empty")));
+    }
+    Ok(())
 }
 
 /// Parse a `MAJ:MIN` device string (the content of `class/block/<name>/dev`).
@@ -345,4 +339,5 @@ fn tag_io_error(rel: &str, err: &io::Error) -> io::Error {
 }
 
 #[cfg(test)]
+#[path = "tests/fs.rs"]
 mod tests;

@@ -351,5 +351,5 @@ fn health_layout(series: &str) -> Value {
 }
 
 #[cfg(test)]
-#[path = "index/tests.rs"]
+#[path = "tests/index.rs"]
 mod tests;

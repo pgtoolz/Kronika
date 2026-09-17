@@ -16,7 +16,6 @@ use rustix::fs::{AtFlags, FileType, FlockOperation, Mode, OFlags};
 
 use crate::{LayoutError, LayoutLimits, OwnerKind, SegmentAddress, UtcDay};
 
-/// Root-level active segment journal.
 mod discovery;
 mod entry;
 mod fsops;
@@ -59,8 +58,11 @@ pub const LOG_OFFSETS_TEMP_NAME: &str = "log.tmp";
 pub const SEAL_SEED_NAME: &str = "seal.seed";
 /// Unfinished publication of the persistent seal seed.
 pub const SEAL_SEED_TEMP_NAME: &str = "seal.seed.tmp";
+// Fixed accounting allowance for per-entry bookkeeping; name bytes are charged separately.
 const ENTRY_METADATA_BYTES: usize = 128;
+// Retry bounded rename/publication races without letting a changing tree starve a scan.
 const SCAN_RACE_ATTEMPTS: usize = 4;
+// Allow a short ownership handoff while keeping contention waits bounded.
 const WRITER_LOCK_HANDOFF_TIMEOUT: Duration = Duration::from_millis(100);
 const DIRECTORY_MODE: Mode = Mode::RUSR
     .union(Mode::WUSR)
@@ -449,17 +451,8 @@ impl FileIdentity {
             ctime_nanoseconds: metadata.ctime_nsec(),
         })
     }
-
-    const fn same_named_object(self, other: Self) -> bool {
-        self.device == other.device
-            && self.inode == other.inode
-            && self.len == other.len
-            && self.mtime_seconds == other.mtime_seconds
-            && self.mtime_nanoseconds == other.mtime_nanoseconds
-            && self.ctime_seconds == other.ctime_seconds
-            && self.ctime_nanoseconds == other.ctime_nanoseconds
-    }
 }
 
 #[cfg(test)]
+#[path = "tests/root.rs"]
 mod tests;

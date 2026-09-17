@@ -103,4 +103,5 @@ pub async fn collect_bgwriter(
 }
 
 #[cfg(test)]
+#[path = "tests/bgwriter.rs"]
 mod tests;

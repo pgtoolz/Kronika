@@ -333,4 +333,5 @@ const fn checksum(head: &[u8], rest: &[u8]) -> u32 {
 }
 
 #[cfg(test)]
+#[path = "tests/file.rs"]
 mod tests;

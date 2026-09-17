@@ -20,4 +20,5 @@ pub struct PgWalStorage {
 }
 
 #[cfg(test)]
+#[path = "../tests/codec/pg_wal_storage.rs"]
 mod tests;

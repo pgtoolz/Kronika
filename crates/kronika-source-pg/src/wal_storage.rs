@@ -53,4 +53,5 @@ pub async fn collect(
 }
 
 #[cfg(test)]
+#[path = "tests/wal_storage.rs"]
 mod tests;

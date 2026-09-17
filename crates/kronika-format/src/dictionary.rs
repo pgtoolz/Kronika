@@ -354,4 +354,5 @@ impl SegmentDicts {
 }
 
 #[cfg(test)]
+#[path = "tests/dictionary.rs"]
 mod tests;

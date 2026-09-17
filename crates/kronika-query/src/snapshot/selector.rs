@@ -1,6 +1,5 @@
 //! Sample selection shared by the nine current-state finders.
 
-use crate::StatementScope;
 use std::sync::Arc;
 
 use kronika_reader::Cell;
@@ -8,6 +7,8 @@ use kronika_registry::{contract, logical_section_name, registry};
 
 use super::relation::RelationRow;
 use super::{PlainRowOut, PreparedSnapshot, ProcessRowOut, StructuredSearch};
+
+use crate::StatementScope;
 use crate::{
     DatasetSegment, Order, PredecessorSelection, QueryContext, QueryDataset, QueryError,
     RelationGroup, RelationKind, SegmentBounds, SegmentSelection, SnapshotRequest,
@@ -355,9 +356,11 @@ fn prepare_current(
         scope: StatementScope::All,
     };
     drop(catalog);
-    super::prepare_selected_state(dataset, anchor, segments, clean, request, true, None)?
-        .finish_prepared()
-        .map(Some)
+    super::preparation::prepare_selected_state(
+        dataset, anchor, segments, clean, request, true, None,
+    )?
+    .finish_prepared()
+    .map(Some)
 }
 
 fn prepare(
@@ -438,7 +441,7 @@ fn prepare(
         scope: StatementScope::All,
     };
     drop(catalog);
-    let prepared = super::prepare_selected(
+    let prepared = super::preparation::prepare_selected(
         dataset,
         anchor,
         segments,
@@ -553,4 +556,5 @@ fn recorded_postgresql_cadence(
 }
 
 #[cfg(test)]
+#[path = "../tests/snapshot_selector.rs"]
 mod tests;

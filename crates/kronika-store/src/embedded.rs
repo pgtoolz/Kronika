@@ -15,11 +15,13 @@ use crate::{
     ResourceListing, SegmentResource, validate_finished_zms,
 };
 
-struct OwnedSegment(Vec<u8>);
-
 #[derive(Clone)]
 enum SegmentStorage {
-    Owned(Arc<OwnedSegment>),
+    #[expect(
+        clippy::rc_buffer,
+        reason = "owned sources retain the caller Vec allocation and capacity without copying"
+    )]
+    Owned(Arc<Vec<u8>>),
     #[cfg(feature = "posix")]
     File {
         file: Arc<File>,
@@ -37,7 +39,7 @@ pub struct SharedSegmentBytes {
 impl SharedSegmentBytes {
     fn len(&self) -> u64 {
         match &self.storage {
-            SegmentStorage::Owned(bytes) => bytes.0.len() as u64,
+            SegmentStorage::Owned(bytes) => bytes.len() as u64,
             #[cfg(feature = "posix")]
             SegmentStorage::File { identity, .. } => identity.len,
         }
@@ -69,7 +71,7 @@ impl std::fmt::Debug for SharedSegmentBytes {
 impl ReadAt for SharedSegmentBytes {
     fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
         match &self.storage {
-            SegmentStorage::Owned(bytes) => bytes.0.read_exact_at(buf, offset),
+            SegmentStorage::Owned(bytes) => bytes.as_ref().read_exact_at(buf, offset),
             #[cfg(feature = "posix")]
             SegmentStorage::File { file, .. } => file.read_exact_at(buf, offset),
         }
@@ -130,7 +132,7 @@ impl EmbeddedSource {
         Ok(Self {
             identity: ResourceIdentity::finished(segment_id),
             bytes: SharedSegmentBytes {
-                storage: SegmentStorage::Owned(Arc::new(OwnedSegment(bytes))),
+                storage: SegmentStorage::Owned(Arc::new(bytes)),
                 source_id: Arc::clone(&source_id),
             },
             summary: Arc::new(summary),
@@ -220,5 +222,5 @@ impl ImmutableSegmentSource for EmbeddedSource {
 }
 
 #[cfg(test)]
-#[path = "embedded/tests.rs"]
+#[path = "tests/embedded.rs"]
 mod tests;

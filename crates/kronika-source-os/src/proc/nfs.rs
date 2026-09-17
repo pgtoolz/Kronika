@@ -74,4 +74,5 @@ pub fn parse_server(content: &str, ts: i64, scope: u8) -> Option<OsNfsServer> {
 }
 
 #[cfg(test)]
+#[path = "../tests/proc/nfs.rs"]
 mod tests;
