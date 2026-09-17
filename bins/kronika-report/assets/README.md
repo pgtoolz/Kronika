@@ -17,10 +17,11 @@ JavaScript and deterministic gzip files. `CARGO_BIN` and `NODE_BIN` select the
 Cargo and Node executables when they are not first on `PATH`.
 The build fixes path remaps for the repository and Cargo home, the
 `const-random` seed, and C compiler identification so bytes remain identical
-across build hosts.
+across build hosts. Compression uses the lockfile-pinned `pako` encoder from
+the UI dependencies because Apple and GNU gzip produce different bytes.
 
-The raw generated WebAssembly is 10,198,018 bytes. Its committed gzip form is
-2,478,504 bytes with SHA-256
-`df2e9f7c90bc0b15ff2d2377f3a6e7d393dfa2e7acd3d5fe712e5e4c54515289`.
+The raw generated WebAssembly is 10,068,598 bytes. Its committed gzip form is
+2,428,738 bytes with SHA-256
+`197e5c32d05271ee5ffcf33b124b9d79807122436e43cc32c80b4bf5e53f6dc1`.
 The 3,885-byte JavaScript binding has SHA-256
 `4635ae734e8c1e1aeb463ae1096f4fdc2a65d98e715b55cee9fe46956f29cba8`.

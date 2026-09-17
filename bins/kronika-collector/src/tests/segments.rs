@@ -235,10 +235,18 @@ fn configured_size_closes_only_after_the_valid_frame_is_appended() {
 fn configured_sixty_four_mib_boundary_is_exact() {
     const LIMIT: u64 = 64 * 1024 * 1024;
     let limit_bytes = usize::try_from(LIMIT).expect("64 MiB fits usize");
-    assert_eq!(close_reason(false, false, limit_bytes - 1, LIMIT), None);
-    assert_eq!(close_reason(false, false, limit_bytes, LIMIT), Some("size"));
+    let forced = false;
+    let age_expired = false;
     assert_eq!(
-        close_reason(false, false, limit_bytes + 1, LIMIT),
+        close_reason(forced, age_expired, limit_bytes - 1, LIMIT),
+        None
+    );
+    assert_eq!(
+        close_reason(forced, age_expired, limit_bytes, LIMIT),
+        Some("size")
+    );
+    assert_eq!(
+        close_reason(forced, age_expired, limit_bytes + 1, LIMIT),
         Some("size")
     );
 }

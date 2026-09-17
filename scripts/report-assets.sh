@@ -136,9 +136,10 @@ bound_wasm=$generated/kronika-report-wasm_bg.wasm
 compressed_wasm=$temporary/kronika-report-wasm.wasm.gz
 "$NODE" bins/kronika-web/ui/scripts/bundle-report-wasm.mjs \
 	"$module_javascript" \
-	"$javascript"
+	"$javascript" \
+	"$bound_wasm" \
+	"$compressed_wasm"
 validate_wasm_paths "$bound_wasm"
-gzip --no-name --best --stdout "$bound_wasm" >"$compressed_wasm"
 
 validate_javascript "$javascript"
 validate_gzip "$compressed_wasm"
