@@ -19,6 +19,7 @@ mod row_key;
 mod rows;
 mod selection;
 pub mod snapshot;
+mod snapshot_neighbor;
 mod statement_scope;
 mod time;
 
@@ -48,8 +49,8 @@ pub use index_provider::{IndexProvider, IndexResource, MemoryIndexProvider};
 pub use projection::{OutputField, Plan, plans, resolved_dictionary};
 pub use request::{
     ActiveCursor, CatalogRequest, DataRequest, Filter, HourPart, HourRequest, HourSeriesRequest,
-    IndexRequest, Order, QueryRequest, RelationGroup, RowsRequest, SegmentRequest, SnapshotRequest,
-    Window,
+    IndexRequest, Order, QueryRequest, RelationGroup, RowsRequest, SegmentRequest,
+    SnapshotNeighborDirection, SnapshotNeighborRequest, SnapshotRequest, Window,
 };
 pub use row_detail::{
     PreparedRowDetail, RowDetailResult, ValidatedRowDetailQuery, execute_row_detail,
@@ -59,6 +60,7 @@ pub use row_key::{
     DETAIL_REF_MAX_ENCODED_BYTES, DetailLocator, RowIdentity, detail_locator, identity,
     identity_columns, is_detail_text, validate,
 };
+pub use snapshot_neighbor::{MAX_SNAPSHOT_NEIGHBOR_SECTIONS, SNAPSHOT_NEIGHBOR_MIN_STEP_MICROS};
 pub use statement_scope::{COLLECTOR_STATEMENT_PREFIX, STATEMENTS_SECTION, StatementScope};
 pub use time::TimeRange;
 
@@ -226,6 +228,7 @@ enum Prepared {
     History(PreparedHistory),
     Hour(PreparedHour),
     Snapshot(snapshot::PreparedSnapshot),
+    SnapshotNeighbor(snapshot_neighbor::PreparedNeighbor),
     Rows(PreparedRows),
     Events(PreparedEvents),
     RowDetail(PreparedRowDetail),
@@ -270,7 +273,7 @@ impl QueryExecution {
             Prepared::Events(prepared) => {
                 QueryMetadata::segment_set(prepared.stability(), prepared.validator_input())
             }
-            Prepared::RowDetail(_) => QueryMetadata {
+            Prepared::RowDetail(_) | Prepared::SnapshotNeighbor(_) => QueryMetadata {
                 stability: QueryStability::Mutable,
                 identity: None,
             },
@@ -290,6 +293,7 @@ impl QueryExecution {
             Prepared::History(prepared) => prepared.stream(sink),
             Prepared::Hour(prepared) => prepared.stream(sink),
             Prepared::Snapshot(prepared) => prepared.stream(sink),
+            Prepared::SnapshotNeighbor(prepared) => prepared.stream(sink),
             Prepared::Rows(prepared) => prepared.stream(sink),
             Prepared::Events(prepared) => prepared.stream(sink),
             Prepared::RowDetail(prepared) => prepared.stream(sink),
@@ -335,6 +339,9 @@ pub fn execute(
         QueryRequest::Snapshot(request) => {
             return snapshot::prepare_snapshot(context, request)?.finish();
         }
+        QueryRequest::SnapshotNeighbor(request) => Prepared::SnapshotNeighbor(
+            snapshot_neighbor::prepare(std::sync::Arc::clone(&context.dataset), request)?,
+        ),
         QueryRequest::Rows(request) => {
             Prepared::Rows(rows::prepare(context.dataset.as_ref(), request)?)
         }

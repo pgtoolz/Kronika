@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { fieldNameForLocator, type DataRow, type Finding, type LanePoint } from "./api"
 import { buildMetricSamples } from "./chart"
 import { CursorRow } from "./cursor-row"
-import { mergeObservationTimestamps, observationTimestamps } from "./cursor-timestamps"
+import { observationTimestamps } from "./cursor-timestamps"
+import { useCursorNavigation } from "./cursor-navigation"
 import { useDisplayTime } from "./display-time-context"
 import { findingOrder, findingSummary, summarizeFindings } from "./finding-presentation"
 import { useExportSelection } from "./export-context"
@@ -80,6 +81,7 @@ export function Timeline({
   readonly t: Translate
 }) {
   const time = useDisplayTime()
+  const navigation = useCursorNavigation()
   const [previewCursor, setPreviewCursor] = useState<number | null>(null)
   const displayCursor = previewCursor ?? cursor
   const preview = useCallback((timestamp: number | null) => {
@@ -141,10 +143,10 @@ export function Timeline({
   const selected = lanes.find((lane) => lane.key === selectedLane) ?? lanes[0]
   const laneTimes = useMemo(() => timelineNavigationTimes(lanes), [lanes])
   const cursorTimes = useMemo(
-    () => navigationTimestamps === undefined
-      ? laneTimes
-      : mergeObservationTimestamps(navigationTimestamps, ...lanes.flatMap((lane) => lane.series.map((line) => line.points))),
-    [laneTimes, navigationTimestamps],
+    () => navigation !== null
+      ? timelineRecordedTimes(selected?.series ?? [])
+      : navigationTimestamps ?? laneTimes,
+    [laneTimes, navigation, navigationTimestamps, selected],
   )
   const [plotWidth, setPlotWidth] = useState(920)
   const markers = useMemo(() => groupFindings(findings, hour, end, plotWidth), [end, findings, hour, plotWidth])
@@ -152,14 +154,19 @@ export function Timeline({
     const move = (event: KeyboardEvent) => {
       if (event.defaultPrevented || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
         || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
-        || keyboardTargetOwnsArrows(event.target) || cursorTimes.length === 0) return
+        || keyboardTargetOwnsArrows(event.target) || navigation === null && cursorTimes.length === 0) return
       event.preventDefault()
+      if (navigation !== null) {
+        preview(null)
+        navigation.step(event.key === "ArrowRight" ? "next" : "previous")
+        return
+      }
       const timestamp = moveCursor(cursor, cursorTimes, event.key)
       if (timestamp !== cursor) onCursor(timestamp)
     }
     window.addEventListener("keydown", move)
     return () => window.removeEventListener("keydown", move)
-  }, [cursor, cursorTimes, onCursor])
+  }, [cursor, cursorTimes, navigation, onCursor, preview])
   const recorded = useMemo(() => selected === undefined ? [] : toRecordedSeries(selected, locale, t), [locale, selected, t])
   const healthAt = selected?.key === "health" ? healthEvaluationAtOrBefore(selected.series, displayCursor) : null
   const current = (selected?.series ?? []).map((line) => {
@@ -190,9 +197,10 @@ export function Timeline({
     />
   })}</>
   if (selected === undefined) {
-    return findings.length === 0
-      ? <section className="flex h-[124px] min-h-[124px] items-center justify-center border-y border-line2 bg-s1 text-sm text-fg4" data-presentation={presentation} data-testid="timeline-empty">{t(emptyHourStatusKey(hour))}</section>
-      : <section className="flex h-[124px] min-h-[124px] items-center justify-center border-y border-line2 bg-s1 text-sm text-fg4" data-presentation={presentation} data-testid="timeline-empty">{t("status.no_data")}</section>
+    return <section className="flex h-[124px] min-h-[124px] flex-col items-center justify-center border-y border-line2 bg-s1 text-sm text-fg4" data-presentation={presentation} data-testid="timeline-empty">
+      <span>{t(findings.length === 0 ? emptyHourStatusKey(hour) : "status.no_data")}</span>
+      {navigation !== null && <CursorRow cursor={cursor} cursorTimes={[]} onCursor={onCursor} navigation={navigation} reading="" t={t} />}
+    </section>
   }
   return <section aria-label={t("hour.range", { range: time.hourRange(hour).primary })} className={`timeline-shell mt-2 flex flex-col overflow-hidden border-y border-line2 bg-s1 timeline-${presentation}`} data-export-from={exportSelection?.from} data-export-to={exportSelection?.to} data-presentation={presentation}>
     <div className="timeline-rail flex h-7 min-w-0 flex-none overflow-hidden border-b border-line2">
@@ -224,6 +232,7 @@ export function Timeline({
       markerLayer={markerLayer}
       navigationTimestamps={cursorTimes}
       onCursor={onCursor}
+      onStep={navigation?.step}
       onPreview={preview}
       onPlotWidth={setPlotWidth}
       reading={current}
@@ -234,7 +243,7 @@ export function Timeline({
       threshold={threshold}
       variant={presentation}
     />
-    {presentation === "preview" && <CursorRow cursor={displayCursor} cursorTimes={cursorTimes} onCursor={onCursor} reading={selectedReading} t={t} />}
+    {presentation === "preview" && <CursorRow cursor={cursor} cursorTimes={cursorTimes} onCursor={onCursor} navigation={navigation} reading={selectedReading} t={t} />}
   </section>
 }
 

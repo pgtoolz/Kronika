@@ -39,6 +39,9 @@ use crate::encoding::AcceptedEncodings;
 #[path = "heatmap_rss.rs"]
 mod heatmap_rss;
 
+#[path = "snapshot_navigation.rs"]
+mod snapshot_navigation;
+
 const SEGMENT_ID: i64 = 1_709_164_800_000_000;
 const SOURCES: u32 = 0b11;
 

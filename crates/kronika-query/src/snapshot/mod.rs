@@ -43,6 +43,7 @@ use crate::{Order, QueryError, QuerySink, QueryStability, RelationGroup};
 pub(crate) struct PreparedSnapshot {
     dataset: Arc<dyn QueryDataset>,
     anchor: DatasetSegment,
+    latest: bool,
     pin_current: bool,
     prior_sources: Vec<DatasetSegment>,
     relation_predecessors: Vec<DatasetSegment>,

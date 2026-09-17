@@ -26,10 +26,10 @@ function finding(kind, timestamp, ordinal) {
 
 test("the shared empty timeline uses the hour-aware status", async () => {
   const source = await readFile(new URL("../src/timeline.tsx", import.meta.url), "utf8")
-  assert.match(source, /t\(emptyHourStatusKey\(hour\)\)/)
+  assert.match(source, /emptyHourStatusKey\(hour\)/)
 })
 
-test("the selected lane draws while one explicit domain owns every shared cursor path", async () => {
+test("the selected lane draws while shared step controls use source navigation", async () => {
   const [app, keyboard, timeline] = await Promise.all([
     readFile(new URL("../src/app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/keyboard.ts", import.meta.url), "utf8"),
@@ -40,6 +40,9 @@ test("the selected lane draws while one explicit domain owns every shared cursor
   assert.match(timeline, /timelineNavigationTimes\(lanes\)/)
   assert.match(timeline, /navigationTimestamps=\{cursorTimes\}/)
   assert.match(timeline, /moveCursor\(cursor, cursorTimes, event\.key\)/)
+  assert.match(timeline, /navigation\.step\(event\.key === "ArrowRight" \? "next" : "previous"\)/)
+  assert.match(timeline, /onStep=\{navigation\?\.step\}/)
+  assert.doesNotMatch(timeline, /mergeObservationTimestamps/)
   assert.match(timeline, /<UPlotChart/)
   assert.match(timeline, /window\.addEventListener\("keydown", move\)/)
   assert.match(timeline, /if \(controlledLane !== undefined\) return/)

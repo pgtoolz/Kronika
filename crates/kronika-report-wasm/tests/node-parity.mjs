@@ -87,6 +87,22 @@ function records(body) {
 }
 
 compare("catalog", "/api/catalog", "");
+for (const [name, at, direction, expected] of [
+  ["next", SEGMENT_ID, "next", SAMPLE_TO],
+  ["previous", "1709164802000000", "previous", SAMPLE_TO],
+  ["absent", SAMPLE_TO, "next", null],
+]) {
+  const neighbor = records(compare(
+    `snapshot-neighbor-${name}`,
+    "/api/snapshot/neighbor",
+    `section=pg_stat_activity&at=${at}&direction=${direction}`,
+  ));
+  assert.deepEqual(neighbor, [{
+    record: "snapshot_neighbor",
+    at: expected,
+    segment_id: expected === null ? null : SEGMENT_ID,
+  }]);
+}
 compare(
   "index",
   `/api/segments/${SEGMENT_ID}/sections/pg_stat_database/index`,
@@ -102,6 +118,12 @@ compare(
   `/api/segments/${SEGMENT_ID}/snapshot`,
   `at=${SAMPLE_TO}&section=os_cpu&field=user&page_size=1&text=5000000000`,
 );
+const latest = records(compare(
+  "snapshot-latest-selection",
+  `/api/segments/${SEGMENT_ID}/snapshot`,
+  `at=${SAMPLE_TO}&section=pg_stat_activity&field=pid&selection=latest`,
+));
+assert.ok(latest.some((record) => record.record === "row" && record.timestamp === SAMPLE_TO));
 
 const rowsPath = `/api/segments/${SEGMENT_ID}/sections/os_process/rows`;
 const firstQuery = "field=comm&field=utime&order=asc&page_size=1";

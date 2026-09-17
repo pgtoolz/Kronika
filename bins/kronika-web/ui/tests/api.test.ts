@@ -601,6 +601,77 @@ async function bundledApi() {
   return api
 }
 
+test("ordinary snapshot URLs opt into latest selection while exact locators and caching stay stable", async () => {
+  const api = await bundledApi()
+  const originalFetch = globalThis.fetch
+  const seen: { url: URL; cache: RequestCache | undefined }[] = []
+  globalThis.fetch = async (input, init) => {
+    seen.push({ url: new URL(String(input), "http://kronika.invalid"), cache: init?.cache })
+    return ndjson([])
+  }
+  try {
+    const signal = new AbortController().signal
+    await api.loadSnapshot("77", START, ["pg_stat_activity"], signal)
+    const page = { section: "os_process", pageSize: 200 }
+    await api.loadSnapshot("77", START, [page], signal)
+    await api.loadSnapshot("77", START, [page], signal, undefined, { cursor: "next-page" })
+    await api.loadSnapshot("77", START, [{ section: "pg_stat_activity", typeId: "1001004" }], signal, undefined, { rowOrdinal: "73" })
+    assert.deepEqual(seen.map(({ url }) => url.searchParams.get("selection")), ["latest", "latest", "latest", null])
+    assert.deepEqual(seen.map(({ cache }) => cache), ["default", "default", "default", "default"])
+    assert.equal(seen[3]?.url.searchParams.get("row_ordinal"), "73")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("snapshot neighbors retry an empty result without caching or losing exact timestamps", async () => {
+  const api = await bundledApi()
+  assert.equal(typeof api.loadSnapshotNeighbor, "function")
+  const originalFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input), "http://kronika.invalid")
+    assert.equal(url.pathname, "/api/snapshot/neighbor")
+    assert.deepEqual(url.searchParams.getAll("section"), ["pg_stat_activity"])
+    assert.equal(url.searchParams.get("at"), String(START))
+    assert.equal(url.searchParams.get("direction"), "next")
+    assert.equal(url.searchParams.get("from"), String(START))
+    assert.equal(url.searchParams.get("to"), String(START + 60_000_000))
+    assert.equal(init?.cache, "no-store")
+    return ndjson([{ record: "snapshot_neighbor", at: ++calls === 1 ? null : String(START + 10_012_990), segment_id: calls === 1 ? null : "81" }])
+  }
+  try {
+    const load = () => api.loadSnapshotNeighbor(["pg_stat_activity"], START, "next", new AbortController().signal, { from: START, to: START + 60_000_000 })
+    assert.equal(await load(), null)
+    assert.deepEqual(await load(), { at: START + 10_012_990, segmentId: "81" })
+    assert.equal(calls, 2)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test("snapshot neighbors reject mismatched, unsafe and out-of-direction results", async () => {
+  const api = await bundledApi()
+  assert.equal(typeof api.loadSnapshotNeighbor, "function")
+  const originalFetch = globalThis.fetch
+  try {
+    for (const record of [
+      { at: null, segment_id: "81" },
+      { at: String(START + 2_000_000), segment_id: null },
+      { at: String(START + 2_000_000), segment_id: "invalid" },
+      { at: "9007199254740993", segment_id: "81" },
+      { at: String(START + 1), segment_id: "81" },
+      { at: String(START - 2_000_000), segment_id: "81" },
+      { at: String(START + 61_000_000), segment_id: "81" },
+    ]) {
+      globalThis.fetch = async () => ndjson([{ record: "snapshot_neighbor", ...record }])
+      await assert.rejects(api.loadSnapshotNeighbor(["pg_stat_activity"], START, "next", new AbortController().signal, { from: START, to: START + 60_000_000 }), /neighbor/)
+    }
+    for (const records of [[], [{ record: "other", at: null, segment_id: null }], [{ record: "snapshot_neighbor", at: null, segment_id: null }, { record: "snapshot_neighbor", at: null, segment_id: null }]]) {
+      globalThis.fetch = async () => ndjson(records)
+      await assert.rejects(api.loadSnapshotNeighbor(["pg_stat_activity"], START, "next", new AbortController().signal), /neighbor/)
+    }
+  } finally { globalThis.fetch = originalFetch }
+})
+
 async function activityWireApi() {
   const api = await importModule(
     'export { loadSeries } from "../src/api.ts"; export { ACTIVITY_COLUMNS, postgresMetricHistoryRequest, postgresMetricHistorySamples } from "../src/postgres-view.tsx"; export { signInBasic } from "../src/session.ts"',

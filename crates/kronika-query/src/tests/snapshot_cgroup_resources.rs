@@ -146,28 +146,25 @@ fn cgroup_family_transition_and_recreated_directory_break_rates() {
             .push(discovered_cpu(200, path, second, Some(30)))
             .expect("recreated");
     });
-    let mut request = snapshot_request(
-        "os_cgroup_v2_cpu",
-        &["usage_usec", "throttled_period_ratio"],
-    );
-    request.at = 150;
-    let transition = snapshot_records(&payload, request.clone());
-    assert!(
-        rows(&transition)[0]["values"]
-            .as_array()
-            .expect("values")
-            .iter()
-            .all(Value::is_null)
-    );
-    request.at = 200;
-    let recreated = snapshot_records(&payload, request);
-    assert!(
-        rows(&recreated)[0]["values"]
-            .as_array()
-            .expect("values")
-            .iter()
-            .all(Value::is_null)
-    );
+    for latest in [false, true] {
+        for at in [150, 200] {
+            let mut request = snapshot_request(
+                "os_cgroup_v2_cpu",
+                &["usage_usec", "throttled_period_ratio"],
+            );
+            request.latest = latest;
+            request.at = at;
+            let records = snapshot_records(&payload, request);
+            assert!(
+                rows(&records)[0]["values"]
+                    .as_array()
+                    .expect("values")
+                    .iter()
+                    .all(Value::is_null),
+                "selection latest={latest}, transition/recreated sample={at}"
+            );
+        }
+    }
 }
 
 #[test]

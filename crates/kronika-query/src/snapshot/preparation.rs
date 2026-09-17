@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use kronika_reader::{Segment, SegmentKind};
-use kronika_registry::{contract, logical_section_name, registry};
+use kronika_registry::{ColumnClass, contract, logical_section_name, registry};
 
 use super::{
     CPU_TIME_VIRTUAL_FIELD, PROCESS_USER_VIRTUAL_FIELDS, PROCESS_VIRTUAL_FIELDS, PageOrder,
@@ -71,13 +71,14 @@ pub fn prepare_snapshot(
         .position(|segment| segment.id() == request.segment_id)
         .ok_or(QueryError::NoSuchSegment)?;
     let current = segments.remove(index);
+    let pin_current = !request.latest || request.row_ordinal.is_some();
     prepare_selected_state_with_inputs(
         Arc::clone(&context.dataset),
         current,
         segments,
         clean,
         request,
-        true,
+        pin_current,
         None,
         inputs,
     )
@@ -237,6 +238,10 @@ impl SnapshotPreparation {
         })
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "captured selection, projection, and source planning meet at this snapshot boundary"
+    )]
     pub(super) fn finish_prepared(self) -> Result<PreparedSnapshot, QueryError> {
         let Self {
             dataset,
@@ -268,13 +273,14 @@ impl SnapshotPreparation {
             &relation_fields,
             search.as_deref(),
         )?;
-        cgroup::extend_plans(
+        extend_plans(
             dataset.as_ref(),
             &anchor,
             &segments,
             &physical_request,
             &mut sections,
             search.as_deref(),
+            &relation_fields,
         )?;
         project_statement_text(&mut sections, request.scope);
         let relation_count = sections
@@ -288,7 +294,7 @@ impl SnapshotPreparation {
                 segments.clone(),
                 &segment,
                 &sections,
-                request.at,
+                &physical_request,
                 pin_current,
             )?
         } else {
@@ -313,6 +319,7 @@ impl SnapshotPreparation {
         Ok(PreparedSnapshot {
             dataset,
             anchor,
+            latest: request.latest,
             pin_current,
             prior_sources,
             relation_predecessors,
@@ -338,6 +345,90 @@ impl SnapshotPreparation {
             validator_segments,
         })
     }
+}
+
+fn extend_plans(
+    dataset: &dyn QueryDataset,
+    anchor: &DatasetSegment,
+    candidates: &[DatasetSegment],
+    request: &SnapshotRequest,
+    sections: &mut Vec<SectionPlans>,
+    search: Option<&StructuredSearch>,
+    relation_fields: &[String],
+) -> Result<(), QueryError> {
+    // Exact row locators keep their physical layout and source pinned.
+    if request.row_ordinal.is_some() {
+        return Ok(());
+    }
+    let mut selected = request.clone();
+    if !selected.latest {
+        selected
+            .sections
+            .retain(|name| cgroup::legacy(name).is_some());
+        if selected.sections.is_empty() {
+            return Ok(());
+        }
+    }
+    for candidate in candidates {
+        if candidate.id() >= anchor.id() || candidate.min_ts() > request.at {
+            continue;
+        }
+        let missing = candidate.sections().iter().any(|layout| {
+            request
+                .type_id
+                .is_none_or(|wanted| wanted == layout.type_id)
+                && contract(layout.type_id).is_some_and(|layout| {
+                    layout
+                        .columns
+                        .iter()
+                        .any(|column| column.class == ColumnClass::Timestamp)
+                })
+                && selected.sections.iter().any(|name| {
+                    let physical = logical_section_name(layout.type_id);
+                    (physical == Some(name.as_str()) || physical == cgroup::legacy(name))
+                        && sections
+                            .iter()
+                            .flat_map(|section| &section.plans)
+                            .all(|plan| plan.type_id != layout.type_id)
+                })
+        });
+        if !missing {
+            continue;
+        }
+        let source = dataset.open(candidate)?;
+        for found in section_plans(&source, &selected, relation_fields, search)? {
+            if let Some(existing) = sections
+                .iter_mut()
+                .find(|section| section.logical_name == found.logical_name)
+            {
+                for plan in found.plans {
+                    if existing
+                        .plans
+                        .iter()
+                        .all(|present| present.type_id != plan.type_id)
+                    {
+                        existing.plans.push(plan);
+                    }
+                }
+            } else {
+                sections.push(found);
+            }
+        }
+    }
+    if request.latest {
+        sections.sort_by_key(|section| {
+            request
+                .sections
+                .iter()
+                .position(|name| name == &section.logical_name)
+        });
+    }
+    for section in sections {
+        if request.latest || cgroup::legacy(&section.logical_name).is_some() {
+            section.plans.sort_unstable_by_key(|plan| plan.type_id);
+        }
+    }
+    Ok(())
 }
 
 fn prepared_first_match(

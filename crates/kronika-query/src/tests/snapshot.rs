@@ -97,6 +97,7 @@ fn fixture_payload(fill: impl FnOnce(&mut Interner, &mut SectionBuffers)) -> Arc
 fn snapshot_request(section: &str, fields: &[&str]) -> SnapshotRequest {
     SnapshotRequest {
         segment_id: SEGMENT_ID,
+        latest: false,
         at: SNAPSHOT_AT,
         sections: vec![section.to_owned()],
         fields: fields.iter().map(|field| (*field).to_owned()).collect(),
@@ -880,6 +881,7 @@ fn dynamic_timed_context_indices_are_unique_beyond_three_sources() {
 fn request() -> SnapshotRequest {
     SnapshotRequest {
         segment_id: 7,
+        latest: false,
         at: 11,
         sections: vec!["pg_stat_statements".to_owned()],
         fields: vec!["queryid".to_owned(), "query".to_owned()],
@@ -921,6 +923,9 @@ fn cursor_binding_covers_query_shape_but_excludes_page_size_and_cursor() {
     assert_eq!(request_binding(&harmless), expected);
 
     let mut variants = Vec::new();
+    let mut changed = baseline.clone();
+    changed.latest = true;
+    variants.push(changed);
     let mut changed = baseline.clone();
     changed.segment_id += 1;
     variants.push(changed);

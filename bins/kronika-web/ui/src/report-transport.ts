@@ -31,6 +31,7 @@ const REPORT_RANGE_CONVENTIONS = new Map<string, ReportRangeConvention>([
   ["/api/events", "exclusive"],
   ["/api/heatmap", "inclusive"],
   ["/api/hour", "inclusive"],
+  ["/api/snapshot/neighbor", "inclusive"],
 ])
 
 function runtime(): ReportRuntime {
@@ -63,6 +64,12 @@ export function reportVisibleCursor(cursor: number, range: ReportVisibleRange | 
 }
 
 function clampReportRequestRange(url: URL): void {
+  if (url.pathname === "/api/snapshot/neighbor") {
+    const visible = reportVisibleRange()
+    if (visible === null) throw new Error("Kronika report visible range is invalid")
+    if (!url.searchParams.has("from")) url.searchParams.set("from", String(visible.from))
+    if (!url.searchParams.has("to")) url.searchParams.set("to", String(visible.toExclusive - 1))
+  }
   const convention = REPORT_RANGE_CONVENTIONS.get(url.pathname)
   if (convention === undefined || !url.searchParams.has("from") || !url.searchParams.has("to")) return
   const fromValues = url.searchParams.getAll("from")

@@ -11,9 +11,9 @@ use super::{
     cgroup, identity_cell, row_timestamp,
 };
 
-use crate::QueryError;
 use crate::dataset::{DatasetSegment, QueryDataset};
 use crate::projection::Plan;
+use crate::{QueryError, SnapshotRequest};
 
 pub(super) fn located_moment(
     retained: &RetainedMoment,
@@ -209,7 +209,7 @@ pub(super) fn preceding(
     segments: Vec<DatasetSegment>,
     current: &Segment,
     sections: &[SectionPlans],
-    at: i64,
+    request: &SnapshotRequest,
     pin_current: bool,
 ) -> Result<Vec<DatasetSegment>, QueryError> {
     let layouts = sections
@@ -217,7 +217,7 @@ pub(super) fn preceding(
         .filter(|section| SnapshotViewSpec::for_logical_name(&section.logical_name).is_none())
         .flat_map(|section| {
             section.plans.iter().filter(move |plan| {
-                plan.applies() || cgroup::legacy(&section.logical_name).is_some()
+                plan.applies() || request.latest || cgroup::legacy(&section.logical_name).is_some()
             })
         })
         .filter_map(|plan| plan.timestamp.map(|timestamp| (plan.type_id, timestamp)))
@@ -228,7 +228,7 @@ pub(super) fn preceding(
     let compatible = layouts.keys().copied().collect::<HashSet<_>>();
     let mut candidates = segments
         .into_iter()
-        .filter(|candidate| candidate.id() < segment_ref.id() && candidate.min_ts() <= at)
+        .filter(|candidate| candidate.id() < segment_ref.id() && candidate.min_ts() <= request.at)
         .filter(|candidate| {
             candidate
                 .sections()
@@ -240,7 +240,7 @@ pub(super) fn preceding(
         .keys()
         .map(|type_id| (*type_id, ContributingMoments::default()))
         .collect::<BTreeMap<_, _>>();
-    scan_contributing_moments(current, &layouts, at, pin_current, &mut moments)?;
+    scan_contributing_moments(current, &layouts, request.at, pin_current, &mut moments)?;
     candidates.sort_unstable_by_key(|candidate| Reverse((candidate.max_ts(), candidate.id())));
     for candidate in &candidates {
         if moments.values().all(|samples| {
@@ -252,7 +252,7 @@ pub(super) fn preceding(
             break;
         }
         let segment = dataset.open(candidate)?;
-        scan_contributing_moments(&segment, &layouts, at, false, &mut moments)?;
+        scan_contributing_moments(&segment, &layouts, request.at, false, &mut moments)?;
     }
     let retained = moments
         .values()

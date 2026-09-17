@@ -339,6 +339,7 @@ fn prepare_current(
     let by = query.order.into_iter().map(|order| order.field).collect();
     let request = SnapshotRequest {
         segment_id: anchor.id(),
+        latest: false,
         at,
         sections: vec![query.logical_name],
         fields: query.fields,
@@ -424,6 +425,7 @@ fn prepare(
     let anchor = segments.remove(index);
     let request = SnapshotRequest {
         segment_id: anchor.id(),
+        latest: false,
         at,
         sections: vec![query.surface.logical_name().to_owned()],
         fields: Vec::new(),

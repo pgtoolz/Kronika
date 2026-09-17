@@ -75,6 +75,10 @@ pub(super) fn snapshot_binding(
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     hash_part(&mut hash, b"segment", &request.segment_id.to_le_bytes());
     hash_part(&mut hash, b"at", &request.at.to_le_bytes());
+    if request.latest {
+        // Keep legacy anchor cursors valid while binding the opt-in policy.
+        hash_part(&mut hash, b"selection", b"latest");
+    }
     for section in &request.sections {
         hash_part(&mut hash, b"section", section.as_bytes());
     }

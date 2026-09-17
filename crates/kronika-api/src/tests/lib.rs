@@ -104,6 +104,38 @@ fn repeated_fields_and_exact_where_parameters_keep_request_order() {
 }
 
 #[test]
+fn snapshot_latest_selection_is_an_explicit_cache_distinct_policy() {
+    for (suffix, expected) in [
+        ("", false),
+        ("&selection=anchor", false),
+        ("&selection=latest", true),
+    ] {
+        let Route::Query(QueryRequest::Snapshot(request)) = parse(
+            "/api/segments/7/snapshot",
+            Some(&format!("at=9&section=pg_stat_activity{suffix}")),
+        )
+        .expect("snapshot selection") else {
+            panic!("snapshot route");
+        };
+        assert_eq!(request.latest, expected);
+    }
+    for suffix in [
+        "&selection=",
+        "&selection=nearest",
+        "&selection=anchor&selection=latest",
+        "&selection=latest&selection=latest",
+    ] {
+        assert_eq!(
+            parse(
+                "/api/segments/7/snapshot",
+                Some(&format!("at=9&section=pg_stat_activity{suffix}"))
+            ),
+            Err(RouteError::BadParameter("selection".to_owned())),
+        );
+    }
+}
+
+#[test]
 fn physical_layout_selection_is_available_to_every_generic_row_resource() {
     let Route::Query(QueryRequest::History(history)) = parse(
         "/api/segments/7/sections/pg_stat_statements/history",
@@ -853,4 +885,73 @@ fn statement_scope_is_accepted_only_where_statements_can_be_scoped() {
             "{query}",
         );
     }
+}
+#[test]
+fn snapshot_neighbor_accepts_source_specific_recorded_navigation() {
+    use kronika_query::SnapshotNeighborDirection;
+    for (direction, expected) in [
+        ("next", SnapshotNeighborDirection::Next),
+        ("previous", SnapshotNeighborDirection::Previous),
+    ] {
+        let query = format!(
+            "section=pg_stat_activity&section=os_process&at=1709164801000000&direction={direction}&from=1709164800000000&to=1709168400000000"
+        );
+        let Route::Query(QueryRequest::SnapshotNeighbor(parsed)) =
+            parse("/api/snapshot/neighbor", Some(&query)).expect("neighbor route")
+        else {
+            panic!("neighbor query");
+        };
+        assert_eq!(parsed.sections, ["pg_stat_activity", "os_process"]);
+        assert_eq!(parsed.at, 1_709_164_801_000_000);
+        assert_eq!(parsed.direction, expected);
+        assert_eq!(
+            parsed.window,
+            Window {
+                from: Some(1_709_164_800_000_000),
+                to: Some(1_709_168_400_000_000)
+            }
+        );
+    }
+}
+
+#[test]
+fn snapshot_neighbor_rejects_ambiguous_invalid_or_unbounded_parameters() {
+    let base = "section=pg_stat_activity&at=1000000&direction=next";
+    for (query, parameter) in [
+        ("at=1&direction=next".to_owned(), "section"),
+        ("section=pg_stat_activity&direction=next".to_owned(), "at"),
+        ("section=pg_stat_activity&at=1".to_owned(), "direction"),
+        (base.replace("next", "asc"), "direction"),
+        (format!("{base}&direction=previous"), "direction"),
+        (format!("{base}&at=2"), "at"),
+        (format!("{base}&section=pg_stat_activity"), "section"),
+        (format!("{base}&section="), "section"),
+        (format!("{base}&section=%FF"), "section"),
+        (format!("{base}&section={}", "x".repeat(129)), "section"),
+        (format!("{base}&from=1&from=2"), "from"),
+        (format!("{base}&to=1&to=2"), "to"),
+        (format!("{base}&from=2&to=1"), "to"),
+        (base.replace("1000000", "9223372036854775808"), "at"),
+        (format!("{base}&step=100"), "step"),
+        (format!("{base}&unknown=1"), "unknown"),
+    ] {
+        assert_eq!(
+            parse("/api/snapshot/neighbor", Some(&query)),
+            Err(RouteError::BadParameter(parameter.to_owned())),
+            "{query}"
+        );
+    }
+    let sections = (0..32)
+        .map(|index| format!("section=source{index}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    let query = format!("{sections}&at=0&direction=next");
+    assert!(parse("/api/snapshot/neighbor", Some(&query)).is_ok());
+    assert_eq!(
+        parse(
+            "/api/snapshot/neighbor",
+            Some(&format!("{query}&section=extra"))
+        ),
+        Err(RouteError::BadParameter("section".to_owned()))
+    );
 }

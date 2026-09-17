@@ -33,7 +33,9 @@ impl PreparedSnapshot {
         let mut contexts = Vec::with_capacity(section.plans.len());
         let mut facts = HashMap::new();
         for (layout_index, plan) in section.plans.iter().enumerate() {
-            if (!plan.applies() && cgroup::legacy(&section.logical_name).is_none()) || cancelled() {
+            if (!plan.applies() && !self.latest && cgroup::legacy(&section.logical_name).is_none())
+                || cancelled()
+            {
                 continue;
             }
             let Some(timestamp) = plan.timestamp else {
@@ -69,6 +71,15 @@ impl PreparedSnapshot {
             )?);
         }
         cgroup::retain_family(&mut contexts, &section.logical_name);
+        if self.latest && !self.pin_current {
+            // Physical revisions belong to one logical snapshot. Keep equal-time
+            // contributors, but do not page or emit an older revision's sample.
+            let latest = contexts
+                .iter()
+                .filter_map(|context| context.sample_to)
+                .max();
+            contexts.retain(|context| context.sample_to.is_none() || context.sample_to == latest);
+        }
         Ok(contexts)
     }
 

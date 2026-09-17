@@ -14,8 +14,8 @@ use kronika_query::{
     HeatmapBatchQuery, HeatmapItemQuery, HeatmapView, HourPart, HourRequest, IndexRequest,
     MemoryIndexProvider, NormalizedRanking, Order, QueryContext, QueryDataset, QueryError,
     QueryRequest, QuerySink, RowsRequest, SOURCE_OS, SOURCE_POSTGRESQL, SegmentRequest,
-    SnapshotRequest, StatementScope, TimeRange, Window, detail_locator, execute,
-    validate_heatmap_request, validate_row_detail_ref,
+    SnapshotNeighborDirection, SnapshotNeighborRequest, SnapshotRequest, StatementScope, TimeRange,
+    Window, detail_locator, execute, validate_heatmap_request, validate_row_detail_ref,
 };
 use kronika_report::{ReportEngine, ReportError, ReportInput};
 use kronika_store::{EmbeddedSource, ResourceError};
@@ -90,6 +90,7 @@ fn direct_context(segment_id: SegmentId) -> QueryContext {
 fn snapshot_request(segment_id: SegmentId) -> QueryRequest {
     QueryRequest::Snapshot(SnapshotRequest {
         segment_id: segment_id.get(),
+        latest: false,
         at: SEGMENT_ID_VALUE,
         sections: vec!["os_process".to_owned()],
         fields: vec!["comm".to_owned(), "utime".to_owned()],
@@ -108,6 +109,10 @@ fn snapshot_request(segment_id: SegmentId) -> QueryRequest {
     })
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture table covers every query family"
+)]
 fn request_families(segment_id: SegmentId) -> Vec<(&'static str, &'static str, QueryRequest)> {
     let data = DataRequest {
         segment: SegmentRequest {
@@ -186,6 +191,16 @@ fn request_families(segment_id: SegmentId) -> Vec<(&'static str, &'static str, Q
             }),
         ),
         ("snapshot", "row", snapshot_request(segment_id)),
+        (
+            "snapshot_neighbor",
+            "snapshot_neighbor",
+            QueryRequest::SnapshotNeighbor(SnapshotNeighborRequest {
+                sections: vec!["os_process".to_owned()],
+                at: SEGMENT_ID_VALUE,
+                direction: SnapshotNeighborDirection::Next,
+                window: Window::default(),
+            }),
+        ),
         (
             "rows",
             "row",
@@ -322,12 +337,12 @@ fn explicit_segment_id_binds_both_embedded_artifacts() {
 }
 
 #[test]
-fn report_engine_matches_direct_context_for_all_nine_query_families() {
+fn report_engine_matches_direct_context_for_all_query_families() {
     let segment_id = segment_id();
     let context = direct_context(segment_id);
     let engine = ReportEngine::new(report_input(segment_id)).expect("report engine");
     let requests = request_families(segment_id);
-    assert_eq!(requests.len(), 9);
+    assert_eq!(requests.len(), 10);
 
     for (family, expected_record, request) in requests {
         let direct = direct_bytes(&context, request.clone())

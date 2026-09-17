@@ -76,8 +76,29 @@ For local access or a reverse proxy on the same machine, use
 | `/` | `GET`, `HEAD` | Embedded browser interface. |
 | `/auth/session` | `GET`, `POST`, `DELETE` | Check, create from Basic credentials, or clear a browser session. Cookies receive `Secure` over HTTPS. |
 | `/api/export?from=<unix_second>&to=<unix_second>` | `GET` | HTML attachment for inclusive whole-second bounds. |
+| `/api/snapshot/neighbor` | `GET` | Previous/next recorded timestamp for the requested sections. See below. |
 | Other `/api/*` | `GET` | JSON/NDJSON resources for recorded data. |
 | `/mcp` | `POST` | Stateless Streamable HTTP. Query strings and `Origin` headers are rejected. [MCP reference](../../docs/mcp-clients.md). |
+
+Snapshot navigation accepts `section` (repeatable, at most 32), `at`, and
+`direction=next|previous`. Optional `from` and `to` bound the search inclusively.
+All timestamps are Unix microseconds. The result is the nearest recorded sample
+at least one second in the requested direction, across segment boundaries:
+
+```json
+{"record":"snapshot_neighbor","at":"1789669528791282","segment_id":"1789668693080235"}
+```
+
+Both values are `null` when no sample is available. Navigation responses use
+`Cache-Control: private,no-store` and no ETag, so a later request can find newly
+appended data after an empty result. Existing immutable snapshot responses keep
+their caching. HTML reports run the same search inside their exported time range.
+
+Screen snapshot requests use `selection=latest` to choose the newest observation
+not after `at`, including data in overlapping earlier segments. The default
+`selection=anchor` preserves the explicit segment's precedence. Exact row
+requests remain pinned to their recorded row. Separate URLs and validators keep
+the two selection modes from sharing cached responses.
 
 ## Export files
 

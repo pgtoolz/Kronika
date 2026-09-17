@@ -26,6 +26,15 @@ fn request_refusals_are_stable_and_bodyless() {
             Some("unknown"),
         ),
         (
+            ReportSession::new(SEGMENT_ID, Vec::new(), Vec::new(), 0, 0).request(
+                "/api/snapshot/neighbor",
+                "section=pg_stat_activity&at=1709164800000000&direction=sideways",
+            ),
+            BAD_REQUEST,
+            "bad_parameter",
+            Some("direction"),
+        ),
+        (
             ReportSession::new(SEGMENT_ID, Vec::new(), Vec::new(), 0, 0)
                 .request("/api/row-detail", "detail_ref=not%2Bbase64"),
             BAD_REQUEST,

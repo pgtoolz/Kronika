@@ -57,6 +57,8 @@ const STREAM_FIELDS: Readonly<Record<keyof VitalStreams, readonly [string, reado
   lifecycle: ["pg_log_lifecycle", ["kind", "message"]],
 }
 
+export const POSTGRES_OVERVIEW_SECTIONS: readonly string[] = Object.values(STREAM_FIELDS).map(([section]) => section)
+
 interface VitalRow {
   readonly key: string
   // Empty points hide the row because the fact was not recorded.

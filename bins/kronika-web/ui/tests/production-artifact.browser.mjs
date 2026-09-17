@@ -582,6 +582,7 @@ test("held first Host snapshot reserves local request frames and filtered cgroup
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/hour") {
       if (url.searchParams.get("part") === "lanes") {
         heldLanes = response
@@ -1016,6 +1017,7 @@ test("the Process Inspector plot keeps its DOM while the shared cursor request s
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/hour") {
       const section = url.searchParams.get("section")
       if (section === "os_process_summary") return ndjson(response, processSummaryRecords(HOUR, 3, 80))
@@ -1929,6 +1931,7 @@ test("display timezone and human chart precision stay global", { timeout: 60_000
       response.end('{"database":"artifact_db"}')
       return
     }
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") {
@@ -2088,11 +2091,9 @@ test("display timezone and human chart precision stay global", { timeout: 60_000
     await cdp.evaluate(`([...document.querySelectorAll('.pg-tabs button')].find((button) => button.textContent === "Databases")).click()`)
     await cdp.waitFor(`document.querySelector('[data-summary-fact="rollbacks"] strong')?.textContent === "20%"`, "the database context")
     assert.equal(postgresSummaryRequests().length, 2)
-    await cdp.evaluate(`(() => {
-      const navigator = document.querySelector('[data-testid="hour-timeline"] input.chart-navigator')
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(navigator, "2")
-      navigator.dispatchEvent(new Event("input", { bubbles: true }))
-    })()`)
+    await cdp.evaluate(`document.querySelector('[data-testid="hour-timeline"] input.chart-navigator').focus()`)
+    await cdp.send("Input.dispatchKeyEvent", { code: "ArrowLeft", key: "ArrowLeft", type: "keyDown", windowsVirtualKeyCode: 37 })
+    await cdp.send("Input.dispatchKeyEvent", { code: "ArrowLeft", key: "ArrowLeft", type: "keyUp", windowsVirtualKeyCode: 37 })
     await cdp.waitFor(`new URL(location.href).searchParams.get("at") === "${BEFORE_AT}" && document.querySelector('[data-summary-fact="rollbacks"] strong')?.textContent === "10%"`, "the local PostgreSQL cursor context")
     assert.equal(postgresSummaryRequests().length, 2)
     await cdp.evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }))`)
@@ -2277,6 +2278,7 @@ test.skip("legacy fullscreen uPlot is replaced by the shared Inspector", { timeo
     }
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") return ndjson(response, [
@@ -2480,6 +2482,7 @@ test("Statements scope widens for an explicit search and returns to the workload
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") {
@@ -2606,6 +2609,7 @@ test("the production artifact preserves wire keys and exact finding page state",
       response.end(JSON.stringify({ record: "instance_label", database: "artifact_db" }))
       return
     }
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") {
       ndjson(response, [])
@@ -4009,6 +4013,7 @@ test("the minified artifact restores and clears its opaque browser session", { t
       ndjson(response, url.searchParams.getAll("section").includes("pg_stat_activity") ? snapshotRecords() : [])
       return
     }
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") {
       ndjson(response, [])
@@ -4173,6 +4178,7 @@ test("the slow-query group loads one opaque representative detail and preserves 
       response.end(JSON.stringify({ record: "instance_label", database: null }))
       return
     }
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") {
       ndjson(response, [])
@@ -4421,6 +4427,7 @@ test("tablespace rollups keep exact history, URL drill, Back, search, and narrow
       response.end(JSON.stringify({ record: "instance_label", database: "artifact_db" }))
       return
     }
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") return ndjson(response, url.searchParams.has("group") ? aggregateRelationHistoryRecords(url) : timelineRecords(HOUR))
@@ -4635,6 +4642,7 @@ test.skip("legacy chart visibility preference is replaced by the permanent previ
     }
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") {
@@ -5093,6 +5101,7 @@ test("PostgreSQL is unavailable without current telemetry and returns for a stor
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") return ndjson(response, sourceTimelineRecords(historical))
@@ -5198,6 +5207,7 @@ test("PostgreSQL detail dock stays inside the viewport", { timeout: 60_000 }, as
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") {
@@ -5343,6 +5353,7 @@ test("structured search pending state and snapshot targets preserve exact newest
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") {
@@ -5680,6 +5691,7 @@ test("recorded environment owns every rail and Inspector across cold routes and 
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/events") return ndjson(response, slowQueryEventRecords())
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/hour") {
       if (url.searchParams.has("section")) return ndjson(response, [])
@@ -5774,6 +5786,7 @@ test("production health keeps staggered components on one stored evaluation", { 
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") {
@@ -5864,6 +5877,7 @@ test("production System projections show exact CPU memory and device readings", 
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") {
@@ -6668,6 +6682,7 @@ test("forensic workstation keeps exact preview and one responsive Inspector", { 
       response.end(JSON.stringify({ record: "instance_label", database: "artifact_db" }))
       return
     }
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") {
@@ -7802,6 +7817,15 @@ function targetedRelationRecords(url, label, eligible) {
 }
 
 
+function answerSnapshotNeighbor(url, response) {
+  const at = Number(url.searchParams.get("at"))
+  const next = url.searchParams.get("direction") === "next"
+  const candidates = [BEFORE_AT, AT, AFTER_AT].filter((timestamp) => next ? timestamp - at >= 1_000_000 : at - timestamp >= 1_000_000)
+  const chosen = candidates.length === 0 ? null : next ? Math.min(...candidates) : Math.max(...candidates)
+  response.setHeader("Cache-Control", "private,no-store")
+  return ndjson(response, [{ record: "snapshot_neighbor", at: chosen === null ? null : String(chosen), segment_id: chosen === null ? null : SEGMENT }])
+}
+
 function answerHeatmap(url, response) {
   assert.equal(url.searchParams.has("label"), false)
   const from = Number(url.searchParams.get("from") ?? "0")
@@ -8151,37 +8175,54 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
-test("mixed-cadence shared cursor uses one recorded domain for pointer and both keyboard paths", { timeout: 90_000 }, async () => {
+test("source-aware snapshot steps retry uncached misses, discover new segments and share all controls", { timeout: 90_000 }, async () => {
   const html = gunzipSync(await readFile(ARTIFACT))
   const authState = { valid: true }
   const page = { errors: [], external: [], responses: [] }
-  const base = HOUR + 1_800_000_000
-  const activityOne = base + 1
-  const activityTwo = base + 4_000
-  const five = base + 5_000_000
-  const ten = base + 10_000_000
-  let snapshotRequests = 0
-  const activityRecords = snapshotRecords().filter((record) => record.record === "layout"
+  const first = AT
+  const second = AT + 10_012_990
+  const third = HOUR + HOUR_US + 20_019_123
+  const nextSegment = "7400"
+  const observations = [first, first + 500_000, second]
+  const neighborRequests = []
+  const snapshots = []
+  let catalogRequests = 0
+  let published = false
+  let latest = second
+  let held = null
+  let holdNext = false
+  let holdSnapshotAt = null
+  let heldSnapshot = null
+  let newestSample = null
+  const activity = snapshotRecords().filter((record) => record.record === "layout"
     ? record.layout.logical_name === "pg_stat_activity"
-    : record.record === "row" && record.type_id === "1001004")
-    .map((record, index) => {
-      if (record.record !== "row") return record
-      const timestamp = index === 1 ? activityOne : activityTwo
-      return { ...record, timestamp: String(timestamp), values: [String(timestamp), ...record.values.slice(1)] }
-    })
-  const timeline = [
-    { record: "hour", from: String(HOUR), to: String(HOUR + HOUR_US - 1), available_hours: [String(HOUR)] },
-    { record: "catalog", from: String(HOUR), to: String(HOUR + HOUR_US - 1), source_families: [{ name: "postgresql", configured: true, present: true, metrics_present: true }] },
-    {
-      record: "finished_segment", id: SEGMENT, min_ts: String(HOUR), max_ts: String(HOUR + HOUR_US - 1),
-      sections: [{ logical_name: "pg_stat_activity", physical_name: "pg_stat_activity", type_id: "1001004", implementation: "postgresql", source_family: "postgresql", rows: "2", bytes: "256" }],
-    },
-    { record: "index", segment: { id: SEGMENT }, logical_name: "health", checksum: null },
-    { record: "point", type_id: "0", series: "os_health", ts: String(base), identity: {}, value: 80 },
-    { record: "point", type_id: "0", series: "overall_health", ts: String(base), identity: {}, value: 75 },
-    ...[-30_000_000, 0, 30_000_000].map((offset, index) => ({ record: "lane", segment_id: SEGMENT, lane: "pg_waiting", ts: String(base + offset), value: index + 1 })),
-    { record: "lane_context", segment_id: SEGMENT, postgresql_interval_seconds: null, environment: 0 },
-    ...[0, 5_000_000, 10_000_000, 15_000_000].map((offset, index) => ({ record: "lane", segment_id: SEGMENT, lane: "cpu_busy", ts: String(base + offset), value: 20 + index })),
+    : record.record === "row" && record.type_id === "1001004" && record.ordinal === "73")
+  const atSnapshot = (at, segmentId) => activity.map((record) => {
+    if (record.record !== "row") return record
+    const values = [...record.values]
+    values[0] = String(at)
+    values[12] = at === newestSample ? "newest_activity_sample" : at < second ? "first_activity_sample" : "later_activity_sample"
+    // Two later samples have identical visible values; both remain navigable.
+    values[16] = String(at - 60_000_000)
+    values[17] = String(at - 30_000_000)
+    values[18] = String(at - 5_000_000)
+    values[19] = String(at - 1_000_000)
+    return { ...record, segment_id: segmentId, timestamp: String(at), values }
+  })
+  const timeline = (hour = HOUR) => [
+    { record: "hour", from: String(hour), to: String(hour + HOUR_US - 1), available_hours: [String(HOUR), String(HOUR + HOUR_US)] },
+    { record: "catalog", from: String(hour), to: String(hour + HOUR_US - 1), source_families: [{ name: "postgresql", configured: true, present: true, metrics_present: true }] },
+    ...[SEGMENT, ...(published ? [nextSegment] : [])].map((id) => ({
+      record: "finished_segment", id, min_ts: String(id === SEGMENT ? HOUR : third), max_ts: String(id === SEGMENT ? latest : third),
+      sections: [
+        { logical_name: "pg_stat_activity", physical_name: "pg_stat_activity", type_id: "1001004", implementation: "postgresql", source_family: "postgresql", rows: "3", bytes: "256" },
+        { logical_name: "os_process", physical_name: "os_process", type_id: "1100001", implementation: "linux", source_family: "system", rows: "80", bytes: "4096" },
+      ],
+    })),
+    { record: "lane_context", segment_id: SEGMENT, postgresql_interval_seconds: 10, environment: 0 },
+    // Deliberately incomplete lanes: neighbors cannot rely on the loaded chart.
+    { record: "lane", segment_id: SEGMENT, lane: "pg_waiting", ts: String(hour === HOUR ? first : third), value: 1 },
+    { record: "lane", segment_id: SEGMENT, lane: "cpu_busy", ts: String(first + 12_990), value: 20 },
   ]
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1")
@@ -8194,25 +8235,50 @@ test("mixed-cadence shared cursor uses one recorded domain for pointer and both 
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
-    if (url.pathname === "/api/hour") return ndjson(response, url.searchParams.has("section") ? [] : timeline)
-    if (url.pathname === "/api/instance-label") {
-      response.writeHead(200, { "Content-Type": "application/json" })
-      response.end(JSON.stringify({ record: "instance_label", database: "artifact_db" }))
+    if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
+    if (url.pathname === "/api/hour") {
+      if (url.searchParams.has("section")) return ndjson(response, [])
+      if (url.searchParams.get("part") === "base") catalogRequests += 1
+      return ndjson(response, timeline(Number(url.searchParams.get("from") ?? HOUR)))
+    }
+    if (url.pathname === "/api/snapshot/neighbor") {
+      neighborRequests.push(url.search)
+      assert.deepEqual(url.searchParams.getAll("section"), ["pg_stat_activity"])
+      assert.equal(url.searchParams.has("from"), false)
+      assert.equal(url.searchParams.has("to"), false)
+      const at = Number(url.searchParams.get("at"))
+      const next = url.searchParams.get("direction") === "next"
+      const candidates = observations.filter((ts) => next ? ts - at >= 1_000_000 : at - ts >= 1_000_000)
+      const chosen = candidates.length === 0 ? null : next ? Math.min(...candidates) : Math.max(...candidates)
+      const records = [{ record: "snapshot_neighbor", at: chosen === null ? null : String(chosen), segment_id: chosen === null ? null : chosen === third ? nextSegment : SEGMENT }]
+      const answer = () => {
+        // Intentionally cacheable to prove the client retries the identical URL.
+        response.setHeader("Cache-Control", "private,max-age=3600")
+        ndjson(response, records)
+      }
+      if (holdNext) { holdNext = false; held = answer; return }
+      answer()
       return
     }
-    if (url.pathname === `/api/segments/${SEGMENT}/snapshot`) {
-      snapshotRequests += 1
-      return ndjson(response, activityRecords)
+    if (/^\/api\/segments\/\d+\/snapshot$/.test(url.pathname)) {
+      const at = Number(url.searchParams.get("at"))
+      const segmentId = url.pathname.split("/")[3]
+      snapshots.push({ at, segmentId })
+      if (url.searchParams.getAll("section").includes("os_process")) return ndjson(response, snapshotRecordsAt(at))
+      const chosen = Math.max(...observations.filter((ts) => ts <= at))
+      if (at === holdSnapshotAt) {
+        holdSnapshotAt = null
+        heldSnapshot = () => ndjson(response, atSnapshot(chosen, segmentId))
+        return
+      }
+      return ndjson(response, atSnapshot(chosen, segmentId))
     }
     response.writeHead(404)
     response.end()
   })
-  await new Promise((resolve, reject) => {
-    server.once("error", reject)
-    server.listen(0, "127.0.0.1", resolve)
-  })
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve) })
   const address = server.address()
-  if (address === null || typeof address === "string") throw new Error("mixed-cadence browser server has no TCP address")
+  if (address === null || typeof address === "string") throw new Error("neighbor browser server has no TCP address")
   const origin = `http://127.0.0.1:${address.port}`
   const profile = await mkdtemp(join(tmpdir(), "b-"))
   const browser = launchBrowser(profile)
@@ -8223,91 +8289,95 @@ test("mixed-cadence shared cursor uses one recorded domain for pointer and both 
     const cdp = cdpSession(socket)
     trackPage(socket, origin, page)
     await enablePage(cdp)
+    await cdp.send("Emulation.setDeviceMetricsOverride", { deviceScaleFactor: 1, height: 900, mobile: false, width: 800 })
     await cdp.send("Network.setCookie", { name: "kronika_session", url: origin, value: SESSION_COOKIE.slice(SESSION_COOKIE.indexOf("=") + 1) })
-    const waitAt = async (timestamp, label) => {
-      await cdp.waitFor(`new URL(location.href).searchParams.get("at") === "${timestamp}"`, label, 15_000)
-      await cdp.waitFor(
-        `document.querySelector('[data-testid="cursor-behind"]') === null && document.querySelector('[data-testid="hour-timeline"]')?.dataset.navigationCount === "8"`,
-        `${label} snapshot`,
-        15_000,
-      )
-      assert.equal(await cdp.evaluate(`document.querySelector('[data-testid="hour-timeline"]')?.dataset.selectedTimestamp`), String(timestamp))
+    const waitAt = async (at) => {
+      await cdp.waitFor(`new URL(location.href).searchParams.get("at") === "${at}" && document.querySelector('[data-testid="cursor-behind"]') === null`, `settled cursor ${at}`, 15_000)
     }
-    for (const width of [800, 1280]) {
-      await cdp.send("Emulation.setDeviceMetricsOverride", { deviceScaleFactor: 1, height: 900, mobile: false, width })
-      await cdp.send("Page.navigate", { url: `${origin}/?at=${ten}&view=pg.activity` })
-      await cdp.waitFor(`document.querySelector('[data-testid="pg-activity-table"] .entity-row') !== null`, `${width}px Activity rows`, 15_000)
-      if (await cdp.evaluate(`document.documentElement.lang !== "ru"`)) {
-        await cdp.evaluate(`document.querySelector('[data-testid="locale-ru"]').click()`)
-        await cdp.waitFor(`document.documentElement.lang === "ru"`, `${width}px RU locale`)
-      }
-      await waitAt(ten, `${width}px initial cursor`)
-      const geometry = await cdp.evaluate(`(() => {
-        const figure = document.querySelector('[data-testid="hour-timeline"]')
-        const plot = figure.querySelector('.u-over')
-        const tabs = document.querySelector('.pg-tabs')
-        const figureBox = figure.getBoundingClientRect()
-        const plotBox = plot.getBoundingClientRect()
-        const tabsBox = tabs.getBoundingClientRect()
-        return {
-          count: Number(figure.dataset.navigationCount),
-          figureBottom: figureBox.bottom,
-          figureLeft: figureBox.left,
-          figureRight: figureBox.right,
-          plotBottom: plotBox.bottom,
-          plotLeft: plotBox.left,
-          plotRight: plotBox.right,
-          tabsTop: tabsBox.top,
-        }
-      })()`)
-      assert.equal(geometry.count, 8, `${width}:${JSON.stringify(geometry)}`)
-      assert.ok(geometry.figureBottom <= geometry.tabsTop + 0.75, `${width}:${JSON.stringify(geometry)}`)
-      assert.ok(geometry.plotLeft >= geometry.figureLeft && geometry.plotRight <= geometry.figureRight && geometry.plotBottom <= geometry.figureBottom, `${width}:${JSON.stringify(geometry)}`)
+    const globalStep = async (key) => cdp.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: ${JSON.stringify(key)} }))`)
+    await cdp.send("Page.navigate", { url: `${origin}/?at=${first}&view=pg.activity` })
+    await cdp.waitFor(`document.querySelector('[data-testid="pg-activity-table"]')?.textContent.includes("first_activity_sample")`, "initial Activity", 15_000)
+    await waitAt(first)
+    await globalStep("ArrowRight")
+    await waitAt(second)
+    assert.equal(await cdp.evaluate(`document.querySelector('[data-testid="pg-activity-table"]')?.textContent.includes("later_activity_sample")`), true)
+    assert.equal(neighborRequests.length, 1)
+    assert.equal(snapshots.some(({ at }) => at === first + 12_990 || at === first + 500_000), false)
 
-      await cdp.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'ArrowLeft' }))`)
-      await waitAt(five, `${width}px global five-second cursor`)
-      await cdp.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'ArrowLeft' }))`)
-      await waitAt(activityTwo, `${width}px second recorded Activity cursor`)
-      await cdp.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'ArrowLeft' }))`)
-      await waitAt(activityOne, `${width}px first recorded Activity cursor`)
+    await globalStep("ArrowRight")
+    await waitForRequests(() => neighborRequests.length === 2)
+    await cdp.waitFor(`document.querySelectorAll('.cursor-row-step:disabled').length === 0`, "retry remains enabled")
+    await waitAt(second)
+    observations.push(third)
+    published = true
+    await cdp.evaluate(`document.querySelectorAll('.cursor-row-step')[1].click()`)
+    await waitAt(third)
+    await cdp.waitFor(`document.querySelector('[data-testid="hour-timeline"]') !== null`, "next hour lanes", 15_000)
+    assert.equal(neighborRequests[1], neighborRequests[2], "same URL is fetched again after the earlier null")
+    assert.equal(catalogRequests, 2, "new segment is discovered before selecting it")
+    assert.deepEqual(snapshots.at(-1), { at: third, segmentId: nextSegment })
+    assert.equal(await cdp.evaluate(`document.querySelector('[data-testid="pg-activity-table"]')?.textContent.includes("later_activity_sample")`), true)
 
-      await cdp.evaluate(`document.querySelector('[data-testid="hour-timeline"] input.chart-navigator').focus()`)
-      await cdp.send("Input.dispatchKeyEvent", { code: "ArrowRight", key: "ArrowRight", nativeVirtualKeyCode: 39, type: "keyDown", windowsVirtualKeyCode: 39 })
-      await cdp.send("Input.dispatchKeyEvent", { code: "ArrowRight", key: "ArrowRight", nativeVirtualKeyCode: 39, type: "keyUp", windowsVirtualKeyCode: 39 })
-      await waitAt(activityTwo, `${width}px chart keyboard cursor`)
+    await cdp.evaluate(`document.querySelector('[data-testid="hour-timeline"] input.chart-navigator').focus()`)
+    await cdp.send("Input.dispatchKeyEvent", { code: "ArrowLeft", key: "ArrowLeft", type: "keyDown", windowsVirtualKeyCode: 37 })
+    await cdp.send("Input.dispatchKeyEvent", { code: "ArrowLeft", key: "ArrowLeft", type: "keyUp", windowsVirtualKeyCode: 37 })
+    await waitAt(second)
+    assert.equal(new URLSearchParams(neighborRequests.at(-1)).get("direction"), "previous")
 
-      const points = await cdp.evaluate(`(() => {
-        const figure = document.querySelector('[data-testid="hour-timeline"]')
-        const host = figure.querySelector('.uplot-host').getBoundingClientRect()
-        const plot = figure.querySelector('.u-over').getBoundingClientRect()
-        const extendedEnd = ${HOUR + HOUR_US} + ${HOUR_US} * 38 / Math.max(1, host.width - 84)
-        figure.querySelector('.uplot').dataset.gestureIdentity = 'same'
-        return [${base - 30_000_000}, ${base}, ${five}, ${ten}].map((timestamp) => ({
-          timestamp,
-          x: plot.left + (timestamp - ${HOUR}) / (extendedEnd - ${HOUR}) * plot.width,
-          y: plot.top + plot.height / 2,
-        }))
-      })()`)
-      const requestsBeforeTravel = snapshotRequests
-      const clocks = []
-      for (const point of points) {
-        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y })
-        await cdp.waitFor(`document.querySelector('[data-testid="hour-timeline"]')?.dataset.selectedTimestamp === "${point.timestamp}"`, `${width}px preview ${point.timestamp}`)
-        clocks.push(await cdp.evaluate(`document.querySelector('[data-testid="cursor-time"]')?.textContent`))
-      }
-      assert.equal(await cdp.evaluate(`new URL(location.href).searchParams.get("at")`), String(activityTwo), `${width}px pointer travel leaves URL committed`)
-      assert.equal(snapshotRequests, requestsBeforeTravel, `${width}px pointer travel emits no snapshots`)
-      assert.ok(new Set(clocks).size >= 3, `${width}px clock follows pointer: ${JSON.stringify(clocks)}`)
-      assert.equal(await cdp.evaluate(`document.querySelector('[data-testid="hour-timeline"] .uplot')?.dataset.gestureIdentity`), "same", `${width}px plot survives pointer travel`)
-      const point = points.at(-1)
-      await cdp.send("Input.dispatchMouseEvent", { button: "left", buttons: 1, clickCount: 1, type: "mousePressed", x: point.x, y: point.y })
-      await cdp.send("Input.dispatchMouseEvent", { button: "left", buttons: 0, clickCount: 1, type: "mouseReleased", x: point.x, y: point.y })
-      await waitAt(ten, `${width}px pointer cursor`)
-      assert.equal(snapshotRequests, requestsBeforeTravel + 1, `${width}px pointer release emits one snapshot`)
-    }
+    // Changing screens aborts a delayed response before it can move the URL.
+    await cdp.evaluate(`document.activeElement?.blur()`)
+    holdNext = true
+    await globalStep("ArrowRight")
+    await waitForRequests(() => held !== null)
+    await cdp.evaluate(`document.querySelector('[data-testid="process-tab"]').click()`)
+    await cdp.waitFor(`new URL(location.href).searchParams.get("view") === null`, "screen switch")
+    held()
+    held = null
+    await cdp.waitFor(`document.querySelector('[data-testid="cursor-behind"]') === null`, "new screen settles", 15_000)
+    assert.equal(await cdp.evaluate(`new URL(location.href).searchParams.get("at")`), String(second))
+    // A provisional miss must not turn off follow-latest. A successful step
+    // does, so a later hour refresh preserves a manually selected observation.
+    observations.splice(observations.indexOf(third), 1)
+    published = false
+    await cdp.send("Page.navigate", { url: `${origin}/?view=pg.activity` })
+    await waitAt(second)
+    const beforeMiss = neighborRequests.length
+    await globalStep("ArrowRight")
+    await waitForRequests(() => neighborRequests.length === beforeMiss + 1)
+    await cdp.waitFor(`document.querySelectorAll('.cursor-row-step:disabled').length === 0`, "miss settled")
+    latest = second + 10_000_000
+    observations.push(latest)
+    await cdp.evaluate(`document.querySelector('[data-testid="refresh-action"]').click()`)
+    await waitAt(latest)
+    await globalStep("ArrowLeft")
+    await waitAt(second)
+    latest += 10_000_000
+    observations.push(latest)
+    const catalogsBeforeManualRefresh = catalogRequests
+    await cdp.evaluate(`document.querySelector('[data-testid="refresh-action"]').click()`)
+    await waitForRequests(() => catalogRequests > catalogsBeforeManualRefresh)
+    await cdp.waitFor(`document.querySelector('[data-testid="refresh-action"]')?.disabled === false && document.querySelector('[data-testid="cursor-behind"]') === null`, "manual cursor refresh settled")
+    await waitAt(second)
+    // A committed step may be followed immediately while its rows are pending.
+    // The newer generation must win even if the older response arrives last.
+    holdSnapshotAt = second + 10_000_000
+    newestSample = latest
+    await globalStep("ArrowRight")
+    await waitForRequests(() => heldSnapshot !== null)
+    await cdp.waitFor(`new URL(location.href).searchParams.get("at") === "${second + 10_000_000}" && document.querySelector('[data-testid="cursor-behind"]') !== null`, "the intermediate snapshot remains pending")
+    await globalStep("ArrowRight")
+    await waitAt(latest)
+    await cdp.waitFor(`document.querySelector('[data-testid="pg-activity-table"]')?.textContent.includes("newest_activity_sample")`, "the newest snapshot replaces pending rows")
+    heldSnapshot()
+    heldSnapshot = null
+    await settleLayout(cdp)
+    await waitAt(latest)
+    assert.equal(await cdp.evaluate(`document.querySelector('[data-testid="pg-activity-table"]')?.textContent.includes("newest_activity_sample")`), true)
     assert.deepEqual(page.errors, [])
     assert.deepEqual(page.external, [])
   } finally {
+    held?.()
+    heldSnapshot?.()
     socket?.close()
     await stopBrowser(browser)
     await new Promise((resolve) => server.close(resolve))
@@ -8329,6 +8399,7 @@ test("narrow controls stay contained and help never changes selection", { timeou
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") {
@@ -8562,6 +8633,7 @@ test("phone width keeps narrow rules winning and nothing reserving height", { ti
     if (url.pathname === "/auth/session") return answerSession(request, response, authState)
     if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
     if (url.pathname.startsWith("/api/") && !browserIsAuthenticated(request, authState)) return unauthorized(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
     if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
     if (url.pathname === "/api/catalog") return ndjson(response, [])
     if (url.pathname === "/api/hour") {

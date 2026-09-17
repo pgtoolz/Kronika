@@ -6,6 +6,7 @@ import { useDisplayTime } from "./display-time-context"
 import { LabelHelp, type Translate } from "./help"
 import { orderedRecordedTimes } from "./keyboard"
 import { humanDurationAxis, type Locale } from "./model"
+import type { SnapshotDirection } from "./api"
 import { niceCeiling } from "./spark"
 
 export type ChartScale = "percent" | "nonnegative" | "signed"
@@ -146,6 +147,7 @@ export function UPlotChart({
   locale,
   onCursor,
   onPreview,
+  onStep,
   reading,
   series,
   className,
@@ -170,6 +172,7 @@ export function UPlotChart({
   readonly navigationTimestamps?: readonly number[] | undefined
   readonly onCursor?: ((timestamp: number) => void) | undefined
   readonly onPreview?: ((timestamp: number | null) => void) | undefined
+  readonly onStep?: ((direction: SnapshotDirection) => void) | undefined
   readonly onPlotWidth?: ((width: number) => void) | undefined
   readonly reading?: string | undefined
   readonly series: readonly RecordedSeries[]
@@ -215,7 +218,7 @@ export function UPlotChart({
   const [themeRevision, setThemeRevision] = useState(0)
   const exact = hovered === null ? null : exactReadings(frame, drawnSeries, hovered, locale, time)
   const selected = cursor === undefined || cursor < hour || cursor >= end ? null : cursor
-  const keyboardTimestamp = navigationTimes[keyboardIndex] ?? null
+  const keyboardTimestamp = onStep === undefined ? navigationTimes[keyboardIndex] ?? null : selected
   const runtime = useRef<ChartRuntimeState>({ decorations, frame, locale, navigationTimes, series: visibleSeries, threshold, time })
   const hoveredRef = useRef(hovered)
   onCursorRef.current = onCursor
@@ -414,11 +417,23 @@ export function UPlotChart({
       aria-valuetext={keyboardTimestamp === null ? undefined : navigationSampleText(series, frame, navigationTimes, keyboardTimestamp, locale, time)}
       className="chart-navigator absolute m-0 h-px w-px overflow-hidden whitespace-nowrap [clip-path:inset(50%)] focus:left-2 focus:z-[9] focus:h-7 focus:w-[min(320px,calc(100%-16px))] focus:[clip-path:none]"
       data-recorded-timestamp={keyboardTimestamp ?? undefined}
-      disabled={navigationTimes.length === 0}
+      disabled={onStep === undefined && navigationTimes.length === 0}
+      onKeyDown={(event) => {
+        if (onStep === undefined || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+          || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+        event.preventDefault()
+        event.stopPropagation()
+        onPreview?.(null)
+        onStep(event.key === "ArrowRight" ? "next" : "previous")
+      }}
       max={Math.max(0, navigationTimes.length - 1)}
       min="0"
       onChange={(event) => {
         const index = Number(event.currentTarget.value)
+        if (onStep !== undefined) {
+          if (index !== keyboardIndex) onStep(index > keyboardIndex ? "next" : "previous")
+          return
+        }
         const timestamp = navigationTimes[index]
         setKeyboardIndex(index)
         if (timestamp !== undefined) {

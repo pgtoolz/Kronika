@@ -3,7 +3,7 @@ import test from "node:test"
 
 import { mergeObservationTimestamps, observationTimestamps } from "../src/cursor-timestamps.ts"
 
-test("current-screen navigation keeps exact mixed-cadence observations without inventing a grid", () => {
+test("observation merging keeps exact mixed-cadence timestamps without inventing a grid", () => {
   const pgWaiting = [0, 30, 60].map((timestamp) => ({ timestamp: timestamp * 1_000_000 }))
   const os = Array.from({ length: 13 }, (_, index) => ({ timestamp: index * 5_000_000 }))
   const shared = observationTimestamps(pgWaiting, os)

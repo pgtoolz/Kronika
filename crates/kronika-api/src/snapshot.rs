@@ -1,6 +1,9 @@
 //! Snapshot parameter parsing and cross-field validation.
 
-use kronika_query::{Filter, Order, RelationGroup, SnapshotRequest, StatementScope};
+use kronika_query::{
+    Filter, MAX_SNAPSHOT_NEIGHBOR_SECTIONS, Order, RelationGroup, SnapshotNeighborDirection,
+    SnapshotNeighborRequest, SnapshotRequest, StatementScope, Window,
+};
 
 use super::{
     DEFAULT_SNAPSHOT_PAGE_SIZE, MAX_FIELDS, MAX_FILTERS, MAX_ORDER_FIELDS,
@@ -12,12 +15,59 @@ use crate::parameters::{
     bounded, decoded, number, pairs, relation_group, statement_scope, unsigned_32, unsigned_64,
 };
 
+pub(super) fn parse_snapshot_neighbor(query: &str) -> Result<SnapshotNeighborRequest, RouteError> {
+    let mut at = None;
+    let mut direction = None;
+    let mut sections = Vec::new();
+    let mut window = Window::default();
+    for (raw_name, raw_value) in pairs(query)? {
+        let name = decoded("parameter", raw_name, true)?;
+        let value = decoded(&name, raw_value, true)?;
+        match name.as_str() {
+            "at" if at.is_none() => at = Some(number("at", &value)?),
+            "direction" if direction.is_none() => {
+                direction = Some(match value.as_str() {
+                    "next" => SnapshotNeighborDirection::Next,
+                    "previous" => SnapshotNeighborDirection::Previous,
+                    _ => return Err(RouteError::BadParameter(name)),
+                });
+            }
+            "section" => {
+                if value.is_empty()
+                    || value.len() > MAX_SECTION_BYTES
+                    || sections.len() >= MAX_SNAPSHOT_NEIGHBOR_SECTIONS
+                    || sections.contains(&value)
+                {
+                    return Err(RouteError::BadParameter(name));
+                }
+                sections.push(value);
+            }
+            "from" if window.from.is_none() => window.from = Some(number("from", &value)?),
+            "to" if window.to.is_none() => window.to = Some(number("to", &value)?),
+            _ => return Err(RouteError::BadParameter(name)),
+        }
+    }
+    if sections.is_empty() {
+        return Err(RouteError::BadParameter("section".to_owned()));
+    }
+    if matches!((window.from, window.to), (Some(from), Some(to)) if from > to) {
+        return Err(RouteError::BadParameter("to".to_owned()));
+    }
+    Ok(SnapshotNeighborRequest {
+        sections,
+        at: at.ok_or_else(|| RouteError::BadParameter("at".to_owned()))?,
+        direction: direction.ok_or_else(|| RouteError::BadParameter("direction".to_owned()))?,
+        window,
+    })
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "the bounded snapshot query grammar is deliberately parsed in one strict pass"
 )]
 pub(super) fn parse_snapshot(segment_id: i64, query: &str) -> Result<SnapshotRequest, RouteError> {
     let mut at = None;
+    let mut latest = None;
     let mut sections = Vec::new();
     let mut fields = Vec::new();
     let mut by = Vec::new();
@@ -35,6 +85,13 @@ pub(super) fn parse_snapshot(segment_id: i64, query: &str) -> Result<SnapshotReq
     for (raw_name, raw_value) in pairs(query)? {
         match raw_name {
             "at" if at.is_none() => at = Some(number("at", raw_value)?),
+            "selection" if latest.is_none() => {
+                latest = Some(match raw_value {
+                    "anchor" => false,
+                    "latest" => true,
+                    _ => return Err(RouteError::BadParameter("selection".to_owned())),
+                });
+            }
             "section" => {
                 let section = decoded("section", raw_value, false)?;
                 if section.is_empty() || section.len() > MAX_SECTION_BYTES {
@@ -155,6 +212,7 @@ pub(super) fn parse_snapshot(segment_id: i64, query: &str) -> Result<SnapshotReq
     validate_snapshot_shape(&sections, paged, &filters, type_id, row_ordinal, group)?;
     Ok(SnapshotRequest {
         segment_id,
+        latest: latest.unwrap_or(false),
         at: at.ok_or_else(|| RouteError::BadParameter("at".to_owned()))?,
         sections,
         fields,

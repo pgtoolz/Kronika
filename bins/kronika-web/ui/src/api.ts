@@ -1181,6 +1181,41 @@ export interface SnapshotOrder {
   readonly descending: boolean
 }
 
+export type SnapshotDirection = "next" | "previous"
+
+export interface SnapshotNeighbor {
+  readonly at: number
+  readonly segmentId: string
+}
+
+// A missing neighbor is provisional for an active recording. Each step asks
+// again, while ordinary immutable snapshot requests keep browser caching.
+export async function loadSnapshotNeighbor(
+  sections: readonly string[],
+  at: number,
+  direction: SnapshotDirection,
+  signal: AbortSignal,
+  bounds?: { readonly from: number; readonly to: number },
+): Promise<SnapshotNeighbor | null> {
+  const query = new URLSearchParams({ at: String(at), direction })
+  for (const section of sections) query.append("section", section)
+  if (bounds !== undefined) {
+    query.set("from", String(bounds.from))
+    query.set("to", String(bounds.to))
+  }
+  const records = await request(`/api/snapshot/neighbor?${query}`, signal, undefined, "no-store")
+  const record = records[0]
+  if (records.length !== 1 || record?.record !== "snapshot_neighbor") throw new Error("invalid snapshot neighbor response")
+  if (record.at === null && record.segment_id === null) return null
+  if (typeof record.at !== "string" || !/^-?\d+$/.test(record.at)
+    || typeof record.segment_id !== "string" || !/^\d+$/.test(record.segment_id)) throw new Error("invalid snapshot neighbor coordinates")
+  const timestamp = Number(record.at)
+  const movement = direction === "next" ? timestamp - at : at - timestamp
+  if (!Number.isSafeInteger(timestamp) || movement < 1_000_000
+    || bounds !== undefined && (timestamp < bounds.from || timestamp > bounds.to)) throw new Error("invalid snapshot neighbor timestamp")
+  return { at: timestamp, segmentId: record.segment_id }
+}
+
 export async function loadSnapshot(
   segmentId: string,
   at: number,
@@ -1559,6 +1594,8 @@ function snapshotQuery(
   const requestedOrder = section === undefined || order === undefined ? undefined : requestedSnapshotOrder(section, order)
   return [
     `at=${at}`,
+    // Give latest-across-segments responses their own immutable cache URL.
+    ...(options.rowOrdinal === undefined ? ["selection=latest"] : []),
     ...sections.map((request) => `section=${encodeURIComponent(request.section)}`),
     ...fields.map((field) => `field=${encodeURIComponent(field)}`),
     ...ordered.map((field) => `by=${encodeURIComponent(field)}`),

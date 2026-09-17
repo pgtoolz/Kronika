@@ -504,6 +504,7 @@ fn assert_all_group_snapshots(engine: &crate::ReportEngine) {
                 .execute(
                     QueryRequest::Snapshot(SnapshotRequest {
                         segment_id: collection_modes::START,
+                        latest: false,
                         at: collection_modes::START + offset * 1_000_000,
                         sections: vec![section.to_owned()],
                         fields: vec!["cgroup_path".to_owned(), "cgroup_identity".to_owned()],

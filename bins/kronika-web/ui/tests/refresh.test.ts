@@ -120,7 +120,7 @@ test("refresh keeps a committed cursor stable and reloads latest exactly once wh
 test("a failed following-latest refresh restores one committed view before the retry advances", async () => {
   const source = await readFile(new URL("../src/app.tsx", import.meta.url), "utf8")
   assert.match(source, /readonly previousCursor: number/)
-  assert.match(source, /pendingRefresh\.current = \{ timeline, previousCursor: cursor, previousSegments: segmentsRef\.current \}/)
+  assert.match(source, /pendingRefresh\.current = \{ timeline, previousCursor: selectedCursor, previousSegments: segmentsRef\.current \}/)
   assert.match(source, /else if \(pending !== null\) \{\s*setSegments\(pending\.previousSegments\)\s*setCursor\(pending\.previousCursor\)\s*\}/)
   const failedBranch = source.match(/else if \(pending !== null\) \{([\s\S]*?)\n    \}/)?.[1] ?? ""
   assert.doesNotMatch(failedBranch, /setTimelineData|setCurrentData/)
@@ -202,7 +202,7 @@ test("first table settlement gates slow hour products without gating Process row
 
 test("the instance label waits for one settled foreground table", async () => {
   const app = await readFile(new URL("../src/app.tsx", import.meta.url), "utf8")
-  const ready = app.indexOf('const refreshReady = !loading && cursorState === "ready" && densePageState !== "loading"')
+  const ready = app.indexOf('const refreshReady = !loading && !neighborPending && cursorState === "ready" && densePageState !== "loading"')
   const requested = app.indexOf("instanceLabelRequest.current = controller")
   const fetch = app.indexOf('apiFetch("/api/instance-label"')
   assert.ok(ready >= 0)

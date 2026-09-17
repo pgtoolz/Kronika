@@ -15,7 +15,7 @@ use kronika_query::{
 };
 use parameters::{bounded, decoded, number, pairs};
 use rows::{parse_data, parse_rows};
-use snapshot::parse_snapshot;
+use snapshot::{parse_snapshot, parse_snapshot_neighbor};
 
 // Physical rows returned when `page_size` is omitted from a rows request.
 const DEFAULT_PAGE_SIZE: usize = 100;
@@ -176,6 +176,10 @@ pub fn parse(path: &str, query: Option<&str>) -> Result<Route, RouteError> {
     }
     if path == "/api/row-detail" {
         return parse_row_detail(query).map(Route::RowDetail);
+    }
+    if path == "/api/snapshot/neighbor" {
+        return parse_snapshot_neighbor(query)
+            .map(|request| Route::Query(QueryRequest::SnapshotNeighbor(request)));
     }
     let tail = path
         .strip_prefix("/api/segments/")

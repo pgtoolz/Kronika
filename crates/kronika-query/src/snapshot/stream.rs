@@ -46,6 +46,7 @@ impl PreparedSnapshot {
         for section in &self.sections {
             if SnapshotViewSpec::for_logical_name(&section.logical_name).is_some()
                 || cgroup::legacy(&section.logical_name).is_some()
+                || (self.latest && section.plans.iter().all(|plan| plan.timestamp.is_some()))
             {
                 if !self.emit_partitioned_section(section, emit, cancelled)? {
                     return Ok(());
