@@ -58,7 +58,8 @@ validate_gzip() {
 
 validate_wasm_paths() {
 	local wasm=$1
-	if grep -aFq "$CARGO_HOME_PATH" "$wasm" || grep -aFq "$(pwd)" "$wasm"; then
+	if grep -aFq "$CARGO_HOME_PATH" "$wasm" || grep -aFq "$(pwd)" "$wasm" ||
+		grep -aFq "$rustc_sysroot" "$wasm"; then
 		echo "generated WebAssembly retains an absolute build path" >&2
 		exit 1
 	fi
@@ -72,6 +73,16 @@ if [[ -n $DOWNLOAD && $DOWNLOAD != --download-bindgen ]]; then
 	echo "usage: $0 {build|check} [--download-bindgen]" >&2
 	exit 2
 fi
+
+# Rust type IDs and symbol hashes differ between host toolchains, even for WASM.
+rustc_info=$(rustc +"$TOOLCHAIN" --version --verbose)
+rustc_host=$(sed -n 's/^host: //p' <<<"$rustc_info")
+if [[ $rustc_host != x86_64-unknown-linux-gnu ]]; then
+	echo "report assets require an x86_64 Linux GNU Rust host; use x86_64 Ubuntu 24.04" >&2
+	exit 1
+fi
+rustc_commit=$(sed -n 's/^commit-hash: //p' <<<"$rustc_info")
+rustc_sysroot=$(rustc +"$TOOLCHAIN" --print sysroot)
 
 if [[ $MODE == check ]]; then
 	validate_javascript "$JAVASCRIPT_ASSET"
@@ -112,6 +123,9 @@ fi
 remap_flags="--remap-path-prefix=${CARGO_HOME_PATH}=/cargo-home"
 remap_flags+=$'\x1f'
 remap_flags+="--remap-path-prefix=$(pwd)=/workspace"
+# Installing rust-src otherwise replaces /rustc paths with local toolchain paths.
+remap_flags+=$'\x1f'
+remap_flags+="--remap-path-prefix=${rustc_sysroot}/lib/rustlib/src/rust=/rustc/${rustc_commit}"
 # Ignore local C flags and Cargo's incremental setting when reproducing assets.
 env -u CFLAGS -u RUSTFLAGS \
 	-u TARGET_CFLAGS -u CFLAGS_wasm32-unknown-unknown \

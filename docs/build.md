@@ -87,8 +87,9 @@ GitHub Actions.
 
 ## Browser assets
 
-The report WebAssembly build requires Clang 18.1.3 and `llvm-ar-18`. On
-Ubuntu 24.04, install them with `sudo apt-get install clang-18 llvm-18`.
+Regenerate the report WebAssembly on x86_64 Ubuntu 24.04 with the
+`x86_64-unknown-linux-gnu` Rust host. Install Clang 18.1.3 and `llvm-ar-18`
+with `sudo apt-get install clang-18 llvm-18`.
 See the [asset build reference](../bins/kronika-report/assets/README.md) for tool paths.
 
 ```sh
