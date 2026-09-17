@@ -132,6 +132,13 @@ jobs:
           git diff --exit-code -- \
             bins/kronika-report/assets/kronika-report-wasm.js \
             bins/kronika-report/assets/kronika-report-wasm.wasm.gz
+      - name: Preserve WebAssembly for byte-mismatch diagnosis
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-wasm-diagnostics
+          path: target/wasm32-unknown-unknown/release/kronika_report_wasm.wasm
+          retention-days: 3
 
   bdd:
     name: bdd

@@ -151,6 +151,12 @@ validate_wasm_paths "$bound_wasm"
 validate_javascript "$javascript"
 validate_gzip "$compressed_wasm"
 
+printf 'kronika-report-wasm raw=%s gzip=%s js=%s\n' \
+	"$(wc -c <"$bound_wasm")" \
+	"$(wc -c <"$compressed_wasm")" \
+	"$(wc -c <"$javascript")"
+sha256sum "$bound_wasm" "$compressed_wasm" "$javascript"
+
 if [[ $MODE == check ]]; then
 	cmp "$javascript" "$JAVASCRIPT_ASSET"
 	cmp "$compressed_wasm" "$WASM_ASSET"
@@ -158,9 +164,3 @@ else
 	install -m 0644 "$javascript" "$JAVASCRIPT_ASSET"
 	install -m 0644 "$compressed_wasm" "$WASM_ASSET"
 fi
-
-printf 'kronika-report-wasm raw=%s gzip=%s js=%s\n' \
-	"$(wc -c <"$bound_wasm")" \
-	"$(wc -c <"$compressed_wasm")" \
-	"$(wc -c <"$javascript")"
-sha256sum "$bound_wasm" "$compressed_wasm" "$javascript"
