@@ -28,36 +28,40 @@ Choose `postgresql` for a remote server or when you only need database metrics.
 Start collecting Linux metrics:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika
 ```
 
 <a id="linux-and-postgresql"></a>
-For PostgreSQL on the collector machine, supply its connection string in
-`KRONIKA_PG_DSN` when starting collector. Use a PostgreSQL account with the
+For PostgreSQL on the collector machine, supply its connection string with
+`--pg-dsn` when starting collector. Use a PostgreSQL account with the
 [monitoring privileges](INSTALL.md#5-postgresql).
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable'
 ```
 
-Leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset for this local machine: CPU capacity
-comes from its recorded CPU snapshots.
+In this default `local` mode, the connection also discovers the current
+PostgreSQL log file. If that file is readable on the collector host, `--pg-log`
+is not needed.
+
+Leave `--postgres-effective-cpus` and `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset
+for this local machine: CPU capacity comes from its recorded CPU snapshots.
 
 ### PostgreSQL only — local or remote
 
 ```sh
 sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 
-KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  /usr/local/bin/kronika-collector
+/usr/local/bin/kronika-collector \
+  --mode postgresql \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres'
 ```
 
-If the PostgreSQL CPU capacity is known, add `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`,
+If the PostgreSQL CPU capacity is known, add `--postgres-effective-cpus 4`,
 replacing `4` with its CPU count.
 Without it, SQL metrics remain available. PostgreSQL Health is unknown.
 See [collector configuration](bins/kronika-collector/README.md#remote-postgresql).
@@ -104,10 +108,10 @@ For a PostgreSQL workload with roughly 500 tables and 3,000 indexes, estimate
 **about 200 MB of compressed recordings per day**. Volume depends on collection
 intervals and the number of recorded objects and distinct queries.
 
-`KRONIKA_RETENTION=2147483648` sets the default **2 GiB** storage budget,
+`--retention 2GiB` sets the default **2 GiB** storage budget,
 including journals and indexes. When the target is exceeded, the collector
 automatically removes the oldest finished recordings and their indexes.
-For **10 GiB**, set `KRONIKA_RETENTION=10737418240` (raw bytes).
+For **10 GiB**, set `--retention 10GiB`.
 
 `auto` and `auto:P` instead set a used-space percentage target for the whole
 backing filesystem. See [storage configuration](bins/kronika-collector/README.md#storage)

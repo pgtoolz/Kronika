@@ -236,7 +236,7 @@ fn log_source_unreadable(path: &std::path::Path, connection: &str, source_index:
             field("source_index", source_index),
             field(
                 "hint",
-                "mount the directory here and name the file in KRONIKA_PG_LOGS",
+                "mount the directory here and name the file with --pg-log or KRONIKA_PG_LOGS",
             ),
         ],
     );

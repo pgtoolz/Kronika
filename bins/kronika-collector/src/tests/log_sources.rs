@@ -230,7 +230,10 @@ fn postgres_sources(root: &std::path::Path, dsn: &str) -> LogSources {
     LogSources {
         discover_postgres_paths: true,
         offsets: Offsets::load(root).expect("load offsets"),
-        pg_dsn: Some(PostgresTarget::new(connection).expect("load PostgreSQL transport")),
+        pg_dsn: Some(PostgresTarget::new(
+            connection,
+            kronika_source_pg::Transport::from_ca_file(None).expect("load PostgreSQL transport"),
+        )),
         pg_logs: Vec::new(),
         pg_log_max_lag_secs: 900,
         pgbouncer_dsns: Vec::new(),

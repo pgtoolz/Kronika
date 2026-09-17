@@ -6,7 +6,7 @@
 
 A snapshot contains the rows read from a source at one collection time. An object’s identity is the set of fields used to match its rows between snapshots. A counter accumulates work; a gauge is a value read at a particular time. A rate measures the counter increase per second between two snapshots. In the notation below, `x₀` and `x₁` are values of the same counter at times `t₀` and `t₁`.
 
-The collector reads one server selected by `KRONIKA_PG_DSN`. Database-local views are read through each connectable database; statements and plans come from one discovered installation of each extension. The [layout reference](type-registry/postgresql-metrics.md) gives exact PostgreSQL and extension versions, physical type IDs and collection scopes. The [registry](../crates/kronika-registry/src/codec) defines every stored field.
+The collector reads one server selected by `--pg-dsn` or `KRONIKA_PG_DSN`. Database-local views are read through each connectable database; statements and plans come from one discovered installation of each extension. The [layout reference](type-registry/postgresql-metrics.md) gives exact PostgreSQL and extension versions, physical type IDs and collection scopes. The [registry](../crates/kronika-registry/src/codec) defines every stored field.
 
 For samples at Unix microsecond timestamps `t₀ < t₁`, write `Δx = x₁ − x₀`, `d = (t₁ − t₀)/10⁶` seconds and `r(x) = Δx/d`. `x` alone is the recorded gauge or cumulative value at the selected sample. `B` is the positive integer `pg_settings.block_size` in bytes from the snapshot at the selected time (cursor). Buffer columns display `B × r(blocks)` bytes/s; Buffer bytes/call displays `B × blocks_per_call`, where `blocks_per_call` is the number of block accesses per query execution. Without recorded `B`, these byte conversions are unavailable.
 
@@ -26,7 +26,7 @@ Statement/plan interval calculations require matching physical type and identity
 
 Activity shows PostgreSQL processes and their current queries. Locks connects waiting processes to the processes blocking them.
 
-Activity, lock waits and VACUUM progress use `KRONIKA_PG_ACTIVITY_INTERVAL_S` (10 seconds by default). A successful nonempty lock-wait read shortens the interval to the smaller of `KRONIKA_PG_ACTIVITY_INTERVAL_S` and `KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S` (default 5 seconds); a successful empty read restores it, and an error leaves it unchanged. Queries run sequentially, so a slow query can delay the next snapshot. See [collection intervals](metrics-time.md) for timer and signal behavior.
+Activity, lock waits and VACUUM progress use `--pg-activity-interval-s` (10 seconds by default). A successful nonempty lock-wait read shortens the interval to the smaller of `--pg-activity-interval-s` and `--pg-activity-blocked-interval-s` (default 5 seconds); a successful empty read restores it, and an error leaves it unchanged. Queries run sequentially, so a slow query can delay the next snapshot. See [collection intervals](metrics-time.md) for timer and signal behavior.
 
 Activity’s default table hides rows with `state = idle`. It also hides system processes: a nonempty `backend_type` other than `client backend`. A missing or empty `backend_type` does not hide a row. **Idle** and **System** include those rows; an explicitly focused row remains visible. Default order is descending query duration, with transaction duration used when both query durations are unavailable. Source: [Activity columns and filters](../bins/kronika-web/ui/src/postgres-view.tsx), [duration functions](../bins/kronika-web/ui/src/postgres-activity.ts).
 
@@ -104,7 +104,7 @@ The **Databases** table shows `numbackends` as a gauge; transaction/session/tupl
 
 Statements groups execution statistics by normalized query; Plans shows statistics for recorded execution plans.
 
-Collection uses `KRONIKA_PG_STATEMENTS_INTERVAL_S`, default and minimum 300 seconds, for both extensions and their info views. The interval starts after the preceding PostgreSQL pass containing these sources finishes; `SIGUSR2` does not bypass it.
+Collection uses `--pg-statements-interval-s`, default and minimum 300 seconds, for both extensions and their info views. The interval starts after the preceding PostgreSQL pass containing these sources finishes; `SIGUSR2` does not bypass it.
 
 The Lens selector chooses which measurements appear as columns. **Exec time/s** measures total execution time per second of observation; **Mean/call** measures the average execution time within the selected interval.
 

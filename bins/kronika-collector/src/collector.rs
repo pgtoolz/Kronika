@@ -6,8 +6,8 @@ mod window;
 
 use anyhow::{Context, Result};
 use kronika_layout::{LayoutLimits, WriterOwner};
+use kronika_source_os::detect_container_with_root_override;
 use kronika_source_os::proc::process::ProcessIoCredentials;
-use kronika_source_os::{ProcFs, detect_container};
 use kronika_writer::Journal;
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -41,9 +41,13 @@ pub(crate) struct WindowWriter<'a> {
     clippy::too_many_lines,
     reason = "the top-level signal and persistence loop must share shutdown diagnostics"
 )]
-pub(crate) async fn run(config: Config) -> Result<()> {
-    let (writer_owner, mut journal, mut logs, mut pg) = initialize_collector(&config)?;
-    let in_container = config.mode.collect_os() && detect_container(&ProcFs::from_env());
+pub(crate) async fn run() -> Result<()> {
+    let config = crate::config::get();
+    let (writer_owner, mut journal, mut logs, mut pg) = initialize_collector(config)?;
+    let fs = config.proc_fs();
+    let sys = config.sys_fs();
+    let in_container = config.mode.collect_os()
+        && detect_container_with_root_override(&fs, config.proc_root.is_some());
     let mut query_diagnostics = PgQueryDiagnostics::new(Instant::now());
 
     let mut sigusr2 = signal(SignalKind::user_defined2()).context("install the SIGUSR2 handler")?;
@@ -120,13 +124,11 @@ pub(crate) async fn run(config: Config) -> Result<()> {
                 continue;
             }
             let mut cgroup_pass = if config.mode.collect_os() && due.has(SourceKind::OsCgroup) {
-                let fs = ProcFs::from_env();
-                let sys = kronika_source_os::SysFs::from_env();
                 let ts = unix_now_us()?;
                 Some(cgroup_discovery::run(
                     &fs,
                     &sys,
-                    &config,
+                    config,
                     in_container,
                     &mut journal,
                     &writer_owner,
@@ -154,7 +156,7 @@ pub(crate) async fn run(config: Config) -> Result<()> {
             let mut writer = WindowWriter {
                 journal: &mut journal,
                 owner: &writer_owner,
-                config: &config,
+                config,
                 in_container,
                 process_io: &mut process_io,
                 segment: &mut segment,

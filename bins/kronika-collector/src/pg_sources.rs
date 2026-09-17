@@ -57,13 +57,10 @@ impl PgSources {
         let Some(dsn) = config.pg_dsn.as_deref() else {
             return Ok(Self::default());
         };
-        let server = Pool::new(dsn).map_err(|error| {
-            if error.is::<kronika_source_pg::transport::CaConfigError>() {
-                anyhow::Error::new(kronika_source_pg::transport::CaConfigError)
-            } else {
-                anyhow::anyhow!("KRONIKA_PG_DSN is not a valid connection string")
-            }
-        })?;
+        let transport =
+            kronika_source_pg::Transport::from_ca_file(config.pg_ssl_root_cert.as_deref())?;
+        let server = Pool::with_transport(dsn, transport)
+            .map_err(|_error| anyhow::anyhow!("KRONIKA_PG_DSN is not a valid connection string"))?;
         Ok(Self {
             server: Some(server),
             ..Self::default()

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use kronika_source_os::{OsScope, ProcFs};
+use kronika_source_os::OsScope;
 use kronika_source_pg::query::BatchWrite;
 use kronika_source_pg::settings::SettingsRow;
 use kronika_writer::SectionBuffers;
@@ -230,9 +230,11 @@ impl WindowWriter<'_> {
         if let Some(due) = opening_due
             && let Some(process_io) = self.process_io.as_mut()
         {
-            let fs = ProcFs::from_env();
+            let fs = self.config.proc_fs();
+            let sys = self.config.sys_fs();
             let mut os = collect_os_sources(
                 &fs,
+                &sys,
                 process_io,
                 &mut self.segment.interner,
                 &mut self.segment.user_names,

@@ -45,6 +45,7 @@ pub(crate) struct OsTick<'a> {
 /// topology is due. Container context also accompanies process-only ticks.
 pub(crate) fn collect_os_sources(
     fs: &ProcFs,
+    sys: &SysFs,
     process_io: &mut ProcessIoCredentials,
     interner: &mut Interner,
     users: &mut SegmentUserNames,
@@ -72,8 +73,7 @@ pub(crate) fn collect_os_sources(
         return os;
     }
 
-    let sys = SysFs::from_env();
-    let selected = selected_cgroup(fs, &sys, tick);
+    let selected = selected_cgroup(fs, sys, tick);
     if let Some(selected) = &selected {
         // Record alongside PSI as well as slower cgroup counters, so a selected
         // directory change cannot be hidden between context snapshots.
@@ -83,21 +83,13 @@ pub(crate) fn collect_os_sources(
         }
     }
     if due.has(SourceKind::OsCore) {
-        core::collect_core_metrics(
-            fs,
-            &sys,
-            scope,
-            ts,
-            in_container,
-            selected.as_ref(),
-            &mut os,
-        );
+        core::collect_core_metrics(fs, sys, scope, ts, in_container, selected.as_ref(), &mut os);
     }
     // OsCore needs mountinfo for the container device filter in diskstats;
     // OsMountTopo needs it to build the attribution section rows.
     let device_tick = due.has(SourceKind::OsCore) || due.has(SourceKind::OsMountTopo);
     let mounts = if device_tick {
-        storage::mountinfo_entries(fs)
+        storage::mountinfo_entries(fs, sys)
     } else {
         Vec::new()
     };
@@ -109,7 +101,7 @@ pub(crate) fn collect_os_sources(
         if let Some(pass) = cgroup_pass {
             devices.extend(pass.charged_devices.iter().copied());
         } else if let Some(selected) = &selected {
-            devices.extend(cgroup::charged_ancestor_devices(&sys, selected));
+            devices.extend(cgroup::charged_ancestor_devices(sys, selected));
         }
         devices
     });
@@ -119,7 +111,7 @@ pub(crate) fn collect_os_sources(
         // network-namespace scope inside a container, not the host scope.
         let net_scope_id = net_scope(in_container).as_u8();
         os.diskstats = storage::collect_diskstats(fs, interner, scope, ts, kept.as_ref());
-        os.netdev = network::collect_netdev(fs, &sys, interner, net_scope_id, ts);
+        os.netdev = network::collect_netdev(fs, sys, interner, net_scope_id, ts);
         network::collect_protocol_counters(fs, net_scope_id, ts, &mut os);
         kernel::collect_kernel_metrics(
             fs,
@@ -129,15 +121,15 @@ pub(crate) fn collect_os_sources(
             os.cpu.len().saturating_sub(1),
             &mut os,
         );
-        os.numa = topology::collect_numa(&sys, scope, ts);
+        os.numa = topology::collect_numa(sys, scope, ts);
     }
 
     if due.has(SourceKind::OsMountTopo) {
         os.mountinfo = collect_mountinfo(interner, scope, ts, &mounts);
-        os.topology = topology::collect_topology(fs, &sys, interner, scope, ts);
-        block_topology::collect_block_topology(&sys, scope, ts, kept.as_ref(), &mut os);
+        os.topology = topology::collect_topology(fs, sys, interner, scope, ts);
+        block_topology::collect_block_topology(sys, scope, ts, kept.as_ref(), &mut os);
     }
-    cpufreq::collect_cpufreq(&sys, interner, scope, ts, due, &mut os);
+    cpufreq::collect_cpufreq(sys, interner, scope, ts, due, &mut os);
 
     let entity_scope = if in_container {
         OsScope::Container

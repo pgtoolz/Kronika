@@ -6,7 +6,7 @@ Sections occupy `1_001_001`–`1_020_001`. Columns, units and keys are declared 
 
 ## Collection scope and protocol
 
-Metrics come from the one server selected by `KRONIKA_PG_DSN`; metric rows do not carry `system_identifier`. Database-local views are read from each connectable database. An absent, unsupported or unreadable source produces no section for that read.
+Metrics come from the one server selected by `--pg-dsn` or `KRONIKA_PG_DSN`; metric rows do not carry `system_identifier`. Database-local views are read from each connectable database. An absent, unsupported or unreadable source produces no section for that read.
 
 The collector retains one connection per database between cycles. Database and extension discovery runs approximately every five minutes and updates the connection set.
 
@@ -36,7 +36,7 @@ A source interval of zero records the base timer interval; if both are zero,
 the recorded value is zero. Older layouts remain readable: `1_021_002` and
 `1_021_003` contain only the common `postgresql_interval_seconds` field.
 The [collector reference](../../bins/kronika-collector/README.md#collection-intervals)
-lists the corresponding environment variables and limits.
+lists the corresponding options, environment variables and limits.
 
 ## Native server views
 
@@ -81,7 +81,7 @@ lists the corresponding environment variables and limits.
 | --- | --- |
 | `pg_stat_activity` | PID identifies a backend. PostgreSQL 14–18 reads nullable `datid` and `query_id` directly from the view. `datid` participates in navigation to Statements; shared/background backends may have `null`. |
 | `pg_stat_progress_vacuum` | `relid` is a `pg_class` OID; `schemaname`/`relname` resolve from the catalog in the same query only for the connected database. Relations in other databases have absent names. |
-| `pg_settings` | Effective metric-session settings; identity `(datid, usesysid, name)`, database and role names `datname`, `usename`. Read with server counters on `KRONIKA_PG_INTERVAL_S` (30 seconds by default), and on a forced `SIGUSR2` cycle; emitted on first success, change and new segment. A segment opened by another source reuses the latest successful snapshot. `primary_conninfo` and `ssl_passphrase_command` are excluded; other settings remain. |
+| `pg_settings` | Effective metric-session settings; identity `(datid, usesysid, name)`, database and role names `datname`, `usename`. Read with server counters on `--pg-instance-interval-s` (30 seconds by default), and on a forced `SIGUSR2` cycle; emitted on first success, change and new segment. A segment opened by another source reuses the latest successful snapshot. `primary_conninfo` and `ssl_passphrase_command` are excluded; other settings remain. |
 | `pg_wal_storage` | Sum of regular-file sizes returned by `pg_ls_waldir()`; subdirectories excluded. The section is absent without permission to call the function. |
 | Tables and indexes | Zero `reltablespace` resolves through the database's `dattablespace`. A storage-less partitioned parent has no placement. An index records its own tablespace. Table size includes heap main fork and TOAST; user indexes are excluded. |
 

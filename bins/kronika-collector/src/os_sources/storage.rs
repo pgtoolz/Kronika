@@ -55,7 +55,7 @@ pub(super) fn collect_diskstats(
 
 /// Read and parse `/proc/self/mountinfo`, resolving `major == 0` subvolume
 /// devices via `/sys`.
-pub(super) fn mountinfo_entries(fs: &ProcFs) -> Vec<MountEntry> {
+pub(super) fn mountinfo_entries(fs: &ProcFs, sys: &SysFs) -> Vec<MountEntry> {
     let type_id = OsMountinfo::CONTRACT.type_id.get();
     let Some(content) = read_optional_os_file(fs, "self/mountinfo", type_id) else {
         return Vec::new();
@@ -64,7 +64,7 @@ pub(super) fn mountinfo_entries(fs: &ProcFs) -> Vec<MountEntry> {
     entries.retain(|entry| {
         !is_pseudo_filesystem(&entry.fstype) && !is_kernel_tree_mount(&entry.mount_point)
     });
-    resolve_major_zero(&SysFs::from_env(), &mut entries);
+    resolve_major_zero(sys, &mut entries);
     entries
 }
 

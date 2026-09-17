@@ -53,16 +53,16 @@ sudo install -d -m 0700 /var/lib/kronika
 Запустите сбор метрик Linux:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika
 ```
 
 Процессы опрашиваются каждые 5 секунд, основные метрики Linux — каждые 10 секунд.
 
 `Ctrl+C` останавливает сбор. Для продолжения запустите ту же команду.
 
-Целевой объём хранения `KRONIKA_RETENTION` по умолчанию равен `2147483648` байт
-(2 GiB). Для цели 10 GiB добавьте `KRONIKA_RETENTION=10737418240`.
+Целевой объём хранения `--retention` по умолчанию равен `2GiB`.
+Для цели 10 GiB добавьте `--retention 10GiB`.
 Раздел [«Хранение»](bins/kronika-collector/README.ru.md#storage) описывает,
 какие файлы учитываются и в каком порядке удаляются старые записи.
 
@@ -85,21 +85,22 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_current_logfile() TO kronika_monitor;
 [«Роль PostgreSQL»](bins/kronika-collector/README.ru.md#postgresql-role).
 
 Для сбора с нескольких серверов PostgreSQL запустите `kronika-collector`
-для каждого сервера, указав его `KRONIKA_PG_DSN` и отдельный каталог
-`KRONIKA_STORAGE_DIR`. См.
+для каждого сервера, указав его `--pg-dsn` и отдельный каталог
+`--storage-dir`. См.
 [пример двух серверов](bins/kronika-collector/README.ru.md#several-postgresql-servers).
 
 PostgreSQL и метрики Linux из той же VM или pod:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable'
 ```
 
 На общей с PostgreSQL машине число CPU определяется автоматически.
-Оставьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS` незаданным. Установленные расширения
-`pg_stat_statements` и `pg_store_plans` дают статистику запросов и планы.
+Не задавайте `--postgres-effective-cpus` и `KRONIKA_POSTGRES_EFFECTIVE_CPUS`.
+Установленные расширения `pg_stat_statements` и `pg_store_plans` дают статистику
+запросов и планы.
 Для Activity, Locks и статистики таблиц и индексов используются встроенные
 представления PostgreSQL.
 
@@ -110,14 +111,14 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```sh
 sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 
-KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  /usr/local/bin/kronika-collector
+/usr/local/bin/kronika-collector \
+  --mode postgresql \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres'
 ```
 
-Если число доступных серверу CPU известно, задайте его в
-`KRONIKA_POSTGRES_EFFECTIVE_CPUS` (например, `4`). Если неизвестно, оставьте
+Если число доступных серверу CPU известно, добавьте
+`--postgres-effective-cpus 4`, заменив `4` нужным числом. Если неизвестно, оставьте
 параметр незаданным: SQL-метрики доступны, PostgreSQL Health неизвестен. См. [удалённый PostgreSQL](bins/kronika-collector/README.ru.md#remote-postgresql).
 
 [Настройка сервисов](docs/services.ru.md) показывает, как хранить строки

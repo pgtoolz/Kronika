@@ -30,7 +30,14 @@ pub struct OsInstanceFacts {
 /// Returns an [`io::Error`] naming the `/proc` file that failed to read or
 /// parse; the collector runs on Linux, where all of them exist.
 pub fn collect_os_instance_facts() -> io::Result<OsInstanceFacts> {
-    let fs = ProcFs::from_env();
+    collect_os_instance_facts_from(&ProcFs::from_env())
+}
+
+/// Read identity files from the selected procfs root and clock/page sizes from `sysconf`.
+///
+/// # Errors
+/// Returns an [`io::Error`] when an identity file cannot be read or parsed.
+pub fn collect_os_instance_facts_from(fs: &ProcFs) -> io::Result<OsInstanceFacts> {
     let stat = fs.read("stat")?;
     let btime =
         parse_btime(&stat).ok_or_else(|| io::Error::other("stat: no parsable btime line"))?;
@@ -58,6 +65,28 @@ mod tests {
     #[cfg(target_os = "linux")]
     use super::collect_os_instance_facts;
     use super::parse_btime;
+
+    #[test]
+    fn explicit_proc_root_supplies_the_recorded_identity() {
+        let root = tempfile::tempdir().expect("proc fixture");
+        std::fs::create_dir_all(root.path().join("sys/kernel/random")).expect("kernel paths");
+        for (path, value) in [
+            ("stat", "cpu 1 2 3 4\nbtime 1700000000\n"),
+            ("sys/kernel/hostname", "fixture-node\n"),
+            ("sys/kernel/osrelease", "fixture-kernel\n"),
+            ("sys/kernel/random/boot_id", "fixture-boot\n"),
+        ] {
+            std::fs::write(root.path().join(path), value).expect("proc file");
+        }
+        let fs = crate::ProcFs::new(root.path().to_owned());
+        let facts = super::collect_os_instance_facts_from(&fs).expect("fixture identity");
+        assert_eq!(facts.hostname, "fixture-node");
+        assert_eq!(facts.kernel_version, "fixture-kernel");
+        assert_eq!(facts.boot_id, "fixture-boot");
+        assert_eq!(facts.btime, 1_700_000_000_000_000);
+        assert!(facts.clock_ticks_per_sec > 0);
+        assert!(facts.page_size_bytes > 0);
+    }
 
     #[test]
     fn parse_btime_finds_the_line_between_others() {

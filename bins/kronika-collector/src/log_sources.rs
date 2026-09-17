@@ -75,14 +75,17 @@ struct PostgresTarget {
 }
 
 impl PostgresTarget {
-    fn new(connection: settings::ConnectionTarget) -> anyhow::Result<Self> {
-        Ok(Self {
+    fn new(
+        connection: settings::ConnectionTarget,
+        transport: kronika_source_pg::Transport,
+    ) -> Self {
+        Self {
             connection,
-            transport: kronika_source_pg::Transport::from_env()?,
+            transport,
             system_identifier: None,
             last_log: None,
             facts: PostgresFacts::default(),
-        })
+        }
     }
 }
 
@@ -117,7 +120,9 @@ impl LogSources {
                 let connection = settings::ConnectionTarget::parse(raw, 0).map_err(|_error| {
                     anyhow::anyhow!("KRONIKA_PG_DSN is not a valid connection string")
                 })?;
-                PostgresTarget::new(connection)
+                let transport =
+                    kronika_source_pg::Transport::from_ca_file(config.pg_ssl_root_cert.as_deref())?;
+                Ok::<_, anyhow::Error>(PostgresTarget::new(connection, transport))
             })
             .transpose()?;
         let pgbouncer_dsns = parse_connections("KRONIKA_PGBOUNCER_DSNS", &config.pgbouncer_dsns)?;

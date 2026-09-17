@@ -1,6 +1,6 @@
 use super::core::collect_pressure_rows;
 use super::network::net_link_facts;
-use super::storage::{collect_diskstats, collect_mountinfo, resolve_major_zero};
+use super::storage::{collect_diskstats, collect_mountinfo, mountinfo_entries, resolve_major_zero};
 use super::topology::{cpu_max_mhz, cpu_numa_node};
 use super::{OsSources, OsTick, SegmentUserNames, collect_os_sources};
 use crate::scheduler::{DueSet, SourceKind};
@@ -37,6 +37,7 @@ fn unreadable_membership_emits_one_unknown_context_row() {
 
     let mut os = collect_os_sources(
         &fs,
+        &SysFs::new(dir.path().join("sys")),
         &mut process_io,
         &mut interner,
         &mut users,
@@ -105,6 +106,7 @@ fn supplied_context_survives_process_only_ticks_and_skips_non_os_ticks() {
 
         let os = collect_os_sources(
             &fs,
+            &SysFs::new(dir.path().join("sys")),
             &mut process_io,
             &mut interner,
             &mut users,
@@ -219,6 +221,27 @@ fn resolve_major_zero_rewrites_dev_backed_subvolumes() {
 }
 
 #[test]
+fn mountinfo_resolves_devices_in_the_supplied_sysfs() {
+    let dir = tempfile::tempdir().expect("mount fixture");
+    let proc_root = dir.path().join("proc");
+    let sys_root = dir.path().join("sys");
+    std::fs::create_dir_all(proc_root.join("self")).expect("proc fixture");
+    std::fs::create_dir_all(sys_root.join("class/block/fixture-disk")).expect("sys fixture");
+    std::fs::write(
+        proc_root.join("self/mountinfo"),
+        "30 25 0:42 / /data rw - btrfs /dev/fixture-disk rw\n",
+    )
+    .expect("mountinfo");
+    std::fs::write(sys_root.join("class/block/fixture-disk/dev"), "259:42\n")
+        .expect("device identity");
+
+    let entries = mountinfo_entries(&ProcFs::new(proc_root), &SysFs::new(sys_root));
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!((entries[0].major, entries[0].minor), (259, 42));
+}
+
+#[test]
 fn resolve_major_zero_leaves_entry_when_sysfs_missing() {
     let dir = tempfile::tempdir().expect("tempdir");
     let sys = SysFs::new(dir.path().to_path_buf());
@@ -301,6 +324,7 @@ fn collect_os_sources_no_diskstats_on_mount_topo_only_tick() {
 
     let os = collect_os_sources(
         &fs,
+        &SysFs::new(dir.path().join("sys")),
         &mut process_io,
         &mut interner,
         &mut users,

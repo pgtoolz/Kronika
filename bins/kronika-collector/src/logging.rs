@@ -19,9 +19,10 @@ pub(crate) use logfmt::{LogField, field, render_log_line};
 pub(crate) use process::{configure_process_diagnostics, peak_rss_kib, process_cpu_ticks};
 
 /// Ordered from the most severe event to the most verbose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
 pub(crate) enum LogLevel {
     Error,
+    #[value(alias = "warning")]
     Warn,
     Info,
     Debug,
@@ -39,6 +40,7 @@ impl LogLevel {
         }
     }
 
+    #[cfg(test)]
     fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "error" => Some(Self::Error),
@@ -51,20 +53,17 @@ impl LogLevel {
     }
 }
 
-/// Read `KRONIKA_LOG_LEVEL` for configuration validation. Unset or non-Unicode
-/// values default to info; an unrecognized level returns `None`.
-pub(crate) fn log_level_from_env() -> Option<LogLevel> {
-    let Ok(value) = std::env::var("KRONIKA_LOG_LEVEL") else {
-        return Some(LogLevel::Info);
-    };
-    LogLevel::parse(&value)
+// Tests that call a source directly use Info; normal startup sets this once.
+static LOG_LEVEL: OnceLock<LogLevel> = OnceLock::new();
+
+pub(crate) fn configure(level: LogLevel) {
+    LOG_LEVEL
+        .set(level)
+        .expect("logging is configured once at startup");
 }
 
 pub(crate) fn log_event(level: LogLevel, action: &'static str, fields: &[LogField<'_>]) {
-    // Cache the output threshold on first use. Configuration validation above
-    // reads the environment independently, before collection starts.
-    static LOG_LEVEL: OnceLock<LogLevel> = OnceLock::new();
-    let threshold = LOG_LEVEL.get_or_init(|| log_level_from_env().unwrap_or(LogLevel::Info));
+    let threshold = LOG_LEVEL.get().unwrap_or(&LogLevel::Info);
     if level <= *threshold {
         let line = render_log_line(level, action, fields);
         eprintln!("{line}");

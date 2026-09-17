@@ -97,9 +97,18 @@ impl Pool {
     /// Returns the parse error when `dsn` is neither a keyword string nor a
     /// connection URL, or an error when the configured CA bundle is invalid.
     pub fn new(dsn: &str) -> Result<Self> {
+        Self::with_transport(dsn, Transport::from_env()?)
+    }
+
+    /// Parse a DSN using an already configured certificate policy.
+    ///
+    /// No connection is opened and no TLS configuration is read from the environment.
+    ///
+    /// # Errors
+    /// Returns the parse error when `dsn` is not a valid connection string or URL.
+    pub fn with_transport(dsn: &str, transport: Transport) -> Result<Self> {
         let mut config: Config = dsn.parse().context("parse the PostgreSQL DSN")?;
         config.application_name(collector_application_name());
-        let transport = Transport::from_env()?;
         Ok(Self {
             config,
             transport,

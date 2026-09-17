@@ -1,5 +1,6 @@
 //! Verified TLS for monitoring sessions and their cancellation connections.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -46,7 +47,20 @@ impl Transport {
     /// # Errors
     /// Returns an error for an unreadable or invalid configured CA bundle.
     pub fn from_env() -> Result<Self> {
-        let Some(path) = std::env::var_os("KRONIKA_PG_SSL_ROOT_CERT") else {
+        let path = std::env::var_os("KRONIKA_PG_SSL_ROOT_CERT");
+        Self::from_ca_file(path.as_deref().map(Path::new))
+    }
+
+    /// Use a PEM CA bundle, or the compiled public CA roots when no path is supplied.
+    ///
+    /// A supplied bundle replaces the public roots. This does not read configuration
+    /// from the environment.
+    ///
+    /// # Errors
+    /// Returns [`CaConfigError`] without the path or file contents if the bundle
+    /// cannot be read or contains no valid CA certificates.
+    pub fn from_ca_file(path: Option<&Path>) -> Result<Self> {
+        let Some(path) = path else {
             return Ok(Self::default());
         };
         let pem = std::fs::read(path).map_err(|_error| CaConfigError)?;
@@ -119,6 +133,44 @@ fn public_roots() -> RootCertStore {
 #[cfg(test)]
 mod tests {
     use super::Transport;
+
+    #[test]
+    fn explicit_transport_does_not_read_the_ca_environment() {
+        const CHILD: &str = "KRONIKA_TEST_EXPLICIT_TRANSPORT";
+        if std::env::var_os(CHILD).is_some() {
+            assert!(Transport::from_env().is_err());
+            let transport = Transport::from_ca_file(None).expect("compiled public CA roots");
+            let pool = crate::Pool::with_transport(
+                "host=example.invalid user=monitor dbname=metrics",
+                transport,
+            )
+            .expect("use explicitly configured transport");
+            assert_eq!(pool.database_label(), "metrics");
+            assert_eq!(pool.connection_label(0), "monitor@example.invalid:5432");
+            assert_eq!(pool.generation(), None);
+            assert_eq!(pool.on_database("other").database_label(), "other");
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "transport::tests::explicit_transport_does_not_read_the_ca_environment",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("KRONIKA_PG_SSL_ROOT_CERT", "/nonexistent/private-ca.pem")
+            .output()
+            .expect("run isolated transport configuration");
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    #[test]
+    fn explicit_ca_file_errors_do_not_disclose_the_path() {
+        let path = std::path::Path::new("/nonexistent/private-ca.pem");
+        let error = Transport::from_ca_file(Some(path)).expect_err("missing CA fails closed");
+        assert!(error.is::<super::CaConfigError>());
+        assert!(!format!("{error:#}").contains("private-ca"));
+    }
 
     #[test]
     fn empty_or_invalid_custom_ca_never_disables_verification() {

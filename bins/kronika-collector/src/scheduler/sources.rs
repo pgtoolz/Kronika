@@ -22,7 +22,7 @@ pub(crate) enum SourceKind {
     OsCgroup,
     /// Process-to-cgroup membership.
     OsCgroupMapping,
-    /// `PostgreSQL` and `PgBouncer` log files.
+    /// ``PostgreSQL`` and ``PgBouncer`` log files.
     Logs,
     /// Activity, locks and vacuum progress, accelerated while blocked sessions exist.
     PgActivity,
@@ -50,28 +50,47 @@ pub(super) const ALL_SOURCES: [SourceKind; 11] = [
 ];
 
 /// Per-source intervals, in seconds.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, clap::Args)]
 #[allow(
     clippy::struct_field_names,
     reason = "the names match the documented OS interval configuration"
 )]
 pub(crate) struct Intervals {
+    /// CPU, memory, disks, network, and pressure.
+    #[arg(long = "os-core-interval-s", env = "KRONIKA_OS_CORE_INTERVAL_S", default_value_t = Self::default().os_core, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub os_core: u64,
+    /// Mounts, capacity, and device topology.
+    #[arg(long = "os-mount-topo-interval-s", env = "KRONIKA_OS_MOUNTTOPO_INTERVAL_S", default_value_t = Self::default().os_mount_topo, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub os_mount_topo: u64,
+    /// Process counters.
+    #[arg(long = "os-process-interval-s", env = "KRONIKA_OS_PROCESS_INTERVAL_S", default_value_t = Self::default().os_processes, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub os_processes: u64,
+    /// Process status details.
+    #[arg(long = "os-process-status-interval-s", env = "KRONIKA_OS_PROCESS_STATUS_INTERVAL_S", default_value_t = Self::default().os_process_status, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub os_process_status: u64,
+    /// Accessible cgroup v2 groups.
+    #[arg(long = "os-cgroup-interval-s", env = "KRONIKA_OS_CGROUP_INTERVAL_S", default_value_t = Self::default().os_cgroup, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub os_cgroup: u64,
+    /// Process-to-cgroup mappings.
+    #[arg(long = "os-cgroup-mapping-interval-s", env = "KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S", default_value_t = Self::default().os_cgroup_mapping, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub os_cgroup_mapping: u64,
+    /// Configured `PostgreSQL` and `PgBouncer` logs.
+    #[arg(long = "log-interval-s", env = "KRONIKA_LOG_INTERVAL_S", default_value_t = Self::default().logs, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub logs: u64,
-    /// `KRONIKA_PG_ACTIVITY_INTERVAL_S`: ordinary activity/locks/vacuum cadence.
+    /// Activity, lock waits, and VACUUM progress.
+    #[arg(long = "pg-activity-interval-s", env = "KRONIKA_PG_ACTIVITY_INTERVAL_S", default_value_t = Self::default().pg_activity, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub pg_activity: u64,
-    /// `KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S`: faster checks while lock waits exist.
+    /// Activity during lock waits; capped by the normal activity interval.
+    #[arg(long = "pg-activity-blocked-interval-s", env = "KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S", default_value_t = Self::default().pg_activity_blocked, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub pg_activity_blocked: u64,
-    /// `KRONIKA_PG_INTERVAL_S`: settings and server-wide counters.
+    /// `PostgreSQL` server counters and settings.
+    #[arg(long = "pg-instance-interval-s", env = "KRONIKA_PG_INTERVAL_S", default_value_t = Self::default().pg_instance, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub pg_instance: u64,
-    /// `KRONIKA_PG_RELATIONS_INTERVAL_S`: both tables and indexes.
+    /// Tables and indexes in each database.
+    #[arg(long = "pg-relations-interval-s", env = "KRONIKA_PG_RELATIONS_INTERVAL_S", default_value_t = Self::default().pg_tables_and_indexes, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub pg_tables_and_indexes: u64,
-    /// `KRONIKA_PG_STATEMENTS_INTERVAL_S`: at least five minutes, even when forced.
+    /// Statements, plans, and their info views; minimum 300 seconds, including SIGUSR2.
+    #[arg(long = "pg-statements-interval-s", env = "KRONIKA_PG_STATEMENTS_INTERVAL_S", default_value_t = Self::default().pg_statements_and_plans, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub pg_statements_and_plans: u64,
 }
 

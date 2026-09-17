@@ -105,29 +105,6 @@ fn the_segment_cap_must_be_positive() {
 }
 
 #[test]
-fn a_value_that_is_not_a_number_names_itself_in_the_refusal() {
-    let error =
-        super::parse_env_number::<u64>("KRONIKA_INTERVAL_S", "often").expect_err("a refusal");
-    assert_eq!(
-        error.to_string(),
-        r#"KRONIKA_INTERVAL_S="often" is not a whole number"#
-    );
-}
-
-#[test]
-fn a_negative_count_is_not_a_whole_number() {
-    assert!(super::parse_env_number::<u64>("KRONIKA_SEGMENT_MAX_AGE_S", "-1").is_err());
-}
-
-#[test]
-fn surrounding_whitespace_is_not_a_refusal() {
-    assert_eq!(
-        super::parse_env_number::<u64>("KRONIKA_INTERVAL_S", " 30 ").expect("a number"),
-        30
-    );
-}
-
-#[test]
 fn an_empty_element_in_a_list_is_a_refusal_naming_the_variable() {
     let error = super::parse_env_list("KRONIKA_PG_LOGS", "/var/log/a.log;;/var/log/b.log")
         .expect_err("a refusal");
@@ -153,22 +130,6 @@ fn a_blank_list_is_empty_rather_than_one_blank_element() {
 }
 
 #[test]
-fn postgres_capacity_is_positive_or_unknown() {
-    assert_eq!(
-        super::optional_positive_u32("KRONIKA_POSTGRES_EFFECTIVE_CPUS", None)
-            .expect("unset capacity"),
-        None
-    );
-    assert_eq!(
-        super::optional_positive_u32("KRONIKA_POSTGRES_EFFECTIVE_CPUS", Some(" 2 "))
-            .expect("positive capacity"),
-        Some(2)
-    );
-    assert!(super::optional_positive_u32("KRONIKA_POSTGRES_EFFECTIVE_CPUS", Some("0")).is_err());
-    assert!(super::optional_positive_u32("KRONIKA_POSTGRES_EFFECTIVE_CPUS", Some("two")).is_err());
-}
-
-#[test]
 fn pg_log_max_lag_is_a_positive_configurable_duration() {
     const CHILD: &str = "KRONIKA_TEST_MAX_LOG_LAG";
     if let Ok(expected) = std::env::var(CHILD) {
@@ -179,7 +140,7 @@ fn pg_log_max_lag_is_a_positive_configurable_duration() {
                     .err()
                     .expect("invalid config")
                     .to_string()
-                    .contains("KRONIKA_PG_LOG_MAX_LAG_S")
+                    .contains("--pg-log-max-lag-s")
             );
         } else {
             assert_eq!(
@@ -228,11 +189,7 @@ fn postgres_activity_and_statement_intervals_have_independent_bounds() {
             let error = result
                 .err()
                 .expect("reject a statement interval below five minutes");
-            assert!(
-                error
-                    .to_string()
-                    .contains("KRONIKA_PG_STATEMENTS_INTERVAL_S")
-            );
+            assert!(error.to_string().contains("--pg-statements-interval-s"));
         } else {
             let intervals = result.expect("valid intervals").intervals;
             assert_eq!(
@@ -284,3 +241,6 @@ fn postgres_activity_and_statement_intervals_have_independent_bounds() {
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
     }
 }
+
+#[path = "config/cli.rs"]
+mod cli;

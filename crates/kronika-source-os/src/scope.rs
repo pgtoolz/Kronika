@@ -53,7 +53,16 @@ pub(crate) fn detect_container_from_cgroup(cgroup: &str) -> bool {
 /// are checked, matching Wave 1 production behavior.
 #[must_use]
 pub fn detect_container(fs: &ProcFs) -> bool {
-    let proc_root_overridden = std::env::var_os("KRONIKA_PROC_ROOT").is_some();
+    detect_container_with_root_override(fs, std::env::var_os("KRONIKA_PROC_ROOT").is_some())
+}
+
+/// Detect containers using the selected procfs root.
+///
+/// When the root was explicitly configured, ignore `KUBERNETES_SERVICE_HOST`
+/// and `/.dockerenv`: they describe the collector's container, which may differ
+/// from the host mounted at that root. Otherwise, include those signals.
+#[must_use]
+pub fn detect_container_with_root_override(fs: &ProcFs, proc_root_overridden: bool) -> bool {
     if !proc_root_overridden {
         if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
             return true;
@@ -81,6 +90,35 @@ pub const fn net_scope(in_container: bool) -> OsScope {
 #[cfg(test)]
 mod tests {
     use super::{OsScope, detect_container_from_cgroup, net_scope};
+
+    #[test]
+    fn explicit_proc_root_ignores_the_collectors_container_environment() {
+        const CHILD: &str = "KRONIKA_TEST_EXPLICIT_PROC_ROOT";
+        if std::env::var_os(CHILD).is_some() {
+            let root = tempfile::tempdir().expect("proc fixture");
+            std::fs::create_dir(root.path().join("1")).expect("pid 1");
+            let membership = root.path().join("1/cgroup");
+            std::fs::write(&membership, "0::/init.scope\n").expect("host membership");
+            let fs = crate::ProcFs::new(root.path().to_owned());
+            assert!(!super::detect_container_with_root_override(&fs, true));
+            assert!(super::detect_container_with_root_override(&fs, false));
+            std::fs::write(&membership, "0::/kubepods/pod123\n").expect("pod membership");
+            assert!(super::detect_container_with_root_override(&fs, true));
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "scope::tests::explicit_proc_root_ignores_the_collectors_container_environment",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("KUBERNETES_SERVICE_HOST", "fixture")
+            .env_remove("KRONIKA_PROC_ROOT")
+            .output()
+            .expect("run isolated container detection");
+        assert!(output.status.success(), "{output:?}");
+    }
 
     #[test]
     fn scope_encodes_as_stable_u8() {

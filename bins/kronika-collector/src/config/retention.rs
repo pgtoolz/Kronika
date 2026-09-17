@@ -6,8 +6,6 @@ use crate::logging::{LogLevel, field, log_event};
 
 /// Used-fraction target of the `auto` mode when no percentage is given.
 const DEFAULT_AUTO_PERCENT: u8 = 80;
-/// Fixed rotation target when `KRONIKA_RETENTION` is unset.
-const DEFAULT_RETENTION_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Rotation target for the whole `KRONIKA_STORAGE_DIR` tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,15 +21,8 @@ pub(crate) enum RetentionConfig {
 }
 
 impl RetentionConfig {
-    /// Read, validate and report the storage target before source configuration.
-    pub(super) fn from_env(segment_max_bytes: u64) -> Result<Self> {
-        let retention = std::env::var("KRONIKA_RETENTION")
-            .ok()
-            .map(|raw| Self::parse(&raw))
-            .transpose()?
-            .unwrap_or(Self::Fixed(DEFAULT_RETENTION_BYTES));
-        retention.validate(segment_max_bytes)?;
-        match retention {
+    pub(super) fn log(self) {
+        match self {
             Self::Fixed(budget) => log_event(
                 LogLevel::Info,
                 "config_retention",
@@ -46,13 +37,12 @@ impl RetentionConfig {
                 ],
             ),
         }
-        Ok(retention)
     }
 
     /// Parses `KRONIKA_RETENTION` into a rotation target.
     ///
-    /// Accepts a raw byte budget (`<u64>`), `auto` (equivalent to `auto:80`), or
-    /// `auto:<P>` with `P` in `1..=99`.
+    /// Accepts a size such as `10GiB` or a raw byte count, `auto` (equivalent to
+    /// `auto:80`), or `auto:<P>` with `P` in `1..=99`.
     ///
     /// # Errors
     ///
@@ -78,8 +68,8 @@ impl RetentionConfig {
             );
             return Ok(Self::Auto(percent));
         }
-        let budget = value.parse::<u64>().with_context(|| {
-            format!("KRONIKA_RETENTION must be a byte budget or 'auto[:P]', got {value:?}")
+        let budget = super::values::byte_size(value).with_context(|| {
+            format!("retention must be a size (e.g. 10GiB, 10G, 10GB) or 'auto[:P]', got {value:?}")
         })?;
         Ok(Self::Fixed(budget))
     }
@@ -94,7 +84,7 @@ impl RetentionConfig {
     /// # Errors
     ///
     /// Returns an error naming the budget and the required floor.
-    fn validate(self, segment_max_bytes: u64) -> Result<()> {
+    pub(super) fn validate(self, segment_max_bytes: u64) -> Result<()> {
         if let Self::Fixed(budget) = self {
             let floor = segment_max_bytes.saturating_mul(2);
             anyhow::ensure!(
@@ -104,6 +94,13 @@ impl RetentionConfig {
             );
         }
         Ok(())
+    }
+}
+
+impl std::str::FromStr for RetentionConfig {
+    type Err = anyhow::Error;
+    fn from_str(raw: &str) -> Result<Self> {
+        Self::parse(raw)
     }
 }
 

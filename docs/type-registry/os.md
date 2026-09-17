@@ -17,8 +17,9 @@ Where present, `scope` identifies the machine, pod or container whose resources 
 CPU, memory, disks, mount points, and topology describe the node even when the
 collector runs inside a container. Network sections use `pod_net` in the collector's recorded container environment. Process rows use `container` inside a container and `host` otherwise. Cgroup v2 discovery runs on machines and in containers; the selected ancestor rows serve the container resource charts.
 
-The filesystem roots are overridable with `KRONIKA_PROC_ROOT` (default
-`/proc`) and `KRONIKA_SYS_ROOT` (default `/sys`).
+The filesystem roots are overridable with `--proc-root` (default `/proc`)
+and `--sys-root` (default `/sys`), or `KRONIKA_PROC_ROOT` and `KRONIKA_SYS_ROOT`.
+Command-line options take precedence.
 
 ## Registered types
 
@@ -248,12 +249,13 @@ Other types, including NFS, CIFS, FUSE and `autofs`, retain `null` capacity fiel
 This filter does not establish that storage is physically local: for example,
 ext4 can reside on a [network block device](https://www.kernel.org/doc/html/latest/admin-guide/blockdev/nbd.html).
 
-The collector probes eligible mounts sequentially in a helper process. This
-isolates a stalled mount probe when other sources and the collector's own WAL
-storage remain usable. It cannot protect WAL writes or other filesystem calls
-made by the collector itself. Each helper launch costs a child process and two
-anonymous files for requests and responses; those files let the parent read
-partial results without waiting for the helper to close its output.
+The collector runs `statvfs` in a child process because the call can block
+indefinitely on unresponsive storage. A timeout does not interrupt the system
+call, and Rust cannot safely terminate its thread. The child keeps the blocked
+call outside the collector and allows a separate termination request. The
+kernel can delay termination even after `SIGKILL`.
+The [single-thread alternative](../../TODO.md) is deferred. This isolation
+does not protect WAL writes or other filesystem calls in the collector itself.
 
 One shared waiting budget expires one second after the capacity pass starts.
 On expiry the parent requests termination without waiting for the helper to

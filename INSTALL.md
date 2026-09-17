@@ -52,16 +52,16 @@ sudo install -d -m 0700 /var/lib/kronika
 Start collecting Linux metrics:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika
 ```
 
 Processes are sampled every 5 seconds and core Linux metrics every 10 seconds.
 
 `Ctrl+C` stops collection. Run the same command to resume.
 
-`KRONIKA_RETENTION` defaults to `2147483648` bytes (2 GiB). For a fixed 10 GiB
-target, add `KRONIKA_RETENTION=10737418240`.
+`--retention` defaults to `2GiB`. For a fixed 10 GiB target, add
+`--retention 10GiB`.
 [Storage](bins/kronika-collector/README.md#storage) defines the counted files
 and deletion order.
 
@@ -83,20 +83,21 @@ database and the database-local extension permissions listed in
 [PostgreSQL role](bins/kronika-collector/README.md#postgresql-role).
 
 To collect from several PostgreSQL servers, run `kronika-collector` for each
-server with its `KRONIKA_PG_DSN` and a separate `KRONIKA_STORAGE_DIR`. See the
+server with its `--pg-dsn` and a separate `--storage-dir`. See the
 [two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
 PostgreSQL and Linux metrics from the same VM or pod:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable'
 ```
 
 On a machine shared with PostgreSQL, the CPU count is determined automatically.
-Leave `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset. Installed `pg_stat_statements` and
-`pg_store_plans` extensions supply query and plan statistics. Activity, Locks,
+Leave `--postgres-effective-cpus` and `KRONIKA_POSTGRES_EFFECTIVE_CPUS` unset.
+Installed `pg_stat_statements` and `pg_store_plans` extensions supply query
+and plan statistics. Activity, Locks,
 and table and index statistics use PostgreSQL's built-in views.
 
 ### PostgreSQL only — local or remote
@@ -106,14 +107,14 @@ Choose this mode for a remote server or when you do not need Linux metrics.
 ```sh
 sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 
-KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  /usr/local/bin/kronika-collector
+/usr/local/bin/kronika-collector \
+  --mode postgresql \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres'
 ```
 
-If you know the server’s available CPU count, set `KRONIKA_POSTGRES_EFFECTIVE_CPUS`
-to that number (for example, `4`). If unknown, leave it unset: SQL metrics remain
+If you know the server’s available CPU count, add `--postgres-effective-cpus 4`,
+replacing `4` with that number. If unknown, leave it unset: SQL metrics remain
 available and PostgreSQL Health is unknown.
 See [remote PostgreSQL](bins/kronika-collector/README.md#remote-postgresql).
 

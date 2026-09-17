@@ -6,7 +6,7 @@ The type range is `2_100_001`–`2_199_999`; `pgbouncer_events` contains one row
 
 ## Source and fields
 
-Using the connections in `KRONIKA_PGBOUNCER_DSNS`, the collector discovers `logfile` through `SHOW CONFIG`. Paths and patterns in `KRONIKA_PGBOUNCER_LOGS` add files explicitly. The files must be readable on the collector host and use the layout below. The source collects log events; `SHOW POOLS`, `SHOW STATS`, `SHOW CLIENTS` and `stats:` lines are not collected.
+Using the connections supplied with `--pgbouncer-dsn` or `KRONIKA_PGBOUNCER_DSNS`, the collector discovers `logfile` through `SHOW CONFIG`. Paths and patterns supplied with `--pgbouncer-log` or `KRONIKA_PGBOUNCER_LOGS` add files explicitly. The files must be readable on the collector host and use the layout below. The source collects log events; `SHOW POOLS`, `SHOW STATS`, `SHOW CLIENTS` and `stats:` lines are not collected.
 
 | Field | Nullable | Definition |
 | --- | --- | --- |

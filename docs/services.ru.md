@@ -11,6 +11,10 @@
 <a id="environment-files"></a>
 ## Файлы настроек
 
+В этом примере настройки сборщика хранятся в файле переменных окружения. Сборщик
+также принимает параметры командной строки: параметр в `ExecStart` заменяет
+соответствующее значение из окружения. См. [справочник параметров](../bins/kronika-collector/README.ru.md#конфигурация).
+
 Создайте и отредактируйте файлы:
 
 ```sh
@@ -24,7 +28,7 @@ sudoedit /etc/kronika/collector.env /etc/kronika/web.env
 
 ```ini
 KRONIKA_STORAGE_DIR=/var/lib/kronika
-KRONIKA_RETENTION=2147483648
+KRONIKA_RETENTION=2GiB
 ```
 
 `/etc/kronika/web.env`:

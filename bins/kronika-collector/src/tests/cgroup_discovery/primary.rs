@@ -32,9 +32,7 @@ fn isolated(test_name: &str, denied: bool) {
     let mut command = Command::new(std::env::current_exe().expect("test executable"));
     command
         .args(["--exact", test_name, "--nocapture"])
-        .env(CHILD_ROOT, temp.path())
-        .env("KRONIKA_PROC_ROOT", temp.path().join("proc"))
-        .env("KRONIKA_SYS_ROOT", temp.path().join("sys"));
+        .env(CHILD_ROOT, temp.path());
     if denied && rustix::process::geteuid().is_root() {
         command.uid(4242).gid(4242);
     }
@@ -177,11 +175,13 @@ fn scenario(root: &Path, denied: bool) {
     let storage = root.join("storage");
     let mut config = config(&storage);
     config.mode = CollectorMode::Local;
+    config.proc_root = Some(root.join("proc"));
+    config.sys_root = root.join("sys");
     let (owner, mut journal) = open_journal(&storage, 2);
     let mut state = SegmentState::default();
     let mut sched = Scheduler::new(Intervals::default(), true);
-    let fs = ProcFs::from_env();
-    let sys = SysFs::from_env();
+    let fs = config.proc_fs();
+    let sys = config.sys_fs();
     let first = crate::clock::collection_timestamp().expect("clock");
     let devices = if denied { 2 } else { 1100 };
     let mut selected_identity = None;

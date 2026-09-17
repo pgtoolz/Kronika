@@ -9,7 +9,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use kronika_registry::instance_metadata::{Environment, InstanceMetadataV4};
 use kronika_registry::{Section, StrId, Ts};
-use kronika_source_os::{OsInstanceFacts, collect_os_instance_facts};
+use kronika_source_os::{OsInstanceFacts, ProcFs, collect_os_instance_facts_from};
 use kronika_writer::{Interner, SectionBuffers};
 
 use crate::buffering::buffer_row;
@@ -62,7 +62,7 @@ pub(crate) fn push_instance_metadata(
         ),
     };
     if os_enabled {
-        let facts = read_linux_facts()?;
+        let facts = read_linux_facts(&config.proc_fs())?;
         let mut intern = |value: &str| -> Result<StrId> {
             interner
                 .intern(value.as_bytes())
@@ -81,11 +81,11 @@ pub(crate) fn push_instance_metadata(
 }
 
 /// Read Linux identity and counter units; failure prevents opening the segment.
-fn read_linux_facts() -> Result<OsInstanceFacts> {
+fn read_linux_facts(fs: &ProcFs) -> Result<OsInstanceFacts> {
     let type_id = InstanceMetadataV4::CONTRACT.type_id.get();
     let started = Instant::now();
     log_collection_start(type_id, "procfs");
-    match collect_os_instance_facts() {
+    match collect_os_instance_facts_from(fs) {
         Ok(facts) => {
             log_collection_finish(type_id, "procfs", 1, started.elapsed());
             Ok(facts)

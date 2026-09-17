@@ -9,6 +9,10 @@ all IPv4 interfaces. Stop any manually started instance before starting its serv
 
 ## Environment files
 
+This setup keeps collector settings in an environment file. The collector also
+accepts command-line options; an option in `ExecStart` overrides the corresponding
+environment value. See the [option reference](../bins/kronika-collector/README.md#configuration).
+
 Create and edit the files:
 
 ```sh
@@ -22,7 +26,7 @@ sudoedit /etc/kronika/collector.env /etc/kronika/web.env
 
 ```ini
 KRONIKA_STORAGE_DIR=/var/lib/kronika
-KRONIKA_RETENTION=2147483648
+KRONIKA_RETENTION=2GiB
 ```
 
 `/etc/kronika/web.env`:

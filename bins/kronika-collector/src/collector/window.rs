@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use kronika_registry::os_cgroup_context::OsCgroupContextV2;
-use kronika_source_os::{OsScope, ProcFs};
+use kronika_source_os::OsScope;
 use kronika_source_pg::settings::SettingsRow;
 use kronika_writer::SectionBuffers;
 use std::path::PathBuf;
@@ -225,9 +225,11 @@ impl WindowWriter<'_> {
         }
 
         let mut os = self.process_io.as_mut().map(|process_io| {
-            let fs = ProcFs::from_env();
+            let fs = self.config.proc_fs();
+            let sys = self.config.sys_fs();
             collect_os_sources(
                 &fs,
+                &sys,
                 process_io,
                 &mut self.segment.interner,
                 &mut self.segment.user_names,

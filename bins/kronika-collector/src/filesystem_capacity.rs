@@ -1,21 +1,13 @@
-//! Total and available bytes and inodes for `os_mountinfo` snapshots.
+//! Filesystem capacity and inode counts for `os_mountinfo` snapshots.
 //!
-//! These optional measurements use `statvfs` on each eligible mount path. The
-//! filesystem-type allowlist skips NFS, FUSE and other unsupported types; it
-//! does not establish that the backing device is local or responsive. For
-//! example, ext4 can reside on a network block device.
+//! `statvfs` can block indefinitely on unresponsive storage. A timeout does not
+//! interrupt the system call, and Rust cannot safely terminate its thread.
+//! A child process keeps the blocked call outside the collector and allows
+//! a separate termination request.
 //!
-//! A separate process keeps a stalled mount probe out of the collection loop.
-//! This is useful when one volume fails while other sources and the collector's
-//! own WAL storage remain usable. It cannot protect blocked WAL writes or other
-//! filesystem calls made by the collector itself.
-//!
-//! Launching a helper requires one child process and two anonymous files for IPC.
-//! The parent polls for completion, requests termination when the shared wait
-//! budget expires, then keeps the complete response records available to read.
-//! Missing results stay `None`. This trades process/IPC overhead for isolation
-//! of these probes; it does not guarantee that the whole pass returns in one
-//! second. See `docs/type-registry/os.md` for the storage contract and rationale.
+//! After the waiting budget expires, keep completed results and request a kill.
+//! Missing values stay `None`. The kernel may delay termination; until the child
+//! exits, no new helper is launched. The single-thread alternative is in TODO.md.
 
 use crate::logging::{LogLevel, field, log_event};
 use anyhow::{Context, Result};

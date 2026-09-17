@@ -9,6 +9,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+clap = { version = "4.6", features = ["derive", "env"] }
+bsize = "0.3"
 kronika-format = { path = "../../crates/kronika-format" }
 kronika-layout = { path = "../../crates/kronika-layout" }
 kronika-registry = { path = "../../crates/kronika-registry" }

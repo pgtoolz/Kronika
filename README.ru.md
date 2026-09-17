@@ -29,36 +29,40 @@ Linux либо записывает только данные PostgreSQL с ло
 Запустите сбор метрик Linux:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika
 ```
 
 <a id="linux-и-postgresql"></a>
-Для PostgreSQL на машине сборщика укажите строку подключения в `KRONIKA_PG_DSN`
+Для PostgreSQL на машине сборщика укажите строку подключения через `--pg-dsn`
 при запуске. Используйте учётную запись PostgreSQL с
 [правами для сбора данных](INSTALL.ru.md#5-postgresql).
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable'
 ```
 
-Для этого локального запуска не задавайте `KRONIKA_POSTGRES_EFFECTIVE_CPUS`:
-число CPU берётся из записанных снимков машины.
+В этом режиме `local`, выбранном по умолчанию, сборщик также узнаёт путь
+текущего журнала PostgreSQL. Если файл доступен для чтения на машине сборщика,
+`--pg-log` не нужен.
+
+Для этого локального запуска не задавайте `--postgres-effective-cpus`
+и `KRONIKA_POSTGRES_EFFECTIVE_CPUS`: число CPU берётся из записанных снимков машины.
 
 ### Только PostgreSQL — локальный или удалённый сервер
 
 ```sh
 sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 
-KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  /usr/local/bin/kronika-collector
+/usr/local/bin/kronika-collector \
+  --mode postgresql \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres'
 ```
 
-Если число CPU PostgreSQL известно, добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`,
+Если число CPU PostgreSQL известно, добавьте `--postgres-effective-cpus 4`,
 заменив `4` нужным числом.
 Без него SQL-метрики доступны, а PostgreSQL Health неизвестен. Подробнее — в [настройках сборщика](bins/kronika-collector/README.ru.md#remote-postgresql).
 
@@ -104,10 +108,10 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 **около 200 MB сжатых записей в сутки**. Объём зависит от интервалов сбора,
 числа записываемых объектов и уникальных запросов.
 
-`KRONIKA_RETENTION=2147483648` задаёт бюджет хранения **2 GiB** по умолчанию,
+`--retention 2GiB` задаёт бюджет хранения **2 GiB** по умолчанию,
 включая журналы и индексы. При превышении целевого объёма сборщик автоматически
 удаляет самые старые завершённые записи вместе с их индексами.
-Для **10 GiB** задайте `KRONIKA_RETENTION=10737418240` (значение в байтах).
+Для **10 GiB** задайте `--retention 10GiB`.
 
 `auto` и `auto:P` вместо фиксированного объёма задают целевую долю занятого места
 на всей файловой системе хранилища. Правила ротации и автоматический режим —

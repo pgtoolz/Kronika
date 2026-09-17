@@ -1,162 +1,150 @@
-//! Startup settings read from the environment before collection begins.
+//! CLI arguments and environment fallbacks, validated once before startup.
 //!
-//! `KRONIKA_STORAGE_DIR` is required. In `postgresql` mode a `PostgreSQL` DSN is
-//! required too. `Config::from_env` reads settings in validation order; retention
-//! parsing and its startup log live in `retention`.
-//!
-//! Variable names, defaults and accepted values: `bins/kronika-collector/README.md`.
+//! The process owns one immutable configuration. Parsing is independent of that
+//! global instance, so tests can check different settings without changing it.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+use clap::parser::ValueSource;
+use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use kronika_format::{JOURNAL_HEADER_LEN, MAX_JOURNAL_LEN};
+use kronika_source_os::{ProcFs, SysFs};
+use std::ffi::OsString;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
-use crate::logging::{LogLevel, field, log_event, log_level_from_env};
+use crate::logging::{LogLevel, field, log_event};
 use crate::scheduler::{Intervals, MIN_PG_STATEMENTS_INTERVAL_SECS};
 
 mod retention;
-
+pub(crate) mod values;
 pub(crate) use retention::RetentionConfig;
+use values::{TrimmedEnum, byte_size, number, parse_env_list, parse_pg_dsn};
 
-// Base timer wake period; individual sources also have their own intervals.
-const DEFAULT_TICK_SECS: u64 = 5;
-// Close a segment after 64 MiB of raw journal data, before compression.
-const DEFAULT_SEGMENT_MAX_BYTES: u64 = 64 * 1024 * 1024;
-// Period for phased segment closing; the first segment may close sooner.
-const DEFAULT_SEGMENT_MAX_AGE_SECS: u64 = 900;
-// Ignore PostgreSQL log entries older than 15 minutes at read time.
-const DEFAULT_PG_LOG_MAX_LAG_SECS: u64 = 900;
+// Initialized after validation, before any runtime thread or collection starts.
+static CONFIG: OnceLock<Config> = OnceLock::new();
 
-/// Collector settings loaded and validated before startup.
+/// Record Linux metrics, `PostgreSQL` metrics, and local logs.
+#[derive(Parser)]
+#[command(name = "kronika-collector", version, after_long_help = crate::help::EXAMPLES)]
 pub(crate) struct Config {
-    /// Which recorded source families this collector reads.
+    /// Collection mode; postgresql requires a DSN and does not read Linux metrics.
+    #[arg(long, env = "KRONIKA_COLLECTOR_MODE", default_value = "local", value_parser = TrimmedEnum::<CollectorMode>::new(), hide_env_values = true)]
     pub(crate) mode: CollectorMode,
-    /// Data root: the journal, the finished segments, and the writer lock.
+    /// Recording directory containing active.wal and finished segments. Required.
+    #[arg(
+        long,
+        env = "KRONIKA_STORAGE_DIR",
+        value_name = "DIR",
+        hide_env_values = true
+    )]
     pub(crate) storage_dir: PathBuf,
-    /// Base tick of the internal timer, seconds; `0` disables the timer and
-    /// leaves collection to signals only.
+    /// Maximum timer sleep in seconds; 0 disables timed collection (SIGUSR2 only).
+    #[arg(long = "interval-s", env = "KRONIKA_INTERVAL_S", default_value_t = 5, value_parser = number::<u64>, hide_env_values = true)]
     pub(crate) tick_secs: u64,
-    /// Per-source read intervals.
+    #[command(flatten)]
     pub(crate) intervals: Intervals,
 
-    /// Write the segment when the journal holds at least this many raw bytes.
+    /// Close a segment at this raw journal size, before compression (e.g. 64MiB).
+    #[arg(long, env = "KRONIKA_SEGMENT_MAX_BYTES", default_value = "64MiB", value_name = "SIZE", value_parser = byte_size, help_heading = "Storage", hide_env_values = true)]
     pub(crate) segment_max_bytes: u64,
-    /// Period of phased age eligibility; the first segment may close sooner.
+    /// Segment closing period in seconds; the first segment may close sooner.
+    #[arg(long = "segment-max-age-s", env = "KRONIKA_SEGMENT_MAX_AGE_S", default_value_t = 900, value_parser = number::<u64>, help_heading = "Storage", hide_env_values = true)]
     pub(crate) segment_max_age_secs: u64,
-    /// Hard cap of the on-disk journal file; reaching it writes the open
-    /// segment early instead of failing the append.
+    /// Hard active.wal limit (36 bytes..1GiB); closes the segment early.
+    #[arg(long, env = "KRONIKA_JOURNAL_MAX_BYTES", default_value = "1GiB", value_name = "SIZE", value_parser = byte_size, help_heading = "Storage", hide_env_values = true)]
     pub(crate) journal_max_bytes: u64,
-    /// Storage-rotation target for the whole storage tree.
+    /// Storage target: size (e.g. 10GiB, 10G, 10GB), auto (= auto:80), or auto:1..99.
+    #[arg(
+        long,
+        env = "KRONIKA_RETENTION",
+        default_value = "2GiB",
+        value_name = "SIZE|auto[:P]",
+        help_heading = "Storage",
+        hide_env_values = true
+    )]
     pub(crate) retention: Option<RetentionConfig>,
 
-    /// The one `PostgreSQL` server used for metrics and log discovery.
+    /// One `PostgreSQL` DSN; local mode also discovers its log file automatically.
+    #[arg(
+        long,
+        env = "KRONIKA_PG_DSN",
+        value_name = "DSN",
+        help_heading = "PostgreSQL and logs",
+        hide_env_values = true
+    )]
     pub(crate) pg_dsn: Option<String>,
-    /// Explicit CPU capacity of the monitored `PostgreSQL` server.
+    /// Target `PostgreSQL` CPU capacity (> 0); requires --pg-dsn.
+    #[arg(long, env = "KRONIKA_POSTGRES_EFFECTIVE_CPUS", value_parser = number::<u32>, help_heading = "PostgreSQL and logs", hide_env_values = true)]
     pub(crate) postgres_effective_cpus: Option<u32>,
-    /// `PostgreSQL` logs named outright, as paths or globs.
+    /// PEM CA bundle replacing the built-in public roots; hostname validation stays enabled.
+    #[arg(
+        long,
+        env = "KRONIKA_PG_SSL_ROOT_CERT",
+        value_name = "FILE",
+        help_heading = "PostgreSQL and logs",
+        hide_env_values = true
+    )]
+    pub(crate) pg_ssl_root_cert: Option<PathBuf>,
+    /// Extra local log path/glob; local mode already discovers the current log via --pg-dsn.
+    /// In postgresql mode, only these explicit paths are read. Repeat for multiple paths.
+    #[arg(
+        long = "pg-log",
+        env = "KRONIKA_PG_LOGS",
+        value_name = "PATH",
+        help_heading = "PostgreSQL and logs",
+        hide_env_values = true
+    )]
     pub(crate) pg_logs: Vec<String>,
-    /// Maximum `PostgreSQL` log age at read time, seconds.
+    /// Skip `PostgreSQL` log entries older than this many seconds (> 0).
+    #[arg(long = "pg-log-max-lag-s", env = "KRONIKA_PG_LOG_MAX_LAG_S", default_value_t = 900, value_parser = number::<u64>, help_heading = "PostgreSQL and logs", hide_env_values = true)]
     pub(crate) pg_log_max_lag_secs: u64,
-
-    /// Where to ask `PgBouncer` which log it writes and who it is.
+    /// `PgBouncer` admin-console DSN for log discovery. Repeat for multiple consoles.
+    #[arg(
+        long = "pgbouncer-dsn",
+        env = "KRONIKA_PGBOUNCER_DSNS",
+        value_name = "DSN",
+        help_heading = "PostgreSQL and logs",
+        hide_env_values = true
+    )]
     pub(crate) pgbouncer_dsns: Vec<String>,
-    /// `PgBouncer` logs named outright, as paths or globs.
+    /// Local `PgBouncer` log path or final-component glob. Repeat for multiple paths.
+    #[arg(
+        long = "pgbouncer-log",
+        env = "KRONIKA_PGBOUNCER_LOGS",
+        value_name = "PATH",
+        help_heading = "PostgreSQL and logs",
+        hide_env_values = true
+    )]
     pub(crate) pgbouncer_logs: Vec<String>,
+
+    /// Structured stderr logging level (case-insensitive; warning aliases warn).
+    #[arg(long, env = "KRONIKA_LOG_LEVEL", default_value = "info", value_parser = TrimmedEnum::<LogLevel>::new(), ignore_case = true, help_heading = "Logging and Linux paths", hide_env_values = true)]
+    pub(crate) log_level: LogLevel,
+    /// Procfs root (default /proc). An explicit root disables container packaging hints.
+    #[arg(
+        long,
+        env = "KRONIKA_PROC_ROOT",
+        value_name = "DIR",
+        help_heading = "Logging and Linux paths",
+        hide_env_values = true
+    )]
+    pub(crate) proc_root: Option<PathBuf>,
+    /// Sysfs root, used only in local mode.
+    #[arg(
+        long,
+        env = "KRONIKA_SYS_ROOT",
+        default_value = "/sys",
+        value_name = "DIR",
+        help_heading = "Logging and Linux paths",
+        hide_env_values = true
+    )]
+    pub(crate) sys_root: PathBuf,
 }
 
-impl Config {
-    /// Read and validate the collector settings from the environment.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `KRONIKA_STORAGE_DIR` is unset, a variable does not
-    /// parse, or a bound fails validation.
-    pub(crate) fn from_env() -> Result<Self> {
-        let storage_dir: PathBuf = std::env::var("KRONIKA_STORAGE_DIR")
-            .context("KRONIKA_STORAGE_DIR is not set")?
-            .into();
-        validate_log_level()?;
-        let mode = CollectorMode::parse(
-            &std::env::var("KRONIKA_COLLECTOR_MODE").unwrap_or_else(|_| "local".to_owned()),
-        )?;
-
-        let tick_secs = env_u64("KRONIKA_INTERVAL_S", DEFAULT_TICK_SECS)?;
-
-        let segment_max_bytes = env_u64("KRONIKA_SEGMENT_MAX_BYTES", DEFAULT_SEGMENT_MAX_BYTES)?;
-        validate_segment_max_bytes(segment_max_bytes)?;
-        let segment_max_age_secs =
-            env_u64("KRONIKA_SEGMENT_MAX_AGE_S", DEFAULT_SEGMENT_MAX_AGE_SECS)?;
-        let journal_max_bytes = env_u64("KRONIKA_JOURNAL_MAX_BYTES", MAX_JOURNAL_LEN as u64)?;
-        validate_journal_max_bytes(journal_max_bytes)?;
-        if segment_max_bytes > journal_max_bytes {
-            log_event(
-                LogLevel::Warn,
-                "config_degraded",
-                &[
-                    field("reason", "segment_cap_exceeds_journal_cap"),
-                    field("segment_max_bytes", segment_max_bytes),
-                    field("journal_max_bytes", journal_max_bytes),
-                ],
-            );
-        }
-        let retention = RetentionConfig::from_env(segment_max_bytes)?;
-
-        let pg_dsn = parse_pg_dsn(
-            std::env::var_os("KRONIKA_PG_DSN").as_deref(),
-            std::env::var_os("KRONIKA_PG_DSNS").as_deref(),
-        )?;
-        let postgres_effective_cpus = optional_positive_u32(
-            "KRONIKA_POSTGRES_EFFECTIVE_CPUS",
-            std::env::var("KRONIKA_POSTGRES_EFFECTIVE_CPUS")
-                .ok()
-                .as_deref(),
-        )?;
-        anyhow::ensure!(
-            pg_dsn.is_some() || postgres_effective_cpus.is_none(),
-            "KRONIKA_POSTGRES_EFFECTIVE_CPUS requires KRONIKA_PG_DSN"
-        );
-        anyhow::ensure!(
-            mode.collect_os() || pg_dsn.is_some(),
-            "KRONIKA_COLLECTOR_MODE=postgresql requires KRONIKA_PG_DSN"
-        );
-
-        let pg_log_max_lag_secs = env_u64("KRONIKA_PG_LOG_MAX_LAG_S", DEFAULT_PG_LOG_MAX_LAG_SECS)?;
-        anyhow::ensure!(
-            pg_log_max_lag_secs > 0,
-            "KRONIKA_PG_LOG_MAX_LAG_S must be greater than zero"
-        );
-
-        let pgbouncer_dsns = env_list("KRONIKA_PGBOUNCER_DSNS")?;
-        let pgbouncer_logs = env_list("KRONIKA_PGBOUNCER_LOGS")?;
-        anyhow::ensure!(
-            mode.collect_os() || (pgbouncer_dsns.is_empty() && pgbouncer_logs.is_empty()),
-            "KRONIKA_COLLECTOR_MODE=postgresql does not collect PgBouncer; remove KRONIKA_PGBOUNCER_DSNS and KRONIKA_PGBOUNCER_LOGS"
-        );
-
-        Ok(Self {
-            mode,
-            storage_dir,
-            tick_secs,
-            intervals: intervals_from_env()?,
-            segment_max_bytes,
-            segment_max_age_secs,
-            journal_max_bytes,
-            retention: Some(retention),
-            pg_dsn,
-            postgres_effective_cpus,
-            pg_logs: env_list("KRONIKA_PG_LOGS")?,
-            pg_log_max_lag_secs,
-            pgbouncer_dsns,
-            pgbouncer_logs,
-        })
-    }
-}
-
-/// Collection placement explicitly selected by the operator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Linux/`PostgreSQL` colocated on this machine, or `PostgreSQL` only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum CollectorMode {
-    /// Linux resources and `PostgreSQL` on the same machine.
     Local,
-    /// `PostgreSQL` metrics and explicitly named `PostgreSQL` log files only.
     Postgresql,
 }
 
@@ -165,150 +153,156 @@ impl CollectorMode {
         matches!(self, Self::Local)
     }
 
-    fn parse(raw: &str) -> Result<Self> {
-        match raw.trim() {
-            "local" => Ok(Self::Local),
-            "postgresql" => Ok(Self::Postgresql),
-            _ => anyhow::bail!("KRONIKA_COLLECTOR_MODE must be local or postgresql"),
-        }
+    #[cfg(test)]
+    fn parse(raw: &str) -> Result<Self, String> {
+        Self::from_str(raw.trim(), false)
     }
 }
 
-/// The canonical variable is one DSN; the legacy list contributes only its first
-/// entry. Ignore the legacy tail before decoding Unicode or validating syntax.
-fn parse_pg_dsn(
-    canonical: Option<&std::ffi::OsStr>,
-    legacy: Option<&std::ffi::OsStr>,
-) -> Result<Option<String>> {
-    let (key, selected) = match (canonical, legacy) {
-        (Some(_), Some(_)) => {
-            anyhow::bail!("KRONIKA_PG_DSN and KRONIKA_PG_DSNS must not both be set")
-        }
-        (Some(raw), None) => ("KRONIKA_PG_DSN", raw.as_encoded_bytes()),
-        (None, Some(raw)) => {
-            if raw.to_str().is_some_and(|value| value.trim().is_empty()) {
-                return Ok(None);
+/// Parse without installing the global configuration or touching storage/network.
+pub(crate) fn parse_from(
+    args: impl IntoIterator<Item = impl Into<OsString> + Clone>,
+) -> Result<Config, clap::Error> {
+    let mut command = Config::command();
+    let matches = command.try_get_matches_from_mut(args)?;
+    let mut config = Config::from_arg_matches(&matches)?;
+    config
+        .normalize(&matches)
+        .and_then(|()| config.validate())
+        .map_err(|error| {
+            command.error(clap::error::ErrorKind::ValueValidation, error.to_string())
+        })?;
+    Ok(config)
+}
+
+pub(crate) fn install(config: Config) -> Result<()> {
+    CONFIG
+        .set(config)
+        .map_err(|_error| anyhow::anyhow!("collector configuration already initialized"))
+}
+
+pub(crate) fn get() -> &'static Config {
+    CONFIG
+        .get()
+        .expect("configuration is installed before collector startup")
+}
+
+impl Config {
+    // CLI lists are individual arguments. Only old env lists use semicolons.
+    fn normalize(&mut self, matches: &clap::ArgMatches) -> Result<()> {
+        let legacy = (matches.value_source("pg_dsn") != Some(ValueSource::CommandLine))
+            .then(|| std::env::var_os("KRONIKA_PG_DSNS"))
+            .flatten();
+        self.pg_dsn = parse_pg_dsn(
+            self.pg_dsn.as_deref().map(std::ffi::OsStr::new),
+            legacy.as_deref(),
+        )?;
+        for (id, key, rows) in [
+            ("pg_logs", "KRONIKA_PG_LOGS", &mut self.pg_logs),
+            (
+                "pgbouncer_dsns",
+                "KRONIKA_PGBOUNCER_DSNS",
+                &mut self.pgbouncer_dsns,
+            ),
+            (
+                "pgbouncer_logs",
+                "KRONIKA_PGBOUNCER_LOGS",
+                &mut self.pgbouncer_logs,
+            ),
+        ] {
+            if matches.value_source(id) == Some(ValueSource::EnvVariable) {
+                *rows = parse_env_list(key, rows.first().map_or("", String::as_str))?;
+            } else {
+                anyhow::ensure!(
+                    rows.iter().all(|row| !row.trim().is_empty()),
+                    "{key} has an empty element"
+                );
             }
-            let first = raw
-                .as_encoded_bytes()
-                .split(|byte| *byte == b';')
-                .next()
-                .unwrap_or_default();
-            ("KRONIKA_PG_DSNS", first)
         }
-        (None, None) => return Ok(None),
-    };
-    let selected = std::str::from_utf8(selected)
-        .with_context(|| format!("{key} must be valid Unicode"))?
-        .trim();
-    anyhow::ensure!(!selected.is_empty(), "{key} has an empty connection string");
-    // Parser errors can contain the DSN, including credentials. Replace the
-    // error entirely instead of attaching it as a source to the public message.
-    selected
-        .parse::<tokio_postgres::Config>()
-        .map_err(|_error| anyhow::anyhow!("{key} is not a valid connection string"))?;
-    Ok(Some(selected.to_owned()))
-}
-
-/// Read the per-source intervals, falling back to the built-in defaults.
-fn intervals_from_env() -> Result<Intervals> {
-    let defaults = Intervals::default();
-    let intervals = Intervals {
-        os_core: env_u64("KRONIKA_OS_CORE_INTERVAL_S", defaults.os_core)?,
-        os_mount_topo: env_u64("KRONIKA_OS_MOUNTTOPO_INTERVAL_S", defaults.os_mount_topo)?,
-        os_processes: env_u64("KRONIKA_OS_PROCESS_INTERVAL_S", defaults.os_processes)?,
-        os_process_status: env_u64(
-            "KRONIKA_OS_PROCESS_STATUS_INTERVAL_S",
-            defaults.os_process_status,
-        )?,
-        os_cgroup: env_u64("KRONIKA_OS_CGROUP_INTERVAL_S", defaults.os_cgroup)?,
-        os_cgroup_mapping: env_u64(
-            "KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S",
-            defaults.os_cgroup_mapping,
-        )?,
-        logs: env_u64("KRONIKA_LOG_INTERVAL_S", defaults.logs)?,
-        pg_instance: env_u64("KRONIKA_PG_INTERVAL_S", defaults.pg_instance)?,
-        pg_tables_and_indexes: env_u64(
-            "KRONIKA_PG_RELATIONS_INTERVAL_S",
-            defaults.pg_tables_and_indexes,
-        )?,
-        pg_activity: env_u64("KRONIKA_PG_ACTIVITY_INTERVAL_S", defaults.pg_activity)?,
-        pg_activity_blocked: env_u64(
-            "KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S",
-            defaults.pg_activity_blocked,
-        )?,
-        pg_statements_and_plans: env_u64(
-            "KRONIKA_PG_STATEMENTS_INTERVAL_S",
-            defaults.pg_statements_and_plans,
-        )?,
-    };
-    anyhow::ensure!(
-        intervals.pg_statements_and_plans >= MIN_PG_STATEMENTS_INTERVAL_SECS,
-        "KRONIKA_PG_STATEMENTS_INTERVAL_S must be at least {MIN_PG_STATEMENTS_INTERVAL_SECS} seconds"
-    );
-    Ok(intervals)
-}
-
-/// Read a `;`-separated list. Missing or non-Unicode values produce an empty list.
-fn env_list(key: &str) -> Result<Vec<String>> {
-    match std::env::var(key) {
-        Ok(raw) => parse_env_list(key, &raw),
-        Err(_unset) => Ok(Vec::new()),
+        for dsn in &self.pgbouncer_dsns {
+            dsn.parse::<tokio_postgres::Config>().map_err(|_error| {
+                anyhow::anyhow!(
+                    "--pgbouncer-dsn / KRONIKA_PGBOUNCER_DSNS is not a valid connection string"
+                )
+            })?;
+        }
+        Ok(())
     }
-}
 
-/// A blank value is an empty list; a blank element inside a list is an error.
-fn parse_env_list(key: &str, raw: &str) -> Result<Vec<String>> {
-    if raw.trim().is_empty() {
-        return Ok(Vec::new());
+    fn validate(&self) -> Result<()> {
+        validate_segment_max_bytes(self.segment_max_bytes)?;
+        validate_journal_max_bytes(self.journal_max_bytes)?;
+        if let Some(retention) = self.retention {
+            retention.validate(self.segment_max_bytes)?;
+        }
+        anyhow::ensure!(
+            self.postgres_effective_cpus != Some(0),
+            "--postgres-effective-cpus / KRONIKA_POSTGRES_EFFECTIVE_CPUS must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.pg_dsn.is_some() || self.postgres_effective_cpus.is_none(),
+            "--postgres-effective-cpus / KRONIKA_POSTGRES_EFFECTIVE_CPUS requires --pg-dsn / KRONIKA_PG_DSN"
+        );
+        anyhow::ensure!(
+            self.mode.collect_os() || self.pg_dsn.is_some(),
+            "--mode postgresql requires --pg-dsn / KRONIKA_PG_DSN"
+        );
+        anyhow::ensure!(
+            self.mode.collect_os()
+                || (self.pgbouncer_dsns.is_empty() && self.pgbouncer_logs.is_empty()),
+            "--mode postgresql does not collect PgBouncer; remove PgBouncer DSN and log settings"
+        );
+        anyhow::ensure!(
+            self.pg_log_max_lag_secs > 0,
+            "--pg-log-max-lag-s / KRONIKA_PG_LOG_MAX_LAG_S must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.intervals.pg_statements_and_plans >= MIN_PG_STATEMENTS_INTERVAL_SECS,
+            "--pg-statements-interval-s / KRONIKA_PG_STATEMENTS_INTERVAL_S must be at least {MIN_PG_STATEMENTS_INTERVAL_SECS} seconds"
+        );
+        Ok(())
     }
-    raw.split(';')
-        .map(|element| {
-            let value = element.trim();
-            anyhow::ensure!(!value.is_empty(), "{key} has an empty element");
-            Ok(value.to_owned())
-        })
-        .collect()
-}
 
-/// Read an unsigned integer. Missing or non-Unicode values use `default`.
-fn env_u64(key: &str, default: u64) -> Result<u64> {
-    match std::env::var(key) {
-        Ok(raw) => parse_env_number(key, &raw),
-        Err(_unset) => Ok(default),
+    pub(crate) fn proc_fs(&self) -> ProcFs {
+        ProcFs::new(
+            self.proc_root
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("/proc")),
+        )
     }
-}
 
-/// Parse a number after trimming, naming the variable and raw value on failure.
-fn parse_env_number<T: std::str::FromStr>(key: &str, raw: &str) -> Result<T> {
-    raw.trim()
-        .parse()
-        .map_err(|_parse| anyhow::anyhow!("{key}={raw:?} is not a whole number"))
-}
+    pub(crate) fn sys_fs(&self) -> SysFs {
+        SysFs::new(self.sys_root.clone())
+    }
 
-fn optional_positive_u32(key: &str, raw: Option<&str>) -> Result<Option<u32>> {
-    let Some(raw) = raw else {
-        return Ok(None);
-    };
-    let value = parse_env_number::<u32>(key, raw)?;
-    anyhow::ensure!(value > 0, "{key} must be greater than zero");
-    Ok(Some(value))
-}
+    /// Log validated storage settings after the configured logger is ready.
+    pub(crate) fn log_storage_settings(&self) {
+        if self.segment_max_bytes > self.journal_max_bytes {
+            log_event(
+                LogLevel::Warn,
+                "config_degraded",
+                &[
+                    field("reason", "segment_cap_exceeds_journal_cap"),
+                    field("segment_max_bytes", self.segment_max_bytes),
+                    field("journal_max_bytes", self.journal_max_bytes),
+                ],
+            );
+        }
+        if let Some(retention) = self.retention {
+            retention.log();
+        }
+    }
 
-/// Reject an unrecognized `KRONIKA_LOG_LEVEL` before collection starts.
-fn validate_log_level() -> Result<()> {
-    anyhow::ensure!(
-        log_level_from_env().is_some(),
-        "KRONIKA_LOG_LEVEL={:?} is not one of error, warn, info, debug, trace",
-        std::env::var("KRONIKA_LOG_LEVEL").unwrap_or_default()
-    );
-    Ok(())
+    #[cfg(test)]
+    pub(crate) fn from_env() -> Result<Self> {
+        Ok(parse_from(["kronika-collector"])?)
+    }
 }
 
 fn validate_journal_max_bytes(value: u64) -> Result<()> {
     anyhow::ensure!(
         (JOURNAL_HEADER_LEN as u64..=MAX_JOURNAL_LEN as u64).contains(&value),
-        "KRONIKA_JOURNAL_MAX_BYTES must be in {JOURNAL_HEADER_LEN}..={MAX_JOURNAL_LEN}, got {value}"
+        "--journal-max-bytes / KRONIKA_JOURNAL_MAX_BYTES must be in {JOURNAL_HEADER_LEN}..={MAX_JOURNAL_LEN}, got {value}"
     );
     Ok(())
 }
@@ -316,7 +310,7 @@ fn validate_journal_max_bytes(value: u64) -> Result<()> {
 fn validate_segment_max_bytes(value: u64) -> Result<()> {
     anyhow::ensure!(
         value > 0,
-        "KRONIKA_SEGMENT_MAX_BYTES must be greater than zero"
+        "--segment-max-bytes / KRONIKA_SEGMENT_MAX_BYTES must be greater than zero"
     );
     Ok(())
 }

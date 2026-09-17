@@ -1,7 +1,7 @@
 //! Linux system collector daemon.
 //!
-//! Configuration is environment-only; the one required variable is
-//! `KRONIKA_STORAGE_DIR`. The process snapshots the OS sources on their own
+//! CLI arguments override environment settings; --storage-dir (or
+//! `KRONIKA_STORAGE_DIR`) is required. The process snapshots the OS sources on their own
 //! intervals, appends each synchronized window to `<storage>/active.wal`, and
 //! publishes immutable `<storage>/YYYY/MM/DD/<segment-id>.zms` segments by size,
 //! age, journal pressure, or `SIGUSR2`.
@@ -43,39 +43,29 @@ mod scheduler;
 mod segments;
 
 use anyhow::{Context, Result};
-use config::Config;
 
 fn main() -> Result<()> {
-    let mut arguments = std::env::args_os().skip(1);
-    if let Some(argument) = arguments.next() {
+    if filesystem_capacity::is_helper_invocation() {
         anyhow::ensure!(
-            arguments.next().is_none(),
-            "unexpected arguments; use kronika-collector --help"
+            std::env::args_os().len() == 2,
+            "unexpected statvfs helper arguments"
         );
-        if argument == "--help" || argument == "-h" {
-            print!("{}", help::HELP);
-            return Ok(());
-        }
-        if argument == "--version" {
-            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-            return Ok(());
-        }
-        if filesystem_capacity::is_helper_invocation() {
-            return filesystem_capacity::run_helper();
-        }
-        anyhow::bail!(
-            "unexpected argument {}; use kronika-collector --help",
-            argument.display()
-        );
+        return filesystem_capacity::run_helper();
     }
-    let config = Config::from_env()?;
+    let config = config::parse_from(std::env::args_os()).unwrap_or_else(|error| error.exit());
+    config::install(config)?;
+    let config = config::get();
+    logging::configure(config.log_level);
     logging::configure_process_diagnostics(config.mode.collect_os());
+    config.log_storage_settings();
+    // Tokio defaults to one worker per available CPU. Keep the pool small even
+    // on large hosts, such as 96-core Kubernetes nodes.
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
         .context("initialize collector runtime")?
-        .block_on(collector::run(config))
+        .block_on(collector::run())
 }
 
 #[cfg(test)]

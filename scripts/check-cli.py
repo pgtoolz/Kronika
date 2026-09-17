@@ -21,9 +21,10 @@ HELP_CONTENT = {
         "KRONIKA_STORAGE_DIR", "KRONIKA_PG_DSN", "KRONIKA_COLLECTOR_MODE",
         "local", "postgresql", "KRONIKA_PG_SSL_ROOT_CERT", "sslmode=require",
         "KRONIKA_POSTGRES_EFFECTIVE_CPUS", "KRONIKA_INTERVAL_S", "5",
-        "KRONIKA_SEGMENT_MAX_BYTES", "67108864", "KRONIKA_SEGMENT_MAX_AGE_S", "900",
+        "KRONIKA_SEGMENT_MAX_BYTES", "64MiB", "KRONIKA_SEGMENT_MAX_AGE_S", "900",
         "KRONIKA_RETENTION", "KRONIKA_LOG_LEVEL", "SIGTERM",
-        "KRONIKA_JOURNAL_MAX_BYTES", "1073741824", "2147483648",
+        "KRONIKA_JOURNAL_MAX_BYTES", "1GiB", "2GiB", "10GiB", "10GB",
+        "automatic log discovery", "pg_current_logfile", "No --pg-log is needed",
     ),
     "kronika-web": (
         "KRONIKA_STORAGE_DIR", "KRONIKA_WEB_SOURCES", "127.0.0.1:8080",
@@ -125,12 +126,14 @@ def invoke(binary, arguments, cwd, environment, root, strace, storage):
     return result
 
 
-def check_help(name, output, slice_help=False):
+def check_help(name, output, slice_help=False, brief=False):
     text = output.decode("utf-8")
     lowered = " ".join(text.lower().split())
     required = ("usage:", name, "--help", "-h")
     if slice_help:
         required += ("slice", "--from", "--to", "--out", "KRONIKA_STORAGE_DIR", "RFC3339", "inclusive")
+    elif name == "kronika-collector" and brief:
+        required += ("--version", "--storage-dir", "--mode", "--pg-dsn", "KRONIKA_STORAGE_DIR")
     else:
         required += ("--version", *HELP_CONTENT[name])
     for fragment in required:
@@ -177,8 +180,8 @@ def check(binary, version, root, strace):
                 description = f"stdout={stdout!r}"
             else:
                 slice_help = arguments[0] == "slice"
-                check_help(binary.name, stdout, slice_help)
-                kind = "slice" if slice_help else "help"
+                check_help(binary.name, stdout, slice_help, brief=arguments == ("-h",))
+                kind = arguments[-1] if binary.name == "kronika-collector" else ("slice" if slice_help else "help")
                 assert stdout == outputs.setdefault(kind, stdout), (
                     f"{binary.name}: {arguments} output differs by alias or environment"
                 )
@@ -189,12 +192,13 @@ def check(binary, version, root, strace):
     if binary.name == "kronika-dump":
         assert outputs["slice"] != outputs["help"], "slice --help did not provide subcommand context"
 
-    # A help/version token must not hide a malformed invocation. Empty environment
-    # also makes these checks fail if services reach their required configuration.
+    # Collector uses clap's help/version short circuit. Other binaries still
+    # reject any extra argument, including one placed after --help/--version.
     malformed = [["--unknown-option"], ["-x"]]
     for option in ("--version", "--help", "-h"):
-        malformed += [[option, "--unknown-option"], ["--unknown-option", option],
-                      [option, "unexpected"]]
+        malformed.append(["--unknown-option", option])
+        if binary.name != "kronika-collector":
+            malformed += [[option, "--unknown-option"], [option, "unexpected"]]
     malformed += list(MALFORMED[binary.name])
     for arguments in malformed:
         status, stdout, stderr = invoke(binary, arguments, cwd, {}, root, strace, storage)
@@ -207,11 +211,14 @@ def check(binary, version, root, strace):
         assert expected not in stdout + stderr, f"{binary.name} ignored an extra argument"
     print(f"{binary.name}: {len(malformed)} unknown/malformed invocations rejected before startup", flush=True)
 
+    if binary.name == "kronika-collector":
+        check_collector_arguments(binary, cwd, storage, root, strace)
+
     # Normal invocation still reaches its usual required-config/input errors.
     normal = []
     if binary.name in ("kronika-collector", "kronika-web"):
-        normal.append(("empty environment", {}, b"KRONIKA_STORAGE_DIR"))
-    config_errors = {"kronika-collector": b"KRONIKA_INTERVAL_S",
+        normal.append(("empty environment", {}, b"--storage-dir" if binary.name == "kronika-collector" else b"KRONIKA_STORAGE_DIR"))
+    config_errors = {"kronika-collector": b"--interval-s",
                      "kronika-web": b"KRONIKA_WEB_LISTEN"}
     if binary.name in config_errors:
         normal.append(("invalid configuration", dict(invalid, TOKIO_WORKER_THREADS="1"),
@@ -244,11 +251,34 @@ def check(binary, version, root, strace):
         print(f"{binary.name} [no arguments, {label}]: status={status}, expected {message.decode()} error", flush=True)
 
 
+def check_collector_arguments(binary, cwd, storage, root, strace):
+    base = ["--storage-dir", str(storage)]
+    cases = [
+        ("mode requires DSN", base + ["--mode", "postgresql"], {}, b"requires --pg-dsn"),
+        ("CLI mode overrides env", base + ["--mode", "postgresql"],
+         {"KRONIKA_COLLECTOR_MODE": "invalid"}, b"requires --pg-dsn"),
+        ("CLI interval overrides invalid env", base + ["--interval-s", "0", "--pg-statements-interval-s", "299"],
+         {"KRONIKA_INTERVAL_S": "invalid"}, b"must be at least 300"),
+        ("invalid DSN is redacted", base + ["--pg-dsn", f"host='unterminated {SECRET}"], {}, b"not a valid connection string"),
+        ("legacy DSN overridden", base + ["--pg-dsn", "host=localhost", "--pg-statements-interval-s", "299"],
+         {"KRONIKA_PG_DSN": f"invalid-{SECRET}", "KRONIKA_PG_DSNS": f"invalid-{SECRET}"}, b"must be at least 300"),
+    ]
+    for label, arguments, environment, message in cases:
+        status, stdout, stderr = invoke(binary, arguments, cwd, environment, root, strace, storage)
+        assert status != 0 and not stdout and message in stderr, (label, status, stdout, stderr)
+        assert SECRET.encode() not in stdout + stderr, f"{label}: leaked DSN"
+    for option in ("--help", "-h", "--version"):
+        status, stdout, stderr = invoke(binary, [option, "--unknown-option"], cwd, {}, root, strace, storage)
+        assert status == 0 and stdout and not stderr, (option, status, stdout, stderr)
+    print("collector: CLI/env precedence, mode/interval bounds, DSN redaction and help short circuit passed", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path, help="extracted package or build output directory")
     parser.add_argument("--version", help="expected version; defaults to the package BUILDINFO value")
     parser.add_argument("--strace", action="store_true", help="also reject startup syscalls (Linux strace required)")
+    parser.add_argument("--binary", choices=BINARIES, action="append", help="check only this binary; repeat to select several")
     arguments = parser.parse_args()
     version = arguments.version
     if version is None:
@@ -266,7 +296,7 @@ def main():
         cwd = root / "read-only"
         cwd.mkdir(mode=0o555)
         try:
-            for name in BINARIES:
+            for name in arguments.binary or BINARIES:
                 binary = root / name
                 shutil.copyfile(source / name, binary)
                 binary.chmod(0o555)
@@ -274,7 +304,7 @@ def main():
                 binary.unlink()
         finally:
             cwd.chmod(0o755)
-    print("All four CLI version, help and argument contracts passed as an unprivileged user in a read-only directory.")
+    print("Selected CLI version, help and argument contracts passed as an unprivileged user in a read-only directory.")
 
 
 if __name__ == "__main__":

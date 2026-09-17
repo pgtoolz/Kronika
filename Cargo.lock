@@ -297,6 +297,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bsize"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c872febc3a9f154d82c27a6510b1529553e8524e17b40943d73f0621c4b61a97"
+dependencies = [
+ "macroweave",
+]
+
+[[package]]
 name = "bstr"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1519,6 +1528,8 @@ name = "kronika-collector"
 version = "1.1.2"
 dependencies = [
  "anyhow",
+ "bsize",
+ "clap",
  "futures-util",
  "kronika-format",
  "kronika-index",
@@ -1921,6 +1932,16 @@ name = "log"
 version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
+
+[[package]]
+name = "macroweave"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46d62baa36507cf47dce93bac9a747ca97fa03e77ccb7a7ba58d2120088a89f3"
+dependencies = [
+ "proc-macro2",
+ "syn 3.0.3",
+]
 
 [[package]]
 name = "md-5"

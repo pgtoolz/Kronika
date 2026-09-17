@@ -19,24 +19,26 @@ A snapshot contains values collected at one time. A gauge, such as process RSS (
 
 Sources: [snapshot selection](../crates/kronika-query/src/snapshot/mod.rs), [surface selector](../crates/kronika-query/src/snapshot/selector.rs), [cursor timestamps](../bins/kronika-web/ui/src/cursor-timestamps.ts), [refresh](../bins/kronika-web/ui/src/refresh.ts), [heatmap cursor](../bins/kronika-web/ui/src/activity.tsx).
 
-Collector intervals are seconds. Except for statements/plans, a per-source zero interval makes that source due on each timer wake; it does not advance the wake by itself. `KRONIKA_INTERVAL_S` is the maximum collection-timer sleep, default 5 seconds; positive source deadlines or segment age can shorten it. `KRONIKA_INTERVAL_S=0` disables timed collection, including accelerated activity snapshots during lock waits. `SIGUSR2` forces collection but does not bypass the statements/plans interval. Rotation retains its separate timer. The denominator of a displayed rate is elapsed recorded time.
+Collector intervals are seconds. Except for statements/plans, a per-source zero interval makes that source due on each timer wake; it does not advance the wake by itself. `--interval-s` is the maximum collection-timer sleep, default 5 seconds; positive source deadlines or segment age can shorten it. `--interval-s 0` disables timed collection, including accelerated activity snapshots during lock waits. `SIGUSR2` forces collection but does not bypass the statements/plans interval. Rotation retains its separate timer. The denominator of a displayed rate is elapsed recorded time.
 
-| Source | Environment variable | Default, s |
-|---|---|---:|
-| Core Linux counters | `KRONIKA_OS_CORE_INTERVAL_S` | 10 |
-| Processes | `KRONIKA_OS_PROCESS_INTERVAL_S` | 5 |
-| Process status | `KRONIKA_OS_PROCESS_STATUS_INTERVAL_S` | 30 |
-| Mounts and topology | `KRONIKA_OS_MOUNTTOPO_INTERVAL_S` | 60 |
-| Cgroup controllers | `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 |
-| PID-to-cgroup mapping | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 |
-| Logs | `KRONIKA_LOG_INTERVAL_S` | 10 |
-| PostgreSQL server counters and settings | `KRONIKA_PG_INTERVAL_S` | 30 |
-| PostgreSQL activity, lock waits and VACUUM progress | `KRONIKA_PG_ACTIVITY_INTERVAL_S` | 10 |
-| Activity while lock waits are present | `KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S` | 5 |
-| PostgreSQL statements/plans and their info views | `KRONIKA_PG_STATEMENTS_INTERVAL_S` | 300 (minimum 300) |
-| PostgreSQL relations | `KRONIKA_PG_RELATIONS_INTERVAL_S` | 300 |
+Options override environment variables; see [collector configuration](../bins/kronika-collector/README.md#configuration).
 
-A successful, nonempty lock-wait snapshot changes the activity interval to `min(KRONIKA_PG_ACTIVITY_INTERVAL_S, KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S)` seconds. A successful empty snapshot restores the configured interval; a failed read leaves it unchanged. Statements/plans wait at least their configured interval after the preceding PostgreSQL pass containing them finishes, including on `SIGUSR2`. Reads are sequential, so a slow SQL query or another running source can delay a snapshot beyond its interval.
+| Source | Option | Environment variable | Default, s |
+|---|---|---|---:|
+| Core Linux counters | `--os-core-interval-s` | `KRONIKA_OS_CORE_INTERVAL_S` | 10 |
+| Processes | `--os-process-interval-s` | `KRONIKA_OS_PROCESS_INTERVAL_S` | 5 |
+| Process status | `--os-process-status-interval-s` | `KRONIKA_OS_PROCESS_STATUS_INTERVAL_S` | 30 |
+| Mounts and topology | `--os-mount-topo-interval-s` | `KRONIKA_OS_MOUNTTOPO_INTERVAL_S` | 60 |
+| Cgroup controllers | `--os-cgroup-interval-s` | `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 |
+| PID-to-cgroup mapping | `--os-cgroup-mapping-interval-s` | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 |
+| Logs | `--log-interval-s` | `KRONIKA_LOG_INTERVAL_S` | 10 |
+| PostgreSQL server counters and settings | `--pg-instance-interval-s` | `KRONIKA_PG_INTERVAL_S` | 30 |
+| PostgreSQL activity, lock waits and VACUUM progress | `--pg-activity-interval-s` | `KRONIKA_PG_ACTIVITY_INTERVAL_S` | 10 |
+| Activity while lock waits are present | `--pg-activity-blocked-interval-s` | `KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S` | 5 |
+| PostgreSQL statements/plans and their info views | `--pg-statements-interval-s` | `KRONIKA_PG_STATEMENTS_INTERVAL_S` | 300 (minimum 300) |
+| PostgreSQL relations | `--pg-relations-interval-s` | `KRONIKA_PG_RELATIONS_INTERVAL_S` | 300 |
+
+A successful, nonempty lock-wait snapshot changes the activity interval to the smaller of `--pg-activity-interval-s` and `--pg-activity-blocked-interval-s`. A successful empty snapshot restores the configured interval; a failed read leaves it unchanged. Statements/plans wait at least their configured interval after the preceding PostgreSQL pass containing them finishes, including on `SIGUSR2`. Reads are sequential, so a slow SQL query or another running source can delay a snapshot beyond its interval.
 
 Sources: [scheduler defaults](../bins/kronika-collector/src/scheduler.rs), [configuration](../bins/kronika-collector/src/config.rs), [`timer_sleep_delay`](../bins/kronika-collector/src/collector.rs).
 
@@ -150,7 +152,7 @@ Capacity is selected at each PostgreSQL sample timestamp in this order:
 
 | Source | Value of `C` |
 | --- | --- |
-| Explicit positive `instance_metadata.postgresql_effective_cpus` | Recorded `KRONIKA_POSTGRES_EFFECTIVE_CPUS` (`1..4294967295`), overriding automatic calculation |
+| Explicit positive `instance_metadata.postgresql_effective_cpus` | Recorded `--postgres-effective-cpus` or `KRONIKA_POSTGRES_EFFECTIVE_CPUS` (`1..4294967295`), overriding automatic calculation |
 | Shared local machine/VM, no override | Count of distinct `os_cpu.cpu_id ≥ 0` in the latest complete CPU snapshot at or before the PostgreSQL timestamp; excludes aggregate `cpu_id = −1` |
 | PostgreSQL-only, container or older metadata without recorded shared placement, no override | `null`; collector resources are not PostgreSQL capacity |
 
@@ -160,7 +162,7 @@ change affects later samples only. The DSN, hostname and matching PIDs do not
 establish placement. Container cgroup capacity belongs to the selected group,
 which can include several containers; it is not automatically PostgreSQL capacity.
 
-`KRONIKA_PG_DSN` enables PostgreSQL collection independently of capacity.
+`--pg-dsn` or `KRONIKA_PG_DSN` enables PostgreSQL collection independently of capacity.
 Unknown capacity does not disable collection; it leaves PostgreSQL Health and
 capacity-dependent marks unavailable. Missing active-count input also gives
 null Health. Conflicting activity layouts at one timestamp give an unknown count.
