@@ -208,7 +208,7 @@ the server supports it. `require` accepts only TLS. `disable` turns TLS off.
 TLS connections validate the server certificate and hostname. For a private CA,
 set `--pg-ssl-root-cert /path/to/ca.pem`. The value `verify-full` is not supported.
 
-Start web over the same recording with `KRONIKA_WEB_SOURCES=2`.
+Start web over the same recording with `--sources postgresql` (or `KRONIKA_WEB_SOURCES=2`).
 Overall equals PostgreSQL Health, or is unknown when PostgreSQL Health cannot be calculated.
 
 In local recordings of a shared machine, Activity, Vacuum and Processes link

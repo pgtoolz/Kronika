@@ -10,7 +10,7 @@ use crate::api::ApiError;
 use crate::config::Config;
 use crate::query_adapter::NativeDataset;
 
-use super::catalog::RowDetailInput;
+use super::input::RowDetailInput;
 use super::semantics::{CancellationSink, detail_ref_error, mcp_error, mcp_structured};
 
 pub(crate) fn call(

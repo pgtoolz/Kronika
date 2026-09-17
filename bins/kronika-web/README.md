@@ -12,51 +12,62 @@ happens after an abrupt stop or when a recording cannot be read.
 
 ## Configuration
 
-Environment variables are read and validated at startup, before the network
-port is opened. To apply changed settings to a running process, stop it and
-start it again. For systemd use the [service instructions](../../docs/services.md#operations).
-Source: [config.rs](src/config.rs).
+Command-line options override environment variables; environment variables override
+built-in defaults. Settings are read and validated before runtime startup. To apply
+changed settings, restart the process. Existing environment-only services continue
+to work. For systemd use the [service instructions](../../docs/services.md#operations).
+Run `kronika-web --help` for all options and examples. Source: [config.rs](src/config.rs).
 
-| Variable | Default | Accepted value and meaning |
-| --- | --- | --- |
-| `KRONIKA_STORAGE_DIR` | Required | Existing real collector storage root. Requires read/write access for `.idx` files and `.kronika-index.owner.lock`. |
-| `KRONIKA_WEB_LISTEN` | `127.0.0.1:8080` | IP address and port, including IPv6 as `[::1]:8080`. Plain HTTP. |
-| `KRONIKA_WEB_SOURCES` | Required | Decimal bitset `0..3`: bit 0 marks OS configured. Bit 1 marks PostgreSQL configured. `0` neither, `1` OS, `2` PostgreSQL, `3` both. |
-| `KRONIKA_WEB_USER` | Unset | Nonempty user name. |
-| `KRONIKA_WEB_PASSWORD` | Unset | Nonempty password. |
-| `KRONIKA_WEB_DEMO` | Unset | Only set value: `synthetic`, which marks the catalog and interface as a synthetic recording. |
-| `TMPDIR` | System temporary directory, normally `/tmp` | Writable filesystem location for export temporary files. |
+| Option | Environment fallback | Default | Accepted value and meaning |
+| --- | --- | --- | --- |
+| `--storage-dir DIR` | `KRONIKA_STORAGE_DIR` | Required | Existing collector storage root containing `active.wal` and dated `YYYY/MM/DD/*.zms` files. Requires read/write access for `.idx` files and `.kronika-index.owner.lock`. |
+| `--listen IP:PORT` | `KRONIKA_WEB_LISTEN` | `127.0.0.1:8080` | IP address and port, including IPv6 as `[::1]:8080`. Hostnames are not accepted. Plain HTTP. |
+| `--sources SOURCES` | `KRONIKA_WEB_SOURCES` | Required | `none`, `os`, `postgresql`, or `all`. Legacy bitsets also work: `0` neither, `1` OS, `2` PostgreSQL, `3` both. |
+| `--user USER` | `KRONIKA_WEB_USER` | Unset | Nonempty user name. |
+| `--password PASSWORD` | `KRONIKA_WEB_PASSWORD` | Unset | Nonempty password. |
+| `--demo synthetic` | `KRONIKA_WEB_DEMO` | Unset | Marks the catalog and interface as a synthetic recording. Only `synthetic` is accepted. |
+| — | `TMPDIR` | System temporary directory, normally `/tmp` | Writable filesystem location for export temporary files. |
 
 When both credentials are unset, the browser, API and MCP require no
 authentication. When both are nonempty, authentication is required.
 Setting only one credential or an explicitly empty value prevents startup.
+Credentials can come from options, environment variables, or a combination of both.
+To clear inherited credentials or demo mode, unset the corresponding environment
+variables before starting the process.
 
-The source bitset sets catalog `configured` fields. In the browser, the
-PostgreSQL bit suppresses its no-data tooltip. Recorded PostgreSQL data also
-suppresses it. The OS bit remains catalog metadata. All tabs and recorded
+`--sources` sets catalog `configured` fields. Source names and numeric values work
+in both the option and its environment fallback. In the browser, configured
+PostgreSQL suppresses its no-data tooltip. Recorded PostgreSQL data also
+suppresses it. The OS flag remains catalog metadata. All tabs and recorded
 sections remain available. Recorded health uses collector metadata.
 
 ## Run
 
-Use the collector's recording directory. The example
-marks Linux as configured. Use `KRONIKA_WEB_SOURCES=3` for Linux and PostgreSQL.
+Use the collector's recording directory. The example marks Linux as configured.
+Use `--sources all` for Linux and PostgreSQL, or `--sources postgresql` for a
+PostgreSQL-only recording.
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
-  KRONIKA_WEB_SOURCES=1 \
-  /usr/local/bin/kronika-web
+sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
+  --listen 0.0.0.0:8080 --sources os
 ```
 
 Open `http://<server-ip>:8080`.
 
-To require sign-in, add `KRONIKA_WEB_USER=kronika` and
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` to the launch command.
+To require sign-in, add `--user kronika --password 'replace-with-a-random-password'`.
+The equivalent environment configuration remains supported:
+
+```sh
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika KRONIKA_WEB_SOURCES=1 \
+  KRONIKA_WEB_LISTEN=0.0.0.0:8080 KRONIKA_WEB_USER=kronika \
+  KRONIKA_WEB_PASSWORD='replace-with-a-random-password' /usr/local/bin/kronika-web
+```
+
 API and MCP then accept HTTP Basic credentials. Protected API requests also
 accept the browser session cookie.
 
 For local access or a reverse proxy on the same machine, use
-`KRONIKA_WEB_LISTEN=127.0.0.1:8080`, which is also the default when unset.
+`--listen 127.0.0.1:8080`, which is also the default when unset.
 
 ## Endpoints
 
@@ -97,7 +108,8 @@ directory. Each process prepares at most one export at a time. Sources: [export.
 
 ## Process interface
 
-`-h`, `--help` and `--version` print to stdout and exit before configuration,
-storage access or listener startup. Request, connection and export errors and
-export timings go to stderr. Web has no log-level setting. `Ctrl+C` or
+`-h` prints a brief option reference, `--help` adds examples and operational notes,
+and `--version` prints the version. All three write to stdout and exit before
+configuration validation, storage access or runtime startup. Request, connection
+and export errors and export timings go to stderr. Web has no log-level setting. `Ctrl+C` or
 `SIGTERM` terminates web. Startup/configuration errors exit nonzero.

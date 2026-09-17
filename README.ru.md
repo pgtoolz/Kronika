@@ -76,28 +76,27 @@ sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 
 #### Для режима `local`
 
-Для Linux укажите `KRONIKA_WEB_SOURCES=1`, как ниже. Если также собирается
-PostgreSQL, замените `1` на `3`:
+Для Linux укажите `--sources os`, как ниже. Если также собирается
+PostgreSQL, используйте `--sources all`:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
-  KRONIKA_WEB_SOURCES=1 \
-  /usr/local/bin/kronika-web
+sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
+  --listen 0.0.0.0:8080 --sources os
 ```
 
 #### Для режима `postgresql`
 
 ```sh
-KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
-  KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
+/usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
+  --listen 0.0.0.0:8080 --sources postgresql
 ```
 
 Откройте `http://<server-ip>:8080`.
 
-Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.
+Для входа по паролю добавьте `--user kronika --password 'replace-with-a-random-password'`.
+Параметры командной строки имеют приоритет над переменными окружения;
+существующие настройки сервисов `KRONIKA_WEB_*` продолжают работать. Полный
+список параметров показывает `kronika-web --help`.
 
 [Настройка systemd](docs/services.ru.md) описывает запуск
 обеих программ как служб и изменение настроек уже работающей службы.

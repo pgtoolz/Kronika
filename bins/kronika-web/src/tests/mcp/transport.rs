@@ -6,8 +6,9 @@ use hyper::header::{ACCEPT, CONTENT_TYPE, HOST};
 use hyper::{Method, Request};
 use serde_json::json;
 
-use super::{response, test_config};
+use super::test_config;
 use crate::config::Config;
+use crate::mcp::response;
 use crate::tests::artifacts::Fixture;
 
 const FORBIDDEN_COORDINATE_KEYS: [&str; 5] = [
@@ -871,13 +872,13 @@ fn overview_window_outside_the_recorded_range_is_no_data() {
 
 #[test]
 fn tools_reject_malformed_arguments_without_panicking() {
-    use super::catalog::{
+    use crate::mcp::catalog::{
         FIND_EVENTS_TOOL, FIND_POSTGRESQL_ACTIVITY_TOOL, FIND_POSTGRESQL_DATABASES_TOOL,
         FIND_POSTGRESQL_LOCKS_TOOL, FIND_POSTGRESQL_PLANS_TOOL, FIND_POSTGRESQL_STATEMENTS_TOOL,
         FIND_POSTGRESQL_TABLES_TOOL, FIND_POSTGRESQL_VACUUM_TOOL, FIND_PROCESSES_TOOL,
         GET_ROW_DETAIL_TOOL, OVERVIEW_TOOL,
     };
-    use super::{events, overview, postgresql, processes, row_detail};
+    use crate::mcp::{events, overview, postgresql, processes, row_detail};
 
     type Handler = fn(
         &Config,

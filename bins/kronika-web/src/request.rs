@@ -1,7 +1,6 @@
 //! Route HTTP requests, enforce authentication, and issue browser session responses.
 
 use std::fmt;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use http_body_util::{BodyExt as _, Full};
 use hyper::body::Bytes;
@@ -21,13 +20,6 @@ use crate::{auth, route, ui};
 pub(crate) fn route_request<B>(
     account: Option<&Account>,
     request: &Request<B>,
-) -> Result<RequestTarget, RequestError> {
-    route_request_at(account, request, unix_time())
-}
-
-pub(crate) fn route_request_at<B>(
-    account: Option<&Account>,
-    request: &Request<B>,
     now: u64,
 ) -> Result<RequestTarget, RequestError> {
     let path = request.uri().path();
@@ -43,55 +35,21 @@ pub(crate) fn route_request_at<B>(
         });
     }
     if path == "/auth/session" && request.uri().query().is_none() {
-        if request.method() == Method::GET {
-            return Ok(RequestTarget::Session(SessionTarget::Check {
-                admitted: account
-                    .is_none_or(|account| admitted_session(account, request.headers(), now)),
-            }));
-        }
-        if request.method() == Method::POST {
-            let Some(account) = account else {
-                return Ok(RequestTarget::Session(SessionTarget::Check {
-                    admitted: true,
-                }));
-            };
-            let admitted = matches!(
-                authorization(request.headers()),
-                SingleHeader::Value(value) if auth::admits_basic(account, Some(value))
-            );
-            let secure = if admitted {
-                secure_session_cookie(request.headers())?
-            } else {
-                false
-            };
-            return Ok(RequestTarget::Session(SessionTarget::Login {
-                issued_at: admitted.then_some(now),
-                secure,
-            }));
-        }
-        if request.method() == Method::DELETE {
-            return Ok(RequestTarget::Session(SessionTarget::Clear {
-                secure: secure_session_cookie(request.headers())?,
-            }));
-        }
-        return Ok(RequestTarget::Session(SessionTarget::MethodNotAllowed));
+        return SessionTarget::from_request(account, request, now).map(RequestTarget::Session);
     }
-    if path == "/mcp" && request.uri().query().is_none() {
+    let mcp = path == "/mcp" && request.uri().query().is_none();
+    if mcp {
         reject_browser_origin(request.headers())?;
-        if account.is_some_and(|account| !admitted_api(account, request.headers(), now)) {
-            return Err(RequestError::Unauthorized {
-                challenge: !is_ui_request(request.headers()),
-            });
-        }
-        return Ok(RequestTarget::Mcp);
-    }
-    if path != "/api" && !path.starts_with("/api/") {
+    } else if path != "/api" && !path.starts_with("/api/") {
         return Err(RequestError::Route(RouteError::NoSuchPath));
     }
     if account.is_some_and(|account| !admitted_api(account, request.headers(), now)) {
         return Err(RequestError::Unauthorized {
             challenge: !is_ui_request(request.headers()),
         });
+    }
+    if mcp {
+        return Ok(RequestTarget::Mcp);
     }
     let route = route::parse(path, request.uri().query()).map_err(RequestError::Route)?;
     if request.method() != Method::GET {
@@ -132,6 +90,38 @@ pub(crate) enum SessionTarget {
         secure: bool,
     },
     MethodNotAllowed,
+}
+
+impl SessionTarget {
+    fn from_request<B>(
+        account: Option<&Account>,
+        request: &Request<B>,
+        now: u64,
+    ) -> Result<Self, RequestError> {
+        match *request.method() {
+            Method::GET => Ok(Self::Check {
+                admitted: account
+                    .is_none_or(|account| admitted_session(account, request.headers(), now)),
+            }),
+            Method::POST => {
+                let Some(account) = account else {
+                    return Ok(Self::Check { admitted: true });
+                };
+                let admitted = matches!(
+                    authorization(request.headers()),
+                    SingleHeader::Value(value) if auth::admits_basic(account, Some(value))
+                );
+                Ok(Self::Login {
+                    issued_at: admitted.then_some(now),
+                    secure: admitted && secure_session_cookie(request.headers())?,
+                })
+            }
+            Method::DELETE => Ok(Self::Clear {
+                secure: secure_session_cookie(request.headers())?,
+            }),
+            _ => Ok(Self::MethodNotAllowed),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,12 +243,6 @@ fn is_ui_request(headers: &HeaderMap) -> bool {
         unique_header(headers.get_all("x-kronika-ui").iter()),
         SingleHeader::Value("1")
     )
-}
-
-fn unix_time() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
 }
 
 pub(crate) fn if_none_match_values(headers: &HeaderMap) -> Option<String> {

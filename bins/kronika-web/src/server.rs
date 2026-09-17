@@ -2,6 +2,7 @@
 
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
 use hyper::header::{CACHE_CONTROL, HeaderValue};
@@ -20,8 +21,8 @@ use crate::response::{failed, json_response};
 use crate::{export, mcp, query_adapter, route, streaming, ui};
 
 #[tokio::main(worker_threads = 2)]
-pub(crate) async fn run() -> Result<()> {
-    let config = Arc::new(Config::from_env()?);
+pub(crate) async fn run(config: Config) -> Result<()> {
+    let config = Arc::new(config);
     let listener = TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("listen on {}", config.listen))?;
@@ -46,7 +47,10 @@ async fn answer(
     config: Arc<Config>,
     request: Request<hyper::body::Incoming>,
 ) -> Result<Response<WebBody>, Infallible> {
-    let target = match route_request(config.account.as_ref(), &request) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let target = match route_request(config.account.as_ref(), &request, now) {
         Ok(target) => target,
         Err(error) => return Ok(error.response()),
     };

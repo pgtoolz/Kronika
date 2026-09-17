@@ -12,8 +12,8 @@ use hyper::header::{
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    DecodeProbe, IdentityBody, UI_CSP, UI_GZIP, UI_GZIP_ETAG, UI_GZIP_LEN, UI_IDENTITY_CHUNK_BYTES,
-    UI_IDENTITY_ETAG, UI_IDENTITY_LEN, UI_IDENTITY_SHA256, response, response_observed,
+    IdentityBody, UI_CSP, UI_GZIP, UI_GZIP_ETAG, UI_GZIP_LEN, UI_IDENTITY_CHUNK_BYTES,
+    UI_IDENTITY_ETAG, UI_IDENTITY_LEN, UI_IDENTITY_SHA256, response,
 };
 use crate::encoding::ContentCoding;
 
@@ -315,4 +315,59 @@ async fn collect_frames(response: hyper::Response<crate::body::WebBody>) -> (Vec
         bytes.extend_from_slice(&data);
     }
     (bytes, frames)
+}
+
+#[derive(Clone, Default)]
+pub(super) struct DecodeProbe(std::sync::Arc<DecodeStats>);
+
+#[derive(Default)]
+struct DecodeStats {
+    starts: std::sync::atomic::AtomicUsize,
+    completions: std::sync::atomic::AtomicUsize,
+    failures: std::sync::atomic::AtomicUsize,
+    frames: std::sync::atomic::AtomicUsize,
+    bytes: std::sync::atomic::AtomicUsize,
+    max_frame: std::sync::atomic::AtomicUsize,
+    yields: std::sync::atomic::AtomicUsize,
+}
+
+impl DecodeProbe {
+    pub(super) fn started(&self) {
+        self.0.starts.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn completed(&self) {
+        self.0.completions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn failed(&self) {
+        self.0.failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn emitted(&self, bytes: usize) {
+        self.0.frames.fetch_add(1, Ordering::Relaxed);
+        self.0.bytes.fetch_add(bytes, Ordering::Relaxed);
+        self.0.max_frame.fetch_max(bytes, Ordering::Relaxed);
+    }
+
+    pub(super) fn yielded(&self) {
+        self.0.yields.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl IdentityBody {
+    fn new_observed(gzip: Bytes, expected_len: usize, probe: DecodeProbe) -> Self {
+        let mut body = Self::new(gzip, expected_len);
+        body.probe = probe;
+        body
+    }
+}
+
+fn response_observed(
+    head: bool,
+    if_none_match: Option<&str>,
+    coding: ContentCoding,
+    probe: DecodeProbe,
+) -> std::io::Result<hyper::Response<crate::body::WebBody>> {
+    super::response_inner(head, if_none_match, coding, probe)
 }

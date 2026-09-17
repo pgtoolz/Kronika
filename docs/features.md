@@ -75,7 +75,7 @@ Sources: [search parser](../bins/kronika-web/ui/src/search.ts), [shared search d
 | --- | --- |
 | Collector `--pg-dsn` or `KRONIKA_PG_DSN` | One connection selects the PostgreSQL server to collect. |
 | Recorded `instance_metadata` | Environment, collection cadence, PostgreSQL enabled flag and optional explicit database CPU capacity override. Used by scope/time/Health calculations. |
-| Required web `KRONIKA_WEB_SOURCES` | Unsigned catalog bitset: `0` neither configured flag, `1` OS, `2` PostgreSQL, `3` both. It labels configured sources. It does not filter stored data, control collection, hide tabs or calculate Health. |
+| Required web `--sources` or `KRONIKA_WEB_SOURCES` | Source names `none`, `os`, `postgresql`, `all`, or the legacy unsigned catalog bitset: `0` neither configured flag, `1` OS, `2` PostgreSQL, `3` both. It labels configured sources. It does not filter stored data, control collection, hide tabs or calculate Health. |
 | Configured PostgreSQL UI flag | Together with recorded PostgreSQL presence, controls suppression of the PostgreSQL no-data tooltip. The configured OS bit has no UI consumer. |
 | Recorded physical layout | Determines available fields for that PostgreSQL version or extension variant. |
 

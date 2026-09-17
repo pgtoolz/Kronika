@@ -16,10 +16,11 @@ use kronika_report::{HtmlReportError, ReportTimeRange, write_html_from_file_with
 use tokio::sync::{Semaphore, mpsc};
 
 use crate::api::CachePolicy;
-use crate::body::{BodyError, BodyItem, ChannelBody, ChunkWriter, WebBody};
+use crate::body::{BODY_CHANNEL_CAPACITY, BodyError, BodyItem, ChannelBody, ChunkWriter, WebBody};
 use crate::response::{common_headers, refused};
 use crate::route::{MAX_QUERY_BYTES, RouteError};
 
+// Buffer report output on disk without retaining the full HTML export in memory.
 const FILE_BUFFER_BYTES: usize = 64 * 1_024;
 
 pub(crate) fn parse(query: &str) -> Result<SliceRange, RouteError> {
@@ -81,7 +82,7 @@ struct PreparedExport {
     filename: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct ExportPreparation {
     requested_from: i64,
     requested_to_exclusive: i64,
@@ -161,7 +162,12 @@ pub(crate) async fn response(
     range: SliceRange,
     gate: Arc<Semaphore>,
 ) -> Response<WebBody> {
-    response_with(gate, move || build(&data_root, range)).await
+    response_with(gate, move || {
+        let (prepared, preparation) = build(&data_root, range)?;
+        eprintln!("kronika-web: export_prepared {preparation}");
+        Ok(prepared)
+    })
+    .await
 }
 
 async fn response_with(
@@ -199,15 +205,10 @@ fn export_failure(error: &ExportError) -> Response<WebBody> {
     refused(status, code, None)
 }
 
-fn build(data_root: &Path, range: SliceRange) -> Result<PreparedExport, ExportError> {
-    build_with(data_root, range, log_prepared)
-}
-
-fn build_with(
+fn build(
     data_root: &Path,
     range: SliceRange,
-    log: impl FnOnce(ExportPreparation),
-) -> Result<PreparedExport, ExportError> {
+) -> Result<(PreparedExport, ExportPreparation), ExportError> {
     let total_started = Instant::now();
     let open_started = Instant::now();
     let reader = Reader::open(data_root).map_err(ExportError::Reader)?;
@@ -255,7 +256,7 @@ fn build_with(
     };
     let report = report_started.elapsed();
     let total = total_started.elapsed();
-    log(ExportPreparation {
+    let preparation = ExportPreparation {
         requested_from: summary.requested_from,
         requested_to_exclusive: summary.requested_to_exclusive,
         rows: summary.rows_written,
@@ -266,12 +267,8 @@ fn build_with(
         slice,
         report,
         total,
-    });
-    Ok(prepared)
-}
-
-fn log_prepared(preparation: ExportPreparation) {
-    eprintln!("kronika-web: export_prepared {preparation}");
+    };
+    Ok((prepared, preparation))
 }
 
 fn filename(range: SliceRange) -> Option<String> {
@@ -293,7 +290,7 @@ fn prepared_response(prepared: PreparedExport) -> Result<Response<WebBody>, Expo
     } = prepared;
     let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
         .map_err(ExportError::InvalidHeader)?;
-    let (sender, receiver) = mpsc::channel::<BodyItem>(8);
+    let (sender, receiver) = mpsc::channel::<BodyItem>(BODY_CHANNEL_CAPACITY);
     let handle = tokio::task::spawn_blocking(move || stream_file(&mut file, len, &sender));
     drop(handle);
 

@@ -20,26 +20,8 @@ mod ui;
 use anyhow::Result;
 
 fn main() -> Result<()> {
-    let mut arguments = std::env::args_os().skip(1);
-    if let Some(argument) = arguments.next() {
-        anyhow::ensure!(
-            arguments.next().is_none(),
-            "unexpected arguments; use kronika-web --help"
-        );
-        if argument == "--help" || argument == "-h" {
-            print!("{}", help::HELP);
-            return Ok(());
-        }
-        if argument == "--version" {
-            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-            return Ok(());
-        }
-        anyhow::bail!(
-            "unexpected argument {}; use kronika-web --help",
-            argument.display()
-        );
-    }
-    server::run()
+    let config = config::parse_from(std::env::args_os()).unwrap_or_else(|error| error.exit());
+    server::run(config)
 }
 
 #[cfg(test)]

@@ -9,14 +9,13 @@ use hyper::{Response, StatusCode};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::api::{self, ApiError};
-use crate::body::{BodyError, BodyItem, BodyProducer, ChannelBody, StreamHead, WebBody};
+use crate::body::{
+    BODY_CHANNEL_CAPACITY, BodyError, BodyItem, BodyProducer, ChannelBody, StreamHead, WebBody,
+};
 use crate::config::Config;
 use crate::encoding::{AcceptedEncodings, ContentCoding};
 use crate::response::{common_headers, failed, refused};
 use crate::route::Route;
-
-// Bound queued chunks so slow clients apply backpressure to the blocking worker.
-const BODY_CHANNEL_CAPACITY: usize = 8;
 
 pub(crate) async fn response(
     config: Arc<Config>,
@@ -26,7 +25,7 @@ pub(crate) async fn response(
 ) -> Response<WebBody> {
     prepare_response(
         move || {
-            api::prepare_with_demo(
+            api::prepare(
                 &config.data_root,
                 config.sources,
                 config.synthetic_demo,
@@ -47,8 +46,7 @@ pub(crate) async fn prepare_response(
     let (body_tx, body_rx) = mpsc::channel::<BodyItem>(BODY_CHANNEL_CAPACITY);
     let (head_tx, head_rx) = oneshot::channel::<Result<StreamHead, ApiError>>();
     let handle = tokio::task::spawn_blocking(move || {
-        let mut head_tx = Some(head_tx);
-        let mut producer: Option<BodyProducer> = None;
+        let mut head_tx = head_tx;
         let mut replayed = false;
         loop {
             let prepared = match prepare() {
@@ -58,64 +56,35 @@ pub(crate) async fn prepare_response(
                     continue;
                 }
                 Err(error) => {
-                    if let Some(producer) = producer.take() {
-                        producer.fail(error);
-                    } else if let Some(head_tx) = head_tx.take() {
-                        let _sent = head_tx.send(Err(error));
-                    }
+                    let _sent = head_tx.send(Err(error));
                     return;
                 }
             };
             let meta = prepared.meta();
             if meta.status == StatusCode::NOT_MODIFIED {
-                if let Some(producer) = producer.take() {
-                    producer.complete_not_modified(meta);
-                } else if let Some(head_tx) = head_tx.take() {
-                    let _sent = head_tx.send(Ok(StreamHead::not_modified(meta)));
-                }
+                let _sent = head_tx.send(Ok(StreamHead::not_modified(meta)));
                 return;
             }
-            if producer.is_some() {
-                let restarted = producer
-                    .as_mut()
-                    .is_some_and(|producer| producer.restart(meta));
-                if !restarted {
-                    if let Some(producer) = producer.take() {
-                        producer.fail(ApiError::Unreadable(Box::new(std::io::Error::other(
-                            "response replay began after headers",
-                        ))));
-                    }
-                    return;
-                }
-            } else {
-                let Some(head_tx) = head_tx.take() else {
-                    return;
-                };
-                producer = Some(BodyProducer::new(accepted, meta, head_tx, body_tx.clone()));
-            }
-            let cancellation_tx = body_tx.clone();
-            let cancelled = || cancellation_tx.is_closed();
-            let Some(current) = producer.as_mut() else {
-                return;
-            };
-            let result = prepared.stream(&mut |bytes| current.emit(&bytes), &cancelled);
+            let mut producer = BodyProducer::new(accepted, meta, head_tx, body_tx.clone());
+            let result =
+                prepared.stream(&mut |bytes| producer.emit(&bytes), &|| body_tx.is_closed());
             match result {
                 Ok(()) => {
-                    if let Some(producer) = producer.take() {
-                        producer.complete();
-                    }
+                    producer.complete();
                     return;
-                }
-                Err(error)
-                    if !replayed && error.source_changed_during_read() && current.can_restart() =>
-                {
-                    replayed = true;
                 }
                 Err(error) => {
-                    if let Some(producer) = producer.take() {
+                    if !replayed
+                        && error.source_changed_during_read()
+                        && let Some(pending_head) = producer.take_staged_head()
+                    {
+                        // Discard this attempt's prefix before preparing a fresh generation.
+                        head_tx = pending_head;
+                        replayed = true;
+                    } else {
                         producer.fail(error);
+                        return;
                     }
-                    return;
                 }
             }
         }

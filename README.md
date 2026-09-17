@@ -76,28 +76,26 @@ Start `kronika-web` in a second terminal with the collector’s data directory.
 
 #### For `local` mode
 
-Use `KRONIKA_WEB_SOURCES=1` for Linux only, as below. Change `1` to `3`
+Use `--sources os` for Linux only, as below. Use `--sources all`
 when also collecting PostgreSQL:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
-  KRONIKA_WEB_SOURCES=1 \
-  /usr/local/bin/kronika-web
+sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
+  --listen 0.0.0.0:8080 --sources os
 ```
 
 #### For `postgresql` mode
 
 ```sh
-KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
-  KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
+/usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
+  --listen 0.0.0.0:8080 --sources postgresql
 ```
 
 Open `http://<server-ip>:8080`.
 
-To require sign-in, add `KRONIKA_WEB_USER=kronika` and
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` to the launch command.
+To require sign-in, add `--user kronika --password 'replace-with-a-random-password'`.
+Options override their environment fallbacks; existing `KRONIKA_WEB_*` service
+settings continue to work. See `kronika-web --help` for the full option list.
 
 [Systemd setup](docs/services.md) covers running both programs as services and
 changing an existing service's configuration.

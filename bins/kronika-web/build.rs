@@ -21,8 +21,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| invalid(format!("{UI_GZIP} does not contain UTF-8 HTML: {error}")))?;
     validate_html(html)?;
 
-    let gzip_etag = etag(&compressed);
-    let identity_hash = hash(&identity);
+    let gzip_etag = format!("\"{:x}\"", Sha256::digest(&compressed));
+    let identity_hash = format!("{:x}", Sha256::digest(&identity));
     let identity_etag = format!("\"{identity_hash}\"");
     let script_hashes = script_bodies(html)?
         .into_iter()
@@ -59,14 +59,6 @@ fn decode_all(compressed: &[u8]) -> io::Result<Vec<u8>> {
         return Err(invalid(format!("{UI_GZIP} has trailing bytes")));
     }
     Ok(identity)
-}
-
-fn etag(bytes: &[u8]) -> String {
-    format!("\"{}\"", hash(bytes))
-}
-
-fn hash(bytes: &[u8]) -> String {
-    hex(&Sha256::digest(bytes))
 }
 
 fn validate_header(bytes: &[u8]) -> io::Result<()> {
@@ -128,16 +120,6 @@ fn script_bodies(html: &str) -> io::Result<Vec<&str>> {
         tail = rest;
     }
     Ok(bodies)
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        output.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
-    }
-    output
 }
 
 fn invalid(message: String) -> io::Error {

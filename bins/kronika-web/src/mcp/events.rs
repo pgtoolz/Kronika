@@ -12,7 +12,8 @@ use crate::api::ApiError;
 use crate::config::Config;
 use crate::query_adapter::NativeDataset;
 
-use super::catalog::{EventsInput, FIND_EVENTS_TOOL};
+use super::catalog::FIND_EVENTS_TOOL;
+use super::input::EventsInput;
 use super::semantics::{
     CancellationSink, arguments_within_budget, invalid_arguments, mcp_error, mcp_error_with,
     mcp_structured, storage_error,

@@ -85,6 +85,16 @@ fn schema_digest(value: &serde_json::Value) -> String {
 }
 
 #[test]
+fn complete_tool_catalog_matches_stable_golden() {
+    // Includes order, names, descriptions, annotations, and all input/output schemas.
+    let catalog = serde_json::to_value(tools()).expect("encode complete tool catalog");
+    assert_eq!(
+        schema_digest(&catalog),
+        "fb6f9eb3d934fa6a5d0b8d931c9dd82d6504043dfe5184343ca94047693810f5"
+    );
+}
+
+#[test]
 fn mass_tool_schemas_match_stable_goldens() {
     for (tool_name, input_golden, output_golden) in [
         (

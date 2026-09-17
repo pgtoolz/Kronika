@@ -13,6 +13,7 @@ import tempfile
 
 
 BINARIES = tuple(f"kronika-{name}" for name in ("collector", "web", "dump", "report"))
+CLAP_BINARIES = ("kronika-collector", "kronika-web")
 TIMEOUT_SECONDS = 5
 SECRET = "cli-check-secret-must-not-appear"
 # Required parameters and units, independent of help layout.
@@ -27,12 +28,14 @@ HELP_CONTENT = {
         "automatic log discovery", "pg_current_logfile", "No --pg-log is needed",
     ),
     "kronika-web": (
+        "--storage-dir", "--listen", "--sources", "--user", "--password", "--demo",
         "KRONIKA_STORAGE_DIR", "KRONIKA_WEB_SOURCES", "127.0.0.1:8080",
-        "KRONIKA_WEB_USER", "KRONIKA_WEB_PASSWORD", "0.0.0.0:8080",
-        "http://SERVER_IP:8080/", "Both unset", "Both nonempty", "startup error", "catalog", "health", "/mcp", "TMPDIR",
-        "kronika-collector", "KRONIKA_PG_DSN", "No default",
-        "0", "1", "2", "3", "Health uses instance information saved by the collector",
-        "All recorded data remains available for every value",
+        "KRONIKA_WEB_USER", "KRONIKA_WEB_PASSWORD", "KRONIKA_WEB_DEMO", "0.0.0.0:8080",
+        "http://SERVER_IP:8080/", "Both credentials unset", "Both nonempty", "startup error",
+        "catalog", "health", "/mcp", "TMPDIR", "kronika-collector", "KRONIKA_PG_DSN",
+        "required", "none", "os", "postgresql", "all", "0..3", "synthetic",
+        "CLI arguments override environment variables", "Health uses instance information saved by the collector",
+        "all recorded data remains available for every value",
     ),
     "kronika-dump": (
         "--json", "--index", "--section", "--limit", "--from", "--to",
@@ -103,7 +106,10 @@ def check_trace(trace, storage):
     }
     for name, line in calls:
         assert name not in forbidden, f"CLI performed a startup operation: {line}"
-        assert str(storage) not in line, f"CLI accessed configured storage: {line}"
+        # The initial execve legitimately includes --storage-dir in argv. It is
+        # not a storage access; the exact-one-execve assertion rejects subprocesses.
+        if name != "execve":
+            assert str(storage) not in line, f"CLI accessed configured storage: {line}"
         if name in {"open", "openat", "openat2"}:
             assert not re.search(r"O_(WRONLY|RDWR|CREAT|TRUNC|APPEND)", line), line
 
@@ -132,16 +138,18 @@ def check_help(name, output, slice_help=False, brief=False):
     required = ("usage:", name, "--help", "-h")
     if slice_help:
         required += ("slice", "--from", "--to", "--out", "KRONIKA_STORAGE_DIR", "RFC3339", "inclusive")
-    elif name == "kronika-collector" and brief:
-        required += ("--version", "--storage-dir", "--mode", "--pg-dsn", "KRONIKA_STORAGE_DIR")
+    elif name in CLAP_BINARIES and brief:
+        required += ("--version", "--storage-dir", "KRONIKA_STORAGE_DIR")
+        required += (("--mode", "--pg-dsn") if name == "kronika-collector"
+                     else ("--listen", "--sources", "--user", "--password", "--demo"))
     else:
         required += ("--version", *HELP_CONTENT[name])
     for fragment in required:
         assert fragment.lower() in lowered, f"{name} help is missing launch information: {fragment}"
     assert SECRET not in text, f"{name} help printed an environment secret"
-    if name == "kronika-web":
-        for pattern in (r"^\s*0\s+(?:neither|none|no)\b", r"^\s*1\s+(?:linux|os)\b",
-                        r"^\s*2\s+postgresql\b", r"^\s*3\s+.*(?:linux|os).*postgresql"):
+    if name == "kronika-web" and not brief:
+        for pattern in (r"^\s*none\s+\(0\)\s+neither\b", r"^\s*os\s+\(1\)\s+linux\b",
+                        r"^\s*postgresql\s+\(2\)\s+postgresql\b", r"^\s*all\s+\(3\)\s+linux.*postgresql"):
             assert re.search(pattern, text, re.IGNORECASE | re.MULTILINE), (
                 f"web help does not explain each source value: {pattern}"
             )
@@ -181,7 +189,7 @@ def check(binary, version, root, strace):
             else:
                 slice_help = arguments[0] == "slice"
                 check_help(binary.name, stdout, slice_help, brief=arguments == ("-h",))
-                kind = arguments[-1] if binary.name == "kronika-collector" else ("slice" if slice_help else "help")
+                kind = arguments[-1] if binary.name in CLAP_BINARIES else ("slice" if slice_help else "help")
                 assert stdout == outputs.setdefault(kind, stdout), (
                     f"{binary.name}: {arguments} output differs by alias or environment"
                 )
@@ -192,12 +200,12 @@ def check(binary, version, root, strace):
     if binary.name == "kronika-dump":
         assert outputs["slice"] != outputs["help"], "slice --help did not provide subcommand context"
 
-    # Collector uses clap's help/version short circuit. Other binaries still
+    # Collector and web use clap's help/version short circuit. Other binaries still
     # reject any extra argument, including one placed after --help/--version.
     malformed = [["--unknown-option"], ["-x"]]
     for option in ("--version", "--help", "-h"):
         malformed.append(["--unknown-option", option])
-        if binary.name != "kronika-collector":
+        if binary.name not in CLAP_BINARIES:
             malformed += [[option, "--unknown-option"], [option, "unexpected"]]
     malformed += list(MALFORMED[binary.name])
     for arguments in malformed:
@@ -213,13 +221,15 @@ def check(binary, version, root, strace):
 
     if binary.name == "kronika-collector":
         check_collector_arguments(binary, cwd, storage, root, strace)
+    elif binary.name == "kronika-web":
+        check_web_arguments(binary, cwd, storage, root, strace)
 
     # Normal invocation still reaches its usual required-config/input errors.
     normal = []
     if binary.name in ("kronika-collector", "kronika-web"):
-        normal.append(("empty environment", {}, b"--storage-dir" if binary.name == "kronika-collector" else b"KRONIKA_STORAGE_DIR"))
+        normal.append(("empty environment", {}, b"--storage-dir"))
     config_errors = {"kronika-collector": b"--interval-s",
-                     "kronika-web": b"KRONIKA_WEB_LISTEN"}
+                     "kronika-web": b"--listen"}
     if binary.name in config_errors:
         normal.append(("invalid configuration", dict(invalid, TOKIO_WORKER_THREADS="1"),
                        config_errors[binary.name]))
@@ -240,7 +250,7 @@ def check(binary, version, root, strace):
         if os.name == "posix":
             for variable in ("KRONIKA_WEB_USER", "KRONIKA_WEB_PASSWORD"):
                 normal.append(("non-Unicode credential", dict(web_base, **{variable: os.fsdecode(b"\xff")}),
-                               (variable + " is not valid Unicode").encode()))
+                               b"invalid UTF-8"))
     for label, environment, message in normal:
         status, stdout, stderr = run([str(binary)], cwd, environment)
         assert status != 0 and stdout == b"" and message in stderr, (
@@ -271,6 +281,31 @@ def check_collector_arguments(binary, cwd, storage, root, strace):
         status, stdout, stderr = invoke(binary, [option, "--unknown-option"], cwd, {}, root, strace, storage)
         assert status == 0 and stdout and not stderr, (option, status, stdout, stderr)
     print("collector: CLI/env precedence, mode/interval bounds, DSN redaction and help short circuit passed", flush=True)
+
+
+def check_web_arguments(binary, cwd, storage, root, strace):
+    base = ["--storage-dir", str(storage), "--sources", "os"]
+    cases = [
+        ("sources required", ["--storage-dir", str(storage)], {}, b"--sources"),
+        ("invalid sources", ["--storage-dir", str(storage), "--sources", "4"], {}, b"--sources"),
+        ("invalid listen", base + ["--listen", "localhost:8080"], {}, b"--listen"),
+        ("invalid demo", base + ["--demo", "true"], {}, b"--demo"),
+        ("user requires password", base + ["--user", SECRET], {}, b"KRONIKA_WEB_PASSWORD is not set"),
+        ("password requires user", base + ["--password", SECRET], {}, b"KRONIKA_WEB_USER is not set"),
+        ("CLI settings override invalid environment", base + ["--listen", "127.0.0.1:0", "--demo", "synthetic", "--user", SECRET],
+         {"KRONIKA_WEB_SOURCES": "invalid", "KRONIKA_WEB_LISTEN": "invalid", "KRONIKA_WEB_DEMO": "invalid"},
+         b"KRONIKA_WEB_PASSWORD is not set"),
+        ("empty password overrides environment", base + ["--password", ""],
+         {"KRONIKA_WEB_USER": SECRET, "KRONIKA_WEB_PASSWORD": SECRET}, b"KRONIKA_WEB_PASSWORD is empty"),
+    ]
+    for label, arguments, environment, message in cases:
+        status, stdout, stderr = invoke(binary, arguments, cwd, environment, root, strace, storage)
+        assert status != 0 and not stdout and message in stderr, (label, status, stdout, stderr)
+        assert SECRET.encode() not in stdout + stderr, f"{label}: leaked credential"
+    for option in ("--help", "-h", "--version"):
+        status, stdout, stderr = invoke(binary, [option, "--unknown-option"], cwd, {}, root, strace, storage)
+        assert status == 0 and stdout and not stderr, (option, status, stdout, stderr)
+    print("web: CLI/env precedence, source/listen/demo validation, credential redaction and help short circuit passed", flush=True)
 
 
 def main():

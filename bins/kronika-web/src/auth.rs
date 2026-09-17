@@ -1,4 +1,4 @@
-//! The single authentication check every request passes.
+//! HTTP Basic credentials and account-signed browser sessions.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -6,13 +6,17 @@ use sha2::{Digest as _, Sha256};
 
 use crate::config::Account;
 
+// Bound decoding work before accepting client-controlled header values.
 const AUTHORIZATION_MAX_BYTES: usize = 8 * 1024;
 const COOKIE_HEADER_MAX_BYTES: usize = 8 * 1024;
+// SHA-256 uses 64-byte HMAC blocks and produces a 32-byte signature.
 const HMAC_BLOCK_BYTES: usize = 64;
-const SESSION_COOKIE_NAME: &str = "kronika_session";
-const SESSION_KEY_DOMAIN: &[u8] = b"kronika session key v1\0";
 const SESSION_SIGNATURE_BYTES: usize = 32;
+// A 32-byte signature encoded as unpadded base64url occupies 43 characters.
 const SESSION_SIGNATURE_TEXT_BYTES: usize = 43;
+const SESSION_COOKIE_NAME: &str = "kronika_session";
+// Separate session signing keys from other uses of the same account credentials.
+const SESSION_KEY_DOMAIN: &[u8] = b"kronika session key v1\0";
 /// Lifetime of an issued browser session in seconds.
 pub(crate) const SESSION_MAX_AGE: u64 = 30 * 24 * 60 * 60;
 
@@ -21,9 +25,9 @@ pub(crate) fn admits_basic(account: &Account, header: Option<&str>) -> bool {
     let Some(offered) = credentials(header) else {
         return false;
     };
-    same(
-        &credential_digest(&offered),
-        &configured_credential_digest(account),
+    constant_time_eq(
+        &credential_digest(&[&offered]),
+        &credential_digest(&[account.user.as_bytes(), b":", account.password.as_bytes()]),
     )
 }
 
@@ -64,7 +68,7 @@ pub(crate) fn admits_session(account: &Account, header: Option<&str>, now: u64) 
         return false;
     }
     let message = format!("v1.{expiry_text}");
-    same(&offered, &signature(account, message.as_bytes()))
+    constant_time_eq(&offered, &signature(account, message.as_bytes()))
 }
 
 /// A persistent session cookie signed for the configured account.
@@ -96,19 +100,12 @@ fn credentials(header: Option<&str>) -> Option<Vec<u8>> {
     STANDARD.decode(value.trim()).ok()
 }
 
-fn configured_credential_digest(account: &Account) -> [u8; 32] {
+fn credential_digest(parts: &[&[u8]]) -> [u8; 32] {
     let mut digest = Sha256::new();
     digest.update(b"kronika basic credentials v1\0");
-    digest.update(account.user.as_bytes());
-    digest.update(b":");
-    digest.update(account.password.as_bytes());
-    digest.finalize().into()
-}
-
-fn credential_digest(credentials: &[u8]) -> [u8; 32] {
-    let mut digest = Sha256::new();
-    digest.update(b"kronika basic credentials v1\0");
-    digest.update(credentials);
+    for part in parts {
+        digest.update(part);
+    }
     digest.finalize().into()
 }
 
@@ -170,7 +167,7 @@ fn cookie(value: &str, max_age: u64, secure: bool) -> String {
     format!("{value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure_attribute}")
 }
 
-fn same(left: &[u8; 32], right: &[u8; 32]) -> bool {
+fn constant_time_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
     let mut difference = 0_u8;
     for (left, right) in left.iter().zip(right) {
         difference |= left ^ right;

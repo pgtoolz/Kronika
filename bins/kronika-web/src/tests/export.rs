@@ -13,8 +13,8 @@ use hyper::header::{
 use kronika_dump::{RangeError, SliceError, SliceRange, UtcSecond};
 
 use super::{
-    ExportError, ExportPreparation, PreparedExport, build, build_with, filename, parse,
-    prepared_response, response_with,
+    ExportError, ExportPreparation, PreparedExport, build, filename, parse, prepared_response,
+    response_with,
 };
 
 const SECOND: i64 = 1_709_164_800;
@@ -347,20 +347,15 @@ fn a_small_recording_becomes_a_standalone_offline_html_with_the_slice_identity()
     fixture.append_process_gauge_rows(&[(first_row, 42, 1_024, "postgres")]);
     fixture.finish();
 
-    let mut events = Vec::new();
-    let mut prepared = build_with(fixture.root(), range(SECOND, SECOND), |event| {
-        events.push(event);
-    })
-    .expect("build export");
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.requested_from, MICROS);
-    assert_eq!(event.requested_to_exclusive, MICROS + 1_000_000);
-    assert_eq!(event.rows, 1);
-    assert_eq!(event.sections, 2);
-    assert!(event.zms_bytes > 0);
-    assert_eq!(event.html_bytes, prepared.len);
-    assert!(event.total >= event.open + event.slice + event.report);
+    let (mut prepared, preparation) =
+        build(fixture.root(), range(SECOND, SECOND)).expect("build export");
+    assert_eq!(preparation.requested_from, MICROS);
+    assert_eq!(preparation.requested_to_exclusive, MICROS + 1_000_000);
+    assert_eq!(preparation.rows, 1);
+    assert_eq!(preparation.sections, 2);
+    assert!(preparation.zms_bytes > 0);
+    assert_eq!(preparation.html_bytes, prepared.len);
+    assert!(preparation.total >= preparation.open + preparation.slice + preparation.report);
     let mut html = Vec::new();
     prepared
         .file
@@ -405,19 +400,14 @@ fn export_does_not_need_write_access_to_the_recording_root() {
     let result = build(fixture.root(), range(SECOND, SECOND));
     std::fs::set_permissions(fixture.root(), original).expect("restore recording permissions");
 
-    let prepared = result.expect("build export without recording-root writes");
+    let (prepared, _preparation) = result.expect("build export without recording-root writes");
     assert!(prepared.len > 0);
 }
 
 #[test]
 fn an_empty_selected_second_is_a_typed_error() {
     let fixture = crate::tests::artifacts::Fixture::new();
-    let mut events = Vec::new();
-    let error = build_with(fixture.root(), range(SECOND, SECOND), |event| {
-        events.push(event);
-    })
-    .expect_err("empty export");
-    assert!(events.is_empty());
+    let error = build(fixture.root(), range(SECOND, SECOND)).expect_err("empty export");
     assert!(matches!(
         error,
         ExportError::Slice(SliceError::NoRowsInRequestedRange)

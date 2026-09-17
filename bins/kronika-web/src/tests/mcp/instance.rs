@@ -4,7 +4,7 @@ use kronika_query::snapshot::PlainRowOut;
 use serde_json::{Value, json};
 
 use super::select_settings;
-use crate::mcp::catalog::SettingsScopeInput;
+use crate::mcp::input::SettingsScopeInput;
 
 fn row(source: Option<Value>, ordinal: u64) -> PlainRowOut {
     let mut fields = BTreeMap::new();

@@ -169,7 +169,7 @@ fn a_field_no_recorded_layout_carries_is_reported_unavailable() {
     for target in [history, hour] {
         let (path, query) = target.split_once('?').expect("query");
         let route = crate::route::parse(path, Some(query)).expect("valid route");
-        let prepared = crate::api::prepare(directory.path(), 0b10, route, None)
+        let prepared = crate::api::prepare(directory.path(), 0b10, false, route, None)
             .unwrap_or_else(|error| panic!("prepare {target}: {error:?}"));
         let records = stream(prepared);
         let layout = records
@@ -198,7 +198,7 @@ fn a_field_no_recorded_layout_carries_is_reported_unavailable() {
     let rejected = |target: String| -> QueryError {
         let (path, query) = target.split_once('?').expect("query");
         let route = crate::route::parse(path, Some(query)).expect("valid route");
-        match crate::api::prepare(directory.path(), 0b10, route, None) {
+        match crate::api::prepare(directory.path(), 0b10, false, route, None) {
             Err(error) => error,
             Ok(prepared) => prepared
                 .stream(&mut |_record| true, &|| false)
@@ -230,7 +230,7 @@ fn textual_filter_and_missing_field_work_across_physical_layouts() {
     );
     let (path, query) = target.split_once('?').expect("history query");
     let route = crate::route::parse(path, Some(query)).expect("valid history route");
-    let prepared = crate::api::prepare(directory.path(), 0b10, route, None)
+    let prepared = crate::api::prepare(directory.path(), 0b10, false, route, None)
         .expect("prepare multi-layout history");
     let records = stream(prepared);
 
@@ -295,8 +295,9 @@ fn snapshot_pages_sort_and_count_across_compatible_physical_layouts() {
     );
     let (path, query) = base.split_once('?').expect("snapshot query");
     let route = crate::route::parse(path, Some(query)).expect("snapshot route");
-    let first =
-        stream(crate::api::prepare(directory.path(), 0b10, route, None).expect("first mixed page"));
+    let first = stream(
+        crate::api::prepare(directory.path(), 0b10, false, route, None).expect("first mixed page"),
+    );
     let first_row_position = first
         .iter()
         .position(|record| record["record"] == "row")
@@ -330,7 +331,7 @@ fn snapshot_pages_sort_and_count_across_compatible_physical_layouts() {
     let (path, query) = continued.split_once('?').expect("continued query");
     let route = crate::route::parse(path, Some(query)).expect("continued route");
     let second = stream(
-        crate::api::prepare(directory.path(), 0b10, route, None).expect("second mixed page"),
+        crate::api::prepare(directory.path(), 0b10, false, route, None).expect("second mixed page"),
     );
     let second_row = second
         .iter()

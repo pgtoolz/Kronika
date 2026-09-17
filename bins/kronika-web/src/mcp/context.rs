@@ -17,7 +17,7 @@ pub(crate) fn call(
     arguments: Map<String, Value>,
     _cancelled: &dyn Fn() -> bool,
 ) -> CallToolResult {
-    let input: super::catalog::GetContextInput =
+    let input: super::input::GetContextInput =
         match serde_json::from_value(Value::Object(arguments)) {
             Ok(input) => input,
             Err(error) => {

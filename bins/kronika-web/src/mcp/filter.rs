@@ -200,34 +200,7 @@ pub(crate) fn build_search(
     let mut expr: Option<Expr> = None;
     let mut clauses = Vec::with_capacity(filters.len());
     for filter in filters {
-        let field = fields
-            .iter()
-            .find(|candidate| candidate.key == filter.field())
-            .ok_or_else(|| {
-                let names: Vec<String> = fields.iter().map(|field| field.key.to_owned()).collect();
-                Refusal {
-                    message: format!(
-                        "unknown field for {logical_name}: {}; the filterable fields are {}",
-                        filter.field(),
-                        names.join(", "),
-                    ),
-                    valid_options: names,
-                }
-            })?;
-        let operator = operator_for(field, filter.op()).ok_or_else(|| {
-            let accepted = accepted_ops(field);
-            Refusal {
-                message: format!(
-                    "operator {} is not valid for field {}: it accepts {}",
-                    op_name(filter.op()),
-                    filter.field(),
-                    accepted.join(", "),
-                ),
-                valid_options: accepted,
-            }
-        })?;
-        let value = filter_value(field, filter)?;
-        let clause = SearchClause::from_parts(field.key, field.columns, operator, value);
+        let clause = filter_clause(logical_name, fields, filter)?;
         clauses.push(clause.clone());
         expr = Some(match expr {
             None => Expr::Predicate(clause),
@@ -238,6 +211,46 @@ pub(crate) fn build_search(
         return Ok(None);
     };
     Ok(Some(StructuredSearch::from_expr(expr, clauses)))
+}
+
+fn filter_clause(
+    logical_name: &str,
+    fields: &[SearchField],
+    filter: &FilterInput,
+) -> Result<SearchClause, Refusal> {
+    let field = fields
+        .iter()
+        .find(|candidate| candidate.key == filter.field())
+        .ok_or_else(|| {
+            let names: Vec<String> = fields.iter().map(|field| field.key.to_owned()).collect();
+            Refusal {
+                message: format!(
+                    "unknown field for {logical_name}: {}; the filterable fields are {}",
+                    filter.field(),
+                    names.join(", "),
+                ),
+                valid_options: names,
+            }
+        })?;
+    let operator = operator_for(field, filter.op()).ok_or_else(|| {
+        let accepted = accepted_ops(field);
+        Refusal {
+            message: format!(
+                "operator {} is not valid for field {}: it accepts {}",
+                op_name(filter.op()),
+                filter.field(),
+                accepted.join(", "),
+            ),
+            valid_options: accepted,
+        }
+    })?;
+    let value = filter_value(field, filter)?;
+    Ok(SearchClause::from_parts(
+        field.key,
+        field.columns,
+        operator,
+        value,
+    ))
 }
 
 const fn operator_for(field: &SearchField, op: Op) -> Option<SearchOperator> {

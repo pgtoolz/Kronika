@@ -59,7 +59,7 @@ fn native_snapshot_queries_replay_only_one_source_change() {
     let config = test_config(fixture.root().to_path_buf());
 
     let mut attempts = 0;
-    let value = super::run_snapshot_query(&config, |_context| {
+    let value = crate::mcp::run_snapshot_query(&config, |_context| {
         attempts += 1;
         if attempts == 1 {
             Err(stale("first active generation"))
@@ -72,7 +72,7 @@ fn native_snapshot_queries_replay_only_one_source_change() {
     assert_eq!(attempts, 2);
 
     let mut repeated = 0;
-    let error = super::run_snapshot_query(&config, |_context| {
+    let error = crate::mcp::run_snapshot_query(&config, |_context| {
         repeated += 1;
         Err::<(), _>(stale(if repeated == 1 {
             "first active generation"
@@ -85,7 +85,7 @@ fn native_snapshot_queries_replay_only_one_source_change() {
     assert!(error.to_string().contains("second active generation"));
 
     let mut refused = 0;
-    let error = super::run_snapshot_query(&config, |_context| {
+    let error = crate::mcp::run_snapshot_query(&config, |_context| {
         refused += 1;
         Err::<(), _>(QueryError::BadFilter("filter".to_owned()))
     })
@@ -100,7 +100,7 @@ fn detail(config: &Config, row: &Value) -> Value {
         .as_str()
         .filter(|detail_ref| !detail_ref.is_empty())
         .expect("opaque detail_ref");
-    let result = super::row_detail::call(
+    let result = crate::mcp::row_detail::call(
         config,
         arguments(&json!({"detail_ref": detail_ref})),
         &|| false,
@@ -117,7 +117,7 @@ fn process_time_selects_rows_without_exposing_internal_sample_metadata() {
     fixture.finish();
     let config = test_config(fixture.root().to_path_buf());
 
-    let latest = structured(super::processes::call(
+    let latest = structured(crate::mcp::processes::call(
         &config,
         arguments(&json!({ "limit": 10 })),
         &|| false,
@@ -125,7 +125,7 @@ fn process_time_selects_rows_without_exposing_internal_sample_metadata() {
     assert_eq!(latest["rows"].as_array().map(Vec::len), Some(1));
     assert!(latest.get("as_of").is_none());
 
-    let selected = structured(super::processes::call(
+    let selected = structured(crate::mcp::processes::call(
         &config,
         arguments(&json!({
             "at": 400,
@@ -136,14 +136,14 @@ fn process_time_selects_rows_without_exposing_internal_sample_metadata() {
     ));
     assert_eq!(selected["rows"], json!([]));
 
-    let edge = structured(super::processes::call(
+    let edge = structured(crate::mcp::processes::call(
         &config,
         arguments(&json!({ "at": 20_000_300, "limit": 10 })),
         &|| false,
     ));
     assert_eq!(edge["rows"].as_array().expect("rows").len(), 1);
 
-    let outside = structured(super::processes::call(
+    let outside = structured(crate::mcp::processes::call(
         &config,
         arguments(&json!({ "at": 20_000_301, "limit": 10 })),
         &|| false,
@@ -172,8 +172,8 @@ fn relation_and_recorded_postgresql_cadences_bound_current_samples() {
     let config = test_config(fixture.root().to_path_buf());
 
     for call in [
-        super::postgresql::call_tables,
-        super::postgresql::call_indexes,
+        crate::mcp::postgresql::call_tables,
+        crate::mcp::postgresql::call_indexes,
     ] {
         let result = structured(call(
             &config,
@@ -187,7 +187,7 @@ fn relation_and_recorded_postgresql_cadences_bound_current_samples() {
         assert_eq!(result["rows"].as_array().expect("rows").len(), 1);
     }
 
-    let old_table = structured(super::postgresql::call_tables(
+    let old_table = structured(crate::mcp::postgresql::call_tables(
         &config,
         arguments(&json!({
             "at": 750_000_201,
@@ -198,14 +198,14 @@ fn relation_and_recorded_postgresql_cadences_bound_current_samples() {
     ));
     assert_eq!(old_table["rows"], json!([]));
 
-    let recorded_cadence = structured(super::postgresql::call_activity(
+    let recorded_cadence = structured(crate::mcp::postgresql::call_activity(
         &config,
         arguments(&json!({ "at": 150_000_150, "limit": 10 })),
         &|| false,
     ));
     assert_eq!(recorded_cadence["rows"].as_array().expect("rows").len(), 2);
 
-    let outside_recorded_cadence = structured(super::postgresql::call_activity(
+    let outside_recorded_cadence = structured(crate::mcp::postgresql::call_activity(
         &config,
         arguments(&json!({ "at": 150_000_151, "limit": 10 })),
         &|| false,
@@ -218,7 +218,7 @@ fn active_metadata_and_default_postgresql_cadences_bound_samples() {
     let mut active = Fixture::new();
     active.append_postgres_health_with_interval(100, 1, 60);
     let config = test_config(active.root().to_path_buf());
-    let edge = structured(super::postgresql::call_activity(
+    let edge = structured(crate::mcp::postgresql::call_activity(
         &config,
         arguments(&json!({ "at": 150_000_150, "limit": 10 })),
         &|| false,
@@ -229,13 +229,13 @@ fn active_metadata_and_default_postgresql_cadences_bound_samples() {
     fallback.append_postgres_health_with_interval(100, 1, 0);
     fallback.finish();
     let config = test_config(fallback.root().to_path_buf());
-    let edge = structured(super::postgresql::call_activity(
+    let edge = structured(crate::mcp::postgresql::call_activity(
         &config,
         arguments(&json!({ "at": 75_000_150, "limit": 10 })),
         &|| false,
     ));
     assert_eq!(edge["rows"].as_array().map(Vec::len), Some(2));
-    let outside = structured(super::postgresql::call_activity(
+    let outside = structured(crate::mcp::postgresql::call_activity(
         &config,
         arguments(&json!({ "at": 75_000_151, "limit": 10 })),
         &|| false,
@@ -254,7 +254,7 @@ fn in_combines_plain_and_relation_filter_values() {
     fixture.finish();
     let config = test_config(fixture.root().to_path_buf());
 
-    let scalar = structured(super::processes::call(
+    let scalar = structured(crate::mcp::processes::call(
         &config,
         arguments(&json!({
             "filters": [{"field": "pid", "op": "eq", "value": 101}],
@@ -264,7 +264,7 @@ fn in_combines_plain_and_relation_filter_values() {
     ));
     assert_eq!(scalar["rows"].as_array().expect("rows").len(), 1);
 
-    let any = structured(super::processes::call(
+    let any = structured(crate::mcp::processes::call(
         &config,
         arguments(&json!({
             "filters": [{
@@ -278,7 +278,7 @@ fn in_combines_plain_and_relation_filter_values() {
     ));
     assert_eq!(any["rows"].as_array().expect("rows").len(), 1);
 
-    let and_or = structured(super::processes::call(
+    let and_or = structured(crate::mcp::processes::call(
         &config,
         arguments(&json!({
             "filters": [
@@ -293,7 +293,7 @@ fn in_combines_plain_and_relation_filter_values() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["pid"], 102);
 
-    let scalar = structured(super::postgresql::call_tables(
+    let scalar = structured(crate::mcp::postgresql::call_tables(
         &config,
         arguments(&json!({
             "group": "object",
@@ -304,7 +304,7 @@ fn in_combines_plain_and_relation_filter_values() {
     ));
     assert_eq!(scalar["rows"].as_array().expect("rows").len(), 1);
 
-    let any = structured(super::postgresql::call_tables(
+    let any = structured(crate::mcp::postgresql::call_tables(
         &config,
         arguments(&json!({
             "group": "object",
@@ -328,7 +328,7 @@ fn finder_results_truncate_without_a_continuation_contract() {
     fixture.finish();
     let config = test_config(fixture.root().to_path_buf());
 
-    let result = super::processes::call(&config, arguments(&json!({ "limit": 1 })), &|| false);
+    let result = crate::mcp::processes::call(&config, arguments(&json!({ "limit": 1 })), &|| false);
     assert_eq!(result.is_error, Some(false));
     let content: Value = serde_json::from_str(&result.content[0].as_text().expect("JSON").text)
         .expect("content JSON");
@@ -357,7 +357,7 @@ fn a_predecessor_before_the_current_window_still_feeds_rates() {
     fixture.finish();
     let config = test_config(fixture.root().to_path_buf());
 
-    let process = structured(super::processes::call(
+    let process = structured(crate::mcp::processes::call(
         &config,
         arguments(&json!({ "at": CURRENT + 20_000_000, "limit": 10 })),
         &|| false,
@@ -366,7 +366,7 @@ fn a_predecessor_before_the_current_window_still_feeds_rates() {
     let process_detail = detail(&config, &process["rows"][0]);
     assert_eq!(process_detail["at"], CURRENT.to_string());
 
-    let table = structured(super::postgresql::call_tables(
+    let table = structured(crate::mcp::postgresql::call_tables(
         &config,
         arguments(&json!({
             "at": 1_500_000_100_i64,
@@ -389,7 +389,7 @@ fn finder_chooses_the_latest_actual_sample_across_overlapping_segments() {
     fixture.finish();
     let config = test_config(fixture.root().to_path_buf());
 
-    let result = structured(super::processes::call(
+    let result = structured(crate::mcp::processes::call(
         &config,
         arguments(&json!({ "at": 300, "limit": 10 })),
         &|| false,
@@ -411,7 +411,7 @@ fn missing_rollback_and_real_zero_counter_rates_remain_distinct() {
         fixture.append_process_counter_rows(&rows);
         fixture.finish();
         let config = test_config(fixture.root().to_path_buf());
-        let result = structured(super::processes::call(
+        let result = structured(crate::mcp::processes::call(
             &config,
             arguments(&json!({ "at": 200, "limit": 10 })),
             &|| false,
@@ -426,7 +426,7 @@ fn cancellation_is_an_error_instead_of_an_empty_success() {
     fixture.append_process_gauge_rows(&[(100, 101, 50, "alpha")]);
     fixture.finish();
     let config = test_config(fixture.root().to_path_buf());
-    let result = super::processes::call(&config, arguments(&json!({ "limit": 10 })), &|| true);
+    let result = crate::mcp::processes::call(&config, arguments(&json!({ "limit": 10 })), &|| true);
     assert_eq!(result.is_error, Some(true));
     assert_eq!(
         result.structured_content.expect("structured error")["message"],
@@ -441,11 +441,11 @@ fn every_plain_postgresql_finder_accepts_an_explicit_point() {
     fixture.finish();
     let config = test_config(fixture.root().to_path_buf());
     for call in [
-        super::postgresql::call_locks,
-        super::postgresql::call_vacuum,
-        super::postgresql::call_databases,
-        super::postgresql::call_statements,
-        super::postgresql::call_plans,
+        crate::mcp::postgresql::call_locks,
+        crate::mcp::postgresql::call_vacuum,
+        crate::mcp::postgresql::call_databases,
+        crate::mcp::postgresql::call_statements,
+        crate::mcp::postgresql::call_plans,
     ] {
         let result = structured(call(
             &config,
@@ -465,7 +465,7 @@ fn omitted_at_uses_the_global_store_bound_and_drops_an_old_vacuum() {
     fixture.finish();
     let config = test_config(fixture.root().to_path_buf());
 
-    let result = structured(super::postgresql::call_vacuum(
+    let result = structured(crate::mcp::postgresql::call_vacuum(
         &config,
         arguments(&json!({ "limit": 10 })),
         &|| false,
@@ -480,7 +480,7 @@ fn an_unknown_sort_is_rejected_even_when_the_surface_has_no_sample() {
     fixture.append_process_gauge_rows(&[(100, 101, 50, "alpha")]);
     fixture.finish();
     let config = test_config(fixture.root().to_path_buf());
-    let result = super::postgresql::call_vacuum(
+    let result = crate::mcp::postgresql::call_vacuum(
         &config,
         arguments(&json!({
             "at": 100,

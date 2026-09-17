@@ -14,8 +14,12 @@ use tokio::sync::{mpsc, oneshot};
 use crate::api::{ApiError, ResponseMeta};
 use crate::encoding::{AcceptedEncodings, ContentCoding};
 
+// Stage up to 8 KiB before choosing compression or committing headers, allowing
+// small responses to fail or replay before any bytes reach the client.
 const STAGED_PREFIX_BYTES: usize = 8 * 1_024;
 pub(crate) const BODY_CHUNK_BYTES: usize = 8 * 1_024;
+// At most 64 KiB is queued per response, in addition to the producer's buffers.
+pub(crate) const BODY_CHANNEL_CAPACITY: usize = 8;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BodyError;
@@ -95,36 +99,22 @@ impl BodyProducer {
                 }
                 self.write_stream(&bytes[remaining..])
             }
-            ProducerState::Identity => {
-                self.state = ProducerState::Identity;
-                self.write_stream(bytes)
-            }
-            ProducerState::Gzip(encoder) => {
-                self.state = ProducerState::Gzip(encoder);
+            state @ (ProducerState::Identity | ProducerState::Gzip(_)) => {
+                self.state = state;
                 self.write_stream(bytes)
             }
             ProducerState::Stopped => false,
         }
     }
 
-    pub(crate) const fn can_restart(&self) -> bool {
-        matches!(self.state, ProducerState::Staging(_))
-    }
-
-    pub(crate) fn restart(&mut self, meta: ResponseMeta) -> bool {
-        let ProducerState::Staging(prefix) = &mut self.state else {
-            return false;
-        };
-        prefix.clear();
-        self.meta = Some(meta);
-        true
-    }
-
-    pub(crate) fn complete_not_modified(mut self, meta: ResponseMeta) {
-        self.state = ProducerState::Stopped;
-        self.meta = None;
-        if let Some(head) = self.head.take() {
-            let _sent = head.send(Ok(StreamHead::not_modified(meta)));
+    /// Recover the unsent headers for a new attempt only while all bytes remain staged.
+    pub(crate) const fn take_staged_head(
+        &mut self,
+    ) -> Option<oneshot::Sender<Result<StreamHead, ApiError>>> {
+        if matches!(self.state, ProducerState::Staging(_)) {
+            self.head.take()
+        } else {
+            None
         }
     }
 
