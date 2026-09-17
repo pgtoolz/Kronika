@@ -139,9 +139,7 @@ sudo journalctl -u kronika-collector -u kronika-web --since '5 minutes ago'
 ```
 
 Откройте `http://<server-ip>:8080`, заменив `<server-ip>` адресом сервера.
-По тому же адресу с путём `/mcp` доступен MCP. Для локального доступа,
-обратного прокси на той же машине или [перенаправления порта по SSH](../INSTALL.ru.md#4-запуск-web)
-укажите в `web.env` `KRONIKA_WEB_LISTEN=127.0.0.1:8080`.
+По тому же адресу с путём `/mcp` доступен MCP.
 
 ## Операции
 

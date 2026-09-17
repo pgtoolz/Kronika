@@ -156,16 +156,11 @@ Web requires write access to the recording directory to create search indexes
 It does not enable collection or hide recorded data. See the [web configuration reference](bins/kronika-web/README.md)
 for authentication settings.
 
-For local access, a reverse proxy on the same machine or SSH forwarding, use
-`--listen 127.0.0.1:8080` instead. This is also the default when unset.
-To forward that listener, run on the client machine:
+The examples use `--listen 0.0.0.0:8080` to listen on all IPv4 interfaces.
+The default listen address is `127.0.0.1:8080`.
 
-```sh
-ssh -N -L 8080:127.0.0.1:8080 user@monitored-host
-```
-
-Open <http://127.0.0.1:8080/> there. MCP uses the same listener and authentication
-at `/mcp`. [Client setup](docs/mcp-clients.md) is also available in the **AI**
+MCP uses the same listener and authentication at `/mcp`.
+[Client setup](docs/mcp-clients.md) is also available in the **AI**
 panel. [Systemd](docs/services.md) defines persistent services.
 
 ## Reference

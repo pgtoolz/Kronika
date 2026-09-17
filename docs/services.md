@@ -131,9 +131,7 @@ sudo journalctl -u kronika-collector -u kronika-web --since '5 minutes ago'
 ```
 
 Open `http://<server-ip>:8080`, replacing `<server-ip>` with the server's
-address. The same listener serves `/mcp`. For local access, a reverse proxy on
-the same machine or [SSH forwarding](../INSTALL.md#4-start-web), use
-`KRONIKA_WEB_LISTEN=127.0.0.1:8080` in `web.env` instead.
+address. The same listener serves `/mcp`.
 
 ## Operations
 
