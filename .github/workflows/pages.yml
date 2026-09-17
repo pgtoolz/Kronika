@@ -46,7 +46,7 @@ jobs:
           install -d "$CARGO_TARGET_DIR" "$TMPDIR"
           cargo +1.96.0 build --locked --release \
             --target "$CARGO_BUILD_TARGET" \
-            -p kronika-report
+            -p kronika-report-cli
 
       - name: Build and exercise Pages report
         env:

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, FixedOffset, Timelike as _};
 use clap::{CommandFactory, FromArgMatches, Parser};
-use kronika_dump::UtcSecond;
+use kronika_slice::UtcSecond;
 
 /// The validated command.
 #[derive(Debug, Clone, PartialEq, Eq)]

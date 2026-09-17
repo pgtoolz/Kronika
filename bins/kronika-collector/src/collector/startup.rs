@@ -7,8 +7,8 @@ use kronika_writer::Journal;
 use crate::config::Config;
 use crate::log_sources::LogSources;
 use crate::logging::{LogLevel, field, log_event};
-use crate::pg_sources::PgSources;
 use crate::segments::{open_collector_journal, report_written};
+use kronika_source_pg::PgCollector;
 
 /// Validate connections and transport settings before changing collector storage.
 /// Then take exclusive writer ownership and publish any recoverable journal.
@@ -19,9 +19,9 @@ use crate::segments::{open_collector_journal, report_written};
 /// scan, or journal recovery.
 pub(crate) fn initialize_collector(
     config: &Config,
-) -> Result<(WriterOwner, Journal, LogSources, PgSources)> {
+) -> Result<(WriterOwner, Journal, LogSources, PgCollector)> {
     let logs = LogSources::open(config).context("open the configured log files")?;
-    let pg = PgSources::open(config).context("open the configured PostgreSQL metrics")?;
+    let pg = crate::pg_sources::open(config).context("open the configured PostgreSQL metrics")?;
 
     std::fs::create_dir_all(&config.storage_dir).context("create the storage directory")?;
     let data_root = DataRoot::open(&config.storage_dir).context("open the data root")?;

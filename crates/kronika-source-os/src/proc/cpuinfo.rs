@@ -12,13 +12,13 @@ pub struct CpuinfoRow {
     pub cpu_id: i32,
     /// CPU model string (`model name` field).
     pub model_name: String,
-    /// Maximum clock frequency in MHz, filled from sysfs by the collector.
+    /// Maximum clock frequency in MHz, filled by source acquisition from sysfs.
     pub mhz_max: Option<f64>,
     /// Physical core within the socket (`core id`); `-1` when absent.
     pub core_id: i32,
     /// Physical socket (`physical id`); `-1` when absent.
     pub socket_id: i32,
-    /// NUMA node, filled from sysfs by the collector; `-1` when unknown.
+    /// NUMA node, filled by source acquisition from sysfs; `-1` when unknown.
     pub numa_node: i32,
 }
 

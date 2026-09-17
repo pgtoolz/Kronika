@@ -3,6 +3,7 @@
 use crate::proc::pressure::{PsiRow, parse_pressure_at};
 use crate::{ProcFs, SysFs};
 
+pub mod discovered_sections;
 pub mod discovery;
 mod model;
 mod parse;

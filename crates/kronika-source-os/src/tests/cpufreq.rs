@@ -79,3 +79,32 @@ fn each_observation_uses_the_first_source_it_can_parse() {
     );
     assert_eq!(second.samples[0].actual_frequency_hz, Some(2_300_000_000));
 }
+
+#[test]
+fn unavailable_policy_attributes_remain_absent() {
+    let dir = tempdir().expect("sysfs root");
+    fs::create_dir_all(dir.path().join("devices/system/cpu/cpufreq/policy3"))
+        .expect("empty policy");
+    let sys = SysFs::new(dir.path().to_path_buf());
+    let observed = collect(&sys, true, true).expect("collect policy");
+    let mut intern = |_: &str| -> Result<kronika_registry::StrId, std::convert::Infallible> {
+        panic!("absent attributes must not reach the dictionary")
+    };
+    let policy = super::policy_row(&observed.policies[0], &mut intern, 0, 9).expect("policy row");
+    let sample = super::sample_row(&observed.samples[0], &mut intern, 0, 9).expect("sample row");
+    assert_eq!((policy.policy_id, sample.policy_id), (3, 3));
+    assert_eq!(policy.related_cpus, None);
+    assert_eq!(policy.scaling_driver, None);
+    assert_eq!((policy.actual_source, sample.actual_source), (None, None));
+    assert_eq!(sample.online_cpus, None);
+    for value in [
+        policy.cpuinfo_min_freq_hz,
+        policy.cpuinfo_max_freq_hz,
+        sample.actual_frequency_hz,
+        sample.scaling_cur_freq_hz,
+        sample.scaling_min_freq_hz,
+        sample.scaling_max_freq_hz,
+    ] {
+        assert_eq!(value, None);
+    }
+}

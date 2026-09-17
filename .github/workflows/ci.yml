@@ -48,7 +48,7 @@ jobs:
       - run: >-
           git diff --exit-code --
           bins/kronika-web/ui/kronika-ui.html.gz
-          bins/kronika-report/assets/kronika-report-shell.html.gz
+          crates/kronika-report/assets/kronika-report-shell.html.gz
       - run: make report
       - run: make fmt-check lint
 
@@ -117,22 +117,22 @@ jobs:
             recorded_collection_modes_generate_matching_report_artifacts \
             --target x86_64-unknown-linux-gnu
           node crates/kronika-report-wasm/tests/node-parity.mjs \
-            bins/kronika-report/assets/kronika-report-wasm.js \
-            bins/kronika-report/assets/kronika-report-wasm.wasm.gz \
+            crates/kronika-report/assets/kronika-report-wasm.js \
+            crates/kronika-report/assets/kronika-report-wasm.wasm.gz \
             target/x86_64-unknown-linux-gnu/debug/examples/native-parity \
             "$report_dir/collection-modes"
-          cargo +1.96.0 build --locked -p kronika-report \
+          cargo +1.96.0 build --locked -p kronika-report-cli \
             --target x86_64-unknown-linux-gnu
           install -m 0644 \
-            bins/kronika-report/tests/fixtures/standalone.zms \
+            crates/kronika-report/tests/fixtures/standalone.zms \
             "$report_dir/1709164800000000.zms"
           target/x86_64-unknown-linux-gnu/debug/kronika-report \
             "$report_dir/1709164800000000.zms" \
             "$report_dir/report.html"
           scripts/report-browser-smoke.sh "$report_dir/report.html"
           git diff --exit-code -- \
-            bins/kronika-report/assets/kronika-report-wasm.js \
-            bins/kronika-report/assets/kronika-report-wasm.wasm.gz
+            crates/kronika-report/assets/kronika-report-wasm.js \
+            crates/kronika-report/assets/kronika-report-wasm.wasm.gz
       - name: Preserve WebAssembly for byte-mismatch diagnosis
         if: failure()
         uses: actions/upload-artifact@v4

@@ -1,5 +1,23 @@
 use super::log_output::query_fields;
 use super::*;
+
+#[test]
+fn source_warnings_do_not_change_query_totals_or_start_periodic_summaries() {
+    let mut diagnostics = PgQueryDiagnostics::new(Instant::now());
+    for warning in [
+        kronika_source_pg::PgWarning::StatsVisibilityRequired {
+            database: "metrics".to_owned(),
+        },
+        kronika_source_pg::PgWarning::StatementsExtensionUpdateRequired {
+            database: "metrics".to_owned(),
+            extension_version: "1.8".to_owned(),
+        },
+    ] {
+        diagnostics.observe(PgObservation::Warning(warning));
+    }
+    assert!(!diagnostics.has_observations);
+    assert_eq!(diagnostics.totals, Totals::default());
+}
 use kronika_source_pg::query::QueryStats;
 
 fn query(elapsed: Duration, stats: QueryStats, outcome: QueryOutcome) -> QueryObservation {

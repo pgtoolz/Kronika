@@ -1,4 +1,4 @@
-//! Strict portable parsing of recorded-data resource paths.
+//! Recorded-data request parsing and error status shared by HTTP and embedded reports.
 
 mod heatmap;
 mod hour;
@@ -133,6 +133,21 @@ impl std::fmt::Display for RouteError {
             Self::NoSuchPath => write!(f, "no such path"),
             Self::BadParameter(name) => write!(f, "invalid parameter {name}"),
         }
+    }
+}
+
+/// HTTP/Fetch status for a query failure, shared by native and embedded responses.
+/// Transport-specific headers and response bodies belong to the caller.
+#[must_use]
+pub const fn query_error_status(error: &QueryError) -> u16 {
+    match error {
+        QueryError::NoSuchSegment | QueryError::NoSuchSection => 404,
+        QueryError::NoSuchColumn(_)
+        | QueryError::MixedUnits(_)
+        | QueryError::BadFilter(_)
+        | QueryError::BadCursor
+        | QueryError::BadLocator(_) => 400,
+        _ => 500,
     }
 }
 

@@ -69,37 +69,6 @@ fn references_and_samples_follow_independent_schedules() {
 }
 
 #[test]
-fn unavailable_policy_attributes_remain_absent() {
-    let dir = tempfile::tempdir().expect("sysfs root");
-    write_policy(dir.path(), 3, &[]);
-    let sys = SysFs::new(dir.path().to_path_buf());
-    let mut interner = Interner::new(DictLimits::default());
-    let mut os = OsSources::default();
-    let due = DueSet::for_test(vec![SourceKind::OsMountTopo, SourceKind::OsCore]);
-
-    collect_cpufreq(&sys, &mut interner, 0, 9, &due, &mut os);
-
-    assert_eq!((os.cpufreq_policy.len(), os.cpufreq.len()), (1, 1));
-    let policy = os.cpufreq_policy[0];
-    let sample = os.cpufreq[0];
-    assert_eq!((policy.policy_id, sample.policy_id), (3, 3));
-    assert_eq!(policy.related_cpus, None);
-    assert_eq!(policy.scaling_driver, None);
-    assert_eq!((policy.actual_source, sample.actual_source), (None, None));
-    assert_eq!(sample.online_cpus, None);
-    for value in [
-        policy.cpuinfo_min_freq_hz,
-        policy.cpuinfo_max_freq_hz,
-        sample.actual_frequency_hz,
-        sample.scaling_cur_freq_hz,
-        sample.scaling_min_freq_hz,
-        sample.scaling_max_freq_hz,
-    ] {
-        assert_eq!(value, None);
-    }
-}
-
-#[test]
 fn dictionary_failure_skips_only_rows_needing_new_strings() {
     for (attribute, value, actual_source, expected_samples) in [
         ("related_cpus", "0", "cpuinfo_avg_freq", &[0, 1, 2][..]),

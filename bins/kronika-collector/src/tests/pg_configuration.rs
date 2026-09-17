@@ -1,4 +1,4 @@
-use crate::pg_sources::PgSources;
+use crate::pg_sources;
 
 #[test]
 fn invalid_ca_configuration_is_reported_without_dsn_or_file_secrets() {
@@ -6,7 +6,7 @@ fn invalid_ca_configuration_is_reported_without_dsn_or_file_secrets() {
     if std::env::var_os(CHILD).is_some() {
         let config = crate::config::Config::from_env().expect("valid collector settings and DSN");
         for error in [
-            PgSources::open(&config).expect_err("invalid CA rejects metrics"),
+            pg_sources::open(&config).expect_err("invalid CA rejects metrics"),
             crate::log_sources::LogSources::open(&config)
                 .expect_err("invalid CA rejects discovery"),
         ] {

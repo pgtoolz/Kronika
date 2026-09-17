@@ -1,27 +1,10 @@
 use super::core::collect_pressure_rows;
-use super::network::net_link_facts;
-use super::storage::{collect_diskstats, collect_mountinfo, mountinfo_entries, resolve_major_zero};
-use super::topology::{cpu_max_mhz, cpu_numa_node};
+use super::storage::{collect_diskstats, collect_mountinfo};
 use super::{OsSources, OsTick, SegmentUserNames, collect_os_sources};
 use crate::scheduler::{DueSet, SourceKind};
 use kronika_source_os::proc::process::ProcessIoCredentials;
 use kronika_source_os::{MountEntry, ProcFs, SysFs, cgroup};
 use kronika_writer::Interner;
-
-fn mount_entry(major: i32, minor: i32, source: &str) -> MountEntry {
-    MountEntry {
-        mount_id: minor,
-        parent_id: 1,
-        major,
-        minor,
-        root: "/".to_owned(),
-        mount_point: "/data".to_owned(),
-        fstype: "btrfs".to_owned(),
-        source: source.to_owned(),
-        deleted: false,
-        is_k8s_infra: false,
-    }
-}
 
 const HOST_CPU_PRESSURE: &str = "some avg10=0.10 avg60=0.05 avg300=0.02 total=10000\n";
 const CONTAINER_CPU_PRESSURE: &str = "some avg10=0.20 avg60=0.10 avg300=0.04 total=20000\n";
@@ -202,56 +185,6 @@ fn pressure_collection_uses_highest_ancestor_and_neutral_scope() {
 }
 
 #[test]
-fn resolve_major_zero_rewrites_dev_backed_subvolumes() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::create_dir_all(dir.path().join("class/block/nvme0n1p2")).expect("mkdir");
-    std::fs::write(dir.path().join("class/block/nvme0n1p2/dev"), "259:2\n").expect("write");
-    let sys = SysFs::new(dir.path().to_path_buf());
-
-    let mut entries = vec![
-        mount_entry(0, 42, "/dev/nvme0n1p2"), // resolvable btrfs subvolume
-        mount_entry(0, 43, "tmpfs"),          // no /dev/ source: unchanged
-        mount_entry(8, 1, "/dev/sda1"),       // already real: unchanged
-    ];
-    resolve_major_zero(&sys, &mut entries);
-
-    assert_eq!((entries[0].major, entries[0].minor), (259, 2));
-    assert_eq!((entries[1].major, entries[1].minor), (0, 43));
-    assert_eq!((entries[2].major, entries[2].minor), (8, 1));
-}
-
-#[test]
-fn mountinfo_resolves_devices_in_the_supplied_sysfs() {
-    let dir = tempfile::tempdir().expect("mount fixture");
-    let proc_root = dir.path().join("proc");
-    let sys_root = dir.path().join("sys");
-    std::fs::create_dir_all(proc_root.join("self")).expect("proc fixture");
-    std::fs::create_dir_all(sys_root.join("class/block/fixture-disk")).expect("sys fixture");
-    std::fs::write(
-        proc_root.join("self/mountinfo"),
-        "30 25 0:42 / /data rw - btrfs /dev/fixture-disk rw\n",
-    )
-    .expect("mountinfo");
-    std::fs::write(sys_root.join("class/block/fixture-disk/dev"), "259:42\n")
-        .expect("device identity");
-
-    let entries = mountinfo_entries(&ProcFs::new(proc_root), &SysFs::new(sys_root));
-
-    assert_eq!(entries.len(), 1);
-    assert_eq!((entries[0].major, entries[0].minor), (259, 42));
-}
-
-#[test]
-fn resolve_major_zero_leaves_entry_when_sysfs_missing() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let sys = SysFs::new(dir.path().to_path_buf());
-    let mut entries = vec![mount_entry(0, 42, "/dev/nvme0n1p2")];
-    resolve_major_zero(&sys, &mut entries);
-    // Unresolvable major==0 stays 0 and is dropped downstream by device_map.
-    assert_eq!((entries[0].major, entries[0].minor), (0, 42));
-}
-
-#[test]
 fn collect_mountinfo_emits_every_mount_entry() {
     let entries = vec![
         MountEntry {
@@ -290,17 +223,6 @@ fn collect_mountinfo_emits_every_mount_entry() {
     assert_ne!(rows[0].mount_point, rows[1].mount_point);
 }
 
-#[test]
-fn cpu_max_mhz_reads_sysfs_khz() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let rel = "devices/system/cpu/cpu0/cpufreq";
-    std::fs::create_dir_all(dir.path().join(rel)).expect("mkdir");
-    std::fs::write(dir.path().join(rel).join("cpuinfo_max_freq"), "3600000\n").expect("write");
-    let sys = SysFs::new(dir.path().to_path_buf());
-
-    assert_eq!(cpu_max_mhz(&sys, 0), Some(3600.0));
-    assert_eq!(cpu_max_mhz(&sys, 1), None);
-}
 // Verify that diskstats rows are not emitted on an OsMountTopo-only tick.
 #[test]
 fn collect_os_sources_no_diskstats_on_mount_topo_only_tick() {
@@ -370,42 +292,4 @@ fn container_diskstats_keep_mounted_and_charged_devices_only() {
 
     let machine = collect_diskstats(&fs, &mut interner, 0, 0, None);
     assert_eq!(machine.len(), 3, "a machine keeps every node device");
-}
-
-#[test]
-fn net_link_facts_read_sysfs_and_fall_back_to_unknown() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let rel = "class/net/eno1";
-    std::fs::create_dir_all(dir.path().join(rel)).expect("mkdir");
-    std::fs::write(dir.path().join(rel).join("speed"), "10000\n").expect("write speed");
-    std::fs::write(dir.path().join(rel).join("duplex"), "full\n").expect("write duplex");
-    let sys = SysFs::new(dir.path().to_path_buf());
-
-    assert_eq!(net_link_facts(&sys, "eno1"), (Some(10_000), 2));
-    // A virtual interface has neither file.
-    assert_eq!(net_link_facts(&sys, "lo"), (None, 0));
-}
-
-#[test]
-fn a_down_interface_reports_no_speed_rather_than_a_negative_one() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let rel = "class/net/eth0";
-    std::fs::create_dir_all(dir.path().join(rel)).expect("mkdir");
-    std::fs::write(dir.path().join(rel).join("speed"), "-1\n").expect("write speed");
-    std::fs::write(dir.path().join(rel).join("duplex"), "unknown\n").expect("write duplex");
-    let sys = SysFs::new(dir.path().to_path_buf());
-
-    assert_eq!(net_link_facts(&sys, "eth0"), (None, 0));
-}
-
-#[test]
-fn cpu_numa_node_reads_the_node_symlink_or_reports_none() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::create_dir_all(dir.path().join("devices/system/cpu/cpu0/node3")).expect("mkdir");
-    std::fs::create_dir_all(dir.path().join("devices/system/cpu/cpu1")).expect("mkdir");
-    let sys = SysFs::new(dir.path().to_path_buf());
-
-    assert_eq!(cpu_numa_node(&sys, 0), 3);
-    assert_eq!(cpu_numa_node(&sys, 1), -1);
-    assert_eq!(cpu_numa_node(&sys, 9), -1);
 }

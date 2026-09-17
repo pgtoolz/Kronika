@@ -4,6 +4,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::SysFs;
+use kronika_registry::{
+    StrId, Ts,
+    os_cpufreq::{OsCpufreq, OsCpufreqPolicy},
+};
 
 /// Maximum `CPUFreq` policies accepted in one complete collection.
 pub const MAX_CPUFREQ_POLICIES: usize = 512;
@@ -224,6 +228,59 @@ fn parse_cpu_list(content: &str) -> Option<BTreeSet<i32>> {
         }
     }
     (!cpus.is_empty()).then_some(cpus)
+}
+
+/// Convert one policy using caller-owned dictionary admission.
+///
+/// # Errors
+/// Returns the first interning failure before attempting later fields.
+pub fn policy_row<E>(
+    policy: &CpuFreqPolicy,
+    intern: &mut impl FnMut(&str) -> Result<StrId, E>,
+    scope: u8,
+    ts: i64,
+) -> Result<OsCpufreqPolicy, E> {
+    Ok(OsCpufreqPolicy {
+        ts: Ts(ts),
+        policy_id: policy.policy_id,
+        related_cpus: intern_optional(intern, policy.related_cpus.as_deref())?,
+        scaling_driver: intern_optional(intern, policy.scaling_driver.as_deref())?,
+        actual_source: intern_optional(intern, policy.actual_source.attribute_name())?,
+        cpuinfo_min_freq_hz: policy.cpuinfo_min_freq_hz,
+        cpuinfo_max_freq_hz: policy.cpuinfo_max_freq_hz,
+        scope,
+    })
+}
+
+/// Convert one sample, retaining nullable hardware readings.
+///
+/// # Errors
+/// Returns the interning failure for the selected source name.
+pub fn sample_row<E>(
+    sample: &CpuFreqSample,
+    intern: &mut impl FnMut(&str) -> Result<StrId, E>,
+    scope: u8,
+    ts: i64,
+) -> Result<OsCpufreq, E> {
+    Ok(OsCpufreq {
+        ts: Ts(ts),
+        policy_id: sample.policy_id,
+        actual_source: intern_optional(intern, sample.actual_source.attribute_name())?,
+        actual_frequency_hz: sample.actual_frequency_hz,
+        scaling_cur_freq_hz: sample.scaling_cur_freq_hz,
+        scaling_min_freq_hz: sample.scaling_min_freq_hz,
+        scaling_max_freq_hz: sample.scaling_max_freq_hz,
+        online_cpus: sample.online_cpus,
+        scope,
+    })
+}
+
+/// Missing values remain NULL; dictionary failures propagate to skip the row.
+fn intern_optional<E>(
+    intern: &mut impl FnMut(&str) -> Result<StrId, E>,
+    value: Option<&str>,
+) -> Result<Option<StrId>, E> {
+    value.map(intern).transpose()
 }
 
 #[cfg(test)]

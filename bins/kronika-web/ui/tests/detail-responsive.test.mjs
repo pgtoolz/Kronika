@@ -45,7 +45,7 @@ test("all detail key/value rows share a readable label track and bounded value t
 test("live and report artifacts retain the shared Detail value style", async () => {
   const [live, report] = await Promise.all([
     readFile(new URL("../kronika-ui.html.gz", import.meta.url)),
-    readFile(new URL("../../../kronika-report/assets/kronika-report-shell.html.gz", import.meta.url)),
+    readFile(new URL("../../../../crates/kronika-report/assets/kronika-report-shell.html.gz", import.meta.url)),
   ])
   for (const [name, artifact] of [["live", live], ["report", report]]) {
     assert.match(gunzipSync(artifact).toString("utf8"), /\.detail-dd\{/s, name)

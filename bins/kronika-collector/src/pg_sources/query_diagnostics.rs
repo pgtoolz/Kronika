@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use super::{ConnectionObservation, PgObservation, QueryObservation, QueryOutcome};
 use crate::logging::{LogLevel, log_event, peak_rss_kib};
-use log_output::{log_connection, log_query, summary_fields};
+use log_output::{log_connection, log_query, log_warning, summary_fields};
 
 /// Minimum interval between periodic `pg_query_summary` log entries.
 /// Periodic reports start after the first query or connection failure;
@@ -38,13 +38,15 @@ impl PgQueryDiagnostics {
     }
 
     pub(crate) fn observe(&mut self, observation: PgObservation) {
-        self.has_observations = true;
         match observation {
             PgObservation::Query(observation) => {
+                self.has_observations = true;
                 log_query(&observation);
                 self.totals.record_query(&observation);
             }
+            PgObservation::Warning(warning) => log_warning(&warning),
             PgObservation::Connection(observation) => {
+                self.has_observations = true;
                 log_connection(&observation);
                 self.totals.record_connection(observation.timeout);
             }

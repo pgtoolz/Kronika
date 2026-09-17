@@ -13,7 +13,12 @@
 
 pub mod block_topology;
 pub mod cgroup;
+mod collection;
 pub mod cpufreq;
+pub mod kernel;
+pub mod network;
+pub mod topology;
+pub use collection::CollectionError;
 
 mod fs;
 pub use fs::{

@@ -1,8 +1,8 @@
 use std::time::Instant;
 
 use kronika_format::DictError;
-use kronika_registry::os_cpufreq::{OsCpufreq, OsCpufreqPolicy};
-use kronika_registry::{Section, StrId, Ts};
+use kronika_registry::os_cpufreq::OsCpufreq;
+use kronika_registry::{Section, StrId};
 use kronika_source_os::{SysFs, cpufreq};
 use kronika_writer::Interner;
 
@@ -36,20 +36,28 @@ pub(super) fn collect_cpufreq(
     if emit_reference {
         store_rows(
             &mut os.cpufreq_policy,
-            observed
-                .policies
-                .iter()
-                .map(|policy| policy_row(policy, interner, scope, ts)),
+            observed.policies.iter().map(|policy| {
+                cpufreq::policy_row(
+                    policy,
+                    &mut |value| interner.intern(value.as_bytes()).map(|id| StrId(id.get())),
+                    scope,
+                    ts,
+                )
+            }),
             started,
         );
     }
     if emit_samples {
         store_rows(
             &mut os.cpufreq,
-            observed
-                .samples
-                .iter()
-                .map(|sample| sample_row(sample, interner, scope, ts)),
+            observed.samples.iter().map(|sample| {
+                cpufreq::sample_row(
+                    sample,
+                    &mut |value| interner.intern(value.as_bytes()).map(|id| StrId(id.get())),
+                    scope,
+                    ts,
+                )
+            }),
             started,
         );
     }
@@ -74,53 +82,6 @@ fn store_rows<S: Section>(
     if !output.is_empty() {
         log_collection_finish(type_id, "sysfs", output.len(), started.elapsed());
     }
-}
-
-fn policy_row(
-    policy: &cpufreq::CpuFreqPolicy,
-    interner: &mut Interner,
-    scope: u8,
-    ts: i64,
-) -> Result<OsCpufreqPolicy, DictError> {
-    Ok(OsCpufreqPolicy {
-        ts: Ts(ts),
-        policy_id: policy.policy_id,
-        related_cpus: intern_optional(interner, policy.related_cpus.as_deref())?,
-        scaling_driver: intern_optional(interner, policy.scaling_driver.as_deref())?,
-        actual_source: intern_optional(interner, policy.actual_source.attribute_name())?,
-        cpuinfo_min_freq_hz: policy.cpuinfo_min_freq_hz,
-        cpuinfo_max_freq_hz: policy.cpuinfo_max_freq_hz,
-        scope,
-    })
-}
-
-fn sample_row(
-    sample: &cpufreq::CpuFreqSample,
-    interner: &mut Interner,
-    scope: u8,
-    ts: i64,
-) -> Result<OsCpufreq, DictError> {
-    Ok(OsCpufreq {
-        ts: Ts(ts),
-        policy_id: sample.policy_id,
-        actual_source: intern_optional(interner, sample.actual_source.attribute_name())?,
-        actual_frequency_hz: sample.actual_frequency_hz,
-        scaling_cur_freq_hz: sample.scaling_cur_freq_hz,
-        scaling_min_freq_hz: sample.scaling_min_freq_hz,
-        scaling_max_freq_hz: sample.scaling_max_freq_hz,
-        online_cpus: sample.online_cpus,
-        scope,
-    })
-}
-
-/// Missing values remain NULL; dictionary failures propagate to skip the row.
-fn intern_optional(
-    interner: &mut Interner,
-    value: Option<&str>,
-) -> Result<Option<StrId>, DictError> {
-    value
-        .map(|value| interner.intern(value.as_bytes()).map(|id| StrId(id.get())))
-        .transpose()
 }
 
 #[cfg(test)]

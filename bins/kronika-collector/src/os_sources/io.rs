@@ -54,3 +54,24 @@ pub(super) fn log_degraded(type_id: u32, source: &'static str, reason: &dyn std:
         ],
     );
 }
+
+/// Record one completed procfs collection while retaining its missing-file policy.
+pub(super) fn collected_rows<S: kronika_registry::Section>(
+    rows: Result<Vec<S>, kronika_source_os::CollectionError>,
+    origin: &'static str,
+    started: std::time::Instant,
+) -> Vec<S> {
+    let type_id = S::CONTRACT.type_id.get();
+    match rows {
+        Ok(rows) => {
+            crate::logging::log_collection_finish(type_id, "procfs", rows.len(), started.elapsed());
+            rows
+        }
+        Err(error) => {
+            if !error.is_missing() {
+                log_degraded(type_id, origin, &error);
+            }
+            Vec::new()
+        }
+    }
+}

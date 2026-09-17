@@ -70,7 +70,11 @@ if [[ -z "$bin_dir" ]]; then
     build_cflags=$CFLAGS_aarch64_unknown_linux_musl
   fi
   packages=()
-  for binary in "${binaries[@]}"; do packages+=(-p "$binary"); done
+  for binary in "${binaries[@]}"; do
+    package=$binary
+    [[ "$binary" != kronika-report ]] || package=kronika-report-cli
+    packages+=(-p "$package")
+  done
   build_command=(cargo build --release --locked --target "$target" "${packages[@]}")
   build_compiler=$(cd "$repo" && "${RUSTC:-rustc}" --version)
   (

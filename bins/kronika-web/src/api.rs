@@ -122,16 +122,9 @@ impl Prepared {
 
 pub(crate) type ApiError = QueryError;
 
-pub(crate) const fn api_error_status(error: &ApiError) -> StatusCode {
-    match error {
-        ApiError::NoSuchSegment | ApiError::NoSuchSection => StatusCode::NOT_FOUND,
-        ApiError::NoSuchColumn(_)
-        | ApiError::MixedUnits(_)
-        | ApiError::BadFilter(_)
-        | ApiError::BadCursor
-        | ApiError::BadLocator(_) => StatusCode::BAD_REQUEST,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
-    }
+pub(crate) fn api_error_status(error: &ApiError) -> StatusCode {
+    StatusCode::from_u16(kronika_api::query_error_status(error))
+        .expect("the shared API returns a valid HTTP status")
 }
 
 struct NativeSink<'a, E, C> {

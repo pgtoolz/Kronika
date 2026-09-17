@@ -12,22 +12,11 @@ use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use kronika_dump::{SliceError, SliceRange, slice_to_zms};
 use kronika_reader::{Reader, ReaderError};
+use kronika_slice::{SliceError, SliceRange, slice_to_zms};
 use kronika_store::{ResourceError, validate_finished_zms};
 
 use crate::args::{Command, View};
-
-// Package dependencies used by the library target are intentionally shared
-// with this binary target.
-use arrow_array as _;
-use arrow_select as _;
-use kronika_format as _;
-use kronika_layout as _;
-#[cfg(test)]
-use kronika_report as _;
-use kronika_writer as _;
-use tempfile as _;
 
 fn main() -> ExitCode {
     let parsed = match args::parse(std::env::args_os().skip(1)) {

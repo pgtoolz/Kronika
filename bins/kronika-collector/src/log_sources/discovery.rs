@@ -1,10 +1,11 @@
 //! Refresh server log metadata and reconcile the files being followed.
 
+use anyhow::Context as _;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use kronika_source_log::pgbouncer::PgBouncerLog;
-use kronika_source_log::postgres::{LinePrefix, PgLog};
+use kronika_source_log::postgres::{LinePrefix, LogTimezone, PgLog};
 
 use super::{LogSources, PostgresFacts, PostgresSource, paths, settings};
 use crate::logging::{LogLevel, field, log_event};
@@ -26,6 +27,7 @@ impl LogSources {
                 &target.transport,
                 target.system_identifier,
                 self.discover_postgres_paths,
+                |name| LogTimezone::parse(name).context("resolve PostgreSQL log_timezone"),
                 observe,
             )
             .await

@@ -17,7 +17,9 @@ use crate::instance_metadata::push_instance_metadata;
 use crate::logging::{LogLevel, field, log_event};
 use crate::os_sources::{OsTick, collect_os_sources, push_os_sources};
 use crate::pg_sources::query_diagnostics::PgQueryDiagnostics;
-use crate::pg_sources::{PgBatch, PgObservation, PgSources, QueryOutcome, push_pg_batch};
+use crate::pg_sources::{
+    PgBatch, PgObservation, QueryOutcome, collection_selection, push_pg_batch,
+};
 use crate::scheduler::DueSet;
 use crate::segments::{
     AppendWindowError, append_window_and_maybe_close, encode_window, report_written,
@@ -46,7 +48,7 @@ impl WindowWriter<'_> {
     /// Stream due `PostgreSQL` sources into independently admitted WAL parts.
     pub(super) async fn collect_postgres(
         &mut self,
-        pg: &mut PgSources,
+        pg: &mut kronika_source_pg::PgCollector,
         due: &DueSet,
         diagnostics: &mut PgQueryDiagnostics,
         cgroup_pass: Option<&CgroupPass>,
@@ -56,7 +58,7 @@ impl WindowWriter<'_> {
         let mut blocking = None;
         let result = pg
             .collect(
-                due,
+                &collection_selection(due),
                 &mut |observation| {
                     // Empty queries emit no batches. Only successful completion
                     // proves that blocking cleared; errors leave the cadence alone.

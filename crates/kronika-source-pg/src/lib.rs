@@ -1,4 +1,13 @@
 //! Collecting metrics from a `PostgreSQL` server.
+//!
+//! [`PgCollector`] owns connection generations, discovery, capability caches and
+//! bounded acquisition. Callers provide a [`Pool`], a [`PgCollectionSelection`]
+//! and synchronous batch-admission and observation callbacks. Scheduling,
+//! persistence and diagnostic formatting remain outside the library.
+//!
+//! [`log_discovery`] reads server log metadata using the same connection setup
+//! and safe endpoint identities. Its timezone resolver keeps log parser types
+//! in the caller, and `PgBouncer` retains its distinct Simple Query Protocol.
 macro_rules! marked {
     () => {
         concat!(
@@ -20,6 +29,15 @@ macro_rules! marked {
         )
     };
 }
+
+mod acquisition;
+mod connection;
+pub mod log_discovery;
+
+pub use acquisition::{
+    ConnectionObservation, PgBatch, PgCollectionSelection, PgCollector, PgObservation, PgWarning,
+    QueryObservation, QueryOutcome,
+};
 
 pub mod activity;
 pub mod archiver;

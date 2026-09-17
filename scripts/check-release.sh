@@ -124,7 +124,7 @@ for name in ('os_cpu', 'os_process'):
 store = scratch / 'data'
 segment_dir = store / '2024/02/29'
 segment_dir.mkdir(parents=True)
-fixture = repo / 'bins/kronika-report/tests/fixtures/standalone.zms'
+fixture = repo / 'crates/kronika-report/tests/fixtures/standalone.zms'
 shutil.copyfile(fixture, segment_dir / '1709164800000000.zms')
 dump = subprocess.run([package / 'kronika-dump', store, '--json'], env=env,
                       capture_output=True, text=True, check=True, timeout=30)

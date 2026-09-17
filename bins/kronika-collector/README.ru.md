@@ -391,4 +391,4 @@ sudo /usr/local/bin/kronika-collector --storage-dir /var/lib/kronika
 
 - [Настройки](src/config.rs) · [Расписание](src/scheduler.rs) · [Основной цикл](src/main.rs) · [rotation.rs](src/rotation.rs)
 - [подключения к базам](../../crates/kronika-source-pg/src/pool.rs) · [поиск расширений](../../crates/kronika-source-pg/src/extension.rs) · [настройки](../../crates/kronika-source-pg/src/settings.rs) · [состав записываемых полей](../../docs/type-registry/postgresql-metrics.ru.md)
-- [поиск журналов](src/log_sources.rs) · [настройки сервера и определение пути](src/log_sources/settings.rs) · [чтение журналов](../../crates/kronika-source-log/src) · [разбор PostgreSQL](../../crates/kronika-source-log/src/postgres.rs)
+- [поиск журналов](src/log_sources.rs) · [настройки сервера и определение пути](../../crates/kronika-source-pg/src/log_discovery.rs) · [чтение журналов](../../crates/kronika-source-log/src) · [разбор PostgreSQL](../../crates/kronika-source-log/src/postgres.rs)

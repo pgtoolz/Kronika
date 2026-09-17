@@ -170,15 +170,7 @@ impl ReportResponse {
     }
 
     fn query(error: &QueryError) -> Self {
-        let status = match error {
-            QueryError::NoSuchSegment | QueryError::NoSuchSection => NOT_FOUND,
-            QueryError::NoSuchColumn(_)
-            | QueryError::MixedUnits(_)
-            | QueryError::BadFilter(_)
-            | QueryError::BadCursor
-            | QueryError::BadLocator(_) => BAD_REQUEST,
-            _ => INTERNAL_SERVER_ERROR,
-        };
+        let status = kronika_api::query_error_status(error);
         let code = error.code();
         let parameter = error.parameter().map(str::to_owned);
         Self::refusal(status, code, parameter, error.to_string())

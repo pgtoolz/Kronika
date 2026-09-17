@@ -12,10 +12,6 @@ use std::path::Path;
 
 use crate::{SysFs, parse_dev_pair};
 
-#[cfg(test)]
-#[path = "tests/block_topology.rs"]
-mod tests;
-
 const MAX_BLOCK_DEVICES: usize = 4096;
 
 /// One exact edge from a block device to the device directly beneath it.
@@ -129,3 +125,38 @@ pub fn chains_under(
     chains.sort_unstable();
     chains
 }
+
+/// Read attribution edges and convert only chains beneath the supplied roots.
+/// Without roots, all visible block-device edges are retained.
+///
+/// # Errors
+/// Returns the bounded block-topology discovery error.
+pub fn collect_sections<S: std::hash::BuildHasher>(
+    sys: &SysFs,
+    scope: u8,
+    ts: i64,
+    kept: Option<&HashSet<(i32, i32), S>>,
+) -> Result<Vec<kronika_registry::os_block_topology::OsBlockTopology>, BlockTopologyError> {
+    let edges = collect(sys)?;
+    let edges = match kept {
+        Some(roots) => chains_under(&edges, roots.iter().copied()),
+        None => edges,
+    };
+    Ok(edges
+        .into_iter()
+        .map(
+            |edge| kronika_registry::os_block_topology::OsBlockTopology {
+                ts: kronika_registry::Ts(ts),
+                major: edge.child.0,
+                minor: edge.child.1,
+                parent_major: edge.parent.0,
+                parent_minor: edge.parent.1,
+                scope,
+            },
+        )
+        .collect())
+}
+
+#[cfg(test)]
+#[path = "tests/block_topology.rs"]
+mod tests;

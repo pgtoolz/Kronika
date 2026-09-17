@@ -6,8 +6,8 @@
 //! the bind-mounted infrastructure files (`/etc/hosts`, service-account
 //! secrets, ...) that share the node's root device but carry no pod I/O.
 //!
-//! Pure string logic: no filesystem or syscall reads. The `/sys/class/block`
-//! resolution of `major == 0` subvolume devices (btrfs, ZFS) is a later step.
+//! Bounded acquisition resolves `major == 0` subvolume devices through the
+//! caller's sysfs root; filesystem capacity remains a caller-supplied observation.
 
 use std::collections::{HashMap, HashSet};
 
@@ -262,6 +262,78 @@ pub fn mount_row(
         available_inodes: space.map(|s| s.available_inodes),
         scope,
     }
+}
+
+/// Read mount attribution, filtering kernel/pseudo filesystems before resolving
+/// subvolume devices through the supplied sysfs root.
+///
+/// # Errors
+/// Returns a bounded mountinfo read failure.
+pub fn collect_entries(fs: &crate::ProcFs, sys: &crate::SysFs) -> std::io::Result<Vec<MountEntry>> {
+    let content = fs.read_raw("self/mountinfo")?;
+    let mut entries = parse_mountinfo(&content);
+    entries.retain(|entry| {
+        !is_pseudo_filesystem(&entry.fstype) && !is_kernel_tree_mount(&entry.mount_point)
+    });
+    resolve_major_zero(sys, &mut entries);
+    Ok(entries)
+}
+
+/// Recover the real `(major, minor)` of `major == 0` subvolume mounts (btrfs,
+/// ZFS) whose source is a `/dev/` node, by reading `class/block/<name>/dev`.
+///
+/// Entries that cannot be resolved keep `major == 0` and are dropped by
+/// `device_map`/`container_device_set` downstream.
+pub fn resolve_major_zero(sys: &crate::SysFs, entries: &mut [MountEntry]) {
+    for entry in entries.iter_mut().filter(|e| e.major == 0) {
+        let Some(name) = entry.source.strip_prefix("/dev/") else {
+            continue;
+        };
+        let rel = format!("class/block/{name}/dev");
+        if let Ok(content) = sys.read(&rel)
+            && let Some((major, minor)) = crate::parse_dev_pair(&content)
+        {
+            entry.major = major;
+            entry.minor = minor;
+        }
+    }
+}
+
+/// Convert mounts with caller-supplied capacity results and string admission.
+/// All four strings are attempted in mount-point/root/type/source order even
+/// when one is rejected; incomplete rows are omitted.
+#[must_use]
+pub fn to_sections(
+    entries: &[MountEntry],
+    capacities: impl IntoIterator<Item = Option<FsSpace>>,
+    scope: u8,
+    ts: i64,
+    mut intern: impl FnMut(&str) -> Option<StrId>,
+) -> Vec<OsMountinfo> {
+    let mut rows = Vec::new();
+    for (entry, space) in entries.iter().zip(capacities) {
+        let (Some(mount_point), Some(root), Some(fstype), Some(source)) = (
+            intern(&entry.mount_point),
+            intern(&entry.root),
+            intern(&entry.fstype),
+            intern(&entry.source),
+        ) else {
+            continue;
+        };
+        rows.push(mount_row(
+            entry,
+            space,
+            scope,
+            ts,
+            MountStringIds {
+                mount_point,
+                root,
+                fstype,
+                source,
+            },
+        ));
+    }
+    rows
 }
 
 #[cfg(test)]

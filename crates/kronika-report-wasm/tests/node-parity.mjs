@@ -16,7 +16,7 @@ assert.ok(nativeArgument, "native oracle path is required");
 const gluePath = resolve(glueArgument);
 const wasmPath = resolve(wasmArgument);
 const nativePath = resolve(nativeArgument);
-const fixtureRoot = new URL("../../../bins/kronika-report/tests/fixtures/", import.meta.url);
+const fixtureRoot = new URL("../../../crates/kronika-report/tests/fixtures/", import.meta.url);
 const [glue, wasmGzip, zms, idx] = await Promise.all([
   readFile(gluePath, "utf8"),
   readFile(wasmPath),

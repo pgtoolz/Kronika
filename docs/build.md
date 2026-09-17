@@ -29,7 +29,7 @@ Choose the build command for your machine. On x86-64 Linux:
 rustup target add x86_64-unknown-linux-musl
 cargo build --release --locked --target x86_64-unknown-linux-musl \
   -p kronika-collector -p kronika-web -p kronika-dump \
-  -p kronika-report
+  -p kronika-report-cli
 ```
 
 Outputs: `target/x86_64-unknown-linux-musl/release/kronika-{collector,web,dump,report}`.
@@ -45,7 +45,7 @@ CC_aarch64_unknown_linux_musl=musl-gcc \
 CFLAGS_aarch64_unknown_linux_musl=-mno-outline-atomics \
 cargo build --release --locked --target aarch64-unknown-linux-musl \
   -p kronika-collector -p kronika-web -p kronika-dump \
-  -p kronika-report
+  -p kronika-report-cli
 ```
 
 Outputs: `target/aarch64-unknown-linux-musl/release/`. The C flag emits inline
@@ -90,7 +90,7 @@ GitHub Actions.
 Regenerate the report WebAssembly on x86_64 Ubuntu 24.04 with the
 `x86_64-unknown-linux-gnu` Rust host. Install Clang 18.1.3 and `llvm-ar-18`
 with `sudo apt-get install clang-18 llvm-18`.
-See the [asset build reference](../bins/kronika-report/assets/README.md) for tool paths.
+See the [asset build reference](../crates/kronika-report/assets/README.md) for tool paths.
 
 ```sh
 rustup target add wasm32-unknown-unknown --toolchain 1.96.0

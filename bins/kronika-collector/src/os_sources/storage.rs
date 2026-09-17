@@ -5,13 +5,10 @@ use std::time::Instant;
 
 use kronika_registry::{Section, os_diskstats::OsDiskstats, os_mountinfo::OsMountinfo};
 use kronika_source_os::proc::diskstats;
-use kronika_source_os::{
-    MountEntry, MountStringIds, ProcFs, SysFs, is_kernel_tree_mount, is_pseudo_filesystem,
-    mount_row, parse_dev_pair, parse_mountinfo,
-};
+use kronika_source_os::{MountEntry, ProcFs, SysFs};
 use kronika_writer::Interner;
 
-use super::io::{intern_str, log_degraded, read_optional_os_file};
+use super::io::{intern_str, log_degraded};
 use crate::logging::log_collection_finish;
 
 /// Read and parse `/proc/diskstats`, interning device names into rows.
@@ -27,62 +24,23 @@ pub(super) fn collect_diskstats(
 ) -> Vec<OsDiskstats> {
     let type_id = OsDiskstats::CONTRACT.type_id.get();
     let started = Instant::now();
-    let Some(content) = read_optional_os_file(fs, "diskstats", type_id) else {
-        return Vec::new();
-    };
-    let mut rows = match diskstats::parse(&content) {
-        Ok(rows) => rows,
-        Err(err) => {
-            log_degraded(type_id, "diskstats", &err.0);
-            return Vec::new();
-        }
-    };
-
-    if let Some(kept) = kept {
-        rows.retain(|row| kept.contains(&(row.major, row.minor)));
-    }
-
-    let built: Vec<OsDiskstats> = rows
-        .iter()
-        .filter_map(|row| {
-            let device = intern_str(interner, type_id, "diskstats", &row.device)?;
-            Some(row.to_section(scope, ts, device))
-        })
-        .collect();
-    log_collection_finish(type_id, "procfs", built.len(), started.elapsed());
-    built
+    let rows = diskstats::collect(fs, scope, ts, kept, |value| {
+        intern_str(interner, type_id, "diskstats", value)
+    });
+    super::io::collected_rows(rows, "diskstats", started)
 }
 
 /// Read and parse `/proc/self/mountinfo`, resolving `major == 0` subvolume
 /// devices via `/sys`.
 pub(super) fn mountinfo_entries(fs: &ProcFs, sys: &SysFs) -> Vec<MountEntry> {
     let type_id = OsMountinfo::CONTRACT.type_id.get();
-    let Some(content) = read_optional_os_file(fs, "self/mountinfo", type_id) else {
-        return Vec::new();
-    };
-    let mut entries = parse_mountinfo(&content);
-    entries.retain(|entry| {
-        !is_pseudo_filesystem(&entry.fstype) && !is_kernel_tree_mount(&entry.mount_point)
-    });
-    resolve_major_zero(sys, &mut entries);
-    entries
-}
-
-/// Recover the real `(major, minor)` of `major == 0` subvolume mounts (btrfs,
-/// ZFS) whose source is a `/dev/` node, by reading `class/block/<name>/dev`.
-/// Entries that cannot be resolved keep `major == 0` and are dropped by
-/// `device_map`/`container_device_set` downstream.
-pub(crate) fn resolve_major_zero(sys: &SysFs, entries: &mut [MountEntry]) {
-    for entry in entries.iter_mut().filter(|e| e.major == 0) {
-        let Some(name) = entry.source.strip_prefix("/dev/") else {
-            continue;
-        };
-        let rel = format!("class/block/{name}/dev");
-        if let Ok(content) = sys.read(&rel)
-            && let Some((major, minor)) = parse_dev_pair(&content)
-        {
-            entry.major = major;
-            entry.minor = minor;
+    match kronika_source_os::mount::collect_entries(fs, sys) {
+        Ok(entries) => entries,
+        Err(error) => {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log_degraded(type_id, "self/mountinfo", &error);
+            }
+            Vec::new()
         }
     }
 }
@@ -102,29 +60,9 @@ pub(crate) fn collect_mountinfo(
     let type_id = OsMountinfo::CONTRACT.type_id.get();
     let started = Instant::now();
     let capacities = crate::filesystem_capacity::collect(entries);
-    let mut rows = Vec::new();
-    for (entry, space) in entries.iter().zip(capacities) {
-        let (Some(mount_point), Some(root), Some(fstype), Some(source)) = (
-            intern_str(interner, type_id, "self/mountinfo", &entry.mount_point),
-            intern_str(interner, type_id, "self/mountinfo", &entry.root),
-            intern_str(interner, type_id, "self/mountinfo", &entry.fstype),
-            intern_str(interner, type_id, "self/mountinfo", &entry.source),
-        ) else {
-            continue;
-        };
-        rows.push(mount_row(
-            entry,
-            space,
-            scope,
-            ts,
-            MountStringIds {
-                mount_point,
-                root,
-                fstype,
-                source,
-            },
-        ));
-    }
+    let rows = kronika_source_os::mount::to_sections(entries, capacities, scope, ts, |value| {
+        intern_str(interner, type_id, "self/mountinfo", value)
+    });
     log_collection_finish(type_id, "procfs", rows.len(), started.elapsed());
     rows
 }

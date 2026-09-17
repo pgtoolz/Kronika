@@ -190,6 +190,32 @@ impl DiskstatsRow {
     }
 }
 
+/// Read device counters, retaining only caller-attributed devices when provided.
+/// Rejected names omit their own rows without changing later admission order.
+///
+/// # Errors
+/// Returns a bounded procfs read or counter parse failure.
+pub fn collect<S: std::hash::BuildHasher>(
+    fs: &crate::ProcFs,
+    scope: u8,
+    ts: i64,
+    kept: Option<&std::collections::HashSet<(i32, i32), S>>,
+    mut intern: impl FnMut(&str) -> Option<StrId>,
+) -> Result<Vec<OsDiskstats>, crate::CollectionError> {
+    let content = fs.read_raw("diskstats")?;
+    let mut rows = parse(&content)?;
+    if let Some(kept) = kept {
+        rows.retain(|row| kept.contains(&(row.major, row.minor)));
+    }
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            let device = intern(&row.device)?;
+            Some(row.to_section(scope, ts, device))
+        })
+        .collect())
+}
+
 #[cfg(test)]
 #[path = "../tests/proc/diskstats.rs"]
 mod tests;

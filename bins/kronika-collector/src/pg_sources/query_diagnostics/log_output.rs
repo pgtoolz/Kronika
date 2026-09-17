@@ -1,5 +1,6 @@
 //! Stable event names, field names, and units used in the collector log.
 
+use kronika_source_pg::PgWarning;
 use std::time::Duration;
 
 use super::{ConnectionObservation, QueryObservation, QueryOutcome, SLOW_QUERY, Totals};
@@ -7,6 +8,31 @@ use crate::logging::{LogField, LogLevel, duration_ms, field, log_event};
 
 const MIB: u128 = 1_048_576;
 const DECIMAL_PLACES: u128 = 1_000_000;
+
+pub(super) fn log_warning(warning: &PgWarning) {
+    match warning {
+        PgWarning::StatementsExtensionUpdateRequired {
+            database,
+            extension_version,
+        } => log_event(
+            LogLevel::Warn,
+            "pg_stat_statements_extension_update_required",
+            &[
+                field("database", database),
+                field("extension_version", extension_version),
+                field("reason", "run ALTER EXTENSION pg_stat_statements UPDATE"),
+            ],
+        ),
+        PgWarning::StatsVisibilityRequired { database } => log_event(
+            LogLevel::Warn,
+            "pg_stats_visibility_required",
+            &[
+                field("database", database),
+                field("reason", "pg_read_all_stats_required"),
+            ],
+        ),
+    }
+}
 
 pub(super) fn log_query(observation: &QueryObservation) {
     let fetch_elapsed = observation.stats.fetch_elapsed(observation.elapsed);

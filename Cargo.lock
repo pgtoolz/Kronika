@@ -1530,7 +1530,6 @@ dependencies = [
  "anyhow",
  "bsize",
  "clap",
- "futures-util",
  "kronika-format",
  "kronika-index",
  "kronika-layout",
@@ -1580,8 +1579,6 @@ dependencies = [
 name = "kronika-dump"
 version = "1.1.2"
 dependencies = [
- "arrow-array",
- "arrow-select",
  "chrono",
  "clap",
  "kronika-format",
@@ -1589,7 +1586,7 @@ dependencies = [
  "kronika-layout",
  "kronika-reader",
  "kronika-registry",
- "kronika-report",
+ "kronika-slice",
  "kronika-store",
  "kronika-writer",
  "serde_json",
@@ -1683,7 +1680,6 @@ name = "kronika-report"
 version = "1.1.2"
 dependencies = [
  "base64 0.22.1",
- "clap",
  "flate2",
  "kronika-format",
  "kronika-index",
@@ -1698,6 +1694,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kronika-report-cli"
+version = "1.1.2"
+dependencies = [
+ "clap",
+ "kronika-report",
+ "kronika-store",
+ "tempfile",
+]
+
+[[package]]
 name = "kronika-report-wasm"
 version = "1.1.2"
 dependencies = [
@@ -1706,6 +1712,23 @@ dependencies = [
  "kronika-query",
  "kronika-report",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kronika-slice"
+version = "1.1.2"
+dependencies = [
+ "arrow-array",
+ "arrow-select",
+ "kronika-format",
+ "kronika-index",
+ "kronika-layout",
+ "kronika-reader",
+ "kronika-registry",
+ "kronika-report",
+ "kronika-store",
+ "kronika-writer",
+ "tempfile",
 ]
 
 [[package]]
@@ -1767,7 +1790,6 @@ dependencies = [
  "hyper",
  "hyper-util",
  "kronika-api",
- "kronika-dump",
  "kronika-format",
  "kronika-index",
  "kronika-layout",
@@ -1775,6 +1797,7 @@ dependencies = [
  "kronika-reader",
  "kronika-registry",
  "kronika-report",
+ "kronika-slice",
  "kronika-writer",
  "rmcp",
  "schemars",

@@ -10,7 +10,7 @@ use hyper::StatusCode;
 use hyper::header::{
     CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, VARY,
 };
-use kronika_dump::{RangeError, SliceError, SliceRange, UtcSecond};
+use kronika_slice::{RangeError, SliceError, SliceRange, UtcSecond};
 
 use super::{
     ExportError, ExportPreparation, PreparedExport, build, filename, parse, prepared_response,

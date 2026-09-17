@@ -134,3 +134,103 @@ fn mount_row_maps_space_fields() {
     assert_eq!(row2.total_inodes, Some(100_000));
     assert_eq!(row2.available_inodes, Some(40_000));
 }
+
+use crate::{ProcFs, SysFs};
+
+fn mount_entry(major: i32, minor: i32, source: &str) -> MountEntry {
+    MountEntry {
+        mount_id: minor,
+        parent_id: 1,
+        major,
+        minor,
+        root: "/".to_owned(),
+        mount_point: "/data".to_owned(),
+        fstype: "btrfs".to_owned(),
+        source: source.to_owned(),
+        deleted: false,
+        is_k8s_infra: false,
+    }
+}
+
+#[test]
+fn resolve_major_zero_rewrites_dev_backed_subvolumes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("class/block/nvme0n1p2")).expect("mkdir");
+    std::fs::write(dir.path().join("class/block/nvme0n1p2/dev"), "259:2\n").expect("write");
+    let sys = SysFs::new(dir.path().to_path_buf());
+
+    let mut entries = vec![
+        mount_entry(0, 42, "/dev/nvme0n1p2"), // resolvable btrfs subvolume
+        mount_entry(0, 43, "tmpfs"),          // no /dev/ source: unchanged
+        mount_entry(8, 1, "/dev/sda1"),       // already real: unchanged
+    ];
+    resolve_major_zero(&sys, &mut entries);
+
+    assert_eq!((entries[0].major, entries[0].minor), (259, 2));
+    assert_eq!((entries[1].major, entries[1].minor), (0, 43));
+    assert_eq!((entries[2].major, entries[2].minor), (8, 1));
+}
+
+#[test]
+fn mountinfo_resolves_devices_in_the_supplied_sysfs() {
+    let dir = tempfile::tempdir().expect("mount fixture");
+    let proc_root = dir.path().join("proc");
+    let sys_root = dir.path().join("sys");
+    std::fs::create_dir_all(proc_root.join("self")).expect("proc fixture");
+    std::fs::create_dir_all(sys_root.join("class/block/fixture-disk")).expect("sys fixture");
+    std::fs::write(
+        proc_root.join("self/mountinfo"),
+        "30 25 0:42 / /data rw - btrfs /dev/fixture-disk rw\n",
+    )
+    .expect("mountinfo");
+    std::fs::write(sys_root.join("class/block/fixture-disk/dev"), "259:42\n")
+        .expect("device identity");
+
+    let entries =
+        collect_entries(&ProcFs::new(proc_root), &SysFs::new(sys_root)).expect("mount entries");
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!((entries[0].major, entries[0].minor), (259, 42));
+}
+
+#[test]
+fn resolve_major_zero_leaves_entry_when_sysfs_missing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sys = SysFs::new(dir.path().to_path_buf());
+    let mut entries = vec![mount_entry(0, 42, "/dev/nvme0n1p2")];
+    resolve_major_zero(&sys, &mut entries);
+    // Unresolvable major==0 stays 0 and is dropped downstream by device_map.
+    assert_eq!((entries[0].major, entries[0].minor), (0, 42));
+}
+
+#[test]
+fn section_conversion_attempts_each_mount_string_and_skips_only_incomplete_rows() {
+    let first = mount_entry(8, 1, "/dev/sda1");
+    let second = MountEntry {
+        mount_point: "/other".to_owned(),
+        ..first.clone()
+    };
+    let mut strings = Vec::new();
+    let rows = to_sections(&[first, second], [None, None], 4, 41, |value| {
+        strings.push(value.to_owned());
+        (value != "/data").then_some(StrId(7))
+    });
+    assert_eq!(
+        strings,
+        [
+            "/data",
+            "/",
+            "btrfs",
+            "/dev/sda1",
+            "/other",
+            "/",
+            "btrfs",
+            "/dev/sda1"
+        ]
+    );
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].ts.0, rows[0].scope, rows[0].major, rows[0].minor),
+        (41, 4, 8, 1)
+    );
+}

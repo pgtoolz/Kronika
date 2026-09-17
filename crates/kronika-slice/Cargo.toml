@@ -1,0 +1,27 @@
+[package]
+name = "kronika-slice"
+description = "Extracts bounded time ranges into standalone Kronika ZMS recordings"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+arrow-array = "55"
+arrow-select = "55"
+kronika-format = { path = "../kronika-format" }
+kronika-layout = { path = "../kronika-layout" }
+kronika-reader = { path = "../kronika-reader" }
+kronika-registry = { path = "../kronika-registry" }
+kronika-store = { path = "../kronika-store" }
+kronika-writer = { path = "../kronika-writer" }
+
+[dev-dependencies]
+kronika-index = { path = "../kronika-index" }
+kronika-report = { path = "../kronika-report", features = ["generator"] }
+tempfile = "3"
+
+[lints]
+workspace = true

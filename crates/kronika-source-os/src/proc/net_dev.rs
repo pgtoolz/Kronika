@@ -43,9 +43,9 @@ pub struct NetDevRow {
     pub tx_carrier: i64,
     /// Compressed packets transmitted.
     pub tx_compressed: i64,
-    /// Negotiated link speed in Mbit/s, filled from sysfs by the collector.
+    /// Negotiated link speed in Mbit/s, filled by source acquisition from sysfs.
     pub speed_mbit: Option<i64>,
-    /// `0` unknown, `1` half, `2` full, filled from sysfs by the collector.
+    /// `0` unknown, `1` half, `2` full, filled by source acquisition from sysfs.
     pub duplex: u8,
 }
 

@@ -20,7 +20,6 @@ kronika-writer = { path = "../../crates/kronika-writer" }
 rustix = { version = "1", features = ["fs"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 anyhow = "1"
-futures-util = "0.3"
 kronika-source-log = { version = "1.1.2", path = "../../crates/kronika-source-log" }
 tokio-postgres = "0.7.18"
 

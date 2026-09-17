@@ -8,3 +8,4 @@ pub(crate) fn intern(bytes: &[u8]) -> Result<kronika_registry::StrId, std::conve
     });
     Ok(kronika_registry::StrId(hash | 1))
 }
+mod acquisition_api;

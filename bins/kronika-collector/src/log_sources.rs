@@ -8,7 +8,7 @@ mod buffering;
 mod collection;
 mod discovery;
 mod paths;
-mod settings;
+use kronika_source_pg::log_discovery as settings;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

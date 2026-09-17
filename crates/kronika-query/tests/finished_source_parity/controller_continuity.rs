@@ -4,7 +4,7 @@ use super::*;
     dead_code,
     reason = "shared report fixture also provides PostgreSQL and unified cgroup cases"
 )]
-#[path = "../../../../bins/kronika-report/tests/support/collection_modes.rs"]
+#[path = "../../../../crates/kronika-report/tests/support/collection_modes.rs"]
 mod collection_modes;
 
 #[test]

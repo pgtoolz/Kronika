@@ -10,9 +10,9 @@ use chrono::{DateTime, Utc};
 use http_body_util::BodyExt as _;
 use hyper::Response;
 use hyper::header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, HeaderValue, VARY};
-use kronika_dump::{SliceError, SliceRange, UtcSecond, slice_to_zms};
 use kronika_reader::{Reader, ReaderError};
 use kronika_report::{HtmlReportError, ReportTimeRange, write_html_from_file_with_segment_id};
+use kronika_slice::{SliceError, SliceRange, UtcSecond, slice_to_zms};
 use tokio::sync::{Semaphore, mpsc};
 
 use crate::api::CachePolicy;

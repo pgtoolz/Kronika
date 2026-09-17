@@ -7,7 +7,7 @@ pub(crate) use kronika_query::{Order, RelationGroup};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Route {
     Recorded(Box<kronika_api::Route>),
-    Export(kronika_dump::SliceRange),
+    Export(kronika_slice::SliceRange),
     McpAccess,
     InstanceLabel,
 }

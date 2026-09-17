@@ -381,4 +381,4 @@ CPU ticks use the recorded `clock_ticks_per_sec`. Unavailable readings stay abse
 
 - [Configuration](src/config.rs) · [Schedule](src/scheduler.rs) · [Main loop](src/main.rs) · [Rotation implementation](src/rotation.rs)
 - [database pool](../../crates/kronika-source-pg/src/pool.rs) · [extension discovery](../../crates/kronika-source-pg/src/extension.rs) · [settings](../../crates/kronika-source-pg/src/settings.rs) · [recorded layouts](../../docs/type-registry/postgresql-metrics.md)
-- [source discovery](src/log_sources.rs) · [SQL facts and path resolution](src/log_sources/settings.rs) · [log collector](../../crates/kronika-source-log/src) · [PostgreSQL parser](../../crates/kronika-source-log/src/postgres.rs)
+- [source discovery](src/log_sources.rs) · [SQL facts and path resolution](../../crates/kronika-source-pg/src/log_discovery.rs) · [log collector](../../crates/kronika-source-log/src) · [PostgreSQL parser](../../crates/kronika-source-log/src/postgres.rs)

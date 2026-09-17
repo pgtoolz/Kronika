@@ -2,10 +2,9 @@
 
 use std::process::Command;
 use {
-    arrow_array as _, arrow_select as _, chrono as _, clap as _, kronika_dump as _,
-    kronika_format as _, kronika_index as _, kronika_layout as _, kronika_reader as _,
-    kronika_registry as _, kronika_report as _, kronika_store as _, kronika_writer as _,
-    serde_json as _,
+    chrono as _, clap as _, kronika_format as _, kronika_index as _, kronika_layout as _,
+    kronika_reader as _, kronika_registry as _, kronika_slice as _, kronika_store as _,
+    kronika_writer as _, serde_json as _,
 };
 
 #[test]

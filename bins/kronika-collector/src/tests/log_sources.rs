@@ -337,8 +337,7 @@ async fn configured_postgres_log_discovery_never_attempts_an_ignored_legacy_targ
     const CHILD: &str = "KRONIKA_TEST_SINGLE_DSN_LOG_CHILD";
     if let Ok(expected) = std::env::var(CHILD) {
         let config = crate::config::Config::from_env().expect("normalized collector config");
-        let _metrics =
-            crate::pg_sources::PgSources::open(&config).expect("same selected metrics DSN");
+        let _metrics = crate::pg_sources::open(&config).expect("same selected metrics DSN");
         let mut sources = LogSources::open(&config).expect("open normalized log target");
         sources.rescan(&mut |_| {}).await;
         if expected == "success" {
@@ -724,6 +723,49 @@ async fn explicit_postgres_logs_receive_and_refresh_the_servers_timezone() {
             .iter()
             .all(|query| !query.contains("pg_current_logfile")
                 && !query.contains("current_setting('data_directory')"))
+    );
+}
+
+#[tokio::test]
+async fn invalid_timezone_fails_the_facts_query_before_identity_discovery() {
+    let dir = tempfile::tempdir().expect("timezone fixture");
+    let path = dir.path().join("postgresql.log");
+    std::fs::write(&path, "").expect("log file");
+    let server = FakePostgres::start(
+        vec![Reply::Value(LogFacts {
+            path: path.display().to_string(),
+            prefix: "%m ",
+            timezone: "Kronika/Unknown_Timezone",
+        })],
+        Vec::new(),
+    );
+    let mut sources = postgres_sources(dir.path(), &server.dsn);
+    let mut observations = Vec::new();
+    sources
+        .rescan_postgres(&mut |observation| observations.push(observation))
+        .await;
+
+    assert!(sources.postgres.is_empty());
+    assert!(
+        sources
+            .pg_dsn
+            .as_ref()
+            .expect("target")
+            .system_identifier
+            .is_none()
+    );
+    assert_eq!(query_counts(&server.finish()), (1, 0));
+    let [kronika_source_pg::PgObservation::Query(query)] = observations.as_slice() else {
+        panic!("only the failed facts query should be observed: {observations:?}");
+    };
+    assert_eq!(query.query_name, "postgres_log_facts");
+    assert_eq!(query.outcome, kronika_source_pg::QueryOutcome::Error);
+    assert!(
+        query
+            .error
+            .as_deref()
+            .expect("timezone error")
+            .contains("resolve PostgreSQL log_timezone")
     );
 }
 

@@ -175,6 +175,6 @@ converts that recording into HTML.
 - Reference: [Controls](docs/features.md) · [Time](docs/metrics-time.md) · [Linux](docs/metrics-linux.md) · [PostgreSQL](docs/metrics-postgresql.md) · [MCP](docs/mcp-clients.md)
 - Programs: [Collector](bins/kronika-collector/README.md) · [Web](bins/kronika-web/README.md) · [Dump](bins/kronika-dump/README.md) · [Report](bins/kronika-report/README.md)
 - Recorded fields: [Linux](docs/type-registry/os.md) · [PostgreSQL metrics](docs/type-registry/postgresql-metrics.md) · [PostgreSQL events](docs/type-registry/postgresql.md) · [PgBouncer events](docs/type-registry/pgbouncer.md)
-- Development: [Segment format](crates/kronika-format/README.md) · [Development demo](bins/kronika-demo/README.md)
+- Development: [Libraries](crates/README.md) · [Segment format](crates/kronika-format/README.md) · [Development demo](bins/kronika-demo/README.md)
 
 [MIT License](LICENSE).

@@ -1,4 +1,11 @@
 use super::*;
+use kronika_registry::{
+    os_cgroup_cpu::OsCgroupCpuV3, os_cgroup_memory::OsCgroupMemoryV3, os_cgroup_pids::OsCgroupPids,
+    os_cgroup_v2_cpu::OsCgroupV2Cpu, os_cgroup_v2_group::OsCgroupV2Group,
+    os_cgroup_v2_io::OsCgroupV2Io, os_cgroup_v2_memory::OsCgroupV2Memory,
+    os_cgroup_v2_pids::OsCgroupV2Pids,
+};
+use kronika_source_os::{OsScope, cgroup};
 
 use std::collections::BTreeMap;
 
@@ -84,15 +91,6 @@ fn context_section_interns_the_selected_path_identity_and_root_for_every_control
     assert_eq!(row.effective_cpu_period_usec, None);
     assert_eq!(row.effective_memory_max, None);
     assert_eq!(row.scope, OsScope::Unknown.as_u8());
-}
-
-#[test]
-fn unavailable_finite_and_unlimited_limits_remain_distinct() {
-    assert_eq!(finite_limit(None), (None, None));
-    assert_eq!(finite_limit(Some(-2)), (None, None));
-    assert_eq!(finite_limit(Some(-1)), (None, Some(true)));
-    assert_eq!(finite_limit(Some(0)), (Some(0), Some(false)));
-    assert_eq!(finite_limit(Some(42)), (Some(42), Some(false)));
 }
 
 #[test]
