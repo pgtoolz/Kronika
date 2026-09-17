@@ -1,15 +1,65 @@
-//! Filesystem adapter for the standalone report command.
+//! Command arguments and atomic publication of a standalone report.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{self, BufWriter, Write as _};
 use std::path::{Path, PathBuf};
 
+use clap::{CommandFactory as _, Parser};
 use kronika_report::{
     HtmlReportError, ReportTimeRange, write_html_from_file, write_html_from_file_with_range,
 };
 
 const TEMP_PREFIX: &str = ".kronika-report-";
+
+/// Turn a finished ZMS recording into one interactive HTML file.
+#[derive(Debug, Parser)]
+#[command(name = "kronika-report", version, after_long_help = crate::help::EXAMPLES)]
+struct Args {
+    /// Finished standalone ZMS file; directories and active.wal are not accepted.
+    #[arg(value_name = "INPUT.zms")]
+    input: PathBuf,
+    /// Exact .html path; atomically replaces an existing file. Parent must exist.
+    #[arg(value_name = "OUTPUT.html")]
+    output: PathBuf,
+    /// Inclusive visible start in Unix microseconds; requires --to-exclusive.
+    #[arg(long, requires = "to_exclusive", value_name = "MICROSECONDS")]
+    from: Option<i64>,
+    /// Exclusive visible end in Unix microseconds; requires --from.
+    #[arg(long, requires = "from", value_name = "MICROSECONDS")]
+    to_exclusive: Option<i64>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Config {
+    pub(crate) input: PathBuf,
+    pub(crate) output: PathBuf,
+    pub(crate) visible_range: Option<ReportTimeRange>,
+}
+
+/// Parse arguments and validate the visible interval before file access.
+pub(crate) fn parse_from(
+    args: impl IntoIterator<Item = impl Into<OsString> + Clone>,
+) -> Result<Config, clap::Error> {
+    let args = Args::try_parse_from(args)?;
+    let visible_range = args
+        .from
+        .zip(args.to_exclusive)
+        .map(|(from, to)| {
+            ReportTimeRange::new(from, to).ok_or_else(|| {
+                Args::command().error(
+                    clap::error::ErrorKind::ValueValidation,
+                    "report bounds must satisfy 0 < from < to-exclusive <= 9007199254740991 (Unix microseconds)",
+                )
+            })
+        })
+        .transpose()?;
+    Ok(Config {
+        input: args.input,
+        output: args.output,
+        visible_range,
+    })
+}
 
 /// Failure while reading paths or atomically publishing an HTML document.
 #[derive(Debug)]
@@ -56,12 +106,6 @@ impl std::error::Error for GenerateError {
     }
 }
 
-impl From<HtmlReportError> for GenerateError {
-    fn from(source: HtmlReportError) -> Self {
-        Self::Document(source)
-    }
-}
-
 /// Generate and atomically replace one standalone report.
 pub(crate) fn generate(
     input: &Path,
@@ -71,17 +115,16 @@ pub(crate) fn generate(
     if output.extension() != Some(OsStr::new("html")) {
         return Err(GenerateError::InvalidOutputName(output.to_path_buf()));
     }
-    let file = File::open(input).map_err(|source| GenerateError::Input {
+    let input_error = |source| GenerateError::Input {
         path: input.to_path_buf(),
         source,
-    })?;
-    let len = file
-        .metadata()
-        .map_err(|source| GenerateError::Input {
-            path: input.to_path_buf(),
-            source,
-        })?
-        .len();
+    };
+    let output_error = |source| GenerateError::Output {
+        path: output.to_path_buf(),
+        source,
+    };
+    let file = File::open(input).map_err(input_error)?;
+    let len = file.metadata().map_err(input_error)?.len();
     let parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -89,42 +132,30 @@ pub(crate) fn generate(
     let mut temporary = tempfile::Builder::new()
         .prefix(TEMP_PREFIX)
         .tempfile_in(parent)
-        .map_err(|source| output_error(output, source))?;
+        .map_err(output_error)?;
     {
         let mut buffered = BufWriter::new(&mut temporary);
         match visible_range {
             Some(range) => write_html_from_file_with_range(file, len, range, &mut buffered),
             None => write_html_from_file(file, len, &mut buffered),
         }
-        .map_err(|error| document_error(output, error))?;
-        buffered
-            .flush()
-            .map_err(|source| output_error(output, source))?;
+        .map_err(|error| match error {
+            HtmlReportError::Write(source) => output_error(source),
+            source => GenerateError::Document(source),
+        })?;
+        buffered.flush().map_err(output_error)?;
     }
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|source| output_error(output, source))?;
+    temporary.as_file().sync_all().map_err(output_error)?;
     temporary
         .persist(output)
-        .map_err(|error| output_error(output, error.error))?;
+        .map_err(|error| output_error(error.error))?;
     Ok(())
 }
 
-fn document_error(path: &Path, error: HtmlReportError) -> GenerateError {
-    match error {
-        HtmlReportError::Write(source) => output_error(path, source),
-        source => GenerateError::Document(source),
-    }
-}
-
-fn output_error(path: &Path, source: io::Error) -> GenerateError {
-    GenerateError::Output {
-        path: path.to_path_buf(),
-        source,
-    }
-}
+#[cfg(test)]
+#[path = "tests/output.rs"]
+mod output_tests;
 
 #[cfg(test)]
-#[path = "cli_tests.rs"]
-mod tests;
+#[path = "tests/arguments.rs"]
+mod arguments_tests;

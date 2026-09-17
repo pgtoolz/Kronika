@@ -1,10 +1,13 @@
 //! Printing a segment as a table or as JSON.
 
+mod index;
+
+pub(crate) use index::index;
+
 use std::collections::HashSet;
 use std::io::Write;
 
-use kronika_index::SeriesBlock;
-use kronika_reader::{Cell, Dictionary, Reader, Resolved, Segment, SegmentRef, StoreWarning};
+use kronika_reader::{Cell, Dictionary, Resolved, Segment, StoreWarning};
 use kronika_registry::{DICT_BLOBS_TYPE_ID, DICT_STRINGS_TYPE_ID, contract, section_name};
 use serde_json::{Map, Value, json};
 
@@ -20,7 +23,7 @@ pub(crate) fn warning(
     warning: &StoreWarning,
 ) -> Result<(), DumpError> {
     if json_output {
-        say(
+        write_json(
             output,
             &json!({"kind": "warning", "detail": format!("{warning:?}")}),
         )?;
@@ -46,7 +49,7 @@ pub(crate) fn sizes(
     })?;
     if json_output {
         let path = segment.source_label();
-        say(
+        write_json(
             output,
             &json!({
                 "kind": "segment",
@@ -60,7 +63,7 @@ pub(crate) fn sizes(
             }),
         )?;
         for (type_id, section) in segment.sections() {
-            say(
+            write_json(
                 output,
                 &json!({
                     "kind": "section",
@@ -73,7 +76,7 @@ pub(crate) fn sizes(
                 }),
             )?;
         }
-        say(
+        write_json(
             output,
             &json!({
                 "kind": "overhead",
@@ -112,182 +115,6 @@ pub(crate) fn sizes(
         percent(overhead_bytes, captured_bytes)
     )?;
     Ok(())
-}
-
-/// The small presentation-series index this segment would get.
-///
-/// # Errors
-///
-/// Returns a build, reader, or index-encoding error when the segment cannot be
-/// summarized exactly.
-#[cfg(test)]
-pub(crate) fn index(
-    output: &mut impl Write,
-    json_output: bool,
-    segment: &Segment,
-) -> Result<(), DumpError> {
-    let built = kronika_index::build(segment)?;
-    write_index(output, json_output, segment, &built)
-}
-
-pub(crate) fn index_from_reader(
-    output: &mut impl Write,
-    json_output: bool,
-    reader: &Reader,
-    segment_ref: &SegmentRef,
-    segment: &Segment,
-) -> Result<(), DumpError> {
-    let built = kronika_index::build_from_reader(reader, segment_ref, segment)?;
-    write_index(output, json_output, segment, &built)
-}
-
-fn write_index(
-    output: &mut impl Write,
-    json_output: bool,
-    segment: &Segment,
-    built: &kronika_index::Index,
-) -> Result<(), DumpError> {
-    let path = segment.source_label();
-    if json_output {
-        for block in &built.blocks {
-            match block {
-                SeriesBlock::OsHealth(points) => {
-                    write_health_points(output, path, "os_health", points)?;
-                }
-                SeriesBlock::OverallHealth(points) => {
-                    write_health_points(output, path, "overall_health", points)?;
-                }
-                SeriesBlock::PostgresHealth(points) => {
-                    write_health_points(output, path, "postgres_health", points)?;
-                }
-                SeriesBlock::PgTransactions { type_id, points } => {
-                    for point in points {
-                        say(
-                            output,
-                            &json!({
-                                "kind": "point",
-                                "path": path,
-                                "series": "transactions_per_second",
-                                "type_id": type_id.to_string(),
-                                "ts": point.timestamp.to_string(),
-                                "identity": { "datid": point.datid },
-                                "value": point.value,
-                            }),
-                        )?;
-                    }
-                }
-                SeriesBlock::PgActiveBackends { type_id, points } => {
-                    for point in points {
-                        say(
-                            output,
-                            &json!({
-                                "kind": "point",
-                                "path": path,
-                                "series": "active_backends",
-                                "type_id": type_id.to_string(),
-                                "ts": point.timestamp.to_string(),
-                                "identity": {},
-                                "value": point.count,
-                            }),
-                        )?;
-                    }
-                }
-                SeriesBlock::Findings(block) => {
-                    say(
-                        output,
-                        &json!({
-                            "kind": "findings",
-                            "path": path,
-                            "type_id": block.type_id.to_string(),
-                            "total_hits": block.total_hits,
-                            "truncated": block.truncated,
-                        }),
-                    )?;
-                    for finding in &block.findings {
-                        let mut value = json!({
-                            "kind": "finding",
-                            "path": path,
-                            "mark": match finding.kind {
-                                kronika_index::FindingKind::KnownBad => "known_bad",
-                                kronika_index::FindingKind::Spike => "spike",
-                                kronika_index::FindingKind::Event => "event",
-                            },
-                            "type_id": block.type_id.to_string(),
-                            "field_ordinal": finding.field_ordinal,
-                            "row_ordinal": finding.row_ordinal,
-                            "ts": finding.timestamp.to_string(),
-                        });
-                        if let Some(category) = finding.category {
-                            value["category"] = category.into();
-                        }
-                        say(output, &value)?;
-                    }
-                }
-            }
-        }
-        return Ok(());
-    }
-    let encoded_bytes = built.encode()?.len();
-    let point_count = built.blocks.iter().map(index_block_len).sum::<usize>();
-    writeln!(
-        output,
-        "{path}  blocks={}  points={point_count}  idx_bytes={encoded_bytes}",
-        built.blocks.len(),
-    )?;
-    for block in &built.blocks {
-        writeln!(
-            output,
-            "  {:<28} points={}",
-            index_block_name(block),
-            index_block_len(block),
-        )?;
-    }
-    Ok(())
-}
-
-fn write_health_points(
-    output: &mut impl Write,
-    path: &str,
-    series: &str,
-    points: &[kronika_index::HealthPoint],
-) -> Result<(), DumpError> {
-    for point in points {
-        say(
-            output,
-            &json!({
-                "kind": "point",
-                "path": path,
-                "series": series,
-                "type_id": "0",
-                "ts": point.timestamp.to_string(),
-                "identity": {},
-                "value": point.value,
-            }),
-        )?;
-    }
-    Ok(())
-}
-
-const fn index_block_name(block: &SeriesBlock) -> &'static str {
-    match block {
-        SeriesBlock::OsHealth(_) => "os_health",
-        SeriesBlock::OverallHealth(_) => "overall_health",
-        SeriesBlock::PostgresHealth(_) => "postgres_health",
-        SeriesBlock::PgTransactions { .. } => "transactions_per_second",
-        SeriesBlock::PgActiveBackends { .. } => "active_backends",
-        SeriesBlock::Findings(_) => "findings",
-    }
-}
-
-const fn index_block_len(block: &SeriesBlock) -> usize {
-    match block {
-        SeriesBlock::OsHealth(points)
-        | SeriesBlock::OverallHealth(points)
-        | SeriesBlock::PostgresHealth(points) => points.len(),
-        SeriesBlock::PgTransactions { points, .. } => points.len(),
-        SeriesBlock::PgActiveBackends { points, .. } => points.len(),
-        SeriesBlock::Findings(block) => block.findings.len(),
-    }
 }
 
 /// The rows of one section, with dictionary ids resolved to what they hold.
@@ -362,7 +189,7 @@ pub(crate) fn section(
             let body: Vec<String> = row
                 .iter()
                 .map(|(name, cell)| {
-                    let value = show(cell, &dictionary);
+                    let value = text_cell(cell, &dictionary);
                     let shown = value.as_deref().unwrap_or("null");
                     format!("{name}={shown}")
                 })
@@ -452,7 +279,7 @@ fn write_json_row(
     type_id: u32,
     row: &Value,
 ) -> Result<(), DumpError> {
-    say(
+    write_json(
         output,
         &json!({
             "kind": "row",
@@ -465,7 +292,7 @@ fn write_json_row(
 
 /// One cell as text. A dictionary id becomes what the segment interned under
 /// it; a blob that was stored cut says so rather than passing for whole.
-fn show(cell: &Cell, dictionary: &Dictionary) -> Option<String> {
+fn text_cell(cell: &Cell, dictionary: &Dictionary) -> Option<String> {
     match cell {
         Cell::Null => None,
         Cell::I16(v) => Some(v.to_string()),
@@ -518,14 +345,15 @@ fn json_cell(cell: &Cell, dictionary: &Dictionary) -> Value {
         Cell::F64(v) => json!(v),
         Cell::Bool(v) => json!(v),
         Cell::ListI32(v) => json!(v),
-        Cell::StrId(_id) => show(cell, dictionary).map_or(Value::Null, Value::String),
+        Cell::StrId(_id) => text_cell(cell, dictionary).map_or(Value::Null, Value::String),
     }
 }
 
 /// One JSON document per line, so a long dump streams.
-fn say(output: &mut impl Write, value: &Value) -> Result<(), DumpError> {
+fn write_json(output: &mut impl Write, value: &Value) -> Result<(), DumpError> {
     writeln!(output, "{value}").map_err(DumpError::Output)
 }
 
 #[cfg(test)]
+#[path = "tests/render.rs"]
 mod tests;

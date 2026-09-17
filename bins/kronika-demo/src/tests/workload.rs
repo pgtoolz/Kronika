@@ -1,4 +1,5 @@
-use super::{WorkloadConfig, connection_config, required_direct_dsn};
+use super::config::required_direct_dsn;
+use super::{WorkloadConfig, connection_config};
 
 pub(super) fn config() -> WorkloadConfig {
     WorkloadConfig {

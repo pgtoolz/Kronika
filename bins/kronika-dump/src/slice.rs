@@ -1,39 +1,28 @@
 //! Storage-form-neutral row selection and finished-ZMS construction.
 
-use std::collections::{BTreeMap, HashSet};
+mod selection;
+mod staging;
+
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
-use std::io::{self, BufWriter, Seek as _, SeekFrom, Write};
-use std::os::unix::fs::FileExt as _;
+use std::io::{self, Seek as _, SeekFrom, Write};
 
-use arrow_array::{Array as _, BooleanArray, Int64Array, RecordBatch, UInt64Array};
-use arrow_select::filter::filter_record_batch;
-use kronika_format::{Crc32c, StrId};
 use kronika_layout::SegmentId;
-use kronika_reader::{
-    Listing, OwnedDictionaryValue, Reader, ReaderError, SegmentRef, StoreObject, StoreWarning,
-    StoreWarningReason,
-};
-use kronika_registry::{
-    Bytes, CodecError, ColumnType, DICT_BLOBS_TYPE_ID, DICT_STRINGS_TYPE_ID, Semantics,
-    TypeContract, contract, encode_final_batches, encode_final_sections_to,
-};
+use kronika_reader::{Listing, Reader, ReaderError, StoreObject, StoreWarning, StoreWarningReason};
+use kronika_registry::{CodecError, DICT_BLOBS_TYPE_ID, DICT_STRINGS_TYPE_ID};
 use kronika_store::ActiveJournalWarningReason;
-use kronika_writer::{
-    FinishedDictionary, FinishedSection, FinishedZmsPlan, WriteError, write_finished_zms,
-};
+use kronika_writer::{FinishedZmsPlan, WriteError, write_finished_zms};
+
+use self::selection::select_boundaries;
+use self::staging::stage_selected_rows;
 
 const MICROS_PER_SECOND: i64 = 1_000_000;
+// Counter/rate calculations need neighboring observations, bounded to 30 seconds.
 const CONTEXT_MICROS: i64 = 30 * MICROS_PER_SECOND;
+// The storage layout accepts years 0000..=9999; context is clipped at those edges.
 const LAYOUT_MIN_MICROS: i64 = -62_167_219_200_000_000;
 const LAYOUT_MAX_EXCLUSIVE_MICROS: i64 = 253_402_300_800_000_000;
-
-#[cfg(test)]
-std::thread_local! {
-    static AFTER_SELECTION_PASS: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
-        std::cell::RefCell::new(None);
-}
 
 /// One whole UTC second accepted by the storage layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -119,21 +108,19 @@ impl SliceRange {
         self.to
     }
 
-    fn micros(self) -> Result<MicrosRange, RangeError> {
+    fn micros(self) -> MicrosRange {
         let from = self.from.unix_micros();
-        let to_exclusive = self
-            .to
-            .unix_micros()
-            .checked_add(MICROS_PER_SECOND)
-            .ok_or(RangeError::OutOfRange)?;
-        Ok(MicrosRange {
+        // UtcSecond already bounds endpoints to the layout; the exclusive end
+        // of its final valid second is still safely inside i64.
+        let to_exclusive = self.to.unix_micros() + MICROS_PER_SECOND;
+        MicrosRange {
             from,
             to_exclusive,
             context_from: from.saturating_sub(CONTEXT_MICROS).max(LAYOUT_MIN_MICROS),
             context_to_exclusive: to_exclusive
                 .saturating_add(CONTEXT_MICROS)
                 .min(LAYOUT_MAX_EXCLUSIVE_MICROS),
-        })
+        }
     }
 }
 
@@ -317,7 +304,9 @@ pub fn slice_to_zms(
     scratch: &mut File,
     output: &mut impl Write,
 ) -> Result<SliceSummary, SliceError> {
-    let range = range.micros()?;
+    let range = range.micros();
+    // Rotation can invalidate the captured active journal between the two passes.
+    // Retry the entire capture once; never append partially prepared output.
     let prepared = match prepare_slice(reader, range, scratch) {
         Ok(prepared) => prepared,
         Err(problem) if retryable_source_change(&problem) => prepare_slice(reader, range, scratch)?,
@@ -363,13 +352,16 @@ fn prepare_captured_slice(
 ) -> Result<PreparedSlice, SliceError> {
     check_warnings(listing)?;
 
-    let mut selections = selection_pass(reader, &listing.segments, range)?;
-    if !selections.values().any(|selection| selection.in_request) {
+    let selections = select_boundaries(reader, &listing.segments, range)?;
+    if !selections
+        .values()
+        .any(|selection| selection.has_requested_rows)
+    {
         return Err(SliceError::NoRowsInRequestedRange);
     }
 
     #[cfg(test)]
-    AFTER_SELECTION_PASS.with(|slot| {
+    tests::AFTER_SELECTION_PASS.with(|slot| {
         if let Some(hook) = slot.borrow_mut().as_mut() {
             hook();
         }
@@ -377,36 +369,11 @@ fn prepare_captured_slice(
 
     let segment_id =
         SegmentId::new(range.from).map_err(|_problem| SliceError::Range(RangeError::OutOfRange))?;
-    let selected = stage_selected_rows(reader, &listing.segments, &mut selections, range, scratch)?;
+    let selected = stage_selected_rows(reader, &listing.segments, &selections, range, scratch)?;
     if selected.rows_written == 0 || selected.actual_min_ts > selected.actual_max_ts {
         return Err(SliceError::NoRowsInRequestedRange);
     }
-    let staging = scratch.try_clone()?;
-    let sections = {
-        let mut spool_writer = BufWriter::new(&mut *scratch);
-        let mut sections = finalize_data(
-            &staging,
-            &selected.staged,
-            &mut spool_writer,
-            selected.staging_end,
-        )?;
-        let offset = sections
-            .iter()
-            .try_fold(selected.staging_end, |end, section| {
-                section
-                    .offset()
-                    .checked_add(section.len())
-                    .map(|next| end.max(next))
-            })
-            .ok_or(SliceError::ArithmeticOverflow)?;
-        sections.extend(
-            selected
-                .dictionary
-                .write_sections_to(&mut spool_writer, offset)?,
-        );
-        spool_writer.flush()?;
-        sections
-    };
+    let sections = selected.finalize(scratch)?;
     let plan = FinishedZmsPlan::new(sections, selected.actual_min_ts, selected.actual_max_ts, 0)?;
     Ok(PreparedSlice {
         plan,
@@ -428,117 +395,6 @@ fn retryable_source_change(problem: &SliceError) -> bool {
     }
 }
 
-#[derive(Debug)]
-struct StagedSelection {
-    staged: BTreeMap<u32, Vec<StagedSection>>,
-    dictionary: FinishedDictionary,
-    staging_end: u64,
-    actual_min_ts: i64,
-    actual_max_ts: i64,
-    rows_written: u64,
-}
-
-fn stage_selected_rows(
-    reader: &Reader,
-    references: &[SegmentRef],
-    selections: &mut BTreeMap<u32, TypeSelection>,
-    range: MicrosRange,
-    staging: &mut File,
-) -> Result<StagedSelection, SliceError> {
-    let mut selected = StagedSelection {
-        staged: BTreeMap::new(),
-        dictionary: FinishedDictionary::default(),
-        staging_end: 0,
-        actual_min_ts: i64::MAX,
-        actual_max_ts: i64::MIN,
-        rows_written: 0,
-    };
-    let mut staging_offset = 0_u64;
-    for reference in references {
-        let segment = reader.open_segment(reference)?;
-        let mut dictionary_ids = HashSet::new();
-        for type_id in segment.type_ids() {
-            if is_dictionary(type_id) {
-                continue;
-            }
-            let selection = selections
-                .get_mut(&type_id)
-                .ok_or(SliceError::UnsliceableType { type_id })?;
-            let contract = selection.contract;
-            let mut callback_error = None;
-            segment.visit_batches(type_id, None, 0, usize::MAX, |_ordinal, batch| {
-                let Some((retained, min_ts, max_ts)) = (match retain_batch(&batch, selection, range)
-                {
-                    Ok(retained) => retained,
-                    Err(problem) => {
-                        callback_error = Some(problem);
-                        return false;
-                    }
-                }) else {
-                    return true;
-                };
-                match stage_batch(
-                    staging,
-                    &mut staging_offset,
-                    type_id,
-                    retained,
-                    &mut selected.staged,
-                    &mut dictionary_ids,
-                    contract,
-                ) {
-                    Ok(rows) => {
-                        let Some(total) = selected.rows_written.checked_add(rows) else {
-                            callback_error = Some(SliceError::ArithmeticOverflow);
-                            return false;
-                        };
-                        selected.rows_written = total;
-                        selected.actual_min_ts = selected.actual_min_ts.min(min_ts);
-                        selected.actual_max_ts = selected.actual_max_ts.max(max_ts);
-                        true
-                    }
-                    Err(problem) => {
-                        callback_error = Some(problem);
-                        false
-                    }
-                }
-            })?;
-            if let Some(problem) = callback_error {
-                return Err(problem);
-            }
-        }
-        if !dictionary_ids.is_empty() {
-            let dictionary = segment.dictionary_for(&dictionary_ids)?;
-            for (str_id, value) in dictionary.into_entries() {
-                if !dictionary_ids.remove(&str_id.get()) {
-                    continue;
-                }
-                match value {
-                    OwnedDictionaryValue::String(bytes) => {
-                        selected.dictionary.insert_owned_string(str_id, bytes)?;
-                    }
-                    OwnedDictionaryValue::Blob {
-                        stored_bytes,
-                        full_len,
-                        truncated,
-                        full_sha256,
-                    } => selected.dictionary.insert_owned_blob(
-                        str_id,
-                        stored_bytes,
-                        full_len,
-                        truncated,
-                        full_sha256,
-                    )?,
-                }
-            }
-            if let Some(&raw) = dictionary_ids.iter().next() {
-                return Err(SliceError::UnresolvedDictionary { str_id: raw });
-            }
-        }
-    }
-    selected.staging_end = staging_offset;
-    Ok(selected)
-}
-
 fn check_warnings(listing: &Listing) -> Result<(), SliceError> {
     if let Some(warning) = listing.warnings.iter().find(|warning| {
         matches!(
@@ -555,311 +411,10 @@ fn check_warnings(listing: &Listing) -> Result<(), SliceError> {
     Ok(())
 }
 
-#[derive(Debug)]
-struct TypeSelection {
-    contract: &'static TypeContract,
-    in_request: bool,
-    boundary: Boundary,
-}
-
-#[derive(Debug)]
-enum Boundary {
-    None,
-    AllContext,
-    Cohort {
-        before: Option<i64>,
-        after: Option<i64>,
-    },
-}
-
-fn selection_pass(
-    reader: &Reader,
-    references: &[SegmentRef],
-    range: MicrosRange,
-) -> Result<BTreeMap<u32, TypeSelection>, SliceError> {
-    let mut selections = BTreeMap::new();
-    for reference in references {
-        let segment = reader.open_segment(reference)?;
-        for type_id in segment.type_ids() {
-            if is_dictionary(type_id) {
-                continue;
-            }
-            let contract = contract(type_id).ok_or(SliceError::UnsliceableType { type_id })?;
-            let timestamp =
-                timestamp_column(contract).ok_or(SliceError::UnsliceableType { type_id })?;
-            let selection = selections.entry(type_id).or_insert_with(|| TypeSelection {
-                contract,
-                in_request: false,
-                boundary: match contract.semantics {
-                    Semantics::EventStream => Boundary::None,
-                    Semantics::Changed | Semantics::OnChange => Boundary::AllContext,
-                    Semantics::SnapshotFull | Semantics::ConditionalFull => Boundary::Cohort {
-                        before: None,
-                        after: None,
-                    },
-                },
-            });
-            let mut callback_error = None;
-            segment.visit_batches(
-                type_id,
-                Some(&[timestamp]),
-                0,
-                usize::MAX,
-                |_ordinal, batch| {
-                    let Some(values) = batch
-                        .column_by_name(timestamp)
-                        .and_then(|column| column.as_any().downcast_ref::<Int64Array>())
-                    else {
-                        callback_error = Some(SliceError::InvalidBatch {
-                            type_id,
-                            column: timestamp,
-                        });
-                        return false;
-                    };
-                    if values.null_count() != 0 {
-                        callback_error = Some(SliceError::InvalidBatch {
-                            type_id,
-                            column: timestamp,
-                        });
-                        return false;
-                    }
-                    for value in values.values() {
-                        observe_timestamp(selection, *value, range);
-                    }
-                    true
-                },
-            )?;
-            if let Some(problem) = callback_error {
-                return Err(problem);
-            }
-        }
-    }
-    Ok(selections)
-}
-
-fn timestamp_column(contract: &TypeContract) -> Option<&'static str> {
-    let mut timestamps = contract
-        .columns
-        .iter()
-        .filter(|column| column.class == kronika_registry::ColumnClass::Timestamp);
-    let column = timestamps.next()?;
-    (timestamps.next().is_none() && column.ty == ColumnType::Ts && !column.nullable)
-        .then_some(column.name)
-}
-
-fn timestamps<'a>(
-    batch: &'a RecordBatch,
-    contract: &TypeContract,
-) -> Result<&'a Int64Array, SliceError> {
-    let name = timestamp_column(contract).ok_or(SliceError::UnsliceableType {
-        type_id: contract.type_id.get(),
-    })?;
-    batch
-        .column_by_name(name)
-        .and_then(|array| array.as_any().downcast_ref::<Int64Array>())
-        .ok_or(SliceError::InvalidBatch {
-            type_id: contract.type_id.get(),
-            column: name,
-        })
-}
-
-fn observe_timestamp(selection: &mut TypeSelection, value: i64, range: MicrosRange) {
-    if range.in_request(value) {
-        selection.in_request = true;
-        return;
-    }
-    match &mut selection.boundary {
-        Boundary::Cohort { before, after } if range.before(value) => {
-            *before = Some(before.map_or(value, |current| current.max(value)));
-        }
-        Boundary::Cohort { after, .. } if range.after(value) => {
-            *after = Some(after.map_or(value, |current| current.min(value)));
-        }
-        Boundary::None | Boundary::AllContext | Boundary::Cohort { .. } => {}
-    }
-}
-
-fn retain_batch(
-    batch: &RecordBatch,
-    selection: &TypeSelection,
-    range: MicrosRange,
-) -> Result<Option<(RecordBatch, i64, i64)>, SliceError> {
-    let ts = timestamps(batch, selection.contract)?;
-    let mut mask = Vec::with_capacity(batch.num_rows());
-    let mut min_ts = i64::MAX;
-    let mut max_ts = i64::MIN;
-    for row in 0..batch.num_rows() {
-        if ts.is_null(row) {
-            return Err(SliceError::InvalidBatch {
-                type_id: selection.contract.type_id.get(),
-                column: "ts",
-            });
-        }
-        let value = ts.value(row);
-        let retain = if range.in_request(value) {
-            true
-        } else {
-            match &selection.boundary {
-                Boundary::None => false,
-                Boundary::AllContext => range.before(value) || range.after(value),
-                Boundary::Cohort { before, after } => {
-                    *before == Some(value) || *after == Some(value)
-                }
-            }
-        };
-        mask.push(retain);
-        if retain {
-            min_ts = min_ts.min(value);
-            max_ts = max_ts.max(value);
-        }
-    }
-    if min_ts > max_ts {
-        return Ok(None);
-    }
-    let retained =
-        filter_record_batch(batch, &BooleanArray::from(mask)).map_err(CodecError::from)?;
-    Ok(Some((retained, min_ts, max_ts)))
-}
-
-#[derive(Debug, Clone, Copy)]
-struct StagedSection {
-    offset: u64,
-    len: u64,
-    rows: u32,
-}
-
-fn stage_batch(
-    staging: &mut File,
-    staging_offset: &mut u64,
-    type_id: u32,
-    batch: RecordBatch,
-    staged: &mut BTreeMap<u32, Vec<StagedSection>>,
-    dictionary_ids: &mut HashSet<u64>,
-    contract: &TypeContract,
-) -> Result<u64, SliceError> {
-    collect_dictionary_ids(&batch, contract, dictionary_ids)?;
-    let rows =
-        u32::try_from(batch.num_rows()).map_err(|_overflow| SliceError::ArithmeticOverflow)?;
-    let body = encode_final_batches(type_id, vec![batch])?;
-    let len = u64::try_from(body.len()).map_err(|_overflow| SliceError::ArithmeticOverflow)?;
-    let offset = *staging_offset;
-    let next = offset
-        .checked_add(len)
-        .ok_or(SliceError::ArithmeticOverflow)?;
-    staging.write_all(&body)?;
-    *staging_offset = next;
-    staged
-        .entry(type_id)
-        .or_default()
-        .push(StagedSection { offset, len, rows });
-    Ok(u64::from(rows))
-}
-
-fn collect_dictionary_ids(
-    batch: &RecordBatch,
-    contract: &TypeContract,
-    ids: &mut HashSet<u64>,
-) -> Result<(), SliceError> {
-    for column in contract
-        .columns
-        .iter()
-        .filter(|column| column.ty == ColumnType::StrId)
-    {
-        let values = batch
-            .column_by_name(column.name)
-            .and_then(|array| array.as_any().downcast_ref::<UInt64Array>())
-            .ok_or(SliceError::InvalidBatch {
-                type_id: contract.type_id.get(),
-                column: column.name,
-            })?;
-        for row in 0..values.len() {
-            if values.is_null(row) {
-                continue;
-            }
-            let raw = values.value(row);
-            StrId::from_raw(raw).ok_or(SliceError::UnresolvedDictionary { str_id: raw })?;
-            ids.insert(raw);
-        }
-    }
-    Ok(())
-}
-
-fn finalize_data(
-    staging: &File,
-    staged: &BTreeMap<u32, Vec<StagedSection>>,
-    spool: &mut (impl Write + Send),
-    mut offset: u64,
-) -> Result<Vec<FinishedSection>, SliceError> {
-    let mut sections = Vec::with_capacity(staged.len());
-    for (&type_id, sources) in staged {
-        let rows = sources.iter().map(|source| source.rows).collect::<Vec<_>>();
-        let total_rows = rows.iter().try_fold(0_u32, |total, rows| {
-            total
-                .checked_add(*rows)
-                .ok_or(SliceError::ArithmeticOverflow)
-        })?;
-        let mut sink = SectionSink::new(&mut *spool);
-        encode_final_sections_to(type_id, &rows, &mut sink, |index| {
-            let source = sources.get(index).ok_or(SliceError::ArithmeticOverflow)?;
-            staged_body(staging, *source)
-        })?;
-        let (len, checksum) = sink.finish();
-        sections.push(FinishedSection::new(
-            type_id, total_rows, offset, len, checksum,
-        )?);
-        offset = offset
-            .checked_add(len)
-            .ok_or(SliceError::ArithmeticOverflow)?;
-    }
-    Ok(sections)
-}
-
-fn staged_body(staging: &File, staged: StagedSection) -> Result<Bytes, SliceError> {
-    let len = usize::try_from(staged.len).map_err(|_overflow| SliceError::ArithmeticOverflow)?;
-    let mut body = vec![0_u8; len];
-    staging.read_exact_at(&mut body, staged.offset)?;
-    Ok(Bytes::from(body))
-}
-
 const fn is_dictionary(type_id: u32) -> bool {
     matches!(type_id, DICT_STRINGS_TYPE_ID | DICT_BLOBS_TYPE_ID)
 }
 
-struct SectionSink<W> {
-    output: W,
-    len: u64,
-    checksum: Crc32c,
-}
-
-impl<W> SectionSink<W> {
-    const fn new(output: W) -> Self {
-        Self {
-            output,
-            len: 0,
-            checksum: Crc32c::new(),
-        }
-    }
-
-    fn finish(self) -> (u64, u32) {
-        (self.len, self.checksum.finalize())
-    }
-}
-
-impl<W: Write> Write for SectionSink<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let written = self.output.write(buf)?;
-        self.checksum.update(&buf[..written]);
-        self.len = self
-            .len
-            .checked_add(written as u64)
-            .ok_or_else(|| io::Error::other("section length overflow"))?;
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.output.flush()
-    }
-}
-
 #[cfg(test)]
+#[path = "tests/slice.rs"]
 mod tests;

@@ -1,8 +1,8 @@
-use super::{Command, Want, parse};
+use super::{Command, View, parse};
 use std::path::PathBuf;
 
 fn args(line: &[&str]) -> Result<super::InspectArgs, String> {
-    match parse(line.iter().map(|word| (*word).to_owned()))? {
+    match parse(line.iter().map(|word| (*word).to_owned())).map_err(|error| error.to_string())? {
         Command::Inspect(args) => Ok(args),
         Command::Slice(_) => Err("expected inspection command".to_owned()),
     }
@@ -12,7 +12,7 @@ fn args(line: &[&str]) -> Result<super::InspectArgs, String> {
 fn a_directory_alone_asks_for_sizes() {
     let parsed = args(&["/data"]).expect("parse");
     assert_eq!(parsed.root, PathBuf::from("/data"));
-    assert_eq!(parsed.want, Want::Sizes);
+    assert_eq!(parsed.view, View::Sizes);
     assert!(!parsed.json);
     assert_eq!(parsed.limit, 20);
 }
@@ -22,8 +22,8 @@ fn a_section_carries_its_type_id() {
     assert_eq!(
         args(&["/data", "--section", "1107001"])
             .expect("parse")
-            .want,
-        Want::Section(1_107_001)
+            .view,
+        View::Section(1_107_001)
     );
 }
 
@@ -31,7 +31,7 @@ fn a_section_carries_its_type_id() {
 fn flags_may_come_before_the_directory() {
     let parsed = args(&["--json", "--index", "/data"]).expect("parse");
     assert_eq!(parsed.root, PathBuf::from("/data"));
-    assert_eq!(parsed.want, Want::Index);
+    assert_eq!(parsed.view, View::Index);
     assert!(parsed.json);
 }
 
@@ -103,6 +103,8 @@ fn slice_accepts_exact_leading_subcommand_and_equal_seconds() {
     let parsed = parse(
         [
             "slice",
+            "--storage-dir",
+            "/data",
             "--from",
             "2026-09-02T13:30:00Z",
             "--to",
@@ -128,6 +130,8 @@ fn slice_accepts_lowercase_rfc3339_separators() {
     let parsed = parse(
         [
             "slice",
+            "--storage-dir",
+            "/data",
             "--from",
             "2026-09-02t13:30:00z",
             "--to",
@@ -155,6 +159,8 @@ fn slice_rejects_fractional_or_non_rfc3339_bounds() {
         let result = parse(
             [
                 "slice",
+                "--storage-dir",
+                "/data",
                 "--from",
                 timestamp,
                 "--to",
@@ -172,10 +178,28 @@ fn slice_rejects_fractional_or_non_rfc3339_bounds() {
 #[test]
 fn slice_requires_each_named_flag_exactly_once() {
     for line in [
-        vec!["slice", "--to", "2026-09-02T13:30:00Z", "--out", "x.zms"],
-        vec!["slice", "--from", "2026-09-02T13:30:00Z", "--out", "x.zms"],
         vec![
             "slice",
+            "--storage-dir",
+            "/data",
+            "--to",
+            "2026-09-02T13:30:00Z",
+            "--out",
+            "x.zms",
+        ],
+        vec![
+            "slice",
+            "--storage-dir",
+            "/data",
+            "--from",
+            "2026-09-02T13:30:00Z",
+            "--out",
+            "x.zms",
+        ],
+        vec![
+            "slice",
+            "--storage-dir",
+            "/data",
             "--from",
             "2026-09-02T13:30:00Z",
             "--to",
@@ -183,6 +207,8 @@ fn slice_requires_each_named_flag_exactly_once() {
         ],
         vec![
             "slice",
+            "--storage-dir",
+            "/data",
             "--from",
             "2026-09-02T13:30:00Z",
             "--from",
@@ -203,6 +229,8 @@ fn slice_rejects_reversed_bounds_and_inspection_flags() {
         parse(
             [
                 "slice",
+                "--storage-dir",
+                "/data",
                 "--from",
                 "2026-09-02T13:30:01Z",
                 "--to",
@@ -219,6 +247,8 @@ fn slice_rejects_reversed_bounds_and_inspection_flags() {
         parse(
             [
                 "slice",
+                "--storage-dir",
+                "/data",
                 "--from",
                 "2026-09-02T13:30:00Z",
                 "--to",
@@ -236,6 +266,8 @@ fn slice_rejects_reversed_bounds_and_inspection_flags() {
         parse(
             [
                 "slice",
+                "--storage-dir",
+                "/data",
                 "--from",
                 "2026-09-02T13:30:00Z",
                 "--to",
@@ -254,13 +286,44 @@ fn slice_rejects_reversed_bounds_and_inspection_flags() {
 fn short_options_are_not_storage_paths() {
     for values in [["-h", "--json"], ["-x", "--index"]] {
         assert!(
-            parse(values.into_iter().map(str::to_owned))
-                .is_err_and(|error| error.starts_with("unknown flag")),
-            "short options must fail before opening storage"
+            parse(values.into_iter().map(str::to_owned)).is_err_and(|error| matches!(
+                error.kind(),
+                clap::error::ErrorKind::UnknownArgument | clap::error::ErrorKind::DisplayHelp
+            )),
+            "short options must not be interpreted as storage paths"
         );
     }
     assert!(
         parse(std::iter::once("./-recording".to_owned())).is_ok(),
         "an explicit relative storage path may start with a dash"
     );
+}
+
+#[test]
+fn slice_is_a_subcommand_only_in_first_position() {
+    assert_eq!(
+        args(&["--json", "slice"]).expect("inspect directory").root,
+        PathBuf::from("slice")
+    );
+}
+
+#[test]
+fn negative_inspection_bounds_and_repeated_flags_keep_their_meaning() {
+    let parsed = args(&[
+        "--json",
+        "--json",
+        "/data",
+        "--section",
+        "5",
+        "--from",
+        "-1",
+        "--limit",
+        "1",
+        "--limit",
+        "3",
+    ])
+    .expect("parse inspection");
+    assert_eq!(parsed.from, Some(-1));
+    assert_eq!(parsed.limit, 3);
+    assert!(args(&["/data", "--section", "5", "--section", "6"]).is_err());
 }

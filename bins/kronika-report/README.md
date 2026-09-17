@@ -4,8 +4,9 @@
 
 `kronika-report` turns a `.zms` recording into an interactive HTML report you
 can open directly in a browser. Use a finished collector segment or a file
-created by `kronika-dump slice`. Sources: [command and argument validation](src/main.rs),
-[parameter help](src/help.rs).
+created by `kronika-dump slice`. Sources: [command arguments](src/cli.rs),
+[help examples](src/help.rs). `--help` is generated from argument definitions;
+`-h` shows the short form.
 
 ```sh
 kronika-report incident.zms incident.html
@@ -23,18 +24,18 @@ the private recording directory used in the install guide.
 | `OUTPUT.html` | Required | Exact `.html` path; existing output is atomically replaced. Parent directory must exist and be writable. |
 | `--from MICROSECONDS` | First recorded microsecond | Inclusive beginning of visible navigation window. |
 | `--to-exclusive MICROSECONDS` | Last recorded microsecond + 1 | Exclusive end of visible navigation window. |
-| `-h`, `--help` | — | Parameter reference; exits before file access. |
+| `-h`, `--help` | — | Short or full parameter reference; exits before file access. |
 | `--version` | — | Binary version; exits before file access. |
 
-Explicit bounds are supplied together in this order, before both paths, and
-satisfy `0 < from < to-exclusive <= 9007199254740991`. Units are whole Unix
+Explicit bounds are supplied together, in either order before or after the paths,
+and satisfy `0 < from < to-exclusive <= 9007199254740991`. Units are whole Unix
 microseconds. The visible interval is `[from, to-exclusive)`.
 
 ## Exact report interval
 
 ```sh
-kronika-report --from 1788634800000000 --to-exclusive 1788638400000000 \
-  incident.zms incident.html
+kronika-report incident.zms incident.html \
+  --from 1788634800000000 --to-exclusive 1788638400000000
 ```
 
 This selects 5 September 2026, 19:00–20:00 UTC. A

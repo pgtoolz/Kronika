@@ -88,7 +88,7 @@ if mode == 'cli':
 env = {k: v for k, v in os.environ.items() if not k.startswith('KRONIKA_')}
 collector = subprocess.run([package / 'kronika-collector'], env=env,
                            capture_output=True, text=True, timeout=10)
-assert collector.returncode != 0 and 'KRONIKA_STORAGE_DIR' in collector.stderr
+assert collector.returncode != 0 and not collector.stdout and '--storage-dir' in collector.stderr, collector.stderr
 capture = scratch / 'capture'
 capture_env = dict(env, KRONIKA_STORAGE_DIR=str(capture), KRONIKA_INTERVAL_S='1',
                    KRONIKA_SEGMENT_MAX_AGE_S='1')
@@ -129,10 +129,10 @@ shutil.copyfile(fixture, segment_dir / '1709164800000000.zms')
 dump = subprocess.run([package / 'kronika-dump', store, '--json'], env=env,
                       capture_output=True, text=True, check=True, timeout=30)
 assert dump.stdout.strip(), 'dump produced no section sizes'
-slice_env = dict(env, KRONIKA_STORAGE_DIR=str(store))
 subprocess.run([package / 'kronika-dump', 'slice',
+                '--storage-dir', store,
                 '--from', '2024-02-29T00:00:00Z', '--to', '2024-02-29T00:59:59Z',
-                '--out', scratch / 'slice.zms'], env=slice_env, check=True, timeout=30)
+                '--out', scratch / 'slice.zms'], env=env, check=True, timeout=30)
 for output in ('report.html', 'report-again.html'):
     subprocess.run([package / 'kronika-report',
                     '--from', '1709164800000000', '--to-exclusive', '1709168400000000',

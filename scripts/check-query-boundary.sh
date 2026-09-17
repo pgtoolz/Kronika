@@ -97,8 +97,8 @@ report_dependency_names=$(
         sort -u
 )
 if printf '%s\n' "$report_dependency_names" |
-    rg '^(http|http-body.*|hyper.*|tokio.*|rmcp.*|url|reqwest.*|ureq|oauth2|jsonwebtoken|openidconnect|native-tls|rustls.*|rustix|errno|socket2|mio|wasm-bindgen.*)$'; then
-    echo "kronika-report dependency graph contains a transport/runtime binding" >&2
+    rg '^(clap.*|http|http-body.*|hyper.*|tokio.*|rmcp.*|url|reqwest.*|ureq|oauth2|jsonwebtoken|openidconnect|native-tls|rustls.*|rustix|errno|socket2|mio|wasm-bindgen.*)$'; then
+    echo "kronika-report dependency graph contains a CLI or transport/runtime binding" >&2
     failed=1
 fi
 
@@ -110,8 +110,8 @@ wasm_dependency_names=$(
         sort -u
 )
 if printf '%s\n' "$wasm_dependency_names" |
-    rg '^(http|http-body.*|hyper.*|tokio.*|rmcp.*|url|reqwest.*|ureq|oauth2|jsonwebtoken|openidconnect|native-tls|rustls.*|rustix|errno|socket2|mio)$'; then
-    echo "kronika-report-wasm dependency graph contains a transport/runtime binding" >&2
+    rg '^(clap.*|http|http-body.*|hyper.*|tokio.*|rmcp.*|url|reqwest.*|ureq|oauth2|jsonwebtoken|openidconnect|native-tls|rustls.*|rustix|errno|socket2|mio)$'; then
+    echo "kronika-report-wasm dependency graph contains a CLI or transport/runtime binding" >&2
     failed=1
 fi
 

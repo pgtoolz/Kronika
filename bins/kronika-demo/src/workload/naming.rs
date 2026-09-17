@@ -33,4 +33,5 @@ pub(crate) fn table_name(schema: u32, table: u32) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/workload/naming.rs"]
 mod tests;

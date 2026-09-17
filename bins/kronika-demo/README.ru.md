@@ -78,13 +78,31 @@ pg_store_plans. Для штатной работы сеть не нужна, к�
 сборщиком, включённой по умолчанию системной нагрузкой и дополнительной
 нагрузкой PostgreSQL.
 
-| Переменная | По умолчанию | Назначение |
+Команда `kronika-demo --help` показывает справку, сформированную из описаний
+параметров. Каждой настройке ниже соответствует параметр командной строки;
+его значение имеет приоритет над переменной окружения. Конфигурация проверяется
+до запуска нагрузки и сборщика.
+
+```sh
+kronika-demo --duration-s 1m --dir demo-data --system-workload-enabled false
+```
+
+Длительности принимают целое число в единицах из имени параметра или значение
+с суффиксом, например `1m`, `5s`, `4000ms`. Результат должен выражаться целым
+числом секунд или миллисекунд, как указано в имени параметра. Объём памяти и
+размер рабочего файла можно задать целым числом MiB или размером с суффиксом,
+например `32MiB`. Для скорости диска и сети аналогично принимается число KiB/s
+или размер данных в секунду, например `32KiB`. Размер должен быть кратен
+единице из имени параметра. Значения по умолчанию и ограничения ресурсов
+сохранены.
+
+| Параметр / переменная окружения | По умолчанию | Назначение |
 | --- | ---: | --- |
-| `KRONIKA_DEMO_DIR` | `demo-data` | Куда пишутся лог сборщика и `report.json`. |
-| `KRONIKA_STORAGE_DIR` | `$KRONIKA_DEMO_DIR/segments` | Каталог хранения сборщика. |
-| `KRONIKA_DEMO_DURATION_S` | 60 | Длительность в секундах. `0` — работать до `SIGTERM` или `SIGINT`. |
-| `KRONIKA_DEMO_COLLECTOR_LOG` | `file` | `file` пишет `collector.log`; `stderr` использует унаследованный stderr. В образе задан `stderr` с ограниченной ротацией логов Docker. |
-| `KRONIKA_COLLECTOR_BIN` | `kronika-collector` рядом с программой | Какую программу сборщика запускать. |
+| `--dir` / `KRONIKA_DEMO_DIR` | `demo-data` | Куда пишутся лог сборщика и `report.json`. |
+| `--storage-dir` / `KRONIKA_STORAGE_DIR` | `$KRONIKA_DEMO_DIR/segments` | Каталог хранения сборщика. |
+| `--duration-s` / `KRONIKA_DEMO_DURATION_S` | 60 | Длительность в секундах. `0` — работать до `SIGTERM` или `SIGINT`. |
+| `--collector-log` / `KRONIKA_DEMO_COLLECTOR_LOG` | `file` | `file` пишет `collector.log`; `stderr` использует унаследованный stderr. В образе задан `stderr` с ограниченной ротацией логов Docker. |
+| `--collector-bin` / `KRONIKA_COLLECTOR_BIN` | `kronika-collector` рядом с программой | Какую программу сборщика запускать. |
 
 Остальные переменные сборщика `KRONIKA_*` передаются без изменений.
 
@@ -94,18 +112,18 @@ pg_store_plans. Для штатной работы сеть не нужна, к�
 `KRONIKA_DEMO_WORKLOAD_DSN`. Скрипт запуска Compose включает её явно, поэтому она
 продолжает работать и при выключенной нагрузке PostgreSQL. Некорректное или
 пустое значение останавливает `kronika-demo` при запуске с указанием имени
-переменной.
+переменной. При выключенной нагрузке остальные её настройки не проверяются.
 
-| Переменная | По умолчанию | Допустимые значения |
+| Параметр / переменная окружения | По умолчанию | Допустимые значения |
 | --- | ---: | --- |
-| `KRONIKA_DEMO_SYSTEM_WORKLOAD_ENABLED` | `true` | Только `true` или `false`. |
-| `KRONIKA_DEMO_SYSTEM_WORKLOAD_DIR` | `$KRONIKA_DEMO_DIR/system-activity` | Непустой каталог отдельно от `KRONIKA_STORAGE_DIR`. В Compose используется `/var/lib/kronika/data/system-activity`. |
-| `KRONIKA_DEMO_SYSTEM_CPU_PERCENT` | 12 | Пиковый процент одного ядра CPU, 1–25. |
-| `KRONIKA_DEMO_SYSTEM_MEMORY_MIB` | 32 | Объём памяти процесса, не связанной с файлами, 8–128 MiB. |
-| `KRONIKA_DEMO_SYSTEM_FILE_MIB` | 8 | Фиксированный размер рабочего файла, 1–32 MiB. |
-| `KRONIKA_DEMO_SYSTEM_DISK_KIB_PER_S` | 32 | Пиковая полезная нагрузка отдельно для чтения и записи, 1–256 KiB/s. |
-| `KRONIKA_DEMO_SYSTEM_NETWORK_KIB_PER_S` | 32 | Пиковый объём передачи через локальный сетевой интерфейс в одном направлении, 1–256 KiB/s. |
-| `KRONIKA_DEMO_SYSTEM_FLUSH_INTERVAL_S` | 5 | Интервал сброса данных этого файла на диск, 1–10 с. Произведение пиковой скорости диска на интервал должно помещаться в рабочий файл. |
+| `--system-workload-enabled` / `KRONIKA_DEMO_SYSTEM_WORKLOAD_ENABLED` | `true` | Только `true` или `false`. |
+| `--system-workload-dir` / `KRONIKA_DEMO_SYSTEM_WORKLOAD_DIR` | `$KRONIKA_DEMO_DIR/system-activity` | Непустой каталог отдельно от `KRONIKA_STORAGE_DIR`. В Compose используется `/var/lib/kronika/data/system-activity`. |
+| `--system-cpu-percent` / `KRONIKA_DEMO_SYSTEM_CPU_PERCENT` | 12 | Пиковый процент одного ядра CPU, 1–25. |
+| `--system-memory-mib` / `KRONIKA_DEMO_SYSTEM_MEMORY_MIB` | 32 | Объём памяти процесса, не связанной с файлами, 8–128 MiB. |
+| `--system-file-mib` / `KRONIKA_DEMO_SYSTEM_FILE_MIB` | 8 | Фиксированный размер рабочего файла, 1–32 MiB. |
+| `--system-disk-kib-per-s` / `KRONIKA_DEMO_SYSTEM_DISK_KIB_PER_S` | 32 | Пиковая полезная нагрузка отдельно для чтения и записи, 1–256 KiB/s. |
+| `--system-network-kib-per-s` / `KRONIKA_DEMO_SYSTEM_NETWORK_KIB_PER_S` | 32 | Пиковый объём передачи через локальный сетевой интерфейс в одном направлении, 1–256 KiB/s. |
+| `--system-flush-interval-s` / `KRONIKA_DEMO_SYSTEM_FLUSH_INTERVAL_S` | 5 | Интервал сброса данных этого файла на диск, 1–10 с. Произведение пиковой скорости диска на интервал должно помещаться в рабочий файл. |
 
 Внутри `kronika-demo` работают четыре именованных потока:
 `krn-demo-cpu`, `krn-demo-memory`, `krn-demo-disk` и `krn-demo-loop`. Работа
@@ -231,34 +249,36 @@ printf 'Smoke data retained at %s\n' "$smoke_dir"
 ### Дополнительная нагрузка PostgreSQL
 
 `KRONIKA_DEMO_WORKLOAD_DSN` включает нагрузку PostgreSQL. Если не задана,
-нагрузка PostgreSQL выключена; системная нагрузка по умолчанию продолжает работать.
+нагрузка PostgreSQL выключена, а остальные её настройки не проверяются;
+системная нагрузка по умолчанию продолжает работать.
 Нагрузку создают короткие торговые транзакции (OLTP), а также отдельные
 сценарии блокировок, смены плана и обслуживания таблиц.
 
-| Переменная | По умолчанию | Назначение |
+| Параметр / переменная окружения | По умолчанию | Назначение |
 | --- | ---: | --- |
-| `KRONIKA_DEMO_WORKLOAD_DSN` | не задана | Строка подключения (DSN) для нагрузки, обычно через PgBouncer. |
-| `KRONIKA_DEMO_WORKLOAD_DIRECT_DSN` | обязательно с нагрузкой | Прямое подключение к PostgreSQL для сценария смены плана и настроек Vacuum в рамках сессии. Нельзя подключаться через PgBouncer в режиме transaction pooling, где серверное соединение закрепляется только на время транзакции. Образ подключается к встроенному PostgreSQL. |
-| `KRONIKA_DEMO_WORKLOAD_SCHEMAS` | 1 | Число схем базы данных для интернет-магазина: от 1 до 8. |
-| `KRONIKA_DEMO_WORKLOAD_TABLES_PER_SCHEMA` | 8 | Число таблиц в схеме: от 8 таблиц интернет-магазина до 64 таблиц всего. |
-| `KRONIKA_DEMO_WORKLOAD_DDL_CONCURRENCY` | 4 | Параллельных соединений при настройке: от 1 до 16. |
-| `KRONIKA_DEMO_WORKLOAD_SESSIONS` | 4 | Долгоживущих OLTP-клиентов: от 1 до 16. |
-| `KRONIKA_DEMO_WORKLOAD_TPS` | 20 | Максимальное общее число OLTP-транзакций в секунду: от 1 до 64. |
-| `KRONIKA_DEMO_WORKLOAD_MAX_ORDERS` | 10000 | Повторно используемых номеров активных OLTP-заказов: от числа клиентов до 50000. |
-| `KRONIKA_DEMO_WORKLOAD_LOCK_CHAINS` | 1 | Независимых цепочек блокировок в каждом ограниченном раунде: от 1 до 4. |
-| `KRONIKA_DEMO_WORKLOAD_LOCK_CHAIN_DEPTH` | 4 | Число транзакций в каждой цепочке: от 2 до 8. Вместе со временем удержания значение должно позволить одному ожидающему получить строку, а следующему — достичь `statement_timeout` через 10 с. |
-| `KRONIKA_DEMO_WORKLOAD_LOCK_HOLD_MS` | 4000 | Время удержания блокировки звеном одного раунда, мс. |
-| `KRONIKA_DEMO_WORKLOAD_LOCK_ROUND_INTERVAL_S` | 120 | Период без демонстрационных блокировок после каждого раунда, с. |
-| `KRONIKA_DEMO_WORKLOAD_EVENT_ROUND_INTERVAL_S` | 180 | Пауза после одного медленного запроса, одного ошибочного оператора и одной попытки подключиться к несуществующей БД, с. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_ROWS` | 300000 | Строк в `shop.orders` для сценария смены плана: от 1 до 500000. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_WORKERS` | 4 | Параллельных сессий `checkout-api`, выполняющих один запрос: от 1 до 8. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_BASELINE_S` | 12 | Длительность работы с индексом до его удаления и после восстановления, с. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_REGRESSION_S` | 30 | Длительность работы запроса оформления заказа без вспомогательного индекса, с. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_ROUND_INTERVAL_S` | 120 | Пауза после полного раунда смены плана, с. |
-| `KRONIKA_DEMO_WORKLOAD_VACUUM_ROWS` | 100000 | Строк в отдельной таблице для демонстрации Vacuum: от 1 до 250000. |
-| `KRONIKA_DEMO_WORKLOAD_VACUUM_ROUND_INTERVAL_S` | 180 | Пауза после каждого эпизода Vacuum, с. |
-| `KRONIKA_DEMO_WORKLOAD_VACUUM_STATEMENT_TIMEOUT_S` | 30 | Максимальное время выполнения каждого оператора обновления и Vacuum, с. |
+| `--workload-dsn` / `KRONIKA_DEMO_WORKLOAD_DSN` | не задана | Строка подключения (DSN) для нагрузки, обычно через PgBouncer. |
+| `--workload-direct-dsn` / `KRONIKA_DEMO_WORKLOAD_DIRECT_DSN` | обязательно с нагрузкой | Прямое подключение к PostgreSQL для сценария смены плана и настроек Vacuum в рамках сессии. Нельзя подключаться через PgBouncer в режиме transaction pooling, где серверное соединение закрепляется только на время транзакции. Образ подключается к встроенному PostgreSQL. |
+| `--workload-schemas` / `KRONIKA_DEMO_WORKLOAD_SCHEMAS` | 1 | Число схем базы данных для интернет-магазина: от 1 до 8. |
+| `--workload-tables-per-schema` / `KRONIKA_DEMO_WORKLOAD_TABLES_PER_SCHEMA` | 8 | Число таблиц в схеме: от 8 таблиц интернет-магазина до 64 таблиц всего. |
+| `--workload-ddl-concurrency` / `KRONIKA_DEMO_WORKLOAD_DDL_CONCURRENCY` | 4 | Параллельных соединений при настройке: от 1 до 16. |
+| `--workload-sessions` / `KRONIKA_DEMO_WORKLOAD_SESSIONS` | 4 | Долгоживущих OLTP-клиентов: от 1 до 16. |
+| `--workload-tps` / `KRONIKA_DEMO_WORKLOAD_TPS` | 20 | Максимальное общее число OLTP-транзакций в секунду: от 1 до 64. |
+| `--workload-max-orders` / `KRONIKA_DEMO_WORKLOAD_MAX_ORDERS` | 10000 | Повторно используемых номеров активных OLTP-заказов: от числа клиентов до 50000. |
+| `--workload-lock-chains` / `KRONIKA_DEMO_WORKLOAD_LOCK_CHAINS` | 1 | Независимых цепочек блокировок в каждом ограниченном раунде: от 1 до 4. |
+| `--workload-lock-chain-depth` / `KRONIKA_DEMO_WORKLOAD_LOCK_CHAIN_DEPTH` | 4 | Число транзакций в каждой цепочке: от 2 до 8. Вместе со временем удержания значение должно позволить одному ожидающему получить строку, а следующему — достичь `statement_timeout` через 10 с. |
+| `--workload-lock-hold-ms` / `KRONIKA_DEMO_WORKLOAD_LOCK_HOLD_MS` | 4000 | Время удержания блокировки звеном одного раунда, мс. |
+| `--workload-lock-round-interval-s` / `KRONIKA_DEMO_WORKLOAD_LOCK_ROUND_INTERVAL_S` | 120 | Период без демонстрационных блокировок после каждого раунда, с. |
+| `--workload-event-round-interval-s` / `KRONIKA_DEMO_WORKLOAD_EVENT_ROUND_INTERVAL_S` | 180 | Пауза после одного медленного запроса, одного ошибочного оператора и одной попытки подключиться к несуществующей БД, с. |
+| `--workload-plan-rows` / `KRONIKA_DEMO_WORKLOAD_PLAN_ROWS` | 300000 | Строк в `shop.orders` для сценария смены плана: от 1 до 500000. |
+| `--workload-plan-workers` / `KRONIKA_DEMO_WORKLOAD_PLAN_WORKERS` | 4 | Параллельных сессий `checkout-api`, выполняющих один запрос: от 1 до 8. |
+| `--workload-plan-baseline-s` / `KRONIKA_DEMO_WORKLOAD_PLAN_BASELINE_S` | 12 | Длительность работы с индексом до его удаления и после восстановления, с. |
+| `--workload-plan-regression-s` / `KRONIKA_DEMO_WORKLOAD_PLAN_REGRESSION_S` | 30 | Длительность работы запроса оформления заказа без вспомогательного индекса, с. |
+| `--workload-plan-round-interval-s` / `KRONIKA_DEMO_WORKLOAD_PLAN_ROUND_INTERVAL_S` | 120 | Пауза после полного раунда смены плана, с. |
+| `--workload-vacuum-rows` / `KRONIKA_DEMO_WORKLOAD_VACUUM_ROWS` | 100000 | Строк в отдельной таблице для демонстрации Vacuum: от 1 до 250000. |
+| `--workload-vacuum-round-interval-s` / `KRONIKA_DEMO_WORKLOAD_VACUUM_ROUND_INTERVAL_S` | 180 | Пауза после каждого эпизода Vacuum, с. |
+| `--workload-vacuum-statement-timeout-s` / `KRONIKA_DEMO_WORKLOAD_VACUUM_STATEMENT_TIMEOUT_S` | 30 | Максимальное время выполнения каждого оператора обновления и Vacuum, с. |
 
+Нагрузка PostgreSQL работает на двух потоках среды выполнения Tokio.
 Постоянную нагрузку по умолчанию создают четыре долгоживущих клиента
 `shop-oltp-*` через соединение PgBouncer. В сумме они выполняют не более 20
 коротких транзакций в секунду. Каждая транзакция читает по ключам покупателя и
@@ -285,19 +305,22 @@ OLTP-строк каждая, продолжая создавать нагруз
 и транзакций нагрузки задано конечное время ожидания.
 Исходник: [генератор нагрузки](src/workload).
 
-Для запуска без контейнера с уже работающими PostgreSQL и PgBouncer используйте
-`make demo-run`. Команда собирает сборщик и демопрограмму для платформы Rust
-на этой машине, затем запускает их. Зависимости перечислены в
-[руководстве по сборке](../../docs/build.ru.md). Замените примеры строк
-подключения на подключения для своей нагрузки:
+Для запуска без контейнера с настройками по умолчанию используйте `make demo-run`.
+Чтобы настроить нагрузку для уже работающих PostgreSQL и PgBouncer, соберите
+программы и передайте параметры `kronika-demo`, как показано ниже. Зависимости
+перечислены в [руководстве по сборке](../../docs/build.ru.md). Замените примеры
+строк подключения на подключения для своей нагрузки:
 
 ```sh
-KRONIKA_DEMO_WORKLOAD_DSN='host=127.0.0.1 port=6432 user=kronika_demo dbname=kronika_demo' \
-KRONIKA_DEMO_WORKLOAD_DIRECT_DSN='host=127.0.0.1 port=5432 user=kronika_demo dbname=kronika_demo' \
-    make demo-run
+make collector demo
+kronika_target=$(rustc +1.96.0 -vV | sed -n 's/^host: //p')
+"target/$kronika_target/debug/kronika-demo" \
+    --duration-s 1m \
+    --workload-dsn 'host=127.0.0.1 port=6432 user=kronika_demo dbname=kronika_demo' \
+    --workload-direct-dsn 'host=127.0.0.1 port=5432 user=kronika_demo dbname=kronika_demo'
 ```
 
 `SIGTERM` и `SIGINT` останавливают нагрузку и сборщик, сохраняют журнал
 сборщика и записывают итоговый отчёт перед выходом.
 
-Исходники: [управление процессами](src/main.rs), [системная нагрузка](src/system_activity), [Compose](../../compose.demo.yml).
+Исходники: [управление запуском](src/run.rs), [жизненный цикл сборщика](src/collector.rs), [конфигурация](src/config.rs), [системная нагрузка](src/system_activity), [Compose](../../compose.demo.yml).

@@ -67,6 +67,7 @@ jobs:
           make build
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
           python3 scripts/check-cli.py target/x86_64-unknown-linux-gnu/debug --version "$version" --strace
+          python3 scripts/check-cli.py target/x86_64-unknown-linux-gnu/debug --version "$version" --strace --binary kronika-demo
       - run: make test
 
   wasm-query:

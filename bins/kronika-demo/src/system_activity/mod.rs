@@ -1,6 +1,6 @@
 //! Default bounded CPU, memory, file, and loopback activity for demo histories.
 
-mod config;
+pub(crate) mod config;
 mod cpu;
 mod loopback;
 mod memory;
@@ -161,4 +161,5 @@ fn wait_for(stop: &AtomicBool, duration: Duration) -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/system_activity.rs"]
 mod tests;

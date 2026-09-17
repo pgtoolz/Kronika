@@ -3,7 +3,7 @@
 #[cfg(test)]
 use serde_json as _;
 #[cfg(feature = "generator")]
-use {kronika_format as _, tempfile as _};
+use {clap as _, kronika_format as _, tempfile as _};
 
 #[cfg(feature = "generator")]
 mod generator;

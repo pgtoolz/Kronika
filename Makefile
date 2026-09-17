@@ -72,8 +72,8 @@ test-bdd: ## Run BDD inside the cached Docker image.
 
 demo-run: ## Run the collector for a bounded window and report its cost.
 	@$(CARGO_BUILD) -p kronika-collector -p kronika-demo
-	@KRONIKA_COLLECTOR_BIN=target/$(TARGET)/debug/kronika-collector \
-		target/$(TARGET)/debug/kronika-demo
+	@target/$(TARGET)/debug/kronika-demo \
+		--collector-bin target/$(TARGET)/debug/kronika-collector
 
 demo-image: ## Build the demo Docker image (PostgreSQL, PgBouncer, collector, web).
 	@scripts/demo-image.sh build

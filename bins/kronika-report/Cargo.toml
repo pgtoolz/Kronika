@@ -12,6 +12,7 @@ repository.workspace = true
 default = ["generator"]
 generator = [
     "dep:base64",
+    "dep:clap",
     "dep:flate2",
     "dep:kronika-format",
     "dep:kronika-reader",
@@ -31,6 +32,7 @@ required-features = ["generator"]
 
 [dependencies]
 base64 = { version = "0.22", optional = true }
+clap = { version = "4.6", features = ["derive"], optional = true }
 flate2 = { version = "1", optional = true }
 kronika-format = { path = "../../crates/kronika-format", optional = true }
 kronika-index = { path = "../../crates/kronika-index", default-features = false }

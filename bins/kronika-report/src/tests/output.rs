@@ -6,7 +6,7 @@ use kronika_report::ReportTimeRange;
 
 use super::{GenerateError, TEMP_PREFIX, generate};
 
-const ZMS: &[u8] = include_bytes!("../tests/fixtures/standalone.zms");
+const ZMS: &[u8] = include_bytes!("../../tests/fixtures/standalone.zms");
 
 fn fixture(directory: &Path) -> PathBuf {
     let input = directory.join("incident.zms");

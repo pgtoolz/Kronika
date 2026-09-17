@@ -231,4 +231,5 @@ pub(super) fn run(
 }
 
 #[cfg(test)]
+#[path = "../tests/system_activity/scratch.rs"]
 mod tests;

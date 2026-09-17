@@ -1555,6 +1555,9 @@ name = "kronika-demo"
 version = "1.1.2"
 dependencies = [
  "anyhow",
+ "bsize",
+ "clap",
+ "humantime",
  "kronika-format",
  "kronika-registry",
  "nix",
@@ -1580,6 +1583,7 @@ dependencies = [
  "arrow-array",
  "arrow-select",
  "chrono",
+ "clap",
  "kronika-format",
  "kronika-index",
  "kronika-layout",
@@ -1679,6 +1683,7 @@ name = "kronika-report"
 version = "1.1.2"
 dependencies = [
  "base64 0.22.1",
+ "clap",
  "flate2",
  "kronika-format",
  "kronika-index",

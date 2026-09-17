@@ -8,6 +8,7 @@ mod slice;
 
 // The package's inspection adapter uses these shared dependencies.
 use chrono as _;
+use clap as _;
 use kronika_index as _;
 #[cfg(test)]
 use kronika_report as _;

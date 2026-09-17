@@ -5,9 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-#[cfg(test)]
-mod tests;
-
 const LOCK_STATEMENT_TIMEOUT_S: u64 = 10;
 
 pub(crate) async fn run_rounds(config: &WorkloadConfig, stop: &Arc<AtomicBool>) {
@@ -143,3 +140,7 @@ async fn hold_one_link(dsn: &str, application_name: &str, table: &str, key: i64,
         eprintln!("kronika-demo: lock-chain link could not commit: {error:?}");
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/workload/locks.rs"]
+mod tests;

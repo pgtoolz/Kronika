@@ -2,14 +2,23 @@ use super::{
     CPU_ENV, DIRECTORY_ENV, DISK_RATE_ENV, ENABLED_ENV, FILE_ENV, FLUSH_ENV, MEMORY_ENV,
     NETWORK_RATE_ENV, SystemActivityConfig,
 };
-use std::collections::BTreeMap;
 use std::path::Path;
 
 fn read(values: &[(&str, &str)]) -> anyhow::Result<Option<SystemActivityConfig>> {
-    let values: BTreeMap<&str, &str> = values.iter().copied().collect();
-    SystemActivityConfig::from_lookup(Path::new("/demo"), Path::new("/demo/segments"), |key| {
-        Ok(values.get(key).map(|value| (*value).to_owned()))
-    })
+    let mut command = crate::config::command().mut_args(|arg| arg.env(None::<&str>));
+    let mut args = vec!["kronika-demo".to_owned()];
+    for (key, value) in values {
+        let long = command
+            .get_arguments()
+            .find(|arg| arg.get_id().as_str() == *key)
+            .unwrap()
+            .get_long()
+            .unwrap();
+        args.push(format!("--{long}"));
+        args.push((*value).to_owned());
+    }
+    let matches = command.try_get_matches_from_mut(args)?;
+    SystemActivityConfig::from_matches(&matches, Path::new("/demo"), Path::new("/demo/segments"))
 }
 
 #[test]

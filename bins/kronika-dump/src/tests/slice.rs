@@ -20,6 +20,11 @@ use kronika_writer::{Interner, Journal, JournalConfig, SectionBuffers, dict, wri
 
 use super::*;
 
+std::thread_local! {
+    pub(super) static AFTER_SELECTION_PASS: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        std::cell::RefCell::new(None);
+}
+
 const BASE_SECOND: i64 = 1_700_000_000;
 const BASE: i64 = BASE_SECOND * MICROS_PER_SECOND;
 const LOAD_TYPE: u32 = 1_105_001;
@@ -298,9 +303,7 @@ fn rows_appended_after_capture_are_not_observed() {
         .expect("append initial part");
     let later = encoded_load_part(&[(BASE + 1_000_000, 2.0)]);
     let reader = Reader::open(directory.path()).expect("open reader");
-    let range = whole_second_range(BASE_SECOND, BASE_SECOND + 2)
-        .micros()
-        .expect("fixture range");
+    let range = whole_second_range(BASE_SECOND, BASE_SECOND + 2).micros();
     let listing = reader
         .segments(range.context_from..range.context_to_exclusive)
         .expect("capture listing");
@@ -402,9 +405,7 @@ fn a_finished_source_changed_after_capture_is_rejected() {
     append_load_segment(directory.path(), &[(BASE, 1.0)], true);
     let zms = only_zms(directory.path());
     let reader = Reader::open(directory.path()).expect("open reader");
-    let range = whole_second_range(BASE_SECOND, BASE_SECOND)
-        .micros()
-        .expect("fixture range");
+    let range = whole_second_range(BASE_SECOND, BASE_SECOND).micros();
     let listing = reader
         .segments(range.context_from..range.context_to_exclusive)
         .expect("capture listing");
@@ -540,9 +541,7 @@ fn a_foreign_storage_entry_does_not_block_a_slice() {
     std::fs::write(directory.path().join("operator-notes.txt"), b"unrelated")
         .expect("write foreign entry");
     let reader = Reader::open(directory.path()).expect("open reader");
-    let range = whole_second_range(BASE_SECOND, BASE_SECOND)
-        .micros()
-        .expect("fixture range");
+    let range = whole_second_range(BASE_SECOND, BASE_SECOND).micros();
     let listing = reader
         .segments(range.context_from..range.context_to_exclusive)
         .expect("list storage with foreign entry");
@@ -836,4 +835,24 @@ fn only_zms(root: &Path) -> PathBuf {
     visit(root, &mut found);
     assert_eq!(found.len(), 1);
     found.pop().expect("one fixture ZMS")
+}
+
+#[test]
+fn whole_second_bounds_include_the_storage_layout_edges() {
+    let first = UtcSecond::from_unix_seconds(-62_167_219_200).expect("first layout second");
+    let last = UtcSecond::from_unix_seconds(253_402_300_799).expect("last layout second");
+    let range = SliceRange::new(first, last)
+        .expect("full layout range")
+        .micros();
+    assert_eq!(range.from, -62_167_219_200_000_000);
+    assert_eq!(range.to_exclusive, 253_402_300_800_000_000);
+    assert_eq!(range.context_from, range.from);
+    assert_eq!(range.context_to_exclusive, range.to_exclusive);
+    for seconds in [-62_167_219_201, 253_402_300_800, i64::MIN, i64::MAX] {
+        assert_eq!(
+            UtcSecond::from_unix_seconds(seconds),
+            Err(RangeError::OutOfRange)
+        );
+    }
+    assert_eq!(SliceRange::new(last, first), Err(RangeError::Reversed));
 }

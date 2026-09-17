@@ -157,4 +157,5 @@ fn transaction_sql(purchase: Purchase) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/workload/dml.rs"]
 mod tests;

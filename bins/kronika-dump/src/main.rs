@@ -4,7 +4,6 @@ mod args;
 mod help;
 mod render;
 
-use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
 use std::io;
@@ -17,7 +16,7 @@ use kronika_dump::{SliceError, SliceRange, slice_to_zms};
 use kronika_reader::{Reader, ReaderError};
 use kronika_store::{ResourceError, validate_finished_zms};
 
-use crate::args::{Command, USAGE, Want};
+use crate::args::{Command, View};
 
 // Package dependencies used by the library target are intentionally shared
 // with this binary target.
@@ -31,25 +30,16 @@ use kronika_writer as _;
 use tempfile as _;
 
 fn main() -> ExitCode {
-    if std::env::args_os().skip(1).eq(["--version"]) {
-        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-        return ExitCode::SUCCESS;
-    }
-    if std::env::args_os().skip(1).eq(["--help"]) || std::env::args_os().skip(1).eq(["-h"]) {
-        print!("{}\n{}", help::HELP, help::SLICE_HELP);
-        return ExitCode::SUCCESS;
-    }
-    if std::env::args_os().skip(1).eq(["slice", "--help"])
-        || std::env::args_os().skip(1).eq(["slice", "-h"])
-    {
-        print!("{}", help::SLICE_HELP);
-        return ExitCode::SUCCESS;
-    }
-    let parsed = match args::parse(std::env::args().skip(1)) {
+    let parsed = match args::parse(std::env::args_os().skip(1)) {
         Ok(parsed) => parsed,
         Err(problem) => {
-            eprintln!("kronika-dump: {problem}\n\n{USAGE}");
-            return ExitCode::FAILURE;
+            let success = !problem.use_stderr();
+            let _printed = problem.print();
+            return if success {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            };
         }
     };
     let stdout = io::stdout();
@@ -70,93 +60,6 @@ fn main() -> ExitCode {
     }
 }
 
-#[derive(Debug)]
-enum DumpError {
-    Build(kronika_index::BuildError),
-    Index(kronika_index::IndexError),
-    Reader(ReaderError),
-    Slice(SliceError),
-    Validation(ResourceError),
-    Output(io::Error),
-    StorageDirectoryMissing,
-    OutputExists(PathBuf),
-    GeneratedBoundsMismatch,
-}
-
-impl fmt::Display for DumpError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Build(problem) => problem.fmt(f),
-            Self::Index(problem) => problem.fmt(f),
-            Self::Reader(problem) => problem.fmt(f),
-            Self::Slice(problem) => problem.fmt(f),
-            Self::Validation(problem) => write!(f, "validate generated ZMS: {problem}"),
-            Self::Output(problem) => write!(f, "write output: {problem}"),
-            Self::StorageDirectoryMissing => {
-                f.write_str("KRONIKA_STORAGE_DIR is required for slice")
-            }
-            Self::OutputExists(path) => {
-                write!(f, "output already exists: {}", path.display())
-            }
-            Self::GeneratedBoundsMismatch => {
-                f.write_str("generated ZMS catalog does not match selected bounds")
-            }
-        }
-    }
-}
-
-impl std::error::Error for DumpError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Build(problem) => Some(problem),
-            Self::Index(problem) => Some(problem),
-            Self::Reader(problem) => Some(problem),
-            Self::Slice(problem) => Some(problem),
-            Self::Validation(problem) => Some(problem),
-            Self::Output(problem) => Some(problem),
-            Self::StorageDirectoryMissing
-            | Self::OutputExists(_)
-            | Self::GeneratedBoundsMismatch => None,
-        }
-    }
-}
-
-impl From<kronika_index::BuildError> for DumpError {
-    fn from(problem: kronika_index::BuildError) -> Self {
-        Self::Build(problem)
-    }
-}
-
-impl From<kronika_index::IndexError> for DumpError {
-    fn from(problem: kronika_index::IndexError) -> Self {
-        Self::Index(problem)
-    }
-}
-
-impl From<ReaderError> for DumpError {
-    fn from(problem: ReaderError) -> Self {
-        Self::Reader(problem)
-    }
-}
-
-impl From<SliceError> for DumpError {
-    fn from(problem: SliceError) -> Self {
-        Self::Slice(problem)
-    }
-}
-
-impl From<ResourceError> for DumpError {
-    fn from(problem: ResourceError) -> Self {
-        Self::Validation(problem)
-    }
-}
-
-impl From<io::Error> for DumpError {
-    fn from(problem: io::Error) -> Self {
-        Self::Output(problem)
-    }
-}
-
 fn run_inspect(args: &args::InspectArgs, output: &mut impl io::Write) -> Result<(), DumpError> {
     let reader = Reader::open(&args.root)?;
     let listing = reader.segments((
@@ -168,12 +71,12 @@ fn run_inspect(args: &args::InspectArgs, output: &mut impl io::Write) -> Result<
     }
     for reference in &listing.segments {
         let segment = reader.open_segment(reference)?;
-        match args.want {
-            Want::Sizes => render::sizes(output, args.json, &segment)?,
-            Want::Index => {
-                render::index_from_reader(output, args.json, &reader, reference, &segment)?;
+        match args.view {
+            View::Sizes => render::sizes(output, args.json, &segment)?,
+            View::Index => {
+                render::index(output, args.json, &reader, reference, &segment)?;
             }
-            Want::Section(type_id) => {
+            View::Section(type_id) => {
                 render::section(output, args.json, &segment, type_id, args.limit)?;
             }
         }
@@ -182,8 +85,7 @@ fn run_inspect(args: &args::InspectArgs, output: &mut impl io::Write) -> Result<
 }
 
 fn run_slice(args: &args::SliceArgs, output: &mut impl io::Write) -> Result<(), DumpError> {
-    let storage = storage_directory(std::env::var_os("KRONIKA_STORAGE_DIR"))?;
-    let reader = Reader::open(&storage)?;
+    let reader = Reader::open(&args.storage_dir)?;
     let parent = args
         .out
         .parent()
@@ -227,10 +129,83 @@ fn run_slice(args: &args::SliceArgs, output: &mut impl io::Write) -> Result<(), 
     Ok(())
 }
 
-fn storage_directory(value: Option<OsString>) -> Result<PathBuf, DumpError> {
-    let value = value.ok_or(DumpError::StorageDirectoryMissing)?;
-    if value.is_empty() {
-        return Err(DumpError::StorageDirectoryMissing);
+#[derive(Debug)]
+enum DumpError {
+    Build(kronika_index::BuildError),
+    Index(kronika_index::IndexError),
+    Reader(ReaderError),
+    Slice(SliceError),
+    Validation(ResourceError),
+    Output(io::Error),
+    OutputExists(PathBuf),
+    GeneratedBoundsMismatch,
+}
+
+impl fmt::Display for DumpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Build(problem) => problem.fmt(f),
+            Self::Index(problem) => problem.fmt(f),
+            Self::Reader(problem) => problem.fmt(f),
+            Self::Slice(problem) => problem.fmt(f),
+            Self::Validation(problem) => write!(f, "validate generated ZMS: {problem}"),
+            Self::Output(problem) => write!(f, "write output: {problem}"),
+            Self::OutputExists(path) => {
+                write!(f, "output already exists: {}", path.display())
+            }
+            Self::GeneratedBoundsMismatch => {
+                f.write_str("generated ZMS catalog does not match selected bounds")
+            }
+        }
     }
-    Ok(PathBuf::from(value))
+}
+
+impl std::error::Error for DumpError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Build(problem) => Some(problem),
+            Self::Index(problem) => Some(problem),
+            Self::Reader(problem) => Some(problem),
+            Self::Slice(problem) => Some(problem),
+            Self::Validation(problem) => Some(problem),
+            Self::Output(problem) => Some(problem),
+            Self::OutputExists(_) | Self::GeneratedBoundsMismatch => None,
+        }
+    }
+}
+
+impl From<kronika_index::BuildError> for DumpError {
+    fn from(problem: kronika_index::BuildError) -> Self {
+        Self::Build(problem)
+    }
+}
+
+impl From<kronika_index::IndexError> for DumpError {
+    fn from(problem: kronika_index::IndexError) -> Self {
+        Self::Index(problem)
+    }
+}
+
+impl From<ReaderError> for DumpError {
+    fn from(problem: ReaderError) -> Self {
+        Self::Reader(problem)
+    }
+}
+
+impl From<SliceError> for DumpError {
+    fn from(problem: SliceError) -> Self {
+        Self::Slice(problem)
+    }
+}
+
+impl From<ResourceError> for DumpError {
+    fn from(problem: ResourceError) -> Self {
+        Self::Validation(problem)
+    }
+}
+
+impl From<io::Error> for DumpError {
+    fn from(problem: io::Error) -> Self {
+        Self::Output(problem)
+    }
 }

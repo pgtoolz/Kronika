@@ -12,7 +12,8 @@ use kronika_writer::{Interner, Journal, JournalConfig, SectionBuffers, dict};
 
 use crate::DumpError;
 
-use super::{dictionary_json, index, percent, section, sizes, write_index, write_json_row};
+use super::index::write_index;
+use super::{dictionary_json, percent, section, sizes, write_json_row};
 
 #[test]
 fn a_share_of_nothing_is_zero_rather_than_a_division_by_zero() {
@@ -455,4 +456,13 @@ impl std::io::Write for FailingWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+fn index(
+    output: &mut impl std::io::Write,
+    json_output: bool,
+    segment: &kronika_reader::Segment,
+) -> Result<(), DumpError> {
+    let built = kronika_index::build(segment)?;
+    write_index(output, json_output, segment, &built)
 }

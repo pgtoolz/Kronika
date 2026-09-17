@@ -241,4 +241,5 @@ async fn create_chunk(
 }
 
 #[cfg(test)]
+#[path = "../tests/workload/schema.rs"]
 mod tests;

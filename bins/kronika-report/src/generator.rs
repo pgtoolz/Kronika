@@ -23,15 +23,6 @@ const WASM_GLUE: &[u8] = include_bytes!("../assets/kronika-report-wasm.js");
 )]
 const WASM_GZIP: &[u8] = include_bytes!("../assets/kronika-report-wasm.wasm.gz");
 const RUNTIME_MARKER: &[u8] = b"/*KRONIKA_REPORT_RUNTIME*/";
-const RUNTIME_START: &[u8] = br#";(()=>{const b=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));globalThis.__KRONIKA_REPORT_RUNTIME__={visibleFrom:""#;
-const RUNTIME_TO: &[u8] = br#"",visibleToExclusive:""#;
-const RUNTIME_READY: &[u8] = br#"",ready:(async()=>{const z=b(""#;
-const RUNTIME_INDEX: &[u8] = br#""),i=b(""#;
-const RUNTIME_WASM: &[u8] = br#""),g=b(""#;
-const RUNTIME_ID: &[u8] = br#"");const r=new Uint8Array(await new Response(new Blob([g]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer()),m=await WebAssembly.compile(r);await KronikaReportWasm.initEmbedded(m);return new KronikaReportWasm.ReportSession(""#;
-const RUNTIME_SOURCES: &[u8] = br#"",z,i,"#;
-const RUNTIME_LENGTH: &[u8] = br#",BigInt(""#;
-const RUNTIME_END: &[u8] = br#""));})()};})();"#;
 const BASE64_INPUT_BYTES: usize = 12 * 1024;
 const MAX_JAVASCRIPT_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 
@@ -163,6 +154,12 @@ impl std::error::Error for HtmlReportError {
             | Self::InvalidAsset(_)
             | Self::InvalidResourceCount(_) => None,
         }
+    }
+}
+
+impl From<io::Error> for HtmlReportError {
+    fn from(source: io::Error) -> Self {
+        Self::Write(source)
     }
 }
 
@@ -325,34 +322,43 @@ fn write_source_html(
     let zms_len = resource.captured_bytes();
     let bytes = source.open_resource(resource)?;
 
-    let (idx, configured_sources) = isolated_index(&reader, resource)?;
+    let (idx, configured_sources) = build_index(&reader, resource)?;
     source.validate_opened(resource, &bytes)?;
-    let shell = shell()?;
+    let mut shell = Vec::new();
+    GzDecoder::new(SHELL_GZIP)
+        .read_to_end(&mut shell)
+        .map_err(HtmlReportError::Asset)?;
     let marker = marker(&shell)?;
 
-    write_output(output, &shell[..marker])?;
-    write_output(output, WASM_GLUE)?;
-    write_output(output, RUNTIME_START)?;
-    write!(output, "{}", visible_range.from()).map_err(HtmlReportError::Write)?;
-    write_output(output, RUNTIME_TO)?;
-    write!(output, "{}", visible_range.to_exclusive()).map_err(HtmlReportError::Write)?;
-    write_output(output, RUNTIME_READY)?;
-    write_base64_reader(output, &bytes, zms_len)?;
-    write_output(output, RUNTIME_INDEX)?;
-
+    output.write_all(&shell[..marker])?;
+    output.write_all(WASM_GLUE)?;
+    write!(
+        output,
+        concat!(
+            r#";(()=>{{const b=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));"#,
+            r#"globalThis.__KRONIKA_REPORT_RUNTIME__={{visibleFrom:"{}",visibleToExclusive:"{}","#,
+            r#"ready:(async()=>{{const z=b(""#,
+        ),
+        visible_range.from(),
+        visible_range.to_exclusive(),
+    )?;
+    write_base64(output, &bytes, zms_len)?;
+    output.write_all(br#""),i=b(""#)?;
     let idx_len =
         u64::try_from(idx.len()).map_err(|_overflow| HtmlReportError::InputTooLarge(idx.len()))?;
-    write_base64(output, &idx)?;
-    write_output(output, RUNTIME_WASM)?;
-    write_base64(output, WASM_GZIP)?;
-    write_output(output, RUNTIME_ID)?;
-    write!(output, "{segment_id}").map_err(HtmlReportError::Write)?;
-    write_output(output, RUNTIME_SOURCES)?;
-    write!(output, "{configured_sources}").map_err(HtmlReportError::Write)?;
-    write_output(output, RUNTIME_LENGTH)?;
-    write!(output, "{zms_len}").map_err(HtmlReportError::Write)?;
-    write_output(output, RUNTIME_END)?;
-    write_output(output, &shell[marker + RUNTIME_MARKER.len()..])?;
+    write_base64(output, &idx, idx_len)?;
+    output.write_all(br#""),g=b(""#)?;
+    write_base64(output, &WASM_GZIP, WASM_GZIP.len() as u64)?;
+    write!(
+        output,
+        concat!(
+            r#"");const r=new Uint8Array(await new Response(new Blob([g]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer()),"#,
+            r#"m=await WebAssembly.compile(r);await KronikaReportWasm.initEmbedded(m);"#,
+            r#"return new KronikaReportWasm.ReportSession("{}",z,i,{},BigInt("{}"));}})()}};}})();"#,
+        ),
+        segment_id, configured_sources, zms_len,
+    )?;
+    output.write_all(&shell[marker + RUNTIME_MARKER.len()..])?;
     source.validate_opened(resource, &bytes)?;
 
     Ok(HtmlReportSummary {
@@ -363,7 +369,7 @@ fn write_source_html(
     })
 }
 
-fn isolated_index(
+fn build_index(
     reader: &FinishedReader<EmbeddedSource>,
     resource: &SegmentResource<EmbeddedResource>,
 ) -> Result<(Vec<u8>, u32), HtmlReportError> {
@@ -384,14 +390,6 @@ fn configured_sources(type_ids: impl IntoIterator<Item = u32>) -> u32 {
         .fold(SOURCE_OS, |sources, source| sources | source)
 }
 
-fn shell() -> Result<Vec<u8>, HtmlReportError> {
-    let mut shell = Vec::new();
-    GzDecoder::new(SHELL_GZIP)
-        .read_to_end(&mut shell)
-        .map_err(HtmlReportError::Asset)?;
-    Ok(shell)
-}
-
 fn marker(shell: &[u8]) -> Result<usize, HtmlReportError> {
     let mut markers = shell
         .windows(RUNTIME_MARKER.len())
@@ -410,15 +408,7 @@ fn marker(shell: &[u8]) -> Result<usize, HtmlReportError> {
     Ok(marker)
 }
 
-fn write_base64(output: &mut dyn io::Write, bytes: &[u8]) -> Result<(), HtmlReportError> {
-    let mut encoder = EncoderWriter::new(output, &STANDARD);
-    encoder
-        .write_all(bytes)
-        .and_then(|()| encoder.finish().map(|_output| ()))
-        .map_err(HtmlReportError::Write)
-}
-
-fn write_base64_reader<R: ReadAt>(
+fn write_base64<R: ReadAt>(
     output: &mut dyn io::Write,
     input: &R,
     len: u64,
@@ -438,9 +428,7 @@ fn write_base64_reader<R: ReadAt>(
         input
             .read_exact_at(&mut buffer[..chunk_len], offset)
             .map_err(HtmlReportError::Read)?;
-        encoder
-            .write_all(&buffer[..chunk_len])
-            .map_err(HtmlReportError::Write)?;
+        encoder.write_all(&buffer[..chunk_len])?;
         offset += chunk_len as u64;
     }
     encoder
@@ -449,10 +437,6 @@ fn write_base64_reader<R: ReadAt>(
         .map_err(HtmlReportError::Write)
 }
 
-fn write_output(output: &mut dyn io::Write, bytes: &[u8]) -> Result<(), HtmlReportError> {
-    output.write_all(bytes).map_err(HtmlReportError::Write)
-}
-
 #[cfg(test)]
-#[path = "generator_tests.rs"]
+#[path = "tests/generator.rs"]
 mod tests;

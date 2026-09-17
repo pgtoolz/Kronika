@@ -100,4 +100,5 @@ pub(super) fn run(peak_kib_per_s: u64, stop: &Arc<AtomicBool>) -> Result<()> {
 }
 
 #[cfg(test)]
+#[path = "../tests/system_activity/loopback.rs"]
 mod tests;

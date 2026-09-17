@@ -6,14 +6,14 @@ use kronika_reader::FinishedReader;
 use kronika_store::EmbeddedSource;
 
 use super::{
-    HtmlReportInput, ReportTimeRange, isolated_index, write_html, write_html_from_file,
+    HtmlReportInput, ReportTimeRange, build_index, write_html, write_html_from_file,
     write_html_from_file_with_segment_id,
 };
 
 const SEGMENT_ID: i64 = 1_709_164_800_000_000;
 const VISIBLE_TO: i64 = SEGMENT_ID + 1_000_001;
-const ZMS: &[u8] = include_bytes!("../tests/fixtures/standalone.zms");
-const IDX: &[u8] = include_bytes!("../tests/fixtures/standalone.idx");
+const ZMS: &[u8] = include_bytes!("../../tests/fixtures/standalone.zms");
+const IDX: &[u8] = include_bytes!("../../tests/fixtures/standalone.idx");
 
 #[test]
 fn report_range_requires_positive_javascript_safe_microseconds() {
@@ -57,7 +57,7 @@ fn isolated_builder_produces_the_committed_canonical_index() {
     let reader = FinishedReader::new(source);
     let listing = reader.resources().expect("fixture resources");
     let (index, configured_sources) =
-        isolated_index(&reader, &listing.resources[0]).expect("build isolated index");
+        build_index(&reader, &listing.resources[0]).expect("build isolated index");
     assert_eq!(index, IDX);
     assert_eq!(configured_sources, SOURCE_OS | SOURCE_POSTGRESQL);
     assert_eq!(super::configured_sources([]), SOURCE_OS);
@@ -252,7 +252,7 @@ fn report_is_self_contained_and_deterministic() {
     }
 }
 
-#[path = "../tests/support/collection_modes.rs"]
+#[path = "../../tests/support/collection_modes.rs"]
 mod collection_modes;
 
 #[test]
@@ -317,7 +317,7 @@ fn recorded_collection_modes_generate_matching_report_artifacts() {
         );
         let resources = reader.resources().expect("resources");
         let (idx, bits) =
-            isolated_index(&reader, &resources.resources[0]).expect("production isolated index");
+            build_index(&reader, &resources.resources[0]).expect("production isolated index");
         assert_eq!(bits, sources);
         let mut html = Vec::new();
         let summary = write_html(

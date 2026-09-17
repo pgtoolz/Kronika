@@ -1,4 +1,4 @@
-//! Which sections the run produced, and how many rows of each.
+//! Measure completed segments and aggregate their section catalogs in one scan.
 //!
 //! Read from each segment's catalog, so a stage that starts collecting a new
 //! source shows up in the demo without the demo learning anything about it.
@@ -19,38 +19,46 @@ pub(crate) struct SectionRows {
     pub(crate) rows: u64,
 }
 
-/// Sum the catalogs of every `.zms` under `root`, in type-id order.
-///
-/// # Errors
-///
-/// Returns an error when a segment cannot be read or its catalog cannot be
-/// decoded.
-pub(crate) fn section_rows(root: &Path) -> Result<Vec<SectionRows>> {
+#[derive(Default)]
+pub(crate) struct SegmentSummary {
+    pub(crate) count: usize,
+    pub(crate) bytes: u64,
+    pub(crate) sections: Vec<SectionRows>,
+}
+
+/// Scan each completed segment once, without following directory symlinks.
+pub(crate) fn measure(root: &Path) -> Result<SegmentSummary> {
+    let mut summary = SegmentSummary::default();
     let mut totals: BTreeMap<u32, u64> = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry.with_context(|| format!("read {}", dir.display()))?;
             let path = entry.path();
-            if path.is_dir() {
+            let file_type = entry.file_type().context("stat a data-root entry")?;
+            if file_type.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "zms") {
+            } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "zms") {
+                summary.count += 1;
+                summary.bytes += entry.metadata().context("stat a segment")?.len();
                 for entry in catalog(&path)?.entries {
                     *totals.entry(entry.type_id).or_default() += u64::from(entry.rows);
                 }
             }
         }
     }
-    Ok(totals
+    summary.sections = totals
         .into_iter()
         .map(|(type_id, rows)| SectionRows {
             type_id,
             name: kronika_registry::section_name(type_id).unwrap_or("unknown"),
             rows,
         })
-        .collect())
+        .collect();
+    Ok(summary)
 }
 
 fn catalog(path: &Path) -> Result<Catalog> {
@@ -74,3 +82,7 @@ fn catalog(path: &Path) -> Result<Catalog> {
         Err(error) => bail!("{}: {error:?}", path.display()),
     }
 }
+
+#[cfg(test)]
+#[path = "tests/sections.rs"]
+mod tests;

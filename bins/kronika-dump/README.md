@@ -4,8 +4,8 @@
 
 `kronika-dump` shows the times, data sections and rows in a recording. Its
 `slice` command extracts an interval into one `.zms` file that `kronika-report`
-can turn into an HTML report. Sources: [inspection parser](src/main.rs), [slice command](src/slice.rs),
-[parameter help](src/help.rs).
+can turn into an HTML report. Sources: [CLI and generated help](src/args.rs),
+[slice extraction](src/slice.rs).
 
 ## Inspect
 
@@ -41,7 +41,7 @@ a directory where you want to save the result. The final command gives your
 user ownership of the file created by `sudo`, so you can pass it to report:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika kronika-dump slice \
+sudo kronika-dump slice --storage-dir /var/lib/kronika \
   --from 2026-09-05T19:00:00Z \
   --to 2026-09-05T19:59:59Z \
   --out incident.zms &&
@@ -50,7 +50,7 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika kronika-dump slice \
 
 | Parameter | Meaning |
 | --- | --- |
-| `KRONIKA_STORAGE_DIR` | Required real collector storage root with read access; finished segments and committed journal are inputs. |
+| `--storage-dir DIR` / `KRONIKA_STORAGE_DIR` | Required real collector storage root with read access; finished segments and committed journal are inputs. The CLI option overrides the environment. |
 | `--from RFC3339` | Required inclusive first whole second, with `Z` or a timezone offset. |
 | `--to RFC3339` | Required inclusive last whole second, at or after `--from`. Equal bounds select one complete second. Fractional seconds and numeric Unix values are rejected. |
 | `--out FILE.zms` | Required new `.zms` path. Parent directory must exist and be writable. Existing paths are rejected. |
@@ -68,6 +68,6 @@ to HTML.
 
 ## Common options
 
-`-h` and `--help` select general help; `slice -h` and `slice --help` select
+`-h` shows a concise option list; `--help` adds examples and operational details; `slice -h` and `slice --help` select
 slice help. `--version` prints the binary version. These calls exit before
-storage access. `Ctrl+C` interrupts a running command.
+storage access. Invalid arguments also exit before storage access. `Ctrl+C` interrupts a running command.
