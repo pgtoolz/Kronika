@@ -19,7 +19,7 @@ use crate::request::{RequestTarget, if_none_match_values, route_request, session
 use crate::response::{failed, json_response};
 use crate::{export, mcp, query_adapter, route, streaming, ui};
 
-#[tokio::main]
+#[tokio::main(worker_threads = 2)]
 pub(crate) async fn run() -> Result<()> {
     let config = Arc::new(Config::from_env()?);
     let listener = TcpListener::bind(config.listen)
