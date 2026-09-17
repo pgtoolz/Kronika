@@ -92,6 +92,10 @@ make fmt-check lint test
 <a id="browser-assets"></a>
 ## Пересборка файлов веб-интерфейса
 
+Для сборки WebAssembly отчёта нужны Clang 18.1.3 и `llvm-ar-18`. В Ubuntu 24.04
+установите их командой `sudo apt-get install clang-18 llvm-18`.
+Настройка путей описана в [справочнике сборки ресурсов](../bins/kronika-report/assets/README.ru.md).
+
 ```sh
 rustup target add wasm32-unknown-unknown --toolchain 1.96.0
 make ui-install

@@ -71,7 +71,10 @@ jobs:
 
   wasm-query:
     name: portable query and report
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      CC_wasm32_unknown_unknown: clang-18
+      AR_wasm32_unknown_unknown: llvm-ar-18
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -80,12 +83,13 @@ jobs:
           cache: npm
           cache-dependency-path: bins/kronika-web/ui/package-lock.json
       - name: Install the pinned WebAssembly target
-        run: rustup target add wasm32-unknown-unknown --toolchain 1.96.0
+        run: |
+          rustup target add wasm32-unknown-unknown --toolchain 1.96.0
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends clang-18 llvm-18
       - uses: Swatinem/rust-cache@v2
       - run: make ui-install
       - name: Check the embedded query graph
-        env:
-          CC_wasm32_unknown_unknown: clang
         run: |
           cargo +1.96.0 test --locked -p kronika-store --lib --no-default-features
           cargo +1.96.0 check --locked -p kronika-query --lib \
@@ -97,8 +101,6 @@ jobs:
             exit 1
           fi
       - name: Check the report WebAssembly and native byte parity
-        env:
-          CC_wasm32_unknown_unknown: clang
         run: |
           cargo +1.96.0 check --locked -p kronika-report-wasm --lib \
             --target wasm32-unknown-unknown --no-default-features

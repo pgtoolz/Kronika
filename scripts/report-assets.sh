@@ -13,6 +13,8 @@ CARGO_HOME_PATH=${CARGO_HOME:-$HOME/.cargo}
 BINDGEN_VERSION=0.2.127
 BINDGEN_ARCHIVE=wasm-bindgen-${BINDGEN_VERSION}-x86_64-unknown-linux-musl.tar.gz
 BINDGEN_SHA256=61d4a7dc85acfa0d2354ccc0b8361928c7e52a746d17f28ebaa795ed3dc1614a
+# zstd's C code changes the WASM bytes when compiled by a different Clang.
+CLANG_VERSION=18.1.3
 ASSET_DIRECTORY=bins/kronika-report/assets
 JAVASCRIPT_ASSET=${ASSET_DIRECTORY}/kronika-report-wasm.js
 WASM_ASSET=${ASSET_DIRECTORY}/kronika-report-wasm.wasm.gz
@@ -101,19 +103,24 @@ if [[ $("$bindgen" --version) != "wasm-bindgen ${BINDGEN_VERSION}" ]]; then
 	exit 1
 fi
 
-if [[ -z ${CC_wasm32_unknown_unknown:-} ]]; then
-	if command -v clang >/dev/null 2>&1; then
-		export CC_wasm32_unknown_unknown=clang
-	elif command -v clang-18 >/dev/null 2>&1; then
-		export CC_wasm32_unknown_unknown=clang-18
-	fi
+export CC_wasm32_unknown_unknown=${CC_wasm32_unknown_unknown:-clang-18}
+export AR_wasm32_unknown_unknown=${AR_wasm32_unknown_unknown:-llvm-ar-18}
+if [[ $("$CC_wasm32_unknown_unknown" -dumpversion) != "$CLANG_VERSION" ]]; then
+	echo "report assets require Clang ${CLANG_VERSION}; set CC_wasm32_unknown_unknown to its executable" >&2
+	exit 1
 fi
 remap_flags="--remap-path-prefix=${CARGO_HOME_PATH}=/cargo-home"
 remap_flags+=$'\x1f'
 remap_flags+="--remap-path-prefix=$(pwd)=/workspace"
+# Ignore local C flags and Cargo's incremental setting when reproducing assets.
 env -u CFLAGS -u RUSTFLAGS \
+	-u TARGET_CFLAGS -u CFLAGS_wasm32-unknown-unknown \
+	-u CC_wasm32-unknown-unknown -u AR_wasm32-unknown-unknown \
+	-u ARFLAGS -u TARGET_ARFLAGS -u ARFLAGS_wasm32_unknown_unknown \
+	-u ARFLAGS_wasm32-unknown-unknown -u CRATE_CC_NO_DEFAULTS \
 	CFLAGS_wasm32_unknown_unknown=-fno-ident \
 	CONST_RANDOM_SEED=kronika-report-wasm-v1 \
+	CARGO_INCREMENTAL=0 \
 	CARGO_ENCODED_RUSTFLAGS="$remap_flags" \
 	"$CARGO" +"$TOOLCHAIN" build --locked --release \
 	--target wasm32-unknown-unknown \
