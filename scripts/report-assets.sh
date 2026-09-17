@@ -48,7 +48,7 @@ validate_gzip() {
 		exit 1
 	fi
 	gzip --test "$compressed"
-	if [[ $(od -An -tu1 -N8 "$compressed" | tr -s ' ' | sed 's/^ //') != "31 139 8 0 0 0 0 0" ]]; then
+	if [[ $(od -An -tu1 -N8 "$compressed" | tr -s ' ' | sed 's/^ //; s/ $//') != "31 139 8 0 0 0 0 0" ]]; then
 		echo "generated WebAssembly gzip has a non-deterministic header" >&2
 		exit 1
 	fi

@@ -22,6 +22,18 @@ pub enum ActualFrequencySource {
     CpuinfoCurrent = 2,
 }
 
+impl ActualFrequencySource {
+    /// Sysfs attribute used for this frequency, or `None` when unavailable.
+    #[must_use]
+    pub const fn attribute_name(self) -> Option<&'static str> {
+        match self {
+            Self::Unavailable => None,
+            Self::CpuinfoAverage => Some("cpuinfo_avg_freq"),
+            Self::CpuinfoCurrent => Some("cpuinfo_cur_freq"),
+        }
+    }
+}
+
 /// Static reference for one kernel `CPUFreq` policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuFreqPolicy {
@@ -165,11 +177,14 @@ fn policy_id(name: &str) -> Option<i32> {
 }
 
 fn actual_frequency(sys: &SysFs, root: &str) -> (ActualFrequencySource, Option<i64>) {
-    for (source, name) in [
-        (ActualFrequencySource::CpuinfoAverage, "cpuinfo_avg_freq"),
-        (ActualFrequencySource::CpuinfoCurrent, "cpuinfo_cur_freq"),
+    for source in [
+        ActualFrequencySource::CpuinfoAverage,
+        ActualFrequencySource::CpuinfoCurrent,
     ] {
-        if let Some(frequency) = read_hz(sys, root, name) {
+        if let Some(frequency) = source
+            .attribute_name()
+            .and_then(|name| read_hz(sys, root, name))
+        {
             return (source, Some(frequency));
         }
     }

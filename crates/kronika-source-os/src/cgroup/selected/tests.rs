@@ -72,6 +72,11 @@ fn primary_root_never_borrows_complete_child_metrics_or_pressure() {
     );
     write(
         dir.path(),
+        "sys/fs/cgroup/pod/collector/cpuset.cpus.effective",
+        "0-1",
+    );
+    write(
+        dir.path(),
         "sys/fs/cgroup/pod/collector/cpu.pressure",
         "some avg10=90 avg60=80 avg300=70 total=9000",
     );
@@ -81,6 +86,7 @@ fn primary_root_never_borrows_complete_child_metrics_or_pressure() {
         "usage_usec 100\nuser_usec 60\nsystem_usec 40\n",
     );
     let selected = collect_ancestor_context(&procfs, &sys, 1).expect("selection");
+    assert_eq!(selected.context.cpuset_cpus, None);
     let rows = collect_ancestor_rows(&sys, &selected, 1);
     let cpu = &rows.ancestor_cpu[0];
     assert_eq!(cpu.cgroup_path, "/");

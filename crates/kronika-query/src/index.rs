@@ -2,7 +2,8 @@
 
 use kronika_index::{
     DERIVED_HEALTH_TYPE_ID, FindingBlock, FindingKind, INSTANCE_METADATA_TYPE_ID,
-    INSTANCE_METADATA_V1_TYPE_ID, OS_PSI_TYPE_ID, SeriesBlock, series_keys_for_sections,
+    INSTANCE_METADATA_V1_TYPE_ID, INSTANCE_METADATA_V3_TYPE_ID, INSTANCE_METADATA_V4_TYPE_ID,
+    OS_PSI_TYPE_ID, SeriesBlock, series_keys_for_sections,
 };
 use kronika_reader::SegmentKind;
 use kronika_registry::{contract, logical_section_name, section_implementation};
@@ -337,7 +338,8 @@ fn health_layout(series: &str) -> Value {
             "inputs": [
                 INSTANCE_METADATA_TYPE_ID.to_string(),
                 INSTANCE_METADATA_V1_TYPE_ID.to_string(),
-                "1021003",
+                INSTANCE_METADATA_V3_TYPE_ID.to_string(),
+                INSTANCE_METADATA_V4_TYPE_ID.to_string(),
                 "1205002",
                 OS_PSI_TYPE_ID.to_string(),
                 "1001001",

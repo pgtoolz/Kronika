@@ -777,9 +777,9 @@ fn only_the_two_exact_ui_paths_admit_get_and_head() {
     assert!(matches!(
         route_request(Some(&account()), &request(Method::GET, "/api/catalog")),
         Ok(RequestTarget::Api {
-            route: crate::route::Route::Recorded(kronika_api::Route::Catalog(_)),
+            route: crate::route::Route::Recorded(route),
             ..
-        })
+        }) if matches!(route.as_ref(), kronika_api::Route::Query(kronika_query::QueryRequest::Catalog(_)))
     ));
 
     let post = route_request(Some(&account()), &public_request(Method::POST, "/"))

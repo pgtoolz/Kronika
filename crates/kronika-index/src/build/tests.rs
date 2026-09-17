@@ -148,6 +148,51 @@ fn overall_uses_latest_nonfuture_postgres_value_only_through_its_interval() {
 }
 
 #[test]
+fn overall_uses_base_interval_after_adaptive_activity_samples() {
+    let facts = HealthMetadata {
+        postgresql_interval_seconds: 10,
+        ..metadata()
+    };
+    let postgres = [
+        (0, 80),
+        (10_000_000, 70),
+        (15_000_000, 60),
+        (25_000_000, 90),
+    ]
+    .map(|(timestamp, value)| HealthPoint {
+        timestamp,
+        value: Some(value),
+    });
+    let os = [
+        9_000_000, 10_000_000, 14_000_000, 15_000_000, 21_000_000, 25_000_000, 35_000_000,
+        35_000_001,
+    ]
+    .map(|timestamp| HealthPoint {
+        timestamp,
+        value: Some(90),
+    });
+
+    // The five-second burst does not shorten the recorded ten-second freshness
+    // window when activity returns to its normal cadence or a sample is missing.
+    assert_eq!(
+        overall_points(&os, Some(&postgres), None, &facts)
+            .iter()
+            .map(|point| point.value)
+            .collect::<Vec<_>>(),
+        [
+            Some(70),
+            Some(60),
+            Some(60),
+            Some(50),
+            Some(50),
+            Some(80),
+            Some(80),
+            None
+        ]
+    );
+}
+
+#[test]
 fn disabled_postgres_costs_nothing_and_unknown_postgres_is_unknown() {
     let os = [HealthPoint {
         timestamp: 10,

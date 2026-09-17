@@ -22,6 +22,8 @@ pub const DERIVED_HEALTH_TYPE_ID: u32 = 0;
 pub const INSTANCE_METADATA_TYPE_ID: u32 = 1_021_002;
 /// Collection families and optional Linux identity.
 pub const INSTANCE_METADATA_V3_TYPE_ID: u32 = 1_021_003;
+/// Per-family `PostgreSQL` collection intervals.
+pub const INSTANCE_METADATA_V4_TYPE_ID: u32 = 1_021_004;
 /// Previous `instance_metadata`, used only to retain OS-health readability.
 pub const INSTANCE_METADATA_V1_TYPE_ID: u32 = 1_021_001;
 /// `type_id` of `os_psi`.
@@ -191,7 +193,7 @@ fn predecessor_health_seed(
     let has_metadata = predecessor.sections().iter().any(|section| {
         matches!(
             section.type_id,
-            INSTANCE_METADATA_TYPE_ID | INSTANCE_METADATA_V3_TYPE_ID
+            INSTANCE_METADATA_TYPE_ID | INSTANCE_METADATA_V3_TYPE_ID | INSTANCE_METADATA_V4_TYPE_ID
         )
     });
     if !(needs_os && has_psi || (needs_postgres || needs_capacity) && has_metadata) {
@@ -568,18 +570,20 @@ const fn health_metadata(
 }
 
 fn metadata_projection(segment: &Segment) -> Result<Option<MetadataProjection>, ReaderError> {
-    let type_id = if segment.rows_of(INSTANCE_METADATA_V3_TYPE_ID).is_some() {
-        INSTANCE_METADATA_V3_TYPE_ID
-    } else if segment.rows_of(INSTANCE_METADATA_TYPE_ID).is_some() {
-        INSTANCE_METADATA_TYPE_ID
-    } else {
+    let mut layouts = [
+        INSTANCE_METADATA_V4_TYPE_ID,
+        INSTANCE_METADATA_V3_TYPE_ID,
+        INSTANCE_METADATA_TYPE_ID,
+    ]
+    .into_iter()
+    .filter(|type_id| segment.rows_of(*type_id).is_some());
+    let Some(type_id) = layouts.next() else {
         return Ok(None);
     };
     let mut selected = None::<(i64, u64, MetadataProjection)>;
     let mut first_usable = None::<MetadataProjection>;
-    let mut ambiguous = segment.rows_of(INSTANCE_METADATA_V1_TYPE_ID).is_some()
-        || type_id == INSTANCE_METADATA_V3_TYPE_ID
-            && segment.rows_of(INSTANCE_METADATA_TYPE_ID).is_some();
+    let mut ambiguous =
+        segment.rows_of(INSTANCE_METADATA_V1_TYPE_ID).is_some() || layouts.next().is_some();
     let mut fields = vec![
         "ts",
         "environment",
@@ -589,7 +593,10 @@ fn metadata_projection(segment: &Segment) -> Result<Option<MetadataProjection>, 
         "postgresql_effective_cpus",
         "postgresql_interval_seconds",
     ];
-    if type_id == INSTANCE_METADATA_V3_TYPE_ID {
+    if matches!(
+        type_id,
+        INSTANCE_METADATA_V3_TYPE_ID | INSTANCE_METADATA_V4_TYPE_ID
+    ) {
         fields.extend(["os_enabled", "postgresql_processes_shared"]);
     }
     segment.visit_rows(type_id, &fields, 0, usize::MAX, |ordinal, row| {

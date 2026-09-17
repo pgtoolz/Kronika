@@ -107,11 +107,12 @@ OPTIONAL STORAGE ENVIRONMENT (sizes are nonnegative whole numbers of bytes)
       the newest finished segment. It checks after a segment is saved and every minute.
       A running collection can delay the check and exceed the target.
 
-OPTIONAL COLLECTION INTERVALS (nonnegative whole numbers of seconds)
+OPTIONAL COLLECTION INTERVALS (nonnegative whole seconds)
   KRONIKA_INTERVAL_S                  default 5, maximum timer sleep
       0 disables timed collection. SIGUSR2 still collects. Positive per-source
       intervals can wake the timer earlier. A per-source 0 reads every timer
-      cycle. It does not disable that source.
+      cycle, except statements/plans, whose interval must be at least 300.
+      A per-source 0 does not disable that source.
   KRONIKA_OS_CORE_INTERVAL_S          default 10, CPU, memory, disks, network, PSI
   KRONIKA_OS_MOUNTTOPO_INTERVAL_S     default 60, mounts, capacity, device topology
   KRONIKA_OS_PROCESS_INTERVAL_S       default 5, process counters
@@ -119,8 +120,20 @@ OPTIONAL COLLECTION INTERVALS (nonnegative whole numbers of seconds)
   KRONIKA_OS_CGROUP_INTERVAL_S        default 30, all visible accessible cgroup v2 groups
   KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S default 30, process-to-cgroup v2 mappings
   KRONIKA_LOG_INTERVAL_S              default 10, configured PostgreSQL/PgBouncer logs
-  KRONIKA_PG_INTERVAL_S               default 30, PostgreSQL metrics and settings
-  KRONIKA_PG_RELATIONS_INTERVAL_S     default 300, tables and indexes
+  KRONIKA_PG_INTERVAL_S               default 30, server counters and settings
+  KRONIKA_PG_ACTIVITY_INTERVAL_S      default 10, activity, lock waits, VACUUM progress
+  KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S default 5, activity during lock waits
+      A successful nonempty lock-wait read uses the smaller of the ordinary
+      and blocked activity intervals. 0 reads on every regular timer wakeup
+      without adding timer wakeups.
+      A successful empty read restores the base interval; errors keep it unchanged.
+  KRONIKA_PG_STATEMENTS_INTERVAL_S    default 300, statements/plans and their info views
+      Must be >= 300. Waits at least this long after the preceding PostgreSQL
+      pass containing these sources finishes; SIGUSR2 cannot bypass the limit.
+  KRONIKA_PG_RELATIONS_INTERVAL_S     default 300, tables and indexes in each database
+
+  Collection is sequential. Slow queries can delay activity snapshots.
+  KRONIKA_INTERVAL_S=0 keeps all collection signal-driven, even during lock waits.
 
 OPTIONAL LOGGING AND MOUNT PATHS
   KRONIKA_LOG_LEVEL   default info, error, warn (or warning), info, debug, trace
@@ -133,7 +146,8 @@ OPTIONAL LOGGING AND MOUNT PATHS
 STOPPING AND ERRORS
   SIGINT (Ctrl+C) and SIGTERM stop collection and retain active.wal without a
   final ZMS close. Restart with the same directory to recover a valid nonempty
-  journal immediately. SIGUSR2 forces a collection cycle.
+  journal immediately. SIGUSR2 forces a collection cycle while preserving the
+  minimum interval for statements/plans.
   The accumulated segment is saved when the cycle appended data and left
   a nonempty segment. Invalid configuration and unrecoverable storage failures
   exit nonzero. Individual source errors are logged and retried.

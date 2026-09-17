@@ -1,97 +1,54 @@
-use super::{OsSources, Result, SectionBuffers, buffer_row};
+use anyhow::Result;
+use kronika_writer::SectionBuffers;
+
+use super::OsSources;
+use crate::buffering::buffer_row;
 
 /// Buffer every collected OS section into the snapshot window.
 ///
-/// Rows are pre-built with their string ids already interned, so this only
-/// moves them into the buffers.
+/// String IDs are already interned; rows are copied into their section buffers.
 ///
 /// # Errors
 /// Returns an error if a section buffer is full.
 pub(crate) fn push_os_sources(buffers: &mut SectionBuffers, os: &OsSources) -> Result<()> {
-    for row in &os.cpu {
-        buffer_row(buffers, *row)?;
+    macro_rules! buffer_sections {
+        ($($field:ident),+ $(,)?) => {
+            $(
+                for row in os.$field.iter().copied() {
+                    buffer_row(buffers, row)?;
+                }
+            )+
+        };
     }
-    if let Some(row) = os.stat {
-        buffer_row(buffers, row)?;
-    }
-    if let Some(row) = os.meminfo {
-        buffer_row(buffers, row)?;
-    }
-    if let Some(row) = os.loadavg {
-        buffer_row(buffers, row)?;
-    }
-    if let Some(row) = os.vmstat {
-        buffer_row(buffers, row)?;
-    }
-    for row in &os.psi {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.diskstats {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.netdev {
-        buffer_row(buffers, *row)?;
-    }
-    if let Some(row) = os.snmp {
-        buffer_row(buffers, row)?;
-    }
-    if let Some(row) = os.netstat {
-        buffer_row(buffers, row)?;
-    }
-    if let Some(row) = os.snmp6 {
-        buffer_row(buffers, row)?;
-    }
-    if let Some(row) = os.kernel_limits {
-        buffer_row(buffers, row)?;
-    }
-    if let Some(row) = os.nfs_client {
-        buffer_row(buffers, row)?;
-    }
-    if let Some(row) = os.nfs_server {
-        buffer_row(buffers, row)?;
-    }
-    for row in &os.interrupts {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.softirq {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.numa {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.mountinfo {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.topology {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.block_topology {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cpufreq_policy {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.cpufreq {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.processes {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.users {
-        buffer_row(buffers, *row)?;
-    }
-    for row in &os.process_status {
-        buffer_row(buffers, *row)?;
-    }
-    push_cgroup_sources(buffers, os)
-}
 
-fn push_cgroup_sources(buffers: &mut SectionBuffers, os: &OsSources) -> Result<()> {
-    for row in &os.cgroup_mapping {
-        buffer_row(buffers, *row)?;
-    }
-    if let Some(row) = os.cgroup_context {
-        buffer_row(buffers, row)?;
-    }
+    buffer_sections!(
+        cpu,
+        stat,
+        meminfo,
+        loadavg,
+        vmstat,
+        psi,
+        diskstats,
+        netdev,
+        snmp,
+        netstat,
+        snmp6,
+        kernel_limits,
+        nfs_client,
+        nfs_server,
+        interrupts,
+        softirq,
+        numa,
+        mountinfo,
+        topology,
+        block_topology,
+        cpufreq_policy,
+        cpufreq,
+        processes,
+        users,
+        process_status,
+        cgroup_mapping,
+        cgroup_context,
+    );
     Ok(())
 }

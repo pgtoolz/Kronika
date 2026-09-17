@@ -4,19 +4,19 @@ use super::{
 };
 use kronika_query::{
     ActiveCursor, CatalogRequest, DataRequest, EventsRepresentation, Filter, HourPart,
-    IndexRequest, Order, SegmentRequest, StatementScope, Window,
+    IndexRequest, Order, QueryRequest, SegmentRequest, StatementScope, Window,
 };
 
 #[test]
 fn catalog_accepts_only_valid_ordered_bounds() {
     assert_eq!(
         parse("/api/catalog", Some("from=-5&to=20")),
-        Ok(Route::Catalog(CatalogRequest {
+        Ok(Route::Query(QueryRequest::Catalog(CatalogRequest {
             window: Window {
                 from: Some(-5),
                 to: Some(20),
             },
-        }))
+        })))
     );
     assert_eq!(
         parse("/api/catalog", Some("from=20&to=5")),
@@ -30,7 +30,7 @@ fn catalog_accepts_only_valid_ordered_bounds() {
 
 #[test]
 fn events_route_is_half_open_deduplicated_and_strict() {
-    let Route::Events(request) = parse(
+    let Route::Query(QueryRequest::Events(request)) = parse(
         "/api/events",
         Some("from=10&to=20&representation=occurrences&limit=5&source=pg_log_errors&source=pg_log_temp_files&source=pg_log_errors"),
     )
@@ -65,10 +65,10 @@ fn resources_name_a_segment_and_textual_section_in_the_path() {
             "/api/segments/1700000000000000/sections/pg_stat_statements/index",
             None,
         ),
-        Ok(Route::Index(IndexRequest {
+        Ok(Route::Query(QueryRequest::Index(IndexRequest {
             segment_id: 1_700_000_000_000_000,
             section: "pg_stat_statements".to_owned(),
-        }))
+        })))
     );
 }
 
@@ -81,7 +81,7 @@ fn repeated_fields_and_exact_where_parameters_keep_request_order() {
     .expect("history");
     assert_eq!(
         route,
-        Route::History(DataRequest {
+        Route::Query(QueryRequest::History(DataRequest {
             segment: SegmentRequest {
                 segment_id: 7,
                 section: "pg_store_plans".to_owned(),
@@ -99,13 +99,13 @@ fn repeated_fields_and_exact_where_parameters_keep_request_order() {
             ],
             type_id: None,
             after: None,
-        })
+        }))
     );
 }
 
 #[test]
 fn physical_layout_selection_is_available_to_every_generic_row_resource() {
-    let Route::History(history) = parse(
+    let Route::Query(QueryRequest::History(history)) = parse(
         "/api/segments/7/sections/pg_stat_statements/history",
         Some("field=calls&type_id=1002001"),
     )
@@ -114,7 +114,7 @@ fn physical_layout_selection_is_available_to_every_generic_row_resource() {
     };
     assert_eq!(history.type_id, Some(1_002_001));
 
-    let Route::Rows(rows) = parse(
+    let Route::Query(QueryRequest::Rows(rows)) = parse(
         "/api/segments/7/sections/pg_store_plans/rows",
         Some("field=plan&type_id=1004001"),
     )
@@ -123,7 +123,7 @@ fn physical_layout_selection_is_available_to_every_generic_row_resource() {
     };
     assert_eq!(rows.data.type_id, Some(1_004_001));
 
-    let Route::Hour(hour) = parse(
+    let Route::Query(QueryRequest::Hour(hour)) = parse(
         "/api/hour",
         Some("from=1&to=2&section=pg_stat_statements&field=calls&type_id=1002002"),
     )
@@ -138,7 +138,8 @@ fn physical_layout_selection_is_available_to_every_generic_row_resource() {
 
 #[test]
 fn hour_parts_pin_one_exact_segment_set_and_active_prefix() {
-    let Route::Hour(base) = parse("/api/hour", Some("from=1&to=2&part=base")).expect("hour base")
+    let Route::Query(QueryRequest::Hour(base)) =
+        parse("/api/hour", Some("from=1&to=2&part=base")).expect("hour base")
     else {
         panic!("hour route");
     };
@@ -146,7 +147,7 @@ fn hour_parts_pin_one_exact_segment_set_and_active_prefix() {
     assert_eq!(base.segments, None);
     assert_eq!(base.active, None);
 
-    let Route::Hour(lanes) = parse(
+    let Route::Query(QueryRequest::Hour(lanes)) = parse(
         "/api/hour",
         Some("from=1&to=2&part=lanes&segments=7%2C9&active=9%2C100"),
     )
@@ -179,7 +180,7 @@ fn hour_parts_pin_one_exact_segment_set_and_active_prefix() {
 
 #[test]
 fn relation_hour_series_accepts_only_one_exact_aggregate_scope() {
-    let Route::Hour(hour) = parse(
+    let Route::Query(QueryRequest::Hour(hour)) = parse(
         "/api/hour",
         Some(
             "from=1&to=2&section=pg_stat_user_tables&group=schema&field=seq_scan&field=buffer_hit_pct&where.datid=7&where.schemaname=public",
@@ -206,7 +207,7 @@ fn relation_hour_series_accepts_only_one_exact_aggregate_scope() {
         ]
     );
 
-    let Route::Hour(hour) = parse(
+    let Route::Query(QueryRequest::Hour(hour)) = parse(
         "/api/hour",
         Some(
             "from=1&to=2&section=pg_stat_user_indexes&group=tablespace&field=main_fork_bytes&where.tablespace_oid=4294967295",
@@ -239,7 +240,7 @@ fn relation_hour_series_accepts_only_one_exact_aggregate_scope() {
 
 #[test]
 fn snapshot_paging_inputs_enable_one_bounded_page() {
-    let Route::Snapshot(ordered) = parse(
+    let Route::Query(QueryRequest::Snapshot(ordered)) = parse(
         "/api/segments/7/snapshot",
         Some("at=9&section=pg_stat_statements&field=total_time&field=total_exec_time&field=calls&by=total_time&by=total_exec_time&by=calls"),
     )
@@ -250,7 +251,7 @@ fn snapshot_paging_inputs_enable_one_bounded_page() {
     assert_eq!(ordered.page_size, Some(DEFAULT_SNAPSHOT_PAGE_SIZE));
     assert_eq!(ordered.direction, Order::Desc);
 
-    let Route::Snapshot(ascending) = parse(
+    let Route::Query(QueryRequest::Snapshot(ascending)) = parse(
         "/api/segments/7/snapshot",
         Some("at=9&section=pg_stat_user_indexes&by=idx_scan&direction=asc"),
     )
@@ -259,7 +260,7 @@ fn snapshot_paging_inputs_enable_one_bounded_page() {
     };
     assert_eq!(ascending.direction, Order::Asc);
 
-    let Route::Snapshot(grouped) = parse(
+    let Route::Query(QueryRequest::Snapshot(grouped)) = parse(
         "/api/segments/7/snapshot",
         Some("at=9&section=pg_stat_user_tables&group=schema"),
     )
@@ -299,7 +300,7 @@ fn snapshot_paging_inputs_enable_one_bounded_page() {
         Err(RouteError::BadParameter("section".to_owned())),
     );
 
-    let Route::Snapshot(searched) = parse(
+    let Route::Query(QueryRequest::Snapshot(searched)) = parse(
         "/api/segments/7/snapshot",
         Some("at=9&section=pg_stat_statements&field=query&search=++slow+query++"),
     )
@@ -309,7 +310,7 @@ fn snapshot_paging_inputs_enable_one_bounded_page() {
     assert_eq!(searched.search.as_deref(), Some("slow query"));
     assert_eq!(searched.page_size, Some(DEFAULT_SNAPSHOT_PAGE_SIZE));
 
-    let Route::Snapshot(resumed) = parse(
+    let Route::Query(QueryRequest::Snapshot(resumed)) = parse(
         "/api/segments/7/snapshot",
         Some("at=9&section=pg_stat_statements&cursor=7%2C0%2C2%2C91%2C101"),
     )
@@ -319,7 +320,7 @@ fn snapshot_paging_inputs_enable_one_bounded_page() {
     assert_eq!(resumed.cursor.as_deref(), Some("7,0,2,91,101"));
     assert_eq!(resumed.page_size, Some(DEFAULT_SNAPSHOT_PAGE_SIZE));
 
-    let Route::Snapshot(sized) = parse(
+    let Route::Query(QueryRequest::Snapshot(sized)) = parse(
         "/api/segments/7/snapshot",
         Some("at=9&section=pg_stat_statements&page_size=17"),
     )
@@ -333,7 +334,9 @@ fn snapshot_paging_inputs_enable_one_bounded_page() {
 fn statement_text_first_match_requires_one_exact_bounded_shape() {
     let path = "/api/segments/7/snapshot";
     let valid = "at=9&section=pg_stat_statements&field=query&page_size=1&search=query_id%3A-42&first_match=1";
-    let Route::Snapshot(snapshot) = parse(path, Some(valid)).expect("first Statement text") else {
+    let Route::Query(QueryRequest::Snapshot(snapshot)) =
+        parse(path, Some(valid)).expect("first Statement text")
+    else {
         panic!("snapshot route");
     };
     assert!(snapshot.first_match);
@@ -359,7 +362,7 @@ fn statement_text_first_match_requires_one_exact_bounded_shape() {
 
 #[test]
 fn snapshot_accepts_one_unpaged_exact_locator() {
-    let Route::Snapshot(locator) = parse(
+    let Route::Query(QueryRequest::Snapshot(locator)) = parse(
         "/api/segments/7/snapshot",
         Some("at=9&section=pg_stat_statements&field=query&type_id=1002001&row_ordinal=18446744073709551615"),
     )
@@ -388,7 +391,7 @@ fn snapshot_accepts_one_unpaged_exact_locator() {
 
 #[test]
 fn snapshot_text_limit_keeps_its_exact_cross_width_value() {
-    let Route::Snapshot(snapshot) = parse(
+    let Route::Query(QueryRequest::Snapshot(snapshot)) = parse(
         "/api/segments/7/snapshot",
         Some("at=9&section=os_cpu&field=user&page_size=1&text=5000000000"),
     )
@@ -403,7 +406,8 @@ fn snapshot_page_size_is_positive_and_bounded() {
     let path = "/api/segments/7/snapshot";
     for page_size in [1, MAX_SNAPSHOT_PAGE_SIZE] {
         let query = format!("at=9&section=pg_stat_statements&page_size={page_size}");
-        let Route::Snapshot(snapshot) = parse(path, Some(&query)).expect("bounded page size")
+        let Route::Query(QueryRequest::Snapshot(snapshot)) =
+            parse(path, Some(&query)).expect("bounded page size")
         else {
             panic!("snapshot route");
         };
@@ -426,7 +430,8 @@ fn snapshot_search_is_single_trimmed_and_bounded() {
     let prefix = "at=9&section=pg_stat_statements&field=query";
     let unicode_boundary = "Ж".repeat(MAX_SEARCH_EXPRESSION_CHARS);
     let query = format!("{prefix}&search=++{unicode_boundary}++");
-    let Route::Snapshot(snapshot) = parse(path, Some(&query)).expect("Unicode scalar boundary")
+    let Route::Query(QueryRequest::Snapshot(snapshot)) =
+        parse(path, Some(&query)).expect("Unicode scalar boundary")
     else {
         panic!("snapshot route");
     };
@@ -450,7 +455,7 @@ fn snapshot_search_is_single_trimmed_and_bounded() {
 
 #[test]
 fn snapshot_shares_only_a_projection_between_sections() {
-    let Route::Snapshot(projected) = parse(
+    let Route::Query(QueryRequest::Snapshot(projected)) = parse(
         "/api/segments/7/snapshot",
         Some("at=9&section=os_cpu&section=os_meminfo&field=user&field=mem_total"),
     )
@@ -464,7 +469,7 @@ fn snapshot_shares_only_a_projection_between_sections() {
     assert!(projected.search.is_none());
     assert!(projected.by.is_empty());
 
-    let Route::Snapshot(filtered) = parse(
+    let Route::Query(QueryRequest::Snapshot(filtered)) = parse(
         "/api/segments/7/snapshot",
         Some("at=9&section=pg_stat_statements&field=queryid&where.userid=4"),
     )
@@ -498,7 +503,7 @@ fn snapshot_shares_only_a_projection_between_sections() {
 
 #[test]
 fn active_tail_is_one_strict_physical_cursor() {
-    let Route::History(request) = parse(
+    let Route::Query(QueryRequest::History(request)) = parse(
         "/api/segments/7/sections/os_diskstats/history",
         Some("field=reads&after=7%2C18446744073709551615"),
     )
@@ -530,7 +535,7 @@ fn active_tail_is_one_strict_physical_cursor() {
 
 #[test]
 fn rows_enforces_order_and_page_bounds() {
-    let Route::Rows(request) = parse(
+    let Route::Query(QueryRequest::Rows(request)) = parse(
         "/api/segments/7/sections/os_process/rows",
         Some("order=desc&page_size=1000&cursor=7%2C0%2C0%2C50%2C99"),
     )
@@ -551,7 +556,7 @@ fn rows_enforces_order_and_page_bounds() {
 
 #[test]
 fn a_tail_and_page_cursor_remain_separate_physical_inputs() {
-    let Route::Rows(request) = parse(
+    let Route::Query(QueryRequest::Rows(request)) = parse(
         "/api/segments/7/sections/os_process/rows",
         Some("after=7,100&cursor=7,200,0,1,9"),
     )
@@ -606,15 +611,15 @@ fn only_the_approved_resource_path_shape_is_recognized() {
 
     assert!(matches!(
         parse("/api/segments/7/sections/os_cpu/index", None),
-        Ok(Route::Index(_))
+        Ok(Route::Query(QueryRequest::Index(_)))
     ));
     assert!(matches!(
         parse("/api/segments/7/sections/os_cpu/history", None),
-        Ok(Route::History(_))
+        Ok(Route::Query(QueryRequest::History(_)))
     ));
     assert!(matches!(
         parse("/api/segments/7/sections/os_cpu/rows", None),
-        Ok(Route::Rows(_))
+        Ok(Route::Query(QueryRequest::Rows(_)))
     ));
     assert_eq!(
         parse("/api/segments/7/sections/os_cpu/index", Some("field=ts")),
@@ -629,10 +634,10 @@ fn a_section_is_one_strict_percent_decoded_path_component() {
             "/api/segments/7/sections/pg%5Fstat%5Fstatements/index",
             None,
         ),
-        Ok(Route::Index(IndexRequest {
+        Ok(Route::Query(QueryRequest::Index(IndexRequest {
             segment_id: 7,
             section: "pg_stat_statements".to_owned(),
-        }))
+        })))
     );
     assert_eq!(
         parse("/api/segments/7/sections/%FF/index", None),
@@ -805,7 +810,7 @@ fn statement_scope_is_accepted_only_where_statements_can_be_scoped() {
     assert!(Route::Heatmap(cpu).into_query().is_err());
 
     let path = "/api/segments/7/snapshot";
-    let Route::Snapshot(page) = parse(
+    let Route::Query(QueryRequest::Snapshot(page)) = parse(
         path,
         Some("at=9&section=pg_stat_statements&field=query&page_size=50&scope=workload"),
     )
@@ -827,7 +832,7 @@ fn statement_scope_is_accepted_only_where_statements_can_be_scoped() {
         );
     }
 
-    let Route::Hour(summary) = parse(
+    let Route::Query(QueryRequest::Hour(summary)) = parse(
         "/api/hour",
         Some("from=1&to=2&section=postgresql_summary&scope=workload"),
     )

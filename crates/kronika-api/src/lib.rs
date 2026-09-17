@@ -1,53 +1,51 @@
 //! Strict portable parsing of recorded-data resource paths.
 
 use kronika_query::{
-    ActiveCursor, CatalogRequest, DETAIL_REF_MAX_ENCODED_BYTES, DataRequest, EventsQuery,
-    EventsRepresentation, Filter, HeatmapBatchQuery, HeatmapItemQuery, HeatmapView, HourPart,
-    HourRequest, HourSeriesRequest, IndexRequest, MAX_EVENTS_LIMIT, MAX_EVENTS_WINDOW_MICROS,
+    ActiveCursor, CatalogRequest, DEFAULT_TOP as DEFAULT_HEATMAP_TOP, DETAIL_REF_MAX_ENCODED_BYTES,
+    DataRequest, EventsQuery, EventsRepresentation, Filter, HeatmapBatchQuery, HeatmapItemQuery,
+    HeatmapView, HourPart, HourRequest, HourSeriesRequest, IndexRequest, MAX_EVENTS_LIMIT,
+    MAX_EVENTS_WINDOW_MICROS, MAX_FIELDS as MAX_HEATMAP_FIELDS, MAX_TOP as MAX_HEATMAP_TOP,
     NormalizedRanking, Order, QueryError, QueryRequest, RelationGroup, RowsRequest, SegmentRequest,
     SnapshotRequest, StatementScope, TimeRange, Window,
 };
 
+// Physical rows returned when `page_size` is omitted from a rows request.
 const DEFAULT_PAGE_SIZE: usize = 100;
+// Caps the rows emitted by one physical-row page.
 const MAX_PAGE_SIZE: usize = 1_000;
+// Rows returned by a paged snapshot when `page_size` is omitted.
 const DEFAULT_SNAPSHOT_PAGE_SIZE: usize = 200;
 /// Maximum accepted encoded query-string length.
 pub const MAX_QUERY_BYTES: usize = 64 * 1024;
+// Maximum decoded section-name length in bytes.
 const MAX_SECTION_BYTES: usize = 128;
+// Caps the sections composed into one snapshot.
 const MAX_SNAPSHOT_SECTIONS: usize = 16;
 /// Maximum number of rows accepted by a snapshot page request.
 pub const MAX_SNAPSHOT_PAGE_SIZE: usize = 5_000;
+// Maximum decoded search length in Unicode scalar values, not UTF-8 bytes.
 const MAX_SEARCH_EXPRESSION_CHARS: usize = 1_024;
+// Caps projected columns in snapshots, hour series, history, and row pages.
 const MAX_FIELDS: usize = 256;
+// Time buckets used when `columns` is omitted; bucket width follows the range.
 const DEFAULT_HEATMAP_COLUMNS: usize = 60;
+// Caps output grid width; MAX_HEATMAP_TOP separately caps ranked entities.
 const MAX_HEATMAP_COLUMNS: usize = 1_440;
-const DEFAULT_HEATMAP_TOP: usize = 25;
-const MAX_HEATMAP_TOP: usize = 500;
-const MAX_HEATMAP_FIELDS: usize = 4;
+// Caps the fields forming a heatmap aggregation key.
 const MAX_HEATMAP_GROUP: usize = 4;
+// Caps repeated `where.*` predicates in one request.
 const MAX_FILTERS: usize = 64;
+// Caps snapshot sort keys, in precedence order.
 const MAX_ORDER_FIELDS: usize = 16;
 
 /// Recorded-data resource requests accepted by native and embedded adapters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// Actual finished/current segment catalog.
-    Catalog(CatalogRequest),
-    /// One composed timeline hour.
-    Hour(HourRequest),
-    /// One logical indexed series in one explicit segment.
-    Index(IndexRequest),
-    /// Projected full-resolution history in one explicit segment.
-    History(DataRequest),
-    /// One stable page of physical rows in one explicit segment.
-    Rows(RowsRequest),
-    /// One current-state snapshot in one explicit segment.
-    Snapshot(Box<SnapshotRequest>),
-    /// The ranked top view of one section over one window.
+    /// A query ready for execution.
+    Query(QueryRequest),
+    /// Heatmap arguments awaiting range and field validation.
     Heatmap(HeatmapRequest),
-    /// Recorded event groups or physical occurrences over one window.
-    Events(EventsQuery),
-    /// One exact stored row addressed by an opaque reference.
+    /// An opaque row reference awaiting validation.
     RowDetail(String),
 }
 
@@ -66,22 +64,18 @@ pub struct HeatmapRequest {
 }
 
 impl Route {
-    /// Convert the parsed resource into the existing transport-neutral query.
+    /// Validate heatmap arguments or a row reference before opening storage.
+    /// Other routes already contain their query.
+    ///
+    /// The HTTP adapter calls this after checking the method and response encoding.
     ///
     /// # Errors
     ///
-    /// Returns the shared semantic refusal for a heatmap range or row-detail
-    /// reference that is intentionally validated after route recognition.
+    /// Returns the query error for invalid heatmap arguments or a malformed row reference.
     pub fn into_query(self) -> Result<QueryRequest, QueryError> {
         match self {
-            Self::Catalog(request) => Ok(QueryRequest::Catalog(request)),
-            Self::Hour(request) => Ok(QueryRequest::Hour(request)),
-            Self::Index(request) => Ok(QueryRequest::Index(request)),
-            Self::History(request) => Ok(QueryRequest::History(request)),
-            Self::Rows(request) => Ok(QueryRequest::Rows(request)),
-            Self::Snapshot(request) => Ok(QueryRequest::Snapshot(*request)),
+            Self::Query(request) => Ok(request),
             Self::Heatmap(request) => request.into_query().map(QueryRequest::Heatmap),
-            Self::Events(request) => Ok(QueryRequest::Events(request)),
             Self::RowDetail(detail_ref) => {
                 kronika_query::validate_row_detail_ref(&detail_ref).map(QueryRequest::RowDetail)
             }
@@ -146,16 +140,16 @@ pub fn parse(path: &str, query: Option<&str>) -> Result<Route, RouteError> {
         return Err(RouteError::BadParameter("query".to_owned()));
     }
     if path == "/api/catalog" {
-        return parse_catalog(query).map(Route::Catalog);
+        return parse_catalog(query).map(|request| Route::Query(QueryRequest::Catalog(request)));
     }
     if path == "/api/hour" {
-        return parse_hour(query).map(Route::Hour);
+        return parse_hour(query).map(|request| Route::Query(QueryRequest::Hour(request)));
     }
     if path == "/api/heatmap" {
         return parse_heatmap(query).map(Route::Heatmap);
     }
     if path == "/api/events" {
-        return parse_events(query).map(Route::Events);
+        return parse_events(query).map(|request| Route::Query(QueryRequest::Events(request)));
     }
     if path == "/api/row-detail" {
         return parse_row_detail(query).map(Route::RowDetail);
@@ -166,8 +160,7 @@ pub fn parse(path: &str, query: Option<&str>) -> Result<Route, RouteError> {
     let pieces: Vec<&str> = tail.split('/').collect();
     if pieces.len() == 2 && pieces[1] == "snapshot" && !pieces[0].is_empty() {
         return parse_snapshot(number("segment_id", pieces[0])?, query)
-            .map(Box::new)
-            .map(Route::Snapshot);
+            .map(|request| Route::Query(QueryRequest::Snapshot(request)));
     }
     if pieces.len() != 4 || pieces[1] != "sections" || pieces.iter().any(|piece| piece.is_empty()) {
         return Err(RouteError::NoSuchPath);
@@ -182,13 +175,17 @@ pub fn parse(path: &str, query: Option<&str>) -> Result<Route, RouteError> {
         section,
     };
     match pieces[3] {
-        "index" if query.is_empty() => Ok(Route::Index(IndexRequest {
+        "index" if query.is_empty() => Ok(Route::Query(QueryRequest::Index(IndexRequest {
             segment_id: segment.segment_id,
             section: segment.section,
-        })),
+        }))),
         "index" => Err(RouteError::BadParameter("query".to_owned())),
-        "history" => parse_data(segment, query).map(Route::History),
-        "rows" => parse_rows(segment, query).map(Route::Rows),
+        "history" => {
+            parse_data(segment, query).map(|request| Route::Query(QueryRequest::History(request)))
+        }
+        "rows" => {
+            parse_rows(segment, query).map(|request| Route::Query(QueryRequest::Rows(request)))
+        }
         _ => Err(RouteError::NoSuchPath),
     }
 }
@@ -248,13 +245,7 @@ fn parse_snapshot(segment_id: i64, query: &str) -> Result<SnapshotRequest, Route
                 });
             }
             "group" if group.is_none() => {
-                group = Some(match raw_value {
-                    "database" => RelationGroup::Database,
-                    "schema" => RelationGroup::Schema,
-                    "tablespace" => RelationGroup::Tablespace,
-                    "object" => RelationGroup::Object,
-                    _ => return Err(RouteError::BadParameter("group".to_owned())),
-                });
+                group = Some(relation_group(raw_value)?);
             }
             "type_id" if type_id.is_none() => {
                 type_id = Some(unsigned_32("type_id", raw_value)?);
@@ -482,6 +473,10 @@ fn statement_scope(value: &str) -> Result<StatementScope, RouteError> {
     StatementScope::parse(value).ok_or_else(|| RouteError::BadParameter("scope".to_owned()))
 }
 
+fn relation_group(value: &str) -> Result<RelationGroup, RouteError> {
+    RelationGroup::parse(value).ok_or_else(|| RouteError::BadParameter("group".to_owned()))
+}
+
 fn parse_events(query: &str) -> Result<EventsQuery, RouteError> {
     let mut from = None;
     let mut to = None;
@@ -593,13 +588,7 @@ fn parse_hour(query: &str) -> Result<HourRequest, RouteError> {
             }
             "type_id" if type_id.is_none() => type_id = Some(unsigned_32("type_id", &value)?),
             "group" if group.is_none() => {
-                group = Some(match value.as_str() {
-                    "database" => RelationGroup::Database,
-                    "schema" => RelationGroup::Schema,
-                    "tablespace" => RelationGroup::Tablespace,
-                    "object" => RelationGroup::Object,
-                    _ => return Err(RouteError::BadParameter("group".to_owned())),
-                });
+                group = Some(relation_group(&value)?);
             }
             "part" if !saw_part => {
                 part = match value.as_str() {

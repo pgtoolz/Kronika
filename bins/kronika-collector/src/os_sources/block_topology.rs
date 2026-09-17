@@ -1,8 +1,13 @@
 use std::collections::HashSet;
+use std::time::Instant;
 
-use super::{Instant, OsSources, SysFs, Ts, log_collection_finish, log_degraded};
+use kronika_registry::Ts;
 use kronika_registry::os_block_topology::OsBlockTopology;
-use kronika_source_os::block_topology;
+use kronika_source_os::{SysFs, block_topology};
+
+use super::OsSources;
+use super::io::log_degraded;
+use crate::logging::log_collection_finish;
 
 /// Record the exact sysfs edges; inside a container (`kept` present) only the
 /// chains under the container's own devices.

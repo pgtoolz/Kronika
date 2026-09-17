@@ -1,57 +1,64 @@
 use super::{FinderSurface, cadence_lookback};
 
 #[test]
-fn policies_keep_the_nine_surface_cadences() {
+fn policies_keep_legacy_defaults_and_select_recorded_family_cadences() {
     let cases = [
-        (FinderSurface::Processes, "os_process", Some(5), 20_000_000),
+        (FinderSurface::Processes, "os_process", None, 5),
         (
             FinderSurface::Tables,
             "pg_stat_user_tables",
-            Some(300),
-            750_000_000,
+            Some("postgresql_relations_interval_seconds"),
+            300,
         ),
         (
             FinderSurface::Indexes,
             "pg_stat_user_indexes",
-            Some(300),
-            750_000_000,
+            Some("postgresql_relations_interval_seconds"),
+            300,
         ),
         (
             FinderSurface::Activity,
             "pg_stat_activity",
-            None,
-            75_000_000,
+            Some("postgresql_interval_seconds"),
+            30,
         ),
-        (FinderSurface::Locks, "pg_locks", None, 75_000_000),
+        (
+            FinderSurface::Locks,
+            "pg_locks",
+            Some("postgresql_interval_seconds"),
+            30,
+        ),
         (
             FinderSurface::Vacuum,
             "pg_stat_progress_vacuum",
-            None,
-            75_000_000,
+            Some("postgresql_interval_seconds"),
+            30,
         ),
         (
             FinderSurface::Databases,
             "pg_stat_database",
-            None,
-            75_000_000,
+            Some("postgresql_instance_interval_seconds"),
+            30,
         ),
         (
             FinderSurface::Statements,
             "pg_stat_statements",
-            None,
-            75_000_000,
+            Some("postgresql_statements_interval_seconds"),
+            30,
         ),
-        (FinderSurface::Plans, "pg_store_plans", None, 75_000_000),
+        (
+            FinderSurface::Plans,
+            "pg_store_plans",
+            Some("postgresql_statements_interval_seconds"),
+            30,
+        ),
     ];
 
-    for (surface, logical_name, cadence, lookback) in cases {
+    for (surface, logical_name, cadence_column, default_cadence) in cases {
         let policy = surface.policy();
         assert_eq!(policy.logical_name, logical_name);
-        assert_eq!(policy.fixed_cadence_seconds, cadence);
-        assert_eq!(
-            cadence_lookback(cadence.unwrap_or(30)).expect("bounded cadence"),
-            lookback
-        );
+        assert_eq!(policy.cadence_column, cadence_column);
+        assert_eq!(policy.default_cadence_seconds, default_cadence);
     }
 }
 

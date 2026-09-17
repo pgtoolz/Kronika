@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises"
+import { readFile, realpath, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
 import { build } from "esbuild"
@@ -8,7 +8,7 @@ if (inputArgument === undefined || outputArgument === undefined || extra.length 
   throw new Error("usage: node scripts/bundle-report-wasm.mjs INPUT OUTPUT")
 }
 
-const input = resolve(inputArgument)
+const input = await realpath(resolve(inputArgument))
 const output = resolve(outputArgument)
 const generated = await readFile(input, "utf8")
 const initMarker = "function initSync(module) {"

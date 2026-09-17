@@ -1,11 +1,17 @@
-use super::{
-    DueSet, Instant, Interner, OsCpufreq, OsCpufreqPolicy, OsSources, SourceKind, SysFs, Ts,
-    intern_str, log_collection_finish, log_degraded,
-};
-use kronika_source_os::cpufreq;
+use std::time::Instant;
 
-/// Collect the complete bounded `CPUFreq` policy set once and expose the
-/// independently paced reference and temporal sections requested by this tick.
+use kronika_format::DictError;
+use kronika_registry::os_cpufreq::{OsCpufreq, OsCpufreqPolicy};
+use kronika_registry::{Section, StrId, Ts};
+use kronika_source_os::{SysFs, cpufreq};
+use kronika_writer::Interner;
+
+use super::OsSources;
+use super::io::log_degraded;
+use crate::logging::log_collection_finish;
+use crate::scheduler::{DueSet, SourceKind};
+
+/// Read `CPUFreq` once, emitting policies and measurements on their own schedules.
 pub(super) fn collect_cpufreq(
     sys: &SysFs,
     interner: &mut Interner,
@@ -23,105 +29,100 @@ pub(super) fn collect_cpufreq(
     let observed = match cpufreq::collect(sys, emit_reference, emit_samples) {
         Ok(observed) => observed,
         Err(error) => {
-            log_degraded(1_122_001, "sysfs/cpufreq", &error);
+            log_degraded(OsCpufreq::CONTRACT.type_id.get(), "sysfs/cpufreq", &error);
             return;
         }
     };
     if emit_reference {
-        os.cpufreq_policy = observed
-            .policies
-            .iter()
-            .filter_map(|policy| {
-                let related_cpus = intern_optional(
-                    interner,
-                    1_121_001,
-                    "sysfs/cpufreq",
-                    policy.related_cpus.as_deref(),
-                )
-                .ok()?;
-                let scaling_driver = intern_optional(
-                    interner,
-                    1_121_001,
-                    "sysfs/cpufreq",
-                    policy.scaling_driver.as_deref(),
-                )
-                .ok()?;
-                let actual_source = intern_optional(
-                    interner,
-                    1_121_001,
-                    "sysfs/cpufreq",
-                    actual_source_name(policy.actual_source),
-                )
-                .ok()?;
-                Some(OsCpufreqPolicy {
-                    ts: Ts(ts),
-                    policy_id: policy.policy_id,
-                    related_cpus,
-                    scaling_driver,
-                    actual_source,
-                    cpuinfo_min_freq_hz: policy.cpuinfo_min_freq_hz,
-                    cpuinfo_max_freq_hz: policy.cpuinfo_max_freq_hz,
-                    scope,
-                })
-            })
-            .collect();
-        if !os.cpufreq_policy.is_empty() {
-            log_collection_finish(
-                1_121_001,
-                "sysfs",
-                os.cpufreq_policy.len(),
-                started.elapsed(),
-            );
-        }
+        store_rows(
+            &mut os.cpufreq_policy,
+            observed
+                .policies
+                .iter()
+                .map(|policy| policy_row(policy, interner, scope, ts)),
+            started,
+        );
     }
     if emit_samples {
-        os.cpufreq = observed
-            .samples
-            .iter()
-            .filter_map(|sample| {
-                let actual_source = intern_optional(
-                    interner,
-                    1_122_001,
-                    "sysfs/cpufreq",
-                    actual_source_name(sample.actual_source),
-                )
-                .ok()?;
-                Some(OsCpufreq {
-                    ts: Ts(ts),
-                    policy_id: sample.policy_id,
-                    actual_source,
-                    actual_frequency_hz: sample.actual_frequency_hz,
-                    scaling_cur_freq_hz: sample.scaling_cur_freq_hz,
-                    scaling_min_freq_hz: sample.scaling_min_freq_hz,
-                    scaling_max_freq_hz: sample.scaling_max_freq_hz,
-                    online_cpus: sample.online_cpus,
-                    scope,
-                })
-            })
-            .collect();
-        if !os.cpufreq.is_empty() {
-            log_collection_finish(1_122_001, "sysfs", os.cpufreq.len(), started.elapsed());
-        }
+        store_rows(
+            &mut os.cpufreq,
+            observed
+                .samples
+                .iter()
+                .map(|sample| sample_row(sample, interner, scope, ts)),
+            started,
+        );
     }
 }
 
-const fn actual_source_name(source: cpufreq::ActualFrequencySource) -> Option<&'static str> {
-    match source {
-        cpufreq::ActualFrequencySource::Unavailable => None,
-        cpufreq::ActualFrequencySource::CpuinfoAverage => Some("cpuinfo_avg_freq"),
-        cpufreq::ActualFrequencySource::CpuinfoCurrent => Some("cpuinfo_cur_freq"),
+/// Replace a section's rows, logging and skipping any that cannot enter the dictionary.
+fn store_rows<S: Section>(
+    output: &mut Vec<S>,
+    rows: impl Iterator<Item = Result<S, DictError>>,
+    started: Instant,
+) {
+    let type_id = S::CONTRACT.type_id.get();
+    *output = rows
+        .filter_map(|row| match row {
+            Ok(row) => Some(row),
+            Err(error) => {
+                log_degraded(type_id, "sysfs/cpufreq", &error);
+                None
+            }
+        })
+        .collect();
+    if !output.is_empty() {
+        log_collection_finish(type_id, "sysfs", output.len(), started.elapsed());
     }
 }
 
-fn intern_optional(
+fn policy_row(
+    policy: &cpufreq::CpuFreqPolicy,
     interner: &mut Interner,
-    type_id: u32,
-    source: &'static str,
-    value: Option<&str>,
-) -> Result<Option<kronika_registry::StrId>, ()> {
-    value.map_or(Ok(None), |value| {
-        intern_str(interner, type_id, source, value)
-            .map(Some)
-            .ok_or(())
+    scope: u8,
+    ts: i64,
+) -> Result<OsCpufreqPolicy, DictError> {
+    Ok(OsCpufreqPolicy {
+        ts: Ts(ts),
+        policy_id: policy.policy_id,
+        related_cpus: intern_optional(interner, policy.related_cpus.as_deref())?,
+        scaling_driver: intern_optional(interner, policy.scaling_driver.as_deref())?,
+        actual_source: intern_optional(interner, policy.actual_source.attribute_name())?,
+        cpuinfo_min_freq_hz: policy.cpuinfo_min_freq_hz,
+        cpuinfo_max_freq_hz: policy.cpuinfo_max_freq_hz,
+        scope,
     })
 }
+
+fn sample_row(
+    sample: &cpufreq::CpuFreqSample,
+    interner: &mut Interner,
+    scope: u8,
+    ts: i64,
+) -> Result<OsCpufreq, DictError> {
+    Ok(OsCpufreq {
+        ts: Ts(ts),
+        policy_id: sample.policy_id,
+        actual_source: intern_optional(interner, sample.actual_source.attribute_name())?,
+        actual_frequency_hz: sample.actual_frequency_hz,
+        scaling_cur_freq_hz: sample.scaling_cur_freq_hz,
+        scaling_min_freq_hz: sample.scaling_min_freq_hz,
+        scaling_max_freq_hz: sample.scaling_max_freq_hz,
+        online_cpus: sample.online_cpus,
+        scope,
+    })
+}
+
+/// Missing values remain NULL; dictionary failures propagate to skip the row.
+fn intern_optional(
+    interner: &mut Interner,
+    value: Option<&str>,
+) -> Result<Option<StrId>, DictError> {
+    value
+        .map(|value| interner.intern(value.as_bytes()).map(|id| StrId(id.get())))
+        .transpose()
+}
+
+#[cfg(test)]
+#[path = "../tests/os_sources/cpufreq.rs"]
+mod tests;

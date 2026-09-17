@@ -1,4 +1,4 @@
-//! Types `1_021_001` and `1_021_002`: per-segment instance facts.
+//! Types `1_021_001`–`1_021_004`: per-segment instance facts and collection intervals.
 //!
 //! Mandatory in every segment carrying snapshots. It records the node identity
 //! and the constants needed to interpret the other sections: without
@@ -136,6 +136,65 @@ pub struct InstanceMetadataV3 {
     pub postgresql_effective_cpus: Option<u32>,
 }
 
+/// Per-family collection intervals and the Linux resource relationship.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Section)]
+#[section(
+    id = 1_021_004,
+    name = "instance_metadata",
+    semantics = snapshot_full,
+    sort_key("ts")
+)]
+pub struct InstanceMetadataV4 {
+    /// Collection timestamp, Unix microseconds.
+    #[column(t)]
+    pub ts: Ts,
+    /// Linux source hostname, absent without OS collection.
+    #[column(l)]
+    pub hostname: Option<StrId>,
+    /// Linux source kernel release.
+    #[column(l)]
+    pub kernel_version: Option<StrId>,
+    /// Linux source environment: 0 machine, 1 container.
+    #[column(l)]
+    pub environment: Option<u8>,
+    /// Ticks per second for recorded OS counters.
+    #[column(l)]
+    pub clock_ticks_per_sec: Option<i64>,
+    /// Page size for recorded OS counters.
+    #[column(l)]
+    pub page_size_bytes: Option<i64>,
+    /// Boot identity of the Linux source.
+    #[column(l)]
+    pub boot_id: Option<StrId>,
+    /// Linux source boot time, Unix microseconds.
+    #[column(l)]
+    pub btime: Option<Ts>,
+    /// Whether Linux collection was configured.
+    #[column(l)]
+    pub os_enabled: bool,
+    /// The deployment uses one machine resource and process namespace for PG and Linux.
+    #[column(l)]
+    pub postgresql_processes_shared: bool,
+    /// Whether `PostgreSQL` collection was configured.
+    #[column(l)]
+    pub postgresql_enabled: bool,
+    /// Normal activity and VACUUM-progress cadence, excluding temporary acceleration.
+    #[column(l, unit = seconds)]
+    pub postgresql_interval_seconds: u64,
+    /// Explicit capacity of the `PostgreSQL` server, CPU cores.
+    #[column(l)]
+    pub postgresql_effective_cpus: Option<u32>,
+    /// Server counter and settings collection cadence, seconds.
+    #[column(l, unit = seconds)]
+    pub postgresql_instance_interval_seconds: u64,
+    /// Per-database table and index collection cadence, seconds.
+    #[column(l, unit = seconds)]
+    pub postgresql_relations_interval_seconds: u64,
+    /// Statement and plan extension collection cadence, seconds.
+    #[column(l, unit = seconds)]
+    pub postgresql_statements_interval_seconds: u64,
+}
+
 /// Previous type `1_021_001`, retained so existing ZMS remains readable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Section)]
 #[section(
@@ -173,8 +232,10 @@ pub struct InstanceMetadataV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Environment, InstanceMetadata, InstanceMetadataV1};
-    use crate::{Section, StrId, Ts, lint};
+    use super::{
+        Environment, InstanceMetadata, InstanceMetadataV1, InstanceMetadataV3, InstanceMetadataV4,
+    };
+    use crate::{ColumnClass, ColumnType, Section, StrId, Ts, Unit, lint};
 
     fn row() -> InstanceMetadata {
         InstanceMetadata {
@@ -195,7 +256,12 @@ mod tests {
     #[test]
     fn contract_passes_the_linter() {
         assert_eq!(
-            lint(&[InstanceMetadataV1::CONTRACT, InstanceMetadata::CONTRACT]),
+            lint(&[
+                InstanceMetadataV1::CONTRACT,
+                InstanceMetadata::CONTRACT,
+                InstanceMetadataV3::CONTRACT,
+                InstanceMetadataV4::CONTRACT,
+            ]),
             Ok(())
         );
     }
@@ -262,5 +328,66 @@ mod tests {
         };
         crate::assert_roundtrips(&[unknown]);
         crate::assert_roundtrips(&[disabled]);
+    }
+
+    #[test]
+    fn v4_adds_family_cadences_without_changing_v3_columns() {
+        let previous = InstanceMetadataV3::CONTRACT.columns;
+        let current = InstanceMetadataV4::CONTRACT.columns;
+        assert_eq!(InstanceMetadataV3::CONTRACT.type_id.get(), 1_021_003);
+        assert_eq!(InstanceMetadataV4::CONTRACT.type_id.get(), 1_021_004);
+        assert_eq!(&current[..previous.len()], previous);
+        let added = &current[previous.len()..];
+        assert_eq!(
+            added.iter().map(|column| column.name).collect::<Vec<_>>(),
+            [
+                "postgresql_instance_interval_seconds",
+                "postgresql_relations_interval_seconds",
+                "postgresql_statements_interval_seconds",
+            ]
+        );
+        for column in added {
+            assert_eq!(column.ty, ColumnType::U64);
+            assert_eq!(column.class, ColumnClass::Label);
+            assert_eq!(column.unit, Some(Unit::Seconds));
+            assert!(!column.nullable);
+        }
+    }
+
+    #[test]
+    fn v4_roundtrip_preserves_distinct_cadences_and_optional_identity() {
+        let remote = InstanceMetadataV4 {
+            ts: Ts(1_000_000),
+            hostname: None,
+            kernel_version: None,
+            environment: None,
+            clock_ticks_per_sec: None,
+            page_size_bytes: None,
+            boot_id: None,
+            btime: None,
+            os_enabled: false,
+            postgresql_processes_shared: false,
+            postgresql_enabled: true,
+            postgresql_interval_seconds: 11,
+            postgresql_effective_cpus: Some(4),
+            postgresql_instance_interval_seconds: 37,
+            postgresql_relations_interval_seconds: 401,
+            postgresql_statements_interval_seconds: 601,
+        };
+        let local = InstanceMetadataV4 {
+            ts: Ts(2_000_000),
+            hostname: Some(StrId(1)),
+            kernel_version: Some(StrId(2)),
+            environment: Some(Environment::Machine.as_u8()),
+            clock_ticks_per_sec: Some(100),
+            page_size_bytes: Some(4_096),
+            boot_id: Some(StrId(3)),
+            btime: Some(Ts(500_000)),
+            os_enabled: true,
+            postgresql_processes_shared: true,
+            postgresql_effective_cpus: None,
+            ..remote
+        };
+        crate::assert_roundtrips(&[remote, local]);
     }
 }

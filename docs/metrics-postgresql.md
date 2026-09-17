@@ -26,6 +26,8 @@ Statement/plan interval calculations require matching physical type and identity
 
 Activity shows PostgreSQL processes and their current queries. Locks connects waiting processes to the processes blocking them.
 
+Activity, lock waits and VACUUM progress use `KRONIKA_PG_ACTIVITY_INTERVAL_S` (10 seconds by default). A successful nonempty lock-wait read shortens the interval to the smaller of `KRONIKA_PG_ACTIVITY_INTERVAL_S` and `KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S` (default 5 seconds); a successful empty read restores it, and an error leaves it unchanged. Queries run sequentially, so a slow query can delay the next snapshot. See [collection intervals](metrics-time.md) for timer and signal behavior.
+
 Activity’s default table hides rows with `state = idle`. It also hides system processes: a nonempty `backend_type` other than `client backend`. A missing or empty `backend_type` does not hide a row. **Idle** and **System** include those rows; an explicitly focused row remains visible. Default order is descending query duration, with transaction duration used when both query durations are unavailable. Source: [Activity columns and filters](../bins/kronika-web/ui/src/postgres-view.tsx), [duration functions](../bins/kronika-web/ui/src/postgres-activity.ts).
 
 | Display / field | Definition and unit |
@@ -94,13 +96,17 @@ In this table, `Σ` sums databases except where another scope is named; **total*
 | Multixact age | Maximum database `min_mxid_age`, multixact IDs | Last |
 | Autovacuum workers | Count of progress rows with `is_autovacuum = true` | Peak; `/ autovacuum_max_workers` when recorded |
 
-Timed/requested checkpoint sources prefer `pg_stat_checkpointer.num_timed/num_requested`, falling back to `pg_stat_bgwriter.checkpoints_timed/checkpoints_req`. Prepared/progress rows are assigned to the open interval between successive database snapshot timestamps; an empty interval gives zero prepared/worker count and null prepared age. Overview's dashed limits use the latest recorded setting in the loaded hour. Passport setting values resolve at the cursor, using the first hour setting when the cursor precedes it. Live-hour Overview series refresh at most once per minute. The [activity lane source](../crates/kronika-query/src/hour/lanes.rs) defines the client/follower selection.
+Timed/requested checkpoint sources prefer `pg_stat_checkpointer.num_timed/num_requested`, falling back to `pg_stat_bgwriter.checkpoints_timed/checkpoints_req`. Prepared-transaction rows are assigned to the open interval between successive database snapshot timestamps. VACUUM-progress rows use successive Activity timestamps, matching their collection cadence; repeated samples of one worker therefore do not accumulate across a slower database interval. An empty interval gives zero prepared/worker count and null prepared age. Without anchor snapshots, no zero is inferred. Overview's dashed limits use the latest recorded setting in the loaded hour. Passport setting values resolve at the cursor, using the first hour setting when the cursor precedes it. Live-hour Overview series refresh at most once per minute. The [activity lane source](../crates/kronika-query/src/hour/lanes.rs) defines the client/follower selection.
 
 The **Databases** table shows `numbackends` as a gauge; transaction/session/tuple/buffer/temp/conflict/deadlock counters as adjacent-sample rates; `blk_read_time` and `blk_write_time` in ms/s; `temp_bytes` in bytes/s; `frozen_xid_age = age(pg_database.datfrozenxid)` as a gauge. `blks_read` and `blks_hit` are converted to bytes/s with `B`. `tup_returned` counts tuples returned by scans; `tup_fetched` counts live rows fetched by index scans. `conflicts` counts queries cancelled because of recovery conflicts. `datid = 0` is the shared-object statistics row and is excluded from the database-count display. Source: [database SQL and fields](../crates/kronika-source-pg/src/database.rs), [table columns](../bins/kronika-web/ui/src/postgres-view.tsx).
 
 ## Statements and Plans
 
-Statements groups execution statistics by normalized query; Plans shows statistics for recorded execution plans. The Lens selector chooses which measurements appear as columns. **Exec time/s** measures total execution time per second of observation; **Mean/call** measures the average execution time within the selected interval.
+Statements groups execution statistics by normalized query; Plans shows statistics for recorded execution plans.
+
+Collection uses `KRONIKA_PG_STATEMENTS_INTERVAL_S`, default and minimum 300 seconds, for both extensions and their info views. The interval starts after the preceding PostgreSQL pass containing these sources finishes; `SIGUSR2` does not bypass it.
+
+The Lens selector chooses which measurements appear as columns. **Exec time/s** measures total execution time per second of observation; **Mean/call** measures the average execution time within the selected interval.
 
 ### Interval metrics
 
@@ -243,7 +249,7 @@ The source is `pg_stat_progress_vacuum`, joined to Activity for `is_autovacuum` 
 | In phase | Number of trailing samples with the same phase and index cycle; span from first to last such timestamp |
 | No movement | At least 3 trailing unchanged designated-counter samples in that phase/cycle; displays count and recorded span |
 
-Episode key is physical type + PID + database OID + relation OID. A new episode starts when `index_vacuum_count`, `heap_blks_scanned` or `heap_blks_vacuumed` decreases, or adjacent samples are more than `2.5 × recorded postgresql_interval_seconds` apart. With no positive recorded cadence, only identity/counter rules apply. The row is the episode's final sample. **At cursor** means its final timestamp equals the latest progress timestamp at or before the cursor; other episodes show their own last recorded time.
+Episode key is physical type + PID + database OID + relation OID. A new episode starts when `index_vacuum_count`, `heap_blks_scanned` or `heap_blks_vacuumed` decreases, or adjacent samples are more than `2.5 × recorded postgresql_interval_seconds` apart. New recordings use the normal activity/VACUUM-progress interval for `postgresql_interval_seconds`, even when lock waits temporarily accelerate collection. With no positive recorded cadence, only identity/counter rules apply. The row is the episode's final sample. **At cursor** means its final timestamp equals the latest progress timestamp at or before the cursor; other episodes show their own last recorded time.
 
 | Phase | Fixed phase label | No-movement operand |
 |---|---|---|

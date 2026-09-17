@@ -19,7 +19,7 @@ A snapshot contains values collected at one time. A gauge, such as process RSS (
 
 Sources: [snapshot selection](../crates/kronika-query/src/snapshot/mod.rs), [surface selector](../crates/kronika-query/src/snapshot/selector.rs), [cursor timestamps](../bins/kronika-web/ui/src/cursor-timestamps.ts), [refresh](../bins/kronika-web/ui/src/refresh.ts), [heatmap cursor](../bins/kronika-web/ui/src/activity.tsx).
 
-Collector intervals are seconds. A per-source zero interval makes that source due on each timer wake; it does not advance the wake by itself. `KRONIKA_INTERVAL_S` is the maximum collection-timer sleep, default 5 seconds; positive source deadlines or segment age can shorten it. `KRONIKA_INTERVAL_S=0` disables timed collection; `SIGUSR2` forces all sources due. Rotation retains its separate timer. The denominator of a displayed rate is elapsed recorded time.
+Collector intervals are seconds. Except for statements/plans, a per-source zero interval makes that source due on each timer wake; it does not advance the wake by itself. `KRONIKA_INTERVAL_S` is the maximum collection-timer sleep, default 5 seconds; positive source deadlines or segment age can shorten it. `KRONIKA_INTERVAL_S=0` disables timed collection, including accelerated activity snapshots during lock waits. `SIGUSR2` forces collection but does not bypass the statements/plans interval. Rotation retains its separate timer. The denominator of a displayed rate is elapsed recorded time.
 
 | Source | Environment variable | Default, s |
 |---|---|---:|
@@ -30,10 +30,28 @@ Collector intervals are seconds. A per-source zero interval makes that source du
 | Cgroup controllers | `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 |
 | PID-to-cgroup mapping | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 |
 | Logs | `KRONIKA_LOG_INTERVAL_S` | 10 |
-| PostgreSQL | `KRONIKA_PG_INTERVAL_S` | 30 |
+| PostgreSQL server counters and settings | `KRONIKA_PG_INTERVAL_S` | 30 |
+| PostgreSQL activity, lock waits and VACUUM progress | `KRONIKA_PG_ACTIVITY_INTERVAL_S` | 10 |
+| Activity while lock waits are present | `KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S` | 5 |
+| PostgreSQL statements/plans and their info views | `KRONIKA_PG_STATEMENTS_INTERVAL_S` | 300 (minimum 300) |
 | PostgreSQL relations | `KRONIKA_PG_RELATIONS_INTERVAL_S` | 300 |
 
-Sources: [scheduler defaults](../bins/kronika-collector/src/scheduler.rs), [configuration](../bins/kronika-collector/src/config.rs), [`timer_sleep_delay`](../bins/kronika-collector/src/main.rs).
+A successful, nonempty lock-wait snapshot changes the activity interval to `min(KRONIKA_PG_ACTIVITY_INTERVAL_S, KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S)` seconds. A successful empty snapshot restores the configured interval; a failed read leaves it unchanged. Statements/plans wait at least their configured interval after the preceding PostgreSQL pass containing them finishes, including on `SIGUSR2`. Reads are sequential, so a slow SQL query or another running source can delay a snapshot beyond its interval.
+
+Sources: [scheduler defaults](../bins/kronika-collector/src/scheduler.rs), [configuration](../bins/kronika-collector/src/config.rs), [`timer_sleep_delay`](../bins/kronika-collector/src/collector.rs).
+
+### Recorded intervals and current-state lookup
+
+`instance_metadata` V4 records separate PostgreSQL intervals so current-state lookups can distinguish a slow source from missing data. For a requested cursor, the typed finders accept the latest sample no more than `max(20, 2.5 × interval)` seconds old. They obtain the interval from the recorded metadata, including custom collector settings:
+
+| Finder | Recorded interval field |
+|---|---|
+| Activity, Locks, Vacuum | `postgresql_interval_seconds` |
+| Databases | `postgresql_instance_interval_seconds` |
+| Tables, Indexes | `postgresql_relations_interval_seconds` |
+| Statements, Plans | `postgresql_statements_interval_seconds` |
+
+For older metadata without the family field, Databases, Statements and Plans use `postgresql_interval_seconds`; Tables and Indexes retain a 300-second interval. Zero intervals are ignored. If no positive recorded interval is available, the fallback is 30 seconds for Activity, Locks, Vacuum, Databases, Statements and Plans, or 300 seconds for Tables and Indexes. Processes use a fixed 5-second interval for this lookup. These bounds select samples; rate calculations still divide by the actual time between observations. Source: [current-state selector](../crates/kronika-query/src/snapshot/selector.rs).
 
 ## Pair rules and units
 
@@ -152,13 +170,15 @@ recorded WAL/ZMS facts; resources of the machine opening the recording do not
 participate. An HTML report keeps the query engine embedded when it was generated;
 generate a new report to use a newer calculation.
 
+New recordings store the normal activity/VACUUM-progress interval in `postgresql_interval_seconds` (10 seconds by default). The shorter interval used during lock waits stays within this freshness bound; it does not rewrite the recorded value. Older recordings keep their recorded interval.
+
 At each OS health timestamp, overall health uses the latest PostgreSQL health at or before it, no older than recorded `postgresql_interval_seconds`:
 
 `Overall health = max(0, OS health − PG penalty)`.
 
 Older recordings without `os_enabled` have unknown Overall unless PostgreSQL was explicitly disabled, even with a CPU override.
 
-In recorded PostgreSQL-only mode (`os_enabled = false`), Overall is calculated at PostgreSQL samples and equals PostgreSQL Health, including null when its operands are unknown. With OS enabled, disabled PostgreSQL contributes zero penalty; unknown or older enabled PostgreSQL input, or unknown OS Health, makes Overall null. Web source flags do not participate in these formulas. Sources: [formulas](../crates/kronika-index/src/health.rs), [CPU capacity](../crates/kronika-index/src/cpu_capacity.rs), [scope, activity counts, and time selection](../crates/kronika-index/src/build.rs), [collector metadata](../bins/kronika-collector/src/service_sections.rs).
+In recorded PostgreSQL-only mode (`os_enabled = false`), Overall is calculated at PostgreSQL samples and equals PostgreSQL Health, including null when its operands are unknown. With OS enabled, disabled PostgreSQL contributes zero penalty; unknown or older enabled PostgreSQL input, or unknown OS Health, makes Overall null. Web source flags do not participate in these formulas. Sources: [formulas](../crates/kronika-index/src/health.rs), [CPU capacity](../crates/kronika-index/src/cpu_capacity.rs), [scope, activity counts, and time selection](../crates/kronika-index/src/build.rs), [collector metadata](../bins/kronika-collector/src/instance_metadata.rs).
 
 ## Timeline marks
 

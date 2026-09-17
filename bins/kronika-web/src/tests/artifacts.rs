@@ -3503,7 +3503,9 @@ fn row_detail_rejects_a_malformed_ref_before_opening_storage() {
     let error = crate::api::prepare(
         &missing,
         SOURCES,
-        crate::route::Route::Recorded(kronika_api::Route::RowDetail("not+base64".to_owned())),
+        crate::route::Route::Recorded(Box::new(kronika_api::Route::RowDetail(
+            "not+base64".to_owned(),
+        ))),
         None,
     )
     .err()
@@ -5595,6 +5597,45 @@ fn quantitative_search_keeps_layout_absence_null() {
             .find(|record| record["record"] == "snapshot_page")
             .expect("unavailable page trailer");
         assert_eq!(page["eligible"], "0", "{section}");
+    }
+}
+
+#[test]
+fn statement_and_plan_rate_filters_use_five_minute_and_delayed_samples() {
+    let mut fixture = Fixture::new();
+    let mut snapshots = Vec::new();
+    // Three counters grow at 1, 2 and 3 calls/s, first over 300 s and then
+    // over 600 s (one collection was missed).
+    for elapsed in [0, 300, 900] {
+        for queryid in 1..=3 {
+            let calls = 100 + elapsed * queryid;
+            snapshots.push((1_000_000 + elapsed * 1_000_000, queryid, calls, 0.0));
+        }
+    }
+    fixture.append_statement_snapshots(&snapshots);
+    fixture.append_plan_snapshots(&snapshots);
+    fixture.finish();
+
+    for section in ["pg_stat_statements", "pg_store_plans"] {
+        for at in [301_000_000, 901_000_000] {
+            for (search, expected) in [
+                ("call_rate%3E1.5%2Fs", ["2", "3"]),
+                ("call_rate%3C2.5%2Fs", ["1", "2"]),
+            ] {
+                let records = stream(fixture.prepare(
+                    &format!(
+                        "/api/segments/{SEGMENT_ID}/snapshot?at={at}&section={section}&field=queryid&by=queryid&direction=asc&page_size=10&search={search}"
+                    ),
+                    None,
+                ))
+                .expect("rate-filtered snapshot");
+                let ids: Vec<_> = row_records(&records)
+                    .iter()
+                    .map(|row| row["values"][0].as_str().expect("query id"))
+                    .collect();
+                assert_eq!(ids, expected, "{section} at {at}: {search}");
+            }
+        }
     }
 }
 

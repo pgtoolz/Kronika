@@ -10,14 +10,15 @@ use kronika_source_pg::archiver::ArchiverRow;
 use kronika_source_pg::settings::SettingsRow;
 use kronika_writer::{Journal, JournalConfig, SectionBuffers};
 
+use crate::collector::WindowWriter;
 use crate::config::Config;
 use crate::log_sources::{LogRows, PgBouncerBatch};
 use crate::pg_sources::PgBatch;
+use crate::scheduler::Scheduler;
 use crate::scheduler::{DueSet, Intervals};
 use crate::segments::{SegmentState, append_window_and_maybe_close, encode_window};
-use crate::{append_pending_pg_batch, append_pending_window, scheduler::Scheduler};
 
-const INSTANCE_METADATA_TYPE_ID: u32 = 1_021_003;
+const INSTANCE_METADATA_TYPE_ID: u32 = 1_021_004;
 const PGBOUNCER_TYPE_ID: u32 = 2_100_001;
 const PG_ARCHIVER_TYPE_ID: u32 = 1_008_001;
 const PG_SETTINGS_TYPE_ID: u32 = 1_019_001;
@@ -62,7 +63,7 @@ fn first_window(segment: &SegmentState) -> kronika_writer::FlushedPart {
             scope: 0,
         })
         .expect("buffer first row");
-    encode_window(buffers, segment.interner()).expect("encode first window")
+    encode_window(buffers, &segment.interner).expect("encode first window")
 }
 
 fn fill_journal_to_pressure(journal: &mut Journal, part: &kronika_writer::FlushedPart, max: usize) {
@@ -153,22 +154,18 @@ fn assert_retained_batch_moves_to_fresh_segment() {
     .expect("append old segment row");
     fill_journal_to_pressure(&mut journal, &first, max);
 
-    let mut scheduler = Scheduler::new(Intervals::default());
+    let mut scheduler = Scheduler::new(Intervals::default(), true);
     let mut process_io = Some(ProcessIoCredentials::new());
-    let outcome = append_pending_window(
-        &mut journal,
-        &owner,
-        &config,
-        false,
-        &DueSet::logs(),
-        &log_rows(),
-        &[settings_row()],
-        200,
-        &mut process_io,
-        &mut segment,
-        &mut scheduler,
-        None,
-    )
+    let outcome = (WindowWriter {
+        journal: &mut journal,
+        owner: &owner,
+        config: &config,
+        in_container: false,
+        process_io: &mut process_io,
+        segment: &mut segment,
+        sched: &mut scheduler,
+    })
+    .append_window(&DueSet::logs(), &log_rows(), &[settings_row()], 200, None)
     .expect("retain and append log batch");
 
     assert!(outcome.accepted);
@@ -236,23 +233,20 @@ fn a_fresh_log_window_append_failure_is_fatal() {
     .expect("open header-only journal");
     let config = config(dir.path(), JOURNAL_HEADER_LEN as u64);
     let mut segment = SegmentState::default();
-    let mut scheduler = Scheduler::new(Intervals::default());
+    let mut scheduler = Scheduler::new(Intervals::default(), true);
     let mut process_io = Some(ProcessIoCredentials::new());
 
-    let error = match append_pending_window(
-        &mut journal,
-        &owner,
-        &config,
-        false,
-        &DueSet::logs(),
-        &log_rows(),
-        &[],
-        200,
-        &mut process_io,
-        &mut segment,
-        &mut scheduler,
-        None,
-    ) {
+    let error = match (WindowWriter {
+        journal: &mut journal,
+        owner: &owner,
+        config: &config,
+        in_container: false,
+        process_io: &mut process_io,
+        segment: &mut segment,
+        sched: &mut scheduler,
+    })
+    .append_window(&DueSet::logs(), &log_rows(), &[], 200, None)
+    {
         Err(error) => error,
         Ok(_outcome) => {
             panic!("a fresh segment must not retry a deterministically rejected window")
@@ -293,21 +287,18 @@ fn assert_pg_batch_moves_to_fresh_segment() {
     .expect("append old segment row");
     fill_journal_to_pressure(&mut journal, &first, max);
 
-    let mut scheduler = Scheduler::new(Intervals::default());
+    let mut scheduler = Scheduler::new(Intervals::default(), true);
     let mut process_io = Some(ProcessIoCredentials::new());
-    let outcome = append_pending_pg_batch(
-        &mut journal,
-        &owner,
-        &config,
-        false,
-        &archiver_batch(),
-        &[],
-        200,
-        &mut process_io,
-        &mut segment,
-        &mut scheduler,
-        None,
-    )
+    let outcome = (WindowWriter {
+        journal: &mut journal,
+        owner: &owner,
+        config: &config,
+        in_container: false,
+        process_io: &mut process_io,
+        segment: &mut segment,
+        sched: &mut scheduler,
+    })
+    .append_postgres(&archiver_batch(), &[], 200, None)
     .expect("retain and append PostgreSQL batch");
 
     assert_eq!(outcome.written.len(), 1, "the old segment closes once");
@@ -350,38 +341,31 @@ fn postgres_batch_is_not_repeated_in_incremental_log_windows() {
     let mut journal = Journal::open(&owner, JournalConfig::default()).expect("open journal");
     let config = config(dir.path(), JournalConfig::default().max_journal_len as u64);
     let mut segment = SegmentState::default();
-    let mut scheduler = Scheduler::new(Intervals::default());
+    let mut scheduler = Scheduler::new(Intervals::default(), true);
     let mut process_io = Some(ProcessIoCredentials::new());
 
-    append_pending_pg_batch(
-        &mut journal,
-        &owner,
-        &config,
-        false,
-        &archiver_batch(),
-        &[],
-        200,
-        &mut process_io,
-        &mut segment,
-        &mut scheduler,
-        None,
-    )
+    (WindowWriter {
+        journal: &mut journal,
+        owner: &owner,
+        config: &config,
+        in_container: false,
+        process_io: &mut process_io,
+        segment: &mut segment,
+        sched: &mut scheduler,
+    })
+    .append_postgres(&archiver_batch(), &[], 200, None)
     .expect("append PostgreSQL batch");
     for ts in [201, 202] {
-        let outcome = append_pending_window(
-            &mut journal,
-            &owner,
-            &config,
-            false,
-            &DueSet::logs(),
-            &log_rows(),
-            &[],
-            ts,
-            &mut process_io,
-            &mut segment,
-            &mut scheduler,
-            None,
-        )
+        let outcome = (WindowWriter {
+            journal: &mut journal,
+            owner: &owner,
+            config: &config,
+            in_container: false,
+            process_io: &mut process_io,
+            segment: &mut segment,
+            sched: &mut scheduler,
+        })
+        .append_window(&DueSet::logs(), &log_rows(), &[], ts, None)
         .expect("append incremental log batch");
         assert!(outcome.accepted);
     }
@@ -426,25 +410,21 @@ fn cached_settings_are_added_once_when_logs_open_a_segment() {
     let mut journal = Journal::open(&owner, JournalConfig::default()).expect("open journal");
     let config = config(dir.path(), JournalConfig::default().max_journal_len as u64);
     let mut segment = SegmentState::default();
-    let mut scheduler = Scheduler::new(Intervals::default());
+    let mut scheduler = Scheduler::new(Intervals::default(), true);
     let mut process_io = Some(ProcessIoCredentials::new());
     let settings = [settings_row()];
 
     for ts in [200, 201] {
-        let outcome = append_pending_window(
-            &mut journal,
-            &owner,
-            &config,
-            false,
-            &DueSet::logs(),
-            &log_rows(),
-            &settings,
-            ts,
-            &mut process_io,
-            &mut segment,
-            &mut scheduler,
-            None,
-        )
+        let outcome = (WindowWriter {
+            journal: &mut journal,
+            owner: &owner,
+            config: &config,
+            in_container: false,
+            process_io: &mut process_io,
+            segment: &mut segment,
+            sched: &mut scheduler,
+        })
+        .append_window(&DueSet::logs(), &log_rows(), &settings, ts, None)
         .expect("append log window");
         assert!(outcome.accepted);
     }
@@ -473,41 +453,31 @@ fn postgresql_mode_normal_and_deferred_windows_encode_no_linux_identity_or_rows(
         let mut config = config(dir.path(), u64::MAX);
         config.mode = crate::config::CollectorMode::Postgresql;
         config.pg_dsn = Some("host=unused dbname=postgres".to_owned());
+        config.intervals.pg_instance = 37;
+        config.intervals.pg_activity = 11;
+        config.intervals.pg_tables_and_indexes = 401;
+        config.intervals.pg_statements_and_plans = 601;
         let mut segment = SegmentState::default();
-        let mut scheduler = Scheduler::for_mode(Intervals::default(), false);
+        let mut scheduler = Scheduler::new(Intervals::default(), false);
         let mut process_io = None;
+        let mut window = WindowWriter {
+            journal: &mut journal,
+            owner: &writer,
+            config: &config,
+            in_container: false,
+            process_io: &mut process_io,
+            segment: &mut segment,
+            sched: &mut scheduler,
+        };
         if !postgres_first {
-            let due = scheduler.plan(std::time::Instant::now(), true);
-            append_pending_window(
-                &mut journal,
-                &writer,
-                &config,
-                false,
-                &due,
-                &LogRows::default(),
-                &[],
-                100,
-                &mut process_io,
-                &mut segment,
-                &mut scheduler,
-                None,
-            )
-            .expect("append forced opening window without Linux");
+            let due = window.sched.plan(std::time::Instant::now(), true);
+            window
+                .append_window(&due, &LogRows::default(), &[], 100, None)
+                .expect("append forced opening window without Linux");
         }
-        append_pending_pg_batch(
-            &mut journal,
-            &writer,
-            &config,
-            false,
-            &archiver_batch(),
-            &[],
-            200,
-            &mut process_io,
-            &mut segment,
-            &mut scheduler,
-            None,
-        )
-        .expect("append a retained PostgreSQL batch without Linux");
+        window
+            .append_postgres(&archiver_batch(), &[], 200, None)
+            .expect("append a retained PostgreSQL batch without Linux");
         assert!(
             process_io.is_none(),
             "no process credential state is constructed"
@@ -525,8 +495,20 @@ fn postgresql_mode_normal_and_deferred_windows_encode_no_linux_identity_or_rows(
         );
         let metadata = captured
             .rows(INSTANCE_METADATA_TYPE_ID)
-            .expect("decode V3 metadata");
+            .expect("decode V4 metadata");
         assert_eq!(metadata.len(), 1);
+        for (name, seconds) in [
+            ("postgresql_interval_seconds", 11),
+            ("postgresql_instance_interval_seconds", 37),
+            ("postgresql_relations_interval_seconds", 401),
+            ("postgresql_statements_interval_seconds", 601),
+        ] {
+            assert_eq!(
+                metadata[0].get(name),
+                Some(&kronika_reader::Cell::U64(seconds)),
+                "{name} preserves its own source family's freshness interval"
+            );
+        }
         for name in [
             "hostname",
             "kernel_version",

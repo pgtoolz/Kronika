@@ -66,9 +66,10 @@ Linux collection intervals do not apply.
 
 ### Collection intervals
 
-Intervals are nonnegative whole seconds. Each source has its own schedule.
-A source interval of `0` reads on every timer wakeup. A cgroup is a Linux group
-of processes with shared resource limits. PSI measures time spent waiting for
+Intervals are nonnegative whole seconds. Each source has its own schedule. Except for
+statements/plans, intervals may be zero to read on every timer wakeup.
+Statements/plans require at least 300 seconds. A cgroup is a Linux group of
+processes with shared resource limits. PSI measures time spent waiting for
 CPU, memory or I/O resources.
 
 | Variable | Default, s | Data |
@@ -81,8 +82,26 @@ CPU, memory or I/O resources.
 | `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 | Discover all accessible cgroup v2 groups and read their resource counters and limits. |
 | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 | Process-to-cgroup v2 mappings. |
 | `KRONIKA_LOG_INTERVAL_S` | 10 | Configured PostgreSQL/PgBouncer logs. |
-| `KRONIKA_PG_INTERVAL_S` | 30 | PostgreSQL metrics and settings. |
-| `KRONIKA_PG_RELATIONS_INTERVAL_S` | 300 | Tables and indexes. |
+| `KRONIKA_PG_INTERVAL_S` | 30 | Server counters and settings. |
+| `KRONIKA_PG_ACTIVITY_INTERVAL_S` | 10 | Activity, lock waits and VACUUM progress; temporarily shortened when lock waits are detected. |
+| `KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S` | 5 | Activity interval while lock waits exist, capped by the ordinary activity interval. `0` reads on every timer wakeup. |
+| `KRONIKA_PG_STATEMENTS_INTERVAL_S` | 300 | `pg_stat_statements`, `pg_store_plans` and their info views. Minimum 300 seconds. |
+| `KRONIKA_PG_RELATIONS_INTERVAL_S` | 300 | Table and index statistics in each discovered database. |
+
+A successful, nonempty lock-wait snapshot changes the activity interval to
+`min(KRONIKA_PG_ACTIVITY_INTERVAL_S, KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S)`
+seconds. A successful empty snapshot restores the ordinary activity interval;
+a failed read leaves it unchanged. With the defaults, activity, lock waits and
+VACUUM progress are read every 10 seconds, or every 5 seconds while the collector
+observes lock waits. A zero interval reads on every regular timer wakeup without
+adding timer wakeups.
+
+Statements and plans wait at least `KRONIKA_PG_STATEMENTS_INTERVAL_S` seconds
+after the preceding PostgreSQL pass containing those sources finishes.
+`SIGUSR2` does not bypass this limit. `KRONIKA_INTERVAL_S=0` still makes
+collection signal-driven only, including activity during lock waits.
+Collection is sequential: a slow SQL query or another running source can delay
+the next activity snapshot beyond its configured interval.
 
 ### Connections and logs
 
@@ -307,7 +326,8 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika /usr/local/bin/kronika-collector
 
 `SIGINT` and `SIGTERM` stop collection and retain `active.wal` without a final
 ZMS close. Restarting recovers a valid nonempty journal immediately.
-`SIGUSR2` collects immediately and saves a segment if that collection adds data.
+`SIGUSR2` requests immediate collection and saves a segment if that collection
+adds data. Statements/plans keep their minimum interval even on a forced cycle.
 `-h`, `--help` and `--version` exit before
 configuration or storage access. Readiness and segment paths go to stdout.
 Structured logs go to stderr. In local mode, each `segment_write_finish` records `rss_kib`,

@@ -133,6 +133,18 @@ pub enum RelationGroup {
 }
 
 impl RelationGroup {
+    /// Parse the public relation `group` parameter value.
+    #[must_use]
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "database" => Some(Self::Database),
+            "schema" => Some(Self::Schema),
+            "tablespace" => Some(Self::Tablespace),
+            "object" => Some(Self::Object),
+            _ => None,
+        }
+    }
+
     /// Stable name used in query output and cursor identities.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

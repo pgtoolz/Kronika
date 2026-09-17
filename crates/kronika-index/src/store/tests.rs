@@ -5,7 +5,7 @@ use kronika_format::DictLimits;
 use kronika_layout::{DataRoot, LayoutLimits, SegmentAddress, SegmentId};
 use kronika_reader::{Reader, SegmentKind, SegmentRef};
 use kronika_registry::instance_metadata::{
-    InstanceMetadata, InstanceMetadataV1, InstanceMetadataV3,
+    InstanceMetadata, InstanceMetadataV1, InstanceMetadataV3, InstanceMetadataV4,
 };
 use kronika_registry::os_cgroup_memory::OsCgroupMemoryV2;
 use kronika_registry::os_cpu::OsCpu;
@@ -1628,6 +1628,62 @@ fn direct_boundaries_and_log_events_use_exact_production_fields() {
 }
 
 #[test]
+fn transaction_rates_use_recorded_elapsed_time_in_wal_and_zms() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let data_root = DataRoot::open(directory.path()).expect("data root");
+    let writer = data_root
+        .acquire_writer(LayoutLimits::default())
+        .expect("writer");
+    let mut journal = Journal::open(&writer, JournalConfig::default()).expect("journal");
+    let samples = [
+        (0, 100, 20),
+        (30_000_000, 340, 80),
+        (35_000_000, 380, 90),
+        (45_000_000, 460, 110),
+        (90_000_000, 820, 200),
+    ];
+    let rows = samples.map(|(offset, xact_commit, xact_rollback)| PgStatDatabaseV4 {
+        xact_commit,
+        xact_rollback,
+        ..database_v4_row(SEGMENT_ID + offset, 42, None, None, None, 0, 0)
+    });
+    append_database_rows(&mut journal, SEGMENT_ID, &rows);
+
+    for kind in [SegmentKind::Active, SegmentKind::Finished] {
+        if kind == SegmentKind::Finished {
+            write_segment(&journal, &writer, address()).expect("finish segment");
+            journal.reset().expect("reset after segment");
+        }
+        let reader = Reader::open(directory.path()).expect("reader");
+        let segment = only_segment(&reader, kind);
+        let selected = resource(directory.path(), &reader, &segment, "pg_stat_database")
+            .expect("database index");
+        let points = selected
+            .index
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                SeriesBlock::PgTransactions { points, .. } => Some(points),
+                _ => None,
+            })
+            .expect("transaction series");
+        assert_eq!(
+            points
+                .iter()
+                .map(|point| (point.timestamp - SEGMENT_ID, point.datid, point.value))
+                .collect::<Vec<_>>(),
+            [
+                (0, 42, None),
+                (30_000_000, 42, Some(10.0)),
+                (35_000_000, 42, Some(10.0)),
+                (45_000_000, 42, Some(10.0)),
+                (90_000_000, 42, Some(10.0)),
+            ]
+        );
+    }
+}
+
+#[test]
 fn pg_stat_database_boundaries_use_exact_production_fields() {
     let directory = tempfile::tempdir().expect("tempdir");
     let data_root = DataRoot::open(directory.path()).expect("data root");
@@ -1902,6 +1958,73 @@ fn process_and_statement_metrics_stay_out_of_finding_indexes() {
     assert!(read(&index_path).expect("read published index").blocks.iter().all(
         |block| !matches!(block, SeriesBlock::Findings(block) if matches!(block.type_id, 1_100_001 | 1_002_001..=1_002_006))
     ));
+}
+
+#[test]
+fn v4_collection_facts_and_postgresql_health_survive_wal_to_zms() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let root = DataRoot::open(directory.path()).expect("data root");
+    let writer = root
+        .acquire_writer(LayoutLimits::default())
+        .expect("writer");
+    let mut journal = Journal::open(&writer, JournalConfig::default()).expect("journal");
+    let mut interner = Interner::new(DictLimits::default());
+    let active = StrId(interner.intern(b"active").expect("state").get());
+    let dictionary = dict::encode(interner.window()).expect("dictionary");
+    let mut buffers = SectionBuffers::new();
+    buffers
+        .push(InstanceMetadataV4 {
+            ts: Ts(SEGMENT_ID),
+            hostname: None,
+            kernel_version: None,
+            environment: None,
+            clock_ticks_per_sec: None,
+            page_size_bytes: None,
+            boot_id: None,
+            btime: None,
+            os_enabled: false,
+            postgresql_processes_shared: false,
+            postgresql_enabled: true,
+            postgresql_interval_seconds: 10,
+            postgresql_effective_cpus: Some(2),
+            postgresql_instance_interval_seconds: 37,
+            postgresql_relations_interval_seconds: 401,
+            postgresql_statements_interval_seconds: 601,
+        })
+        .expect("V4 SQL-only metadata");
+    for pid in 1..=5 {
+        buffers
+            .push(activity_row(SEGMENT_ID + 1, pid, active, active))
+            .expect("activity");
+    }
+    let part = buffers.flush(&dictionary).expect("encode").expect("part");
+    journal.append(address().id, &part).expect("append");
+
+    for kind in [SegmentKind::Active, SegmentKind::Finished] {
+        if kind == SegmentKind::Finished {
+            write_segment(&journal, &writer, address()).expect("seal");
+            journal.reset().expect("reset");
+        }
+        let reader = Reader::open(directory.path()).expect("reader");
+        let selected = only_segment(&reader, kind);
+        let segment = reader.open_segment(&selected).expect("decode segment");
+        assert_eq!(
+            segment.rows_of(crate::INSTANCE_METADATA_V4_TYPE_ID),
+            Some(1)
+        );
+        assert_eq!(
+            crate::collection_facts(&segment).expect("V4 collection facts"),
+            crate::CollectionFacts {
+                os_enabled: Some(false),
+                postgresql_enabled: Some(true),
+                postgresql_processes_shared: false,
+            }
+        );
+        let health = resource(directory.path(), &reader, &selected, "health").expect("health");
+        assert!(health_values(&health, "os").is_empty());
+        assert_eq!(health_values(&health, "postgres"), [Some(80)]);
+        assert_eq!(health_values(&health, "overall"), [Some(80)]);
+    }
 }
 
 #[test]

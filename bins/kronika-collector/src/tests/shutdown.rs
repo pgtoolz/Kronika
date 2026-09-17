@@ -10,7 +10,7 @@ use kronika_writer::{Journal, JournalConfig};
 use crate::config::Config;
 use crate::scheduler::Intervals;
 
-use super::super::{complete_or_shutdown, initialize_collector};
+use crate::collector::{complete_or_shutdown, initialize_collector};
 
 struct PendingWork(Arc<AtomicBool>);
 

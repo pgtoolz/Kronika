@@ -1,285 +1,89 @@
-use crate::buffering::buffer_row;
-use crate::logging::{
-    LogLevel, field, layout_id, log_collection_finish, log_count_degraded, log_event, section_name,
-};
-use crate::scheduler::{DueSet, SourceKind};
-use anyhow::Result;
-use kronika_registry::os_block_topology::OsBlockTopology;
-use kronika_registry::os_cgroup_context::OsCgroupContextV2;
-use kronika_registry::os_cgroup_mapping::OsCgroupMapping;
-use kronika_registry::os_cpu::OsCpu;
-use kronika_registry::os_cpufreq::{OsCpufreq, OsCpufreqPolicy};
-use kronika_registry::os_diskstats::OsDiskstats;
-use kronika_registry::os_interrupts::OsInterrupts;
-use kronika_registry::os_kernel_limits::OsKernelLimits;
-use kronika_registry::os_loadavg::OsLoadavg;
-use kronika_registry::os_meminfo::OsMeminfo;
-use kronika_registry::os_mountinfo::OsMountinfo;
-use kronika_registry::os_netdev::OsNetdev;
-use kronika_registry::os_netstat::OsNetstat;
-use kronika_registry::os_nfs::{OsNfsClient, OsNfsServer};
-use kronika_registry::os_numa::OsNuma;
-use kronika_registry::os_process::OsProcess;
-use kronika_registry::os_process_status::OsProcessStatus;
-use kronika_registry::os_psi::OsPsi;
-use kronika_registry::os_snmp::OsSnmp;
-use kronika_registry::os_snmp6::OsSnmp6;
-use kronika_registry::os_softirq::OsSoftirq;
-use kronika_registry::os_stat::OsStat;
-use kronika_registry::os_topology::OsTopology;
-use kronika_registry::os_user::OsUser;
-use kronika_registry::os_vmstat::OsVmstat;
-use kronika_registry::{StrId, Ts};
-use kronika_source_os::proc::cpuinfo;
-use kronika_source_os::proc::loadavg::parse_loadavg;
-use kronika_source_os::proc::meminfo::parse_meminfo;
-use kronika_source_os::proc::pressure::parse_pressure;
-use kronika_source_os::proc::process::{
-    ProcessError, ProcessIoCredentials, ProcessIoTarget, ProcessReader, process_facts,
-};
-use kronika_source_os::proc::stat::{parse_cpu, parse_stat_misc};
-use kronika_source_os::proc::vmstat::parse_vmstat;
-use kronika_source_os::proc::{
-    diskstats, interrupts, kernel_limits, net_dev, net_netstat, net_snmp, net_snmp6, nfs,
-};
-use kronika_source_os::{
-    MountEntry, MountStringIds, OsScope, ProcFs, SysFs, cgroup, container_device_set,
-    is_kernel_tree_mount, is_pseudo_filesystem, mount_row, net_scope, parse_dev_pair,
-    parse_mountinfo,
-};
-use kronika_source_os::{node_id_from_dir, parse_node_meminfo};
-use kronika_writer::{Interner, SectionBuffers};
-use std::io::ErrorKind;
-use std::time::Instant;
+//! Coordinate the OS sources due on one tick.
+//!
+//! Source modules build rows; `rows` holds them until buffering. `io` shares
+//! optional-file handling and dictionary-error diagnostics.
 
 mod block_topology;
 mod buffering;
-mod cgroups;
+mod core;
 mod cpufreq;
+mod io;
+mod kernel;
+mod network;
 mod process;
-mod procfs_sections;
-mod singletons;
-mod user_reference;
+mod rows;
+mod storage;
+mod topology;
+mod user_names;
+
+use kronika_source_os::proc::process::ProcessIoCredentials;
+use kronika_source_os::{OsScope, ProcFs, SysFs, cgroup, container_device_set, net_scope};
+use kronika_writer::Interner;
+
+use crate::cgroup_discovery::CgroupPass;
+use crate::scheduler::{DueSet, SourceKind};
+use io::log_degraded;
 
 pub(crate) use buffering::push_os_sources;
-pub(crate) use procfs_sections::collect_mountinfo;
-#[cfg(test)]
-pub(crate) use procfs_sections::{cpu_max_mhz, cpu_numa_node, net_link_facts, resolve_major_zero};
-pub(crate) use user_reference::UserReferences;
+pub(crate) use rows::OsSources;
+pub(crate) use storage::collect_mountinfo;
+pub(crate) use user_names::SegmentUserNames;
 
-/// OS procfs sections collected synchronously in the read phase.
-pub(crate) struct OsSources {
-    cpu: Vec<OsCpu>,
-    stat: Option<OsStat>,
-    meminfo: Option<OsMeminfo>,
-    loadavg: Option<OsLoadavg>,
-    vmstat: Option<OsVmstat>,
-    psi: Vec<OsPsi>,
-    diskstats: Vec<OsDiskstats>,
-    netdev: Vec<OsNetdev>,
-    snmp: Option<OsSnmp>,
-    netstat: Option<OsNetstat>,
-    snmp6: Option<OsSnmp6>,
-    kernel_limits: Option<OsKernelLimits>,
-    nfs_client: Option<OsNfsClient>,
-    nfs_server: Option<OsNfsServer>,
-    interrupts: Vec<OsInterrupts>,
-    softirq: Vec<OsSoftirq>,
-    numa: Vec<OsNuma>,
-    mountinfo: Vec<OsMountinfo>,
-    topology: Vec<OsTopology>,
-    block_topology: Vec<OsBlockTopology>,
-    cpufreq_policy: Vec<OsCpufreqPolicy>,
-    cpufreq: Vec<OsCpufreq>,
-    processes: Vec<OsProcess>,
-    users: Vec<OsUser>,
-    pending_users: Vec<(u8, u32)>,
-    process_status: Vec<OsProcessStatus>,
-    cgroup_mapping: Vec<OsCgroupMapping>,
-    cgroup_context: Option<OsCgroupContextV2>,
+/// Schedule and attribution shared by all OS sources in one collection pass.
+pub(crate) struct OsTick<'a> {
+    /// Scope of device-local rows; network and process scopes are selected separately.
+    pub(crate) scope: u8,
+    pub(crate) ts: i64,
+    pub(crate) in_container: bool,
+    pub(crate) due: &'a DueSet,
+    /// Reuse the cgroup selection and charged devices from this tick's discovery.
+    pub(crate) cgroup_pass: Option<&'a CgroupPass>,
 }
 
-impl OsSources {
-    const fn empty() -> Self {
-        Self {
-            cpu: Vec::new(),
-            stat: None,
-            meminfo: None,
-            loadavg: None,
-            vmstat: None,
-            psi: Vec::new(),
-            diskstats: Vec::new(),
-            netdev: Vec::new(),
-            snmp: None,
-            netstat: None,
-            snmp6: None,
-            kernel_limits: None,
-            nfs_client: None,
-            nfs_server: None,
-            interrupts: Vec::new(),
-            softirq: Vec::new(),
-            numa: Vec::new(),
-            mountinfo: Vec::new(),
-            topology: Vec::new(),
-            block_topology: Vec::new(),
-            cpufreq_policy: Vec::new(),
-            cpufreq: Vec::new(),
-            processes: Vec::new(),
-            users: Vec::new(),
-            pending_users: Vec::new(),
-            process_status: Vec::new(),
-            cgroup_mapping: Vec::new(),
-            cgroup_context: None,
-        }
-    }
-
-    pub(crate) fn deduplicate_context(
-        &mut self,
-        recorded: Option<&OsCgroupContextV2>,
-    ) -> Option<OsCgroupContextV2> {
-        if self.cgroup_context.as_ref() == recorded {
-            self.cgroup_context = None;
-        }
-        self.cgroup_context
-    }
-
-    pub(crate) fn pending_users(&self) -> &[(u8, u32)] {
-        &self.pending_users
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn diskstats_empty(&self) -> bool {
-        self.diskstats.is_empty()
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn mountinfo_empty(&self) -> bool {
-        self.mountinfo.is_empty()
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn cgroup_context_only(row: &OsCgroupContextV2) -> Self {
-        let mut sources = Self::empty();
-        sources.cgroup_context = Some(*row);
-        sources
-    }
-
-    #[cfg(test)]
-    pub(crate) fn cpufreq_only(policies: Vec<OsCpufreqPolicy>, samples: Vec<OsCpufreq>) -> Self {
-        let mut sources = Self::empty();
-        sources.cpufreq_policy = policies;
-        sources.cpufreq = samples;
-        sources
-    }
-
-    #[cfg(test)]
-    pub(crate) fn storage_only(
-        mounts: Vec<OsMountinfo>,
-        block_topology: Vec<OsBlockTopology>,
-    ) -> Self {
-        let mut sources = Self::empty();
-        sources.mountinfo = mounts;
-        sources.block_topology = block_topology;
-        sources
-    }
-
-    #[cfg(test)]
-    pub(crate) fn users_only(users: Vec<OsUser>) -> Self {
-        let mut sources = Self::empty();
-        sources.users = users;
-        sources
-    }
-}
-
-fn read_optional_os_file(fs: &ProcFs, rel: &'static str, type_id: u32) -> Option<String> {
-    match fs.read_raw(rel) {
-        Ok(content) => Some(content),
-        Err(err) if err.kind() == ErrorKind::NotFound => None,
-        Err(err) => {
-            log_event(
-                LogLevel::Warn,
-                "collection_degraded",
-                &[
-                    field("collection", section_name(type_id)),
-                    field("type_id", type_id),
-                    field("layout_id", layout_id(type_id)),
-                    field("source", rel),
-                    field("reason", &err),
-                ],
-            );
-            None
-        }
-    }
-}
-
-/// Read every procfs OS section synchronously.
-///
-/// Counter sections (cpu, stat, meminfo, loadavg, vmstat, pressure, diskstats,
-/// netdev, snmp, netstat) are gated on `due.has(SourceKind::OsCore)` and are
-/// never emitted on an OsMountTopo-only tick. Pressure comes from procfs on a
-/// machine and the selected ancestor cgroup v2 path in a container.
-/// Mountinfo is parsed on every `OsCore` tick for diskstats attribution and
-/// emitted, together with topology, only when
-/// `due.has(SourceKind::OsMountTopo)` is true.
-/// On file read or parse failure the affected section is skipped and a
-/// `collection_degraded` event is logged; zeros are never fabricated. `scope`
-/// is the host scope for device-local sections; network sections carry their
-/// own `net_scope`.
-///
-/// The `interner` is the segment's interner: device, interface, and mount
-/// strings are interned here so the built rows already hold their `StrId`s.
-#[allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "independent procfs reads share explicit filesystem, scheduler, dictionary, and segment-reference state"
-)]
+/// Collect only due sections, interning strings into the current segment.
+/// Mounts are read for both core counters and topology, but emitted only when
+/// topology is due. Container context also accompanies process-only ticks.
 pub(crate) fn collect_os_sources(
     fs: &ProcFs,
     process_io: &mut ProcessIoCredentials,
     interner: &mut Interner,
-    users: &mut UserReferences,
-    scope: u8,
-    ts: i64,
-    in_container: bool,
-    due: &DueSet,
-    cgroup_pass: Option<&crate::cgroup_discovery::CgroupPass>,
+    users: &mut SegmentUserNames,
+    tick: &OsTick<'_>,
 ) -> OsSources {
-    let cgroup_due = due.has(SourceKind::OsCgroup);
-    if !due.has(SourceKind::OsCore)
-        && !due.has(SourceKind::OsMountTopo)
-        && !due.has(SourceKind::OsProcesses)
-        && !due.has(SourceKind::OsProcessStatus)
-        && !cgroup_due
-        && !due.has(SourceKind::OsCgroupMapping)
+    let OsTick {
+        scope,
+        ts,
+        in_container,
+        due,
+        cgroup_pass,
+    } = *tick;
+    let mut os = OsSources::default();
+    if ![
+        SourceKind::OsCore,
+        SourceKind::OsMountTopo,
+        SourceKind::OsProcesses,
+        SourceKind::OsProcessStatus,
+        SourceKind::OsCgroup,
+        SourceKind::OsCgroupMapping,
+    ]
+    .into_iter()
+    .any(|source| due.has(source))
     {
-        return OsSources::empty();
+        return os;
     }
 
-    let mut os = OsSources::empty();
-
     let sys = SysFs::from_env();
-    let selected = in_container.then(|| {
-        if let Some(pass) = cgroup_pass {
-            return pass.selected.clone();
-        }
-        cgroup::collect_ancestor_context(fs, &sys, ts).unwrap_or_else(|err| {
-            log_degraded(1_205_002, "cgroup/context", &err);
-            cgroup::AncestorContext {
-                context: cgroup::CgroupContextRow {
-                    ts,
-                    ..cgroup::CgroupContextRow::default()
-                },
-                ..cgroup::AncestorContext::default()
-            }
-        })
-    });
+    let selected = selected_cgroup(fs, &sys, tick);
     if let Some(selected) = &selected {
         // Record alongside PSI as well as slower cgroup counters, so a selected
         // directory change cannot be hidden between context snapshots.
-        cgroups::record_context_section(selected, interner, &mut os);
+        match crate::cgroup_discovery::context_section(interner, selected) {
+            Ok(row) => os.cgroup_context = Some(row),
+            Err(error) => log_degraded(1_205_002, "cgroup/context", &error),
+        }
     }
     if due.has(SourceKind::OsCore) {
-        singletons::collect_singletons(
+        core::collect_core_metrics(
             fs,
             &sys,
             scope,
@@ -293,7 +97,7 @@ pub(crate) fn collect_os_sources(
     // OsMountTopo needs it to build the attribution section rows.
     let device_tick = due.has(SourceKind::OsCore) || due.has(SourceKind::OsMountTopo);
     let mounts = if device_tick {
-        procfs_sections::mountinfo_entries(fs)
+        storage::mountinfo_entries(fs)
     } else {
         Vec::new()
     };
@@ -314,112 +118,74 @@ pub(crate) fn collect_os_sources(
         // Counters: disk and network. Network sections carry the pod's
         // network-namespace scope inside a container, not the host scope.
         let net_scope_id = net_scope(in_container).as_u8();
-        os.diskstats = procfs_sections::collect_diskstats(fs, interner, scope, ts, kept.as_ref());
-        os.netdev = procfs_sections::collect_netdev(fs, &sys, interner, net_scope_id, ts);
-        procfs_sections::collect_net_singletons(fs, net_scope_id, ts, &mut os);
-        procfs_sections::collect_kernel_singletons(
+        os.diskstats = storage::collect_diskstats(fs, interner, scope, ts, kept.as_ref());
+        os.netdev = network::collect_netdev(fs, &sys, interner, net_scope_id, ts);
+        network::collect_protocol_counters(fs, net_scope_id, ts, &mut os);
+        kernel::collect_kernel_metrics(
             fs,
             interner,
             scope,
-            net_scope_id,
             ts,
             os.cpu.len().saturating_sub(1),
             &mut os,
         );
-        os.numa = procfs_sections::collect_numa(&sys, scope, ts);
+        os.numa = topology::collect_numa(&sys, scope, ts);
     }
 
     if due.has(SourceKind::OsMountTopo) {
         os.mountinfo = collect_mountinfo(interner, scope, ts, &mounts);
-        os.topology = procfs_sections::collect_topology(fs, &sys, interner, scope, ts);
+        os.topology = topology::collect_topology(fs, &sys, interner, scope, ts);
         block_topology::collect_block_topology(&sys, scope, ts, kept.as_ref(), &mut os);
     }
     cpufreq::collect_cpufreq(&sys, interner, scope, ts, due, &mut os);
 
-    let entity_scope = os_entity_scope(in_container);
+    let entity_scope = if in_container {
+        OsScope::Container
+    } else {
+        OsScope::Host
+    }
+    .as_u8();
     process::collect_process_sections(
         fs,
         process_io,
         interner,
         users,
-        entity_scope,
-        ts,
-        due,
+        &process::ProcessTick {
+            scope: entity_scope,
+            ts,
+            due,
+        },
         &mut os,
     );
 
     os
 }
 
-/// Processes and cgroups describe the container the collector runs in, not
-/// the node.
-const fn os_entity_scope(in_container: bool) -> u8 {
-    if in_container {
-        OsScope::Container.as_u8()
-    } else {
-        OsScope::Host.as_u8()
+fn selected_cgroup(fs: &ProcFs, sys: &SysFs, tick: &OsTick<'_>) -> Option<cgroup::AncestorContext> {
+    if !tick.in_container {
+        return None;
     }
-}
-
-#[cfg(test)]
-pub(crate) fn collects_cgroup_metrics(in_container: bool, due: &DueSet) -> bool {
-    let _ = in_container;
-    due.has(SourceKind::OsCgroup)
-}
-
-#[cfg(test)]
-pub(crate) fn collect_diskstats_for_test(
-    fs: &ProcFs,
-    interner: &mut Interner,
-    kept: Option<&std::collections::HashSet<(i32, i32)>>,
-) -> Vec<OsDiskstats> {
-    procfs_sections::collect_diskstats(fs, interner, 0, 0, kept)
-}
-
-#[cfg(test)]
-pub(crate) fn collect_pressure_for_test(
-    fs: &ProcFs,
-    sys: &SysFs,
-    scope: u8,
-    ts: i64,
-    in_container: bool,
-) -> Vec<OsPsi> {
-    let mut os = OsSources::empty();
-    let selected = in_container
-        .then(|| cgroup::collect_ancestor_context(fs, sys, ts).ok())
-        .flatten();
-    singletons::collect_pressure_rows(fs, sys, scope, ts, in_container, selected.as_ref(), &mut os);
-    os.psi
-}
-
-/// Intern one OS string, logging degradation and returning `None` on failure
-/// so the caller skips only the affected row.
-fn intern_str(
-    interner: &mut Interner,
-    type_id: u32,
-    origin: &'static str,
-    value: &str,
-) -> Option<StrId> {
-    match interner.intern(value.as_bytes()) {
-        Ok(id) => Some(StrId(id.get())),
-        Err(err) => {
-            log_degraded(type_id, origin, &err);
-            None
-        }
+    if let Some(pass) = tick.cgroup_pass {
+        return Some(pass.selected.clone());
     }
+    Some(
+        cgroup::collect_ancestor_context(fs, sys, tick.ts).unwrap_or_else(|err| {
+            log_degraded(1_205_002, "cgroup/context", &err);
+            cgroup::AncestorContext {
+                context: cgroup::CgroupContextRow {
+                    ts: tick.ts,
+                    ..cgroup::CgroupContextRow::default()
+                },
+                ..cgroup::AncestorContext::default()
+            }
+        }),
+    )
 }
 
-/// Emit a `collection_degraded` event with the section identity and reason.
-fn log_degraded(type_id: u32, source: &'static str, reason: &dyn std::fmt::Display) {
-    log_event(
-        LogLevel::Warn,
-        "collection_degraded",
-        &[
-            field("collection", section_name(type_id)),
-            field("type_id", type_id),
-            field("layout_id", layout_id(type_id)),
-            field("source", source),
-            field("reason", reason),
-        ],
-    );
-}
+#[cfg(test)]
+#[path = "tests/os_sources/collection.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "tests/os_sources/fixtures.rs"]
+mod fixtures;

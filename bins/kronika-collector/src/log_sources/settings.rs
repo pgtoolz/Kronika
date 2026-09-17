@@ -682,4 +682,5 @@ fn absolute(data_directory: &str, name: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/log_sources/settings.rs"]
 mod tests;

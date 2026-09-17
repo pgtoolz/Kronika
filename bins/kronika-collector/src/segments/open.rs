@@ -1,9 +1,14 @@
 //! Opening the journal at startup and publishing a readable WAL.
 
-use super::{
-    Context, FileKind, Instant, Journal, JournalConfig, LogLevel, PathBuf, Result, SegmentAddress,
-    WriterOwner, duration_ms, field, log_close_failure, log_event, peak_rss_kib, write_segment,
-};
+use std::fmt;
+use std::path::PathBuf;
+use std::time::Instant;
+
+use anyhow::{Context, Result};
+use kronika_layout::{FileKind, SegmentAddress, WriterOwner};
+use kronika_writer::{Journal, JournalConfig, write_segment};
+
+use crate::logging::{LogLevel, duration_ms, field, log_event, peak_rss_kib};
 
 /// Open the journal under the storage directory and write out windows a
 /// previous process left behind, so a restart loses no collected data.
@@ -63,22 +68,26 @@ pub(super) fn write_recovered_journal(
     let journal_bytes = journal.bytes();
     let journal_parts = journal.parts().len();
     let started = Instant::now();
-    let summary = match write_segment(journal, owner, address) {
-        Ok(summary) => summary,
-        Err(error) => {
-            log_close_failure(
-                &dest,
-                segment_id,
-                "recovered",
-                "write",
-                journal_bytes,
-                journal_parts,
-                started.elapsed(),
-                &error,
-            );
-            return Err(anyhow::Error::new(error).context("write the recovered segment"));
-        }
+    let log_failure = |stage: &'static str, error: &dyn fmt::Display| {
+        log_event(
+            LogLevel::Error,
+            "segment_close_failure",
+            &[
+                field("segment_path", dest.display()),
+                field("segment_id", segment_id.get()),
+                field("reason", "recovered"),
+                field("stage", stage),
+                field("journal_bytes", journal_bytes),
+                field("journal_parts", journal_parts),
+                field("elapsed_ms", duration_ms(started.elapsed())),
+                field("error", error),
+            ],
+        );
     };
+    let summary = write_segment(journal, owner, address).map_err(|error| {
+        log_failure("write", &error);
+        anyhow::Error::new(error).context("write the recovered segment")
+    })?;
     log_event(
         LogLevel::Info,
         "segment_write_finish",
@@ -96,19 +105,9 @@ pub(super) fn write_recovered_journal(
             field("rss_kib", peak_rss_kib()),
         ],
     );
-    if let Err(error) = journal.reset() {
-        log_close_failure(
-            &dest,
-            segment_id,
-            "recovered",
-            "journal-reset",
-            journal_bytes,
-            journal_parts,
-            started.elapsed(),
-            &error,
-        );
-        return Err(anyhow::Error::new(error)
-            .context("reset the journal after the recovered segment write"));
-    }
+    journal.reset().map_err(|error| {
+        log_failure("journal-reset", &error);
+        anyhow::Error::new(error).context("reset the journal after the recovered segment write")
+    })?;
     Ok(Some(dest))
 }

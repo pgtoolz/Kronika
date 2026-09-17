@@ -189,6 +189,7 @@ pub const fn registry() -> &'static [TypeContract] {
         instance_metadata::InstanceMetadataV1::CONTRACT,
         instance_metadata::InstanceMetadata::CONTRACT,
         instance_metadata::InstanceMetadataV3::CONTRACT,
+        instance_metadata::InstanceMetadataV4::CONTRACT,
         os_process::OsProcess::CONTRACT,
         os_process_status::OsProcessStatus::CONTRACT,
         os_cpu::OsCpu::CONTRACT,

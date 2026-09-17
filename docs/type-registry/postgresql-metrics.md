@@ -19,6 +19,25 @@ The collector retains one connection per database between cycles. Database and e
 | Session limits | `lock_timeout=100ms` limits each wait to acquire a lock; `statement_timeout=30s` limits the SQL statement. The lock timeout does not limit how long an acquired lock is held. |
 | Client result deadline | 35 seconds to open and consume a row stream. On expiry, the collector sends one `CancelRequest`, bounded to 1 second, then closes the connection. |
 
+## Recorded collection intervals
+
+Each new segment records `instance_metadata` layout `1_021_004`. Its PostgreSQL
+intervals are separate because activity, server counters, relations and statement
+extensions can have different schedules.
+
+| Field | Recorded cadence, seconds |
+| --- | --- |
+| `postgresql_interval_seconds` | Normal activity, lock-wait and VACUUM-progress collection. Temporary acceleration during lock waits does not change this value. |
+| `postgresql_instance_interval_seconds` | Server counters and settings. |
+| `postgresql_relations_interval_seconds` | Table and index statistics. |
+| `postgresql_statements_interval_seconds` | Statement and plan extensions, including their info views. |
+
+A source interval of zero records the base timer interval; if both are zero,
+the recorded value is zero. Older layouts remain readable: `1_021_002` and
+`1_021_003` contain only the common `postgresql_interval_seconds` field.
+The [collector reference](../../bins/kronika-collector/README.md#collection-intervals)
+lists the corresponding environment variables and limits.
+
 ## Native server views
 
 `type_id` selects the section’s field layout. `snapshot_full` records a full snapshot on each collection; `conditional_full` records a full snapshot on cycles when the source’s collection condition holds; `on_change` records a changed state or a scheduled refresh. Additional settings emission rules appear below.
@@ -62,7 +81,7 @@ The collector retains one connection per database between cycles. Database and e
 | --- | --- |
 | `pg_stat_activity` | PID identifies a backend. PostgreSQL 14–18 reads nullable `datid` and `query_id` directly from the view. `datid` participates in navigation to Statements; shared/background backends may have `null`. |
 | `pg_stat_progress_vacuum` | `relid` is a `pg_class` OID; `schemaname`/`relname` resolve from the catalog in the same query only for the connected database. Relations in other databases have absent names. |
-| `pg_settings` | Effective metric-session settings; identity `(datid, usesysid, name)`, database and role names `datname`, `usename`. Read each PostgreSQL cycle; emitted on first success, change and new segment. A segment opened by another source reuses the latest successful snapshot. `primary_conninfo` and `ssl_passphrase_command` are excluded; other settings remain. |
+| `pg_settings` | Effective metric-session settings; identity `(datid, usesysid, name)`, database and role names `datname`, `usename`. Read with server counters on `KRONIKA_PG_INTERVAL_S` (30 seconds by default), and on a forced `SIGUSR2` cycle; emitted on first success, change and new segment. A segment opened by another source reuses the latest successful snapshot. `primary_conninfo` and `ssl_passphrase_command` are excluded; other settings remain. |
 | `pg_wal_storage` | Sum of regular-file sizes returned by `pg_ls_waldir()`; subdirectories excluded. The section is absent without permission to call the function. |
 | Tables and indexes | Zero `reltablespace` resolves through the database's `dattablespace`. A storage-less partitioned parent has no placement. An index records its own tablespace. Table size includes heap main fork and TOAST; user indexes are excluded. |
 
