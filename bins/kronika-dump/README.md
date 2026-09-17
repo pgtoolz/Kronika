@@ -5,7 +5,7 @@
 `kronika-dump` shows the times, data sections and rows in a recording. Its
 `slice` command extracts an interval into one `.zms` file that `kronika-report`
 can turn into an HTML report. Sources: [CLI and generated help](src/args.rs),
-[slice extraction](src/slice.rs).
+[slice extraction](../../crates/kronika-slice/src/slice.rs).
 
 ## Inspect
 
