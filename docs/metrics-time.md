@@ -90,7 +90,7 @@ Chart statistics describe the distribution of each drawn line. Only its finite n
 
 ### Cells and ranking
 
-An activity heatmap shows each entity’s contribution over the selected hour and when it was busiest. Processes, Statements, Plans, databases, cgroup CPU and cgroup I/O use 60 columns; Tables and Indexes use 12. Let `h` be the hour start in Unix microseconds, `C` the column count and `j` a boundary number from 0 to `C`. The boundary is `bⱼ = h + floor(j × 3,600,000,000 / C)`, where `floor` rounds down. Cell `j` covers `[bⱼ, bⱼ₊₁)`, including its start and excluding its end.
+An activity heatmap shows each entity’s contribution over the selected hour and when it was busiest. Processes, databases, cgroup CPU and cgroup I/O use 60 columns; Statements, Plans, Tables and Indexes use 12 (five minutes per column). Let `h` be the hour start in Unix microseconds, `C` the column count and `j` a boundary number from 0 to `C`. The boundary is `bⱼ = h + floor(j × 3,600,000,000 / C)`, where `floor` rounds down. Cell `j` covers `[bⱼ, bⱼ₊₁)`, including its start and excluding its end.
 
 The engine assigns an observation to the column containing the midpoint between that observation and its previous observation for the identity; the first observation uses its own timestamp. A counter entering a new column carries the previous observation into the column's calculation. It allocates the interval to one column; it does not split the counter difference proportionally over every crossed boundary.
 

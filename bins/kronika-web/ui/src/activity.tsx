@@ -284,7 +284,7 @@ export function StatementsActivity({ blockSize, cursor, hour, layouts, locale, o
     }
   }
 
-  return <ActivityLedger columns={60} cursor={cursor} cuts={cutsForLayouts(STATEMENT_CUTS, layouts)} defaultCut="exec_time" drill={drill} hour={hour} keys={STATEMENT_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} scope={scope} section="pg_stat_statements" storageKey="kronika.activity-open" t={t} />
+  return <ActivityLedger columns={12} cursor={cursor} cuts={cutsForLayouts(STATEMENT_CUTS, layouts)} defaultCut="exec_time" drill={drill} hour={hour} keys={STATEMENT_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} scope={scope} section="pg_stat_statements" storageKey="kronika.activity-open" t={t} />
 }
 
 export function PlansActivity({ blockSize, cursor, hour, layouts, locale, onCursor, onRelated, rows, t }: {
@@ -313,7 +313,7 @@ export function PlansActivity({ blockSize, cursor, hour, layouts, locale, onCurs
       prefix: identityPrefix(row, null),
     }
   }
-  return <ActivityLedger columns={60} cursor={cursor} cuts={cutsForLayouts(PLAN_CUTS, layouts)} defaultCut="exec_time" drill={drill} hour={hour} keys={PLAN_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} section="pg_store_plans" storageKey="kronika.activity-open.plans" t={t} />
+  return <ActivityLedger columns={12} cursor={cursor} cuts={cutsForLayouts(PLAN_CUTS, layouts)} defaultCut="exec_time" drill={drill} hour={hour} keys={PLAN_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} section="pg_store_plans" storageKey="kronika.activity-open.plans" t={t} />
 }
 
 export type RelationActivityLevel = "object" | "schema" | "database" | "tablespace"
