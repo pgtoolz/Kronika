@@ -106,10 +106,9 @@ For a PostgreSQL workload with roughly 500 tables and 3,000 indexes, estimate
 **about 200 MB of compressed recordings per day**. Volume depends on collection
 intervals and the number of recorded objects and distinct queries.
 
-`--retention 2GiB` sets the default **2 GiB** storage budget,
-including journals and indexes. When the target is exceeded, the collector
-automatically removes the oldest finished recordings and their indexes.
-For **10 GiB**, set `--retention 10GiB`.
+The default storage limit is **2 GiB** (`--retention`), including journals and
+indexes. When the limit is exceeded, the collector removes the oldest finished
+recordings and their indexes.
 
 `auto` and `auto:P` instead set a used-space percentage target for the whole
 backing filesystem. See [storage configuration](bins/kronika-collector/README.md#storage)
