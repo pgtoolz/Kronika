@@ -13,7 +13,7 @@ Linux либо записывает только данные PostgreSQL с ло
 [Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/).
 
 Запись за 5 сентября 2026 года, 19:00–20:00 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=host).
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=host).
 
 ## Установка и запуск
 
