@@ -19,7 +19,7 @@ use kronika_source_pg::settings::SettingsRow;
 use kronika_writer::{Journal, SectionBuffers};
 
 use crate::buffering::buffer_row;
-use crate::config::Config;
+use crate::config::{CollectorMode, Config};
 use crate::instance_metadata::push_instance_metadata;
 use crate::logging::{LogLevel, field, log_event, peak_rss_kib, process_cpu_ticks};
 use crate::scheduler::Scheduler;
@@ -85,8 +85,8 @@ struct Appender<'a> {
 }
 
 /// Decide cgroup admission once; unknown support retains collection diagnostics.
-pub(crate) fn enabled(fs: &ProcFs, collect_os: bool, in_container: bool) -> bool {
-    if !collect_os || !in_container {
+pub(crate) fn enabled(fs: &ProcFs, mode: CollectorMode, in_container: bool) -> bool {
+    if !mode.collect_os() || !in_container {
         return false;
     }
     cgroup::has_v2_mount(fs).unwrap_or_else(|error| {

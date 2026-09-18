@@ -184,7 +184,8 @@ fn scenario(root: &Path, denied: bool) {
     let mut state = SegmentState::default();
     let fs = config.proc_fs();
     let sys = config.sys_fs();
-    let mut sched = Scheduler::new(Intervals::default(), true, enabled(&fs, true, true));
+    let admitted = enabled(&fs, config.mode, true);
+    let mut sched = Scheduler::new(Intervals::default(), config.mode, admitted);
     assert!(sched.collects_cgroups());
     let first = crate::clock::collection_timestamp().expect("clock");
     let devices = if denied { 2 } else { 1100 };

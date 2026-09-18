@@ -96,7 +96,7 @@ fn collect(
     owner: &WriterOwner,
     segment: &mut SegmentState,
 ) -> CgroupPass {
-    let mut sched = Scheduler::new(Intervals::default(), true, true);
+    let mut sched = Scheduler::new(Intervals::default(), CollectorMode::Local, true);
     let mut pass = CgroupPass::default();
     let mut appender = Appender {
         config,
@@ -246,7 +246,7 @@ fn postgresql_mode_never_opens_discovery_roots_or_appends_os_rows() {
     let config = config(&storage);
     let (owner, mut journal) = open_journal(&storage, JournalConfig::default().max_parts);
     let mut segment = SegmentState::default();
-    let mut sched = Scheduler::new(Intervals::default(), false, false);
+    let mut sched = Scheduler::new(Intervals::default(), CollectorMode::Postgresql, false);
     let pass = run(
         &ProcFs::new(temp.path().join("missing-proc")),
         &SysFs::new(temp.path().join("missing-sys")),
@@ -274,16 +274,16 @@ fn startup_admission_distinguishes_absence_from_read_failure() {
     let temp = tempfile::tempdir().expect("probe fixture");
     let fs = ProcFs::new(temp.path().to_path_buf());
     assert!(
-        !enabled(&fs, false, true),
+        !enabled(&fs, CollectorMode::Postgresql, true),
         "PG-only skips the unreadable probe"
     );
     assert!(
-        !enabled(&fs, true, false),
+        !enabled(&fs, CollectorMode::Local, false),
         "machine skips the unreadable probe"
     );
     assert!(cgroup::has_v2_mount(&fs).is_err());
     assert!(
-        enabled(&fs, true, true),
+        enabled(&fs, CollectorMode::Local, true),
         "unknown support retains diagnostics"
     );
     std::fs::create_dir(temp.path().join("self")).expect("self directory");
@@ -302,12 +302,12 @@ fn startup_admission_distinguishes_absence_from_read_failure() {
             inotify::WatchFlags::OPEN,
         )
         .expect("watch startup probe");
-        assert!(!enabled(&fs, true, false));
-        assert!(!enabled(&fs, false, true));
+        assert!(!enabled(&fs, CollectorMode::Local, false));
+        assert!(!enabled(&fs, CollectorMode::Postgresql, true));
         let mut buf = [std::mem::MaybeUninit::uninit(); 512];
         let mut events = inotify::Reader::new(&notify, &mut buf);
         assert!(matches!(events.next(), Err(rustix::io::Errno::AGAIN)));
-        assert_eq!(enabled(&fs, true, true), expected);
+        assert_eq!(enabled(&fs, CollectorMode::Local, true), expected);
         assert!(events.next().is_ok(), "container probes mountinfo");
     }
 }
@@ -321,7 +321,7 @@ fn disabled_discovery_never_opens_roots_or_appends_rows() {
         config.mode = CollectorMode::Local;
         let (owner, mut journal) = open_journal(&storage, JournalConfig::default().max_parts);
         let mut segment = SegmentState::default();
-        let mut sched = Scheduler::new(Intervals::default(), true, collect_cgroups);
+        let mut sched = Scheduler::new(Intervals::default(), CollectorMode::Local, collect_cgroups);
         let pass = run(
             &ProcFs::new(temp.path().join("missing-proc")),
             &SysFs::new(temp.path().join("missing-sys")),

@@ -7,6 +7,7 @@
 
 mod sources;
 
+use crate::config::CollectorMode;
 use sources::ALL_SOURCES;
 pub(crate) use sources::{Intervals, MIN_PG_STATEMENTS_INTERVAL_SECS, SourceKind};
 use std::time::{Duration, Instant};
@@ -29,11 +30,11 @@ pub(crate) struct Scheduler {
 }
 
 impl Scheduler {
-    pub(crate) fn new(intervals: Intervals, collect_os: bool, collect_cgroups: bool) -> Self {
+    pub(crate) fn new(intervals: Intervals, mode: CollectorMode, collect_cgroups: bool) -> Self {
         let sources = ALL_SOURCES
             .into_iter()
             .filter(|kind| {
-                collect_os
+                mode.collect_os()
                     || matches!(
                         kind,
                         SourceKind::Logs

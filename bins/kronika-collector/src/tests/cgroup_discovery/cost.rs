@@ -111,7 +111,7 @@ fn append_hour(proc: &ProcFs, sys: &SysFs, storage: &Path) {
     let config = config(storage);
     let (owner, mut journal) = open_journal(storage, JournalConfig::default().max_parts);
     let mut segment = SegmentState::default();
-    let mut sched = Scheduler::new(Intervals::default(), true, true);
+    let mut sched = Scheduler::new(Intervals::default(), CollectorMode::Local, true);
     let mut pass = CgroupPass::default();
     let mut raw_bytes = 0_u64;
     let interval = Interval::start();

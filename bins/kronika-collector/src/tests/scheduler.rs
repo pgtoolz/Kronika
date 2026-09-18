@@ -1,3 +1,4 @@
+use crate::config::CollectorMode;
 use std::time::{Duration, Instant};
 
 use super::{ALL_SOURCES, DueSet, Intervals, Scheduler, SourceKind};
@@ -30,7 +31,7 @@ fn intervals() -> Intervals {
 
 #[test]
 fn the_first_tick_reads_every_source() {
-    let mut scheduler = Scheduler::new(intervals(), true, true);
+    let mut scheduler = Scheduler::new(intervals(), CollectorMode::Local, true);
     let due = scheduler.plan(Instant::now(), false);
     for kind in ALL_SOURCES {
         assert!(due.has(kind), "{kind:?} must be due on the first tick");
@@ -43,7 +44,7 @@ fn the_first_tick_reads_every_source() {
 
 #[test]
 fn a_source_comes_due_again_only_after_its_own_interval() {
-    let mut scheduler = Scheduler::new(intervals(), true, true);
+    let mut scheduler = Scheduler::new(intervals(), CollectorMode::Local, true);
     let start = Instant::now();
     scheduler.plan(start, false);
 
@@ -63,7 +64,7 @@ fn a_source_comes_due_again_only_after_its_own_interval() {
 
 #[test]
 fn a_forced_tick_preserves_the_statement_cooldown() {
-    let mut scheduler = Scheduler::new(intervals(), true, true);
+    let mut scheduler = Scheduler::new(intervals(), CollectorMode::Local, true);
     let start = Instant::now();
     scheduler.plan(start, false);
     let forced = scheduler.plan(start + Duration::from_secs(1), true);
@@ -94,7 +95,7 @@ fn a_forced_tick_preserves_the_statement_cooldown() {
 
 #[test]
 fn opening_a_segment_re_reads_mount_topology() {
-    let mut scheduler = Scheduler::new(intervals(), true, true);
+    let mut scheduler = Scheduler::new(intervals(), CollectorMode::Local, true);
     let start = Instant::now();
     scheduler.plan(start, false);
     scheduler.mark_segment_opened();
@@ -105,7 +106,7 @@ fn opening_a_segment_re_reads_mount_topology() {
 
 #[test]
 fn immediate_recollection_includes_and_records_segment_open_sources() {
-    let mut scheduler = Scheduler::new(intervals(), true, true);
+    let mut scheduler = Scheduler::new(intervals(), CollectorMode::Local, true);
     let start = Instant::now();
     scheduler.plan(start, false);
     scheduler.mark_segment_opened();
@@ -125,7 +126,7 @@ fn immediate_recollection_includes_and_records_segment_open_sources() {
 
 #[test]
 fn the_next_wake_is_the_soonest_positive_interval() {
-    let mut scheduler = Scheduler::new(intervals(), true, true);
+    let mut scheduler = Scheduler::new(intervals(), CollectorMode::Local, true);
     let start = Instant::now();
     scheduler.plan(start, false);
     assert_eq!(
@@ -142,7 +143,7 @@ fn a_zero_interval_runs_every_tick_without_pulling_the_wake_forward() {
             os_core: 0,
             ..intervals()
         },
-        true,
+        CollectorMode::Local,
         true,
     );
     let start = Instant::now();
@@ -159,7 +160,7 @@ fn a_zero_interval_runs_every_tick_without_pulling_the_wake_forward() {
 #[test]
 fn postgresql_mode_never_schedules_linux_even_at_forced_segment_open() {
     let now = Instant::now();
-    let mut scheduler = Scheduler::new(intervals(), false, false);
+    let mut scheduler = Scheduler::new(intervals(), CollectorMode::Postgresql, false);
     for forced in [false, true] {
         let due = scheduler.plan(now, forced);
         scheduler.mark_segment_opened();
@@ -187,7 +188,7 @@ fn postgresql_mode_never_schedules_linux_even_at_forced_segment_open() {
 #[test]
 fn unread_and_zero_interval_sources_do_not_request_an_earlier_wake() {
     let start = Instant::now();
-    let mut scheduler = Scheduler::new(intervals(), true, true);
+    let mut scheduler = Scheduler::new(intervals(), CollectorMode::Local, true);
     assert_eq!(scheduler.next_elapsed_due_in(start), None);
     scheduler.plan(start, false);
     scheduler.mark_segment_opened();
@@ -212,7 +213,7 @@ fn unread_and_zero_interval_sources_do_not_request_an_earlier_wake() {
             pg_tables_and_indexes: 0,
             pg_statements_and_plans: 0,
         },
-        true,
+        CollectorMode::Local,
         true,
     );
     scheduler.plan(start, false);
@@ -225,7 +226,7 @@ fn unread_and_zero_interval_sources_do_not_request_an_earlier_wake() {
 
 #[test]
 fn postgresql_groups_keep_their_independent_intervals() {
-    let mut scheduler = Scheduler::new(intervals(), false, false);
+    let mut scheduler = Scheduler::new(intervals(), CollectorMode::Postgresql, false);
     let start = Instant::now();
     scheduler.plan(start, false);
 
@@ -251,7 +252,7 @@ fn postgresql_groups_keep_their_independent_intervals() {
 
 #[test]
 fn default_postgresql_groups_have_separate_cadences() {
-    let mut scheduler = Scheduler::new(Intervals::default(), false, false);
+    let mut scheduler = Scheduler::new(Intervals::default(), CollectorMode::Postgresql, false);
     let start = Instant::now();
     scheduler.plan(start, false);
 
@@ -282,7 +283,7 @@ fn forced_ticks_respect_the_configured_statement_interval_and_its_minimum() {
                 pg_statements_and_plans: configured,
                 ..Intervals::default()
             },
-            false,
+            CollectorMode::Postgresql,
             false,
         );
         let start = Instant::now();
@@ -306,7 +307,7 @@ fn forced_ticks_respect_the_configured_statement_interval_and_its_minimum() {
 
 #[test]
 fn statement_cooldown_starts_after_postgres_finishes_and_survives_os_recollection() {
-    let mut scheduler = Scheduler::new(Intervals::default(), true, true);
+    let mut scheduler = Scheduler::new(Intervals::default(), CollectorMode::Local, true);
     let start = Instant::now();
     let due = scheduler.plan(start, false);
     scheduler.finish_postgres(&due, None, start + Duration::from_secs(45));
@@ -338,7 +339,7 @@ fn blocking_feedback_accelerates_activity_until_a_successful_clear_read() {
             pg_tables_and_indexes: 3_600,
             ..Intervals::default()
         },
-        false,
+        CollectorMode::Postgresql,
         false,
     );
     let start = Instant::now();
@@ -380,7 +381,7 @@ fn blocking_feedback_never_slows_a_faster_activity_schedule() {
                 pg_tables_and_indexes: 3_600,
                 ..Intervals::default()
             },
-            false,
+            CollectorMode::Postgresql,
             false,
         );
         let start = Instant::now();
@@ -410,7 +411,7 @@ fn the_blocked_activity_interval_is_configurable_and_capped_by_the_base() {
                 pg_tables_and_indexes: 3_600,
                 ..Intervals::default()
             },
-            false,
+            CollectorMode::Postgresql,
             false,
         );
         let start = Instant::now();

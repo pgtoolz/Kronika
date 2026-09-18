@@ -2,6 +2,7 @@ use super::{
     DueSet, Interner, OsSources, ProcFs, ProcessIoCredentials, ProcessTick, SegmentUserNames,
     SourceKind, collect_process_sections,
 };
+use crate::config::CollectorMode;
 use crate::os_sources::{OsTick, collect_os_sources};
 use crate::scheduler::{Intervals, Scheduler};
 use kronika_format::DictLimits;
@@ -292,14 +293,14 @@ fn disabled_cgroup_scenario() {
         )
         .expect("mountinfo");
         let fs = ProcFs::new(dir.path().to_path_buf());
-        let admitted = crate::cgroup_discovery::enabled(&fs, true, in_container);
+        let admitted = crate::cgroup_discovery::enabled(&fs, CollectorMode::Local, in_container);
         assert!(!admitted);
         let notify = inotify::init(inotify::CreateFlags::NONBLOCK).expect("inotify");
         for name in ["10/cgroup", "self/cgroup"] {
             inotify::add_watch(&notify, dir.path().join(name), inotify::WatchFlags::OPEN)
                 .expect("watch membership");
         }
-        let mut scheduler = Scheduler::new(Intervals::default(), true, admitted);
+        let mut scheduler = Scheduler::new(Intervals::default(), CollectorMode::Local, admitted);
         let mut interner = Interner::new(DictLimits::default());
         let mut users = SegmentUserNames::default();
         let mut process_io = ProcessIoCredentials::new();

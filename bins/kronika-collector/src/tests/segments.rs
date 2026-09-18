@@ -14,7 +14,7 @@ use kronika_registry::{DICT_STRINGS_TYPE_ID, SECTION_WRITE_BATCH_ROWS, Section, 
 use kronika_source_os::PasswdSnapshot;
 use kronika_writer::{FlushedPart, Interner, Journal, JournalConfig, SectionBuffers};
 
-use crate::config::Config;
+use crate::config::{CollectorMode, Config};
 use crate::scheduler::Intervals;
 
 use super::open::{open_collector_journal, write_recovered_journal};
@@ -119,7 +119,7 @@ fn cgroup_v2_window() -> FlushedPart {
 
 fn test_config(storage_dir: &Path) -> Config {
     Config {
-        mode: crate::config::CollectorMode::Local,
+        mode: CollectorMode::Local,
         storage_dir: storage_dir.to_path_buf(),
         tick_secs: 5,
         intervals: Intervals::default(),
@@ -848,7 +848,7 @@ fn one_age_deadline_survives_later_appends_and_wall_clock_changes() {
         )
         .expect("first append deadline");
     assert_eq!(segment.first_id.map(SegmentId::get), Some(777));
-    let sched = crate::scheduler::Scheduler::new(Intervals::default(), true, true);
+    let sched = crate::scheduler::Scheduler::new(Intervals::default(), CollectorMode::Local, true);
     assert_eq!(
         crate::collector::timer_sleep_delay(now, 5, &sched, &segment, None),
         Some(Duration::from_millis(500))

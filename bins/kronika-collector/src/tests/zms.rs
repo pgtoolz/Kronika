@@ -23,7 +23,7 @@ use kronika_source_pg::user_tables::{UserTablesRow, UserTablesVersion};
 use kronika_writer::{Journal, JournalConfig, SectionBuffers};
 
 use crate::collector::WindowWriter;
-use crate::config::Config;
+use crate::config::{CollectorMode, Config};
 use crate::logging::peak_rss_kib;
 use crate::os_sources::{OsSources, SegmentUserNames, push_os_sources};
 use crate::pg_sources::{PgBatch, push_pg_batch};
@@ -123,7 +123,7 @@ struct ReplayArtifactReport {
 
 fn config(root: &Path, journal_max_bytes: u64) -> Config {
     Config {
-        mode: crate::config::CollectorMode::Local,
+        mode: CollectorMode::Local,
         storage_dir: root.to_path_buf(),
         tick_secs: 1,
         intervals: Intervals::default(),
@@ -518,7 +518,7 @@ fn statement_sql_timestamp_survives_source_batches_in_one_active_segment() {
         Journal::open(&writer, JournalConfig::default()).expect("open statement timestamp journal");
     let config = config(directory.path(), u64::MAX);
     let mut segment = SegmentState::default();
-    let mut scheduler = Scheduler::new(Intervals::default(), true, true);
+    let mut scheduler = Scheduler::new(Intervals::default(), CollectorMode::Local, true);
     let mut process_io = Some(ProcessIoCredentials::new());
     let mut rows = (0..=BATCH_ROWS)
         .map(|query_index| {
