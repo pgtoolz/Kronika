@@ -78,6 +78,127 @@ async function pasteClipboard(cdp) {
   })()`)
 }
 
+test("hour refresh updates open Activity ledgers without moving an explicit cursor", { timeout: 60_000 }, async () => {
+  const html = gunzipSync(await readFile(ARTIFACT))
+  const heatmaps = []
+  let holdNext = false
+  let held = null
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1")
+    if (url.pathname === "/") { response.writeHead(200, { "Content-Type": "text/html" }); response.end(html); return }
+    if (url.pathname === "/auth/session") { response.writeHead(204); response.end(); return }
+    if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
+    if (url.pathname === "/api/hour") {
+      if (url.searchParams.get("section") === "os_process_summary") return ndjson(response, processSummaryRecords(HOUR, 3, 80))
+      return ndjson(response, timelineRecords())
+    }
+    if (url.pathname.endsWith("/snapshot")) return ndjson(response,
+      url.searchParams.getAll("section").includes("pg_stat_statements") ? statementRecords(true) : snapshotRecords())
+    if (url.pathname === "/api/heatmap") {
+      heatmaps.push(url)
+      const count = heatmaps.length
+      const columns = Number(url.searchParams.get("columns"))
+      assert.equal(url.searchParams.get("from"), String(HOUR))
+      assert.equal(url.searchParams.get("to"), String(HOUR + HOUR_US - 1))
+      const cells = Array.from({ length: columns }, (_, index) => index < count ? count * 100 : null)
+      const records = [
+        { record: "heatmap", class: "cumulative", summary: "sum", entity_count: 1, others_count: 0,
+          labels: [], intervals: Array.from({ length: columns }, (_, index) => ({
+            start: String(HOUR + index * HOUR_US / columns), end: String(HOUR + (index + 1) * HOUR_US / columns - 1),
+          })) },
+        { record: "heatmap_row", type_id: url.searchParams.get("section") === "os_process" ? "1100001" : "1002003", identity: url.searchParams.get("section") === "os_process" ? ["worker"] : ["101", "10", "5", "true"], members: 1, labels: [], total: count * 1000, cells },
+        { record: "heatmap_band", band: "totals", total: count * 1000, cells },
+      ]
+      if (holdNext) { holdNext = false; held = { response, records }; return }
+      return ndjson(response, records)
+    }
+    ndjson(response, [])
+  })
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve) })
+  const origin = `http://127.0.0.1:${server.address().port}`
+  const profile = await mkdtemp(join(tmpdir(), "b-"))
+  const browser = launchBrowser(profile)
+  const page = { errors: [], external: [], responses: [] }
+  let socket
+  try {
+    socket = await pageSocket(await browserDebugPort(profile, browser))
+    const cdp = cdpSession(socket)
+    trackPage(socket, origin, page)
+    await enablePage(cdp)
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
+      Date.now = () => ${AT / 1000}
+      localStorage.setItem('kronika.activity-open.processes', '1')
+      localStorage.setItem('kronika.activity-open', '1')
+      window.__hidden = false
+      Object.defineProperty(document, 'hidden', { get: () => window.__hidden })
+      window.__visibility = (hidden) => { window.__hidden = hidden; document.dispatchEvent(new Event('visibilitychange')) }
+      window.__refreshTimers = new Map()
+      let next = -1
+      const set = window.setTimeout.bind(window), clear = window.clearTimeout.bind(window)
+      window.setTimeout = (callback, milliseconds, ...args) => {
+        if (milliseconds !== 15000) return set(callback, milliseconds, ...args)
+        const id = next--
+        window.__refreshTimers.set(id, () => callback(...args))
+        return id
+      }
+      window.clearTimeout = (id) => window.__refreshTimers.delete(id) || clear(id)
+      window.__tick = () => { const pending = [...window.__refreshTimers.values()]; window.__refreshTimers.clear(); pending.forEach(run => run()) }
+    })()` })
+    await cdp.send("Page.navigate", { url: `${origin}/?at=${AT}` })
+    const cells = (count) => cdp.waitFor(`document.querySelectorAll('[data-testid="activity-row-totals"] svg rect').length === ${count}`, `updated ${count} heatmap cells`)
+    const ready = () => cdp.waitFor(`document.querySelector('[data-testid="refresh-action"]')?.disabled === false`, "ready for refresh")
+    const refresh = async () => { await ready(); await cdp.evaluate(`document.querySelector('[data-testid="refresh-action"]').click()`) }
+    await cells(1)
+    await ready()
+    const total = () => cdp.evaluate(`document.querySelector('[data-testid="activity-row-totals"] strong').innerText`)
+    let previous = await total()
+    for (const action of [refresh,
+      async () => { await ready(); await cdp.evaluate(`window.__tick()`) },
+      async () => { await ready(); await cdp.evaluate(`window.__visibility(true)`); assert.equal(await cdp.evaluate(`window.__refreshTimers.size`), 0); await cdp.evaluate(`window.__visibility(false)`) }]) {
+      const expected = heatmaps.length + 1
+      await action()
+      await cells(expected)
+      assert.notEqual(await total(), previous, "new totals are rendered")
+      previous = await total()
+      assert.equal(await cdp.evaluate(`new URL(location.href).searchParams.get('at')`), String(AT))
+    }
+    await cdp.evaluate(`document.querySelector('[data-testid="activity-toggle"]').click()`)
+    const beforeClosed = heatmaps.length
+    await refresh(); await ready(); await settleLayout(cdp)
+    assert.equal(heatmaps.length, beforeClosed, "closed panels do not fetch")
+    await cdp.evaluate(`document.querySelector('[data-testid="activity-toggle"]').click()`)
+    await cells(beforeClosed + 1)
+    holdNext = true
+    await refresh()
+    await waitForRequests(() => held !== null)
+    const retained = await total()
+    assert.equal(await cdp.evaluate(`document.querySelectorAll('[data-testid="activity-row-totals"] svg rect').length`), beforeClosed + 1)
+    const newest = heatmaps.length + 1
+    await refresh()
+    await cells(newest)
+    assert.notEqual(await total(), retained)
+    ndjson(held.response, held.records)
+    held = null
+    await settleLayout(cdp)
+    assert.equal(await cdp.evaluate(`document.querySelectorAll('[data-testid="activity-row-totals"] svg rect').length`), newest, "late aborted heatmap cannot replace current data")
+    await cdp.send("Page.navigate", { url: `${origin}/?at=${AT}&view=pg.statements` })
+    await cdp.waitFor(`document.querySelector('[data-testid="activity-pg_stat_statements"] [data-testid="activity-row"]') !== null`, "Statements Activity")
+    const beforePg = heatmaps.length
+    await refresh(); await cells(beforePg + 1)
+    assert.equal(heatmaps.at(-1).searchParams.get("section"), "pg_stat_statements")
+    assert.equal(await cdp.evaluate(`new URL(location.href).searchParams.get('at')`), String(AT))
+    assert.deepEqual(page.errors, [])
+    assert.deepEqual(page.external, [])
+  } finally {
+    held?.response.destroy()
+    socket?.close()
+    await stopBrowser(browser)
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+    await removeBrowserProfile(profile)
+  }
+})
+
 test("tab return catches up the selected hour once after loading, even across its end", { timeout: 60_000 }, async () => {
   const html = gunzipSync(await readFile(ARTIFACT))
   for (const scenario of ["same-hour", "hour-ended", "initial-busy", "refresh-busy", "navigate-pending", "historical"]) {
