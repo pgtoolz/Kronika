@@ -42,16 +42,23 @@ export function scheduleRefresh(
     if (timer !== null) timers.clearTimeout(timer)
     timer = null
   }
-  const schedule = () => {
-    if (visibility.hidden || timer !== null || !isCurrentHour(hour, now())) return
-    timer = timers.setTimeout(run, REFRESH_INTERVAL_MS)
+  // The timer re-arms itself after every tick: what a refresh did, or
+  // whether it ever finished, never decides whether the next one is asked for.
+  const arm = () => {
+    stop()
+    if (visibility.hidden || !isCurrentHour(hour, now())) return
+    timer = timers.setTimeout(tick, REFRESH_INTERVAL_MS)
   }
-  const run = () => {
+  const tick = () => {
     timer = null
-    if (!visibility.hidden && isCurrentHour(hour, now())) refresh()
+    try {
+      if (!visibility.hidden && isCurrentHour(hour, now())) refresh()
+    } finally {
+      arm()
+    }
   }
-  const changed = () => { if (visibility.hidden) stop(); else run() }
-  schedule()
+  const changed = () => { if (visibility.hidden) stop(); else tick() }
+  arm()
   visibility.addEventListener("visibilitychange", changed)
   return () => {
     stop()

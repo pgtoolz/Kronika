@@ -79,7 +79,7 @@ import { planRequest, statementRequest, type PlanLens, type StatementLens } from
 import { isRelationLens, relationRequest, type RelationGroup, type RelationLens, type RelationNavigation, type RelationSection } from "./postgres-relations"
 import { EMPTY_PROCESS_SUMMARY, LENS_FIELDS, ProcessSummary, ProcessTable, processSummaryReducer, processTableDefaultOrder } from "./process-table"
 import { buildProcessForest } from "./process-tree"
-import { latestTimelineTimestamp, refreshedCursor, scheduleRefresh } from "./refresh"
+import { latestTimelineTimestamp, refreshedCursor, scheduleRefresh, REFRESH_INTERVAL_MS } from "./refresh"
 import { reportLatestHour, reportVisibleAt, reportVisibleCursor, reportVisibleRange } from "./report-transport"
 import type { ChartPoint } from "./series-chart"
 import { apiFetch, bootstrapSession, getSessionSnapshot, logout, subscribeSession } from "./session"
@@ -466,9 +466,15 @@ function App({ locale, onLocale, t }: {
     setRefreshing(false)
     setRefreshFailed(!succeeded)
   }, [])
+  const refreshStartedAt = useRef(0)
   const beginRefresh = useCallback(() => {
-    if (refreshRequested.current || neighborRequest.current !== null || drawn.current === null || drawn.current !== selectedHour.current) return
+    // A refresh that has not settled within two intervals is lost; move on.
+    if (refreshRequested.current && Date.now() - refreshStartedAt.current < 2 * REFRESH_INTERVAL_MS) return
+    if (neighborRequest.current !== null || drawn.current === null || drawn.current !== selectedHour.current) return
+    pendingRefresh.current = null
+    refreshAwaitingSnapshot.current = false
     refreshRequested.current = true
+    refreshStartedAt.current = Date.now()
     setRefreshing(true)
     setRefreshVersion((current) => current + 1)
   }, [])
@@ -813,8 +819,8 @@ function App({ locale, onLocale, t }: {
       })
       .catch(() => {})
   }, [backgroundReadyHour, foregroundKey, hour, refreshReady])
-  useEffect(() => KRONIKA_REPORT || hour === null || !refreshReady || refreshing
-    ? undefined : scheduleRefresh(hour, requestRefresh), [hour, refreshReady, refreshing, requestRefresh])
+  useEffect(() => KRONIKA_REPORT || hour === null || !refreshReady
+    ? undefined : scheduleRefresh(hour, requestRefresh), [hour, refreshReady, requestRefresh])
   const denseMetadata = currentData.snapshotRows[0]
   const loadMoreDense = useCallback(() => {
     const next = denseMetadata?.hasMore === true ? denseMetadata.nextCursor : null
