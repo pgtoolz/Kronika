@@ -78,6 +78,155 @@ async function pasteClipboard(cdp) {
   })()`)
 }
 
+test("refresh preserves streaming progress and retries inactive catalogs without stale commits", { timeout: 60_000 }, async () => {
+  const html = gunzipSync(await readFile(ARTIFACT))
+  const authState = { valid: true }
+  const catalogs = []
+  const records = (version) => timelineRecords(HOUR).map((record) => record.record === "catalog" ? { ...record, kronika_version: version } : record)
+  const finish = (response, version) => {
+    if (!response.headersSent) response.writeHead(200, { "Content-Type": "application/x-ndjson" })
+    response.end(`${records(version).map((record) => JSON.stringify(record)).join("\n")}\n`)
+  }
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1")
+    if (url.pathname === "/") {
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+      response.end(html)
+      return
+    }
+    if (url.pathname === "/auth/session") return answerSession(request, response, authState)
+    if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
+    if (url.pathname === "/api/hour") {
+      if (url.searchParams.get("part") === "base") {
+        catalogs.push(response)
+        if (catalogs.length === 1) finish(response, "initial")
+        return
+      }
+      if (url.searchParams.get("section") === "os_process_summary") return ndjson(response, processSummaryRecords(HOUR, 3, 80))
+      return ndjson(response, url.searchParams.has("section") ? [] : timelineRecords(HOUR))
+    }
+    if (url.pathname.endsWith("/snapshot")) return ndjson(response, snapshotRecords())
+    response.writeHead(404)
+    response.end()
+  })
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve) })
+  const address = server.address()
+  if (address === null || typeof address === "string") throw new Error("refresh inactivity server has no TCP address")
+  const origin = `http://127.0.0.1:${address.port}`
+  const profile = await mkdtemp(join(tmpdir(), "b-"))
+  const browser = launchBrowser(profile)
+  const page = { errors: [], external: [], responses: [] }
+  let socket
+  try {
+    const debugPort = await browserDebugPort(profile, browser)
+    socket = await pageSocket(debugPort)
+    const cdp = cdpSession(socket)
+    trackPage(socket, origin, page)
+    await enablePage(cdp)
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
+      let next = -1
+      window.__refreshNow = ${AT / 1000}
+      Date.now = () => window.__refreshNow
+      window.__refreshTimers = new Map()
+      const set = window.setTimeout.bind(window)
+      const clear = window.clearTimeout.bind(window)
+      window.setTimeout = (callback, milliseconds, ...args) => {
+        if (milliseconds !== 15000) return set(callback, milliseconds, ...args)
+        const id = next--
+        window.__refreshTimers.set(id, () => callback(...args))
+        return id
+      }
+      window.clearTimeout = (id) => window.__refreshTimers.delete(id) || clear(id)
+      const fetch = window.fetch.bind(window)
+      let catalogs = 0
+      window.__catalogChunks = 0
+      window.__abortedCatalogs = []
+      window.__catalogResponses = []
+      window.fetch = async (input, init = {}) => {
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href)
+        if (url.pathname !== '/api/hour' || url.searchParams.get('part') !== 'base') return fetch(input, init)
+        const ordinal = ++catalogs
+        init.signal?.addEventListener('abort', () => window.__abortedCatalogs.push(ordinal), { once: true })
+        // The first hung response deliberately ignores transport cancellation;
+        // its eventual result still must not replace the newer committed view.
+        // Avoid browser cache coalescing with this deliberately uncancellable fetch.
+        const response = await fetch(input, ordinal === 3 ? { ...init, cache: 'no-store', signal: undefined } : init)
+        window.__catalogResponses.push(ordinal)
+        return new Response(response.body.pipeThrough(new TransformStream({ transform(chunk, controller) {
+          window.__catalogChunks += 1
+          controller.enqueue(chunk)
+        } })), { status: response.status, headers: response.headers })
+      }
+    })()` })
+    await cdp.send("Network.setCookie", { name: "kronika_session", url: origin, value: SESSION_COOKIE.slice(SESSION_COOKIE.indexOf("=") + 1) })
+    await cdp.send("Page.navigate", { url: `${origin}/?at=${AT}` })
+    const ready = () => cdp.waitFor(`document.querySelector('[data-testid="refresh-action"]')?.disabled === false`, "a settled refresh", 15_000)
+    const tickRefresh = async () => {
+      await cdp.waitFor(`window.__refreshTimers.size === 1`, "one live refresh ticker")
+      await cdp.evaluate(`(() => {
+        window.__refreshNow += 15000
+        const callbacks = [...window.__refreshTimers.values()]
+        window.__refreshTimers.clear()
+        for (const callback of callbacks) callback()
+      })()`)
+      await settleLayout(cdp)
+    }
+    const progress = async (response) => {
+      const before = await cdp.evaluate(`window.__catalogChunks`)
+      if (!response.headersSent) response.writeHead(200, { "Content-Type": "application/x-ndjson" })
+      response.write("\n")
+      await cdp.waitFor(`window.__catalogChunks > ${before}`, "catalog stream progress")
+    }
+    await ready()
+    await cdp.evaluate(`document.querySelector('[data-testid="help-trigger"]').click()`)
+    await tickRefresh()
+    await waitForRequests(() => catalogs.length === 2)
+    for (let interval = 0; interval < 4; interval += 1) {
+      await progress(catalogs[1])
+      await tickRefresh()
+      assert.equal(catalogs.length, 2, "progressing catalog must not restart after thirty seconds")
+      assert.equal(catalogs[1].destroyed, false)
+    }
+    finish(catalogs[1], "streamed")
+    await ready()
+    await cdp.waitFor(`document.querySelector('[data-testid="help-version"]')?.textContent.includes('streamed')`, "the long stream committed")
+
+    await tickRefresh()
+    await waitForRequests(() => catalogs.length === 3)
+    await tickRefresh()
+    assert.equal(catalogs.length, 3, "a pre-header request remains alive before its inactivity deadline")
+    await tickRefresh()
+    await waitForRequests(() => catalogs.length === 4)
+    assert.equal(await cdp.evaluate(`window.__abortedCatalogs.includes(3)`), true)
+    finish(catalogs[3], "recovered")
+    await ready()
+    await cdp.waitFor(`document.querySelector('[data-testid="help-version"]')?.textContent.includes('recovered')`, "pre-header inactivity recovered")
+    finish(catalogs[2], "obsolete")
+    await cdp.waitFor(`window.__catalogResponses.includes(3)`, "the cancelled response arrived late")
+    await settleLayout(cdp)
+    assert.equal(await cdp.evaluate(`document.querySelector('[data-testid="help-version"]')?.textContent.includes('recovered')`), true)
+
+    await tickRefresh()
+    await waitForRequests(() => catalogs.length === 5)
+    await progress(catalogs[4])
+    await tickRefresh()
+    assert.equal(catalogs.length, 5)
+    await tickRefresh()
+    await waitForRequests(() => catalogs.length === 6 && catalogs[4].destroyed)
+    finish(catalogs[5], "body-recovered")
+    await ready()
+    await cdp.waitFor(`document.querySelector('[data-testid="help-version"]')?.textContent.includes('body-recovered')`, "body inactivity recovered")
+    assert.deepEqual(page.errors, [])
+    assert.deepEqual(page.external, [])
+  } finally {
+    socket?.close()
+    await stopBrowser(browser)
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+    await removeBrowserProfile(profile)
+  }
+})
+
 test("the first Process table does not wait for lanes, summary, or enrichment", { timeout: 60_000 }, async () => {
   const html = gunzipSync(await readFile(ARTIFACT))
   const requests = []

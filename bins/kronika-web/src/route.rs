@@ -25,7 +25,7 @@ pub(crate) fn parse(path: &str, query: Option<&str>) -> Result<Route, RouteError
 }
 
 fn native(query: &str, route: Route) -> Result<Route, RouteError> {
-    if query.is_empty() {
+    if kronika_api::query_pairs(query)?.is_empty() {
         Ok(route)
     } else {
         Err(RouteError::BadParameter("query".to_owned()))

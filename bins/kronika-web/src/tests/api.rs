@@ -28,21 +28,24 @@ fn heatmap_summary_change_invalidates_the_previous_representation_validator() {
     else {
         panic!("finished heatmap identity");
     };
-    let previous_shape = shape
-        .strip_prefix("summary-v1:")
+    let unversioned_shape = shape
+        .strip_prefix("summary-v2:")
         .expect("summary representation version");
-    let previous = super::weak_dataset_etag(resource, previous_shape, segments)
-        .expect("previous heatmap validator");
     let current = fixture
         .prepare(&target, None)
         .meta()
         .etag
         .expect("current heatmap validator");
-    assert_ne!(current, previous);
-    assert_eq!(
-        fixture.prepare(&target, Some(&previous)).meta().status,
-        StatusCode::OK
-    );
+    for prefix in ["", "summary-v1:"] {
+        let previous_shape = format!("{prefix}{unversioned_shape}");
+        let previous = super::weak_dataset_etag(resource, &previous_shape, segments)
+            .expect("previous heatmap validator");
+        assert_ne!(current, previous);
+        assert_eq!(
+            fixture.prepare(&target, Some(&previous)).meta().status,
+            StatusCode::OK
+        );
+    }
     assert_eq!(
         fixture.prepare(&target, Some(&current)).meta().status,
         StatusCode::NOT_MODIFIED

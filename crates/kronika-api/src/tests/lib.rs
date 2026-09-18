@@ -20,6 +20,32 @@ fn the_build_cache_key_carries_no_request_meaning() {
 }
 
 #[test]
+fn index_accepts_only_build_cache_metadata() {
+    let path = "/api/segments/7/sections/os_cpu/index";
+    assert_eq!(
+        parse(path, Some("build=84e1609")),
+        Ok(Route::Query(QueryRequest::Index(IndexRequest {
+            segment_id: 7,
+            section: "os_cpu".to_owned(),
+        })))
+    );
+    for query in ["build=84e1609&field=ts", "build=84e1609&", "&build=84e1609"] {
+        assert_eq!(
+            parse(path, Some(query)),
+            Err(RouteError::BadParameter("query".to_owned())),
+            "{query}"
+        );
+    }
+    assert!(
+        parse(
+            path,
+            Some(&format!("build={}", "x".repeat(super::MAX_QUERY_BYTES)))
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn catalog_accepts_only_valid_ordered_bounds() {
     assert_eq!(
         parse("/api/catalog", Some("from=-5&to=20")),

@@ -3,6 +3,10 @@ import { floorHour } from "./model"
 
 export const REFRESH_INTERVAL_MS = 15_000
 
+export function refreshIsInactive(lastProgressAt: number, now = Date.now()): boolean {
+  return now - lastProgressAt >= 2 * REFRESH_INTERVAL_MS
+}
+
 interface VisibilityTarget { readonly hidden: boolean; addEventListener(type: "visibilitychange", listener: () => void): void; removeEventListener(type: "visibilitychange", listener: () => void): void }
 interface TimerTarget { setTimeout(handler: () => void, milliseconds: number): number; clearTimeout(id: number): void }
 

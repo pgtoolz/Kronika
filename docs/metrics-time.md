@@ -92,11 +92,13 @@ Chart statistics describe the distribution of each drawn line. Only its finite n
 
 An activity heatmap shows each entity’s contribution over the selected hour and when it was busiest. Processes, databases, cgroup CPU and cgroup I/O use 60 columns; Statements, Plans, Tables and Indexes use 12 (five minutes per column). Let `h` be the hour start in Unix microseconds, `C` the column count and `j` a boundary number from 0 to `C`. The boundary is `bⱼ = h + floor(j × 3,600,000,000 / C)`, where `floor` rounds down. Cell `j` covers `[bⱼ, bⱼ₊₁)`, including its start and excluding its end.
 
-The engine assigns an observation to the column containing the midpoint between that observation and its previous observation for the identity; the first observation uses its own timestamp. A counter entering a new column carries the previous observation into the column's calculation. It allocates the interval to one column; it does not split the counter difference proportionally over every crossed boundary.
+Counter intervals are assigned to the column containing their midpoint. The nearest samples before and after the requested range can complete its edge columns. Both the neighboring-sample lookup and the gap between consecutive counter samples have a hard limit of 15 minutes, independent of collector settings. Exactly 15 minutes is allowed; a longer gap contributes no rate, and rate calculation resumes from the next valid pair. The bound applies to rows as well as segments. Samples outside the range do not enter the ranking totals.
+
+The interval is allocated to one column rather than split across every crossed boundary. Heatmaps show approximate activity over time. Gauge placement retains its midpoint rule; gauge values are not extended into empty columns.
 
 | Value | Counter | Gauge |
 |---|---|---|
-| Entity cell | `(last − first) / elapsed_seconds` where `first`/`last` are the first/last observations in the cell, including its carried predecessor, and `elapsed_seconds` is their elapsed time | Last observation accumulated in the cell |
+| Entity cell | Sum of valid counter differences divided by their total elapsed seconds; negative differences and gaps longer than 15 minutes do not contribute | Last observation accumulated in the cell |
 | Entity ranking and right summary | Last minus first counter over the requested range | Maximum observed value over the range, except RSS Grid below |
 | Group ranking | Sum of member entity summaries | Sum of member entity summaries |
 | Group cell | Sum of available member cells | Sum of available member cells |

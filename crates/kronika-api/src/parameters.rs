@@ -2,11 +2,21 @@
 
 use kronika_query::{ActiveCursor, Filter, RelationGroup, StatementScope};
 
-use super::{MAX_FIELDS, MAX_FILTERS, RouteError};
+use super::{MAX_FIELDS, MAX_FILTERS, MAX_QUERY_BYTES, RouteError};
 
-/// The interface keys browser caches on the serving build with a `build`
-/// parameter; it carries no request meaning and is dropped here.
-pub(super) fn pairs(query: &str) -> Result<Vec<(&str, &str)>, RouteError> {
+/// Split a bounded API query into raw parameter pairs, omitting `build` metadata.
+///
+/// The interface keys browser caches on the serving build; this parameter carries
+/// no request meaning. Callers validate the remaining names, values, and duplicates.
+/// Names and values remain percent-encoded.
+///
+/// # Errors
+///
+/// Returns `BadParameter("query")` for oversized queries or empty query components.
+pub fn pairs(query: &str) -> Result<Vec<(&str, &str)>, RouteError> {
+    if query.len() > MAX_QUERY_BYTES {
+        return Err(RouteError::BadParameter("query".to_owned()));
+    }
     if query.is_empty() {
         return Ok(Vec::new());
     }

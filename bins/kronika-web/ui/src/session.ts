@@ -13,9 +13,7 @@ let cleanupPromise: Promise<void> | null = null
 let build: string | null = null
 
 export function apiAddress(path: string, build: string | null): string {
-  // These native endpoints accept no query parameters.
-  if (build === null || !path.startsWith("/api/")
-    || path === "/api/instance-label" || path === "/api/mcp-access") return path
+  if (build === null || !path.startsWith("/api/")) return path
   return `${path}${path.includes("?") ? "&" : "?"}build=${encodeURIComponent(build)}`
 }
 

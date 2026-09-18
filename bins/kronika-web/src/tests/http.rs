@@ -104,6 +104,97 @@ fn session_responses_name_the_serving_build() {
     assert_eq!(named, (!build.is_empty()).then_some(build));
 }
 
+#[tokio::test]
+async fn session_build_cache_key_reaches_all_native_feature_responses() {
+    let second = 1_709_164_800;
+    let mut fixture = artifacts::Fixture::new();
+    fixture.append_placed_table_snapshots(&[(
+        second * 1_000_000,
+        1,
+        11,
+        0,
+        "db",
+        "public",
+        "t",
+        None,
+        None,
+        100,
+        None,
+    )]);
+    fixture.finish();
+    let config = label_config(fixture.root());
+    let session = session_route_response(
+        &session_request_from_origin(
+            Method::POST,
+            Some(AUTHORIZATION),
+            None,
+            "http://kronika.example",
+        ),
+        100,
+    );
+    assert_eq!(session.status(), StatusCode::NO_CONTENT);
+    let cookie = request_cookie(session.headers()[SET_COOKIE].to_str().expect("cookie"));
+    // Git-free builds omit the header; still exercise the parser contract there.
+    let build = session
+        .headers()
+        .get("kronika-build")
+        .map_or("test-build", |value| value.to_str().expect("build"));
+    for path in [
+        format!("/api/export?from={second}&to={second}&build={build}"),
+        format!("/api/mcp-access?build={build}"),
+        format!("/api/instance-label?build={build}"),
+    ] {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(&path)
+            .header(COOKIE, cookie)
+            .header("x-kronika-ui", "1")
+            .body(())
+            .expect("browser API request");
+        let RequestTarget::Api { route, .. } =
+            route_request(config.account.as_ref(), &request, 100)
+                .expect("session build metadata must not reject a feature request")
+        else {
+            panic!("expected API route")
+        };
+        let response = match route {
+            crate::route::Route::Export(range) => {
+                crate::export::response(
+                    config.data_root.clone(),
+                    range,
+                    std::sync::Arc::clone(&config.export_gate),
+                )
+                .await
+            }
+            crate::route::Route::McpAccess => crate::server::mcp_access(&config),
+            crate::route::Route::InstanceLabel => {
+                crate::server::instance_label(std::sync::Arc::clone(&config)).await
+            }
+            crate::route::Route::Recorded(_) => panic!("expected native feature route"),
+        };
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("feature body")
+            .to_bytes();
+        if path.starts_with("/api/export?") {
+            let html = std::str::from_utf8(&bytes).expect("HTML export");
+            assert!(html.contains("WebAssembly.compile"));
+            assert!(html.contains("visibleFrom:\"1709164800000000\""));
+        } else {
+            let body: serde_json::Value =
+                serde_json::from_slice(&bytes).expect("JSON feature response");
+            if path.starts_with("/api/mcp-access?") {
+                assert_eq!(body["authorization"], AUTHORIZATION);
+            } else {
+                assert_eq!(body["database"], "db");
+            }
+        }
+    }
+}
+
 fn session_route_response(
     request: &Request<()>,
     now: u64,

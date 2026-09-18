@@ -4,7 +4,7 @@ import test from "node:test"
 
 import { importFile } from "./import-module.mjs"
 
-const { emptyHourStatusKey, isCurrentHour, latestTimelineTimestamp, REFRESH_INTERVAL_MS, refreshedCursor, scheduleRefresh } = await importFile("../src/refresh.ts")
+const { emptyHourStatusKey, isCurrentHour, latestTimelineTimestamp, REFRESH_INTERVAL_MS, refreshIsInactive, refreshedCursor, scheduleRefresh } = await importFile("../src/refresh.ts")
 
 const HOUR = 1_800_000_000_000_000
 
@@ -126,6 +126,18 @@ test("a tick that does nothing, or throws, still arms the next one", async () =>
   }
   dispose()
   assert.equal(timers.pending(), 0)
+})
+
+test("refresh recovery measures inactivity from the latest progress", () => {
+  assert.equal(typeof refreshIsInactive, "function")
+  assert.equal(refreshIsInactive(0, 29_999), false)
+  assert.equal(refreshIsInactive(0, 30_000), true)
+  // The response has taken minutes, but bytes still arrive every fifteen seconds.
+  for (let now = 45_000; now <= 180_000; now += 15_000) {
+    assert.equal(refreshIsInactive(now - 15_000, now), false)
+  }
+  assert.equal(refreshIsInactive(180_000, 209_999), false)
+  assert.equal(refreshIsInactive(180_000, 210_000), true)
 })
 
 test("refresh keeps a committed cursor stable and reloads latest exactly once when it advances", () => {

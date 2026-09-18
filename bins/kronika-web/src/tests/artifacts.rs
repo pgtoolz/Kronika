@@ -4313,7 +4313,8 @@ fn empty_finished_heatmap_has_no_validator() {
     fixture.append_diskstats(&[(100, 0, 1), (200, 0, 2)]);
     fixture.finish();
 
-    // The grid also reads one column past each edge; the segment stays beyond it.
+    // Nearby edge samples cannot make an empty window immutable: another
+    // segment may later supply its first in-range observation.
     let prepared = fixture.prepare(
         "/api/heatmap?from=500&to=600&section=os_diskstats&field=reads&columns=1&top=1",
         None,

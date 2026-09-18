@@ -13,6 +13,7 @@ use kronika_query::{
     HeatmapItemQuery, HeatmapView, IndexRequest, MAX_EVENTS_LIMIT, MAX_EVENTS_WINDOW_MICROS,
     NormalizedRanking, QueryError, QueryRequest, SegmentRequest, StatementScope, TimeRange,
 };
+pub use parameters::pairs as query_pairs;
 use parameters::{bounded, decoded, number, pairs};
 use rows::{parse_data, parse_rows};
 use snapshot::{parse_snapshot, parse_snapshot_neighbor};
@@ -202,10 +203,12 @@ pub fn parse(path: &str, query: Option<&str>) -> Result<Route, RouteError> {
         section,
     };
     match pieces[3] {
-        "index" if query.is_empty() => Ok(Route::Query(QueryRequest::Index(IndexRequest {
-            segment_id: segment.segment_id,
-            section: segment.section,
-        }))),
+        "index" if pairs(query)?.is_empty() => {
+            Ok(Route::Query(QueryRequest::Index(IndexRequest {
+                segment_id: segment.segment_id,
+                section: segment.section,
+            })))
+        }
         "index" => Err(RouteError::BadParameter("query".to_owned())),
         "history" => {
             parse_data(segment, query).map(|request| Route::Query(QueryRequest::History(request)))

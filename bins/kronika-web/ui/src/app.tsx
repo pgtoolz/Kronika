@@ -79,7 +79,7 @@ import { planRequest, statementRequest, type PlanLens, type StatementLens } from
 import { isRelationLens, relationRequest, type RelationGroup, type RelationLens, type RelationNavigation, type RelationSection } from "./postgres-relations"
 import { EMPTY_PROCESS_SUMMARY, LENS_FIELDS, ProcessSummary, ProcessTable, processSummaryReducer, processTableDefaultOrder } from "./process-table"
 import { buildProcessForest } from "./process-tree"
-import { latestTimelineTimestamp, refreshedCursor, scheduleRefresh, REFRESH_INTERVAL_MS } from "./refresh"
+import { latestTimelineTimestamp, refreshedCursor, refreshIsInactive, scheduleRefresh } from "./refresh"
 import { reportLatestHour, reportVisibleAt, reportVisibleCursor, reportVisibleRange } from "./report-transport"
 import type { ChartPoint } from "./series-chart"
 import { apiFetch, bootstrapSession, getSessionSnapshot, logout, subscribeSession } from "./session"
@@ -467,15 +467,15 @@ function App({ locale, onLocale, t }: {
     setRefreshing(false)
     setRefreshFailed(!succeeded)
   }, [])
-  const refreshStartedAt = useRef(0)
+  const refreshProgressAt = useRef(0)
   const beginRefresh = useCallback(() => {
-    // A refresh that has not settled within two intervals is lost; move on.
-    if (refreshRequested.current && Date.now() - refreshStartedAt.current < 2 * REFRESH_INTERVAL_MS) return
+    // Recover a silent request without interrupting a long, progressing stream.
+    if (refreshRequested.current && !refreshIsInactive(refreshProgressAt.current)) return
     if (neighborRequest.current !== null || drawn.current === null || drawn.current !== selectedHour.current) return
     pendingRefresh.current = null
     refreshAwaitingSnapshot.current = false
     refreshRequested.current = true
-    refreshStartedAt.current = Date.now()
+    refreshProgressAt.current = Date.now()
     setRefreshing(true)
     setRefreshVersion((current) => current + 1)
   }, [])
@@ -513,12 +513,18 @@ function App({ locale, onLocale, t }: {
       setLoadProgress({ received: 0, startedAt: Date.now() * 1_000, lastSeconds: readLastLoadSeconds() })
     }
     const loadStartedAt = Date.now() * 1_000
-    void loadTimeline(requestedHour, controller.signal, refresh ? undefined : (received) => {
+    void loadTimeline(requestedHour, controller.signal, (received) => {
+      if (controller.signal.aborted) return
       const now = Date.now()
+      if (refresh) {
+        refreshProgressAt.current = now
+        return
+      }
       if (now - loadThrottle.current < 250) return
       loadThrottle.current = now
       setLoadProgress((current) => current === undefined ? current : { ...current, received })
     }, reportRange).then((timeline) => {
+      if (controller.signal.aborted) return
       const asked = wanted.current
       wanted.current = null
       const latest = reportVisibleCursor(latestTimelineTimestamp(timeline), reportRange)

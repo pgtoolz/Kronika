@@ -901,8 +901,8 @@ fn a_counter_reset_beside_the_range_does_not_blank_the_edge_column() {
     assert_eq!(cells[11], Some(5.0));
     assert_eq!(totals[0], Some(5.0));
     assert_eq!(totals[11], Some(5.0));
-    // The span across the gap lands on its midpoint column as before.
-    assert!(cells[6].is_some());
+    // The internal gap exceeds fifteen minutes and cannot supply a rate.
+    assert_eq!(cells[6], None);
     assert_eq!(result.entities[0].total, Some(1_200.0));
 }
 
@@ -964,4 +964,260 @@ fn gauges_keep_their_last_sample_inside_the_range() {
     assert_eq!(cells[0], Some(21.0));
     assert_eq!(cells[10], Some(31.0));
     assert_eq!(cells[11], None);
+}
+
+fn posix_context(root: &std::path::Path) -> QueryContext {
+    let source = PosixSource::open(root).expect("posix source");
+    let dataset: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(source));
+    QueryContext::new(dataset, 0, false)
+}
+
+#[test]
+fn edge_sample_admission_is_independent_of_segment_packaging() {
+    for (offset, expected) in [(600_000_000, 49_000.0 / 680.0), (900_000_001, 5.0)] {
+        let rows = [
+            (0, EDGE_FROM + 20_000_000, 100),
+            (0, EDGE_FROM + 80_000_000, 400),
+            (0, EDGE_TO - 80_000_000, 1_000),
+            (0, EDGE_TO - 20_000_000, 1_300),
+            (0, EDGE_TO + offset, 50_000),
+        ];
+        let combined = tempfile::tempdir().expect("combined directory");
+        write_cpu_segment(combined.path(), EDGE_FROM, &rows);
+        let combined = edge_grid(&posix_context(combined.path()));
+        let split = tempfile::tempdir().expect("split directory");
+        write_cpu_segment(split.path(), EDGE_FROM, &rows[..4]);
+        write_cpu_segment(split.path(), EDGE_TO + offset, &rows[4..]);
+        let split = edge_grid(&posix_context(split.path()));
+        assert_eq!(cells_of(&combined), cells_of(&split), "offset {offset}");
+        assert_eq!(cells_of(&combined).0[11], Some(expected));
+        assert_eq!(combined.entities[0].total, Some(1_200.0));
+    }
+}
+
+#[test]
+fn overlapping_segments_keep_the_nearest_preceding_sample() {
+    let first = [
+        (0, EDGE_FROM - 90_000_000, 100),
+        (0, EDGE_FROM + 20_000_000, 200),
+        (0, EDGE_FROM + 80_000_000, 500),
+    ];
+    let second = [(0, EDGE_FROM - 10_000_000, 150)];
+    let overlapping = tempfile::tempdir().expect("overlapping directory");
+    write_cpu_segment(overlapping.path(), EDGE_FROM - 100_000_000, &first);
+    write_cpu_segment(overlapping.path(), EDGE_FROM - 10_000_000, &second);
+    let overlapping = edge_grid(&posix_context(overlapping.path()));
+    let combined = edge_payload(&[first[0], second[0], first[1], first[2]]);
+    let (context, _dataset, _resources) = context(&combined);
+    let combined = edge_grid(&context);
+    assert_eq!(cells_of(&combined), cells_of(&overlapping));
+    assert_eq!(cells_of(&overlapping).0[0], Some(350.0 / 90.0));
+    assert_eq!(overlapping.entities[0].total, Some(300.0));
+}
+
+#[test]
+fn overlapping_segments_keep_a_following_sample_encountered_before_its_entity() {
+    let root = tempfile::tempdir().expect("overlapping directory");
+    write_cpu_segment(
+        root.path(),
+        EDGE_FROM - 100_000_000,
+        &[
+            (1, EDGE_FROM - 90_000_000, 0),
+            (0, EDGE_TO + 30_000_000, 300),
+        ],
+    );
+    write_cpu_segment(
+        root.path(),
+        EDGE_TO - 80_000_000,
+        &[
+            (0, EDGE_TO - 80_000_000, 90),
+            (0, EDGE_TO - 20_000_000, 150),
+        ],
+    );
+    let result = edge_grid(&posix_context(root.path()));
+    assert_eq!(result.entity_count, 1);
+    assert_eq!(cells_of(&result).0[11], Some(210.0 / 110.0));
+    assert_eq!(cells_of(&result).1[11], Some(210.0 / 110.0));
+    assert_eq!(result.entities[0].total, Some(60.0));
+    let entity = serde_json::to_value(&result.entities[0]).expect("entity");
+    assert_eq!(
+        entity["detail_locator"]["at"],
+        (EDGE_TO - 20_000_000).to_string()
+    );
+}
+
+#[test]
+fn preceding_edge_spans_allow_exactly_fifteen_minutes() {
+    for first in [EDGE_FROM, EDGE_FROM + 50_000_000] {
+        for (gap, expected) in [(900_000_000, Some(1.0)), (900_000_001, None)] {
+            let payload = edge_payload(&[(0, first - gap, 0), (0, first, 900)]);
+            let (context, _dataset, _resources) = context(&payload);
+            let result = edge_grid(&context);
+            assert_eq!(cells_of(&result).0[0], expected, "gap {gap}");
+            assert_eq!(cells_of(&result).1[0], expected, "gap {gap}");
+            assert_eq!(result.entities[0].total, None);
+        }
+    }
+}
+
+#[test]
+fn following_edge_spans_allow_exactly_fifteen_minutes() {
+    for (gap, expected) in [(900_000_000, Some(1.0)), (900_000_001, None)] {
+        let last = EDGE_TO - 1;
+        let payload = edge_payload(&[(0, last, 0), (0, last + gap, 900)]);
+        let (context, _dataset, _resources) = context(&payload);
+        let result = edge_grid(&context);
+        assert_eq!(cells_of(&result).0[11], expected, "gap {gap}");
+        assert_eq!(cells_of(&result).1[11], expected, "gap {gap}");
+        assert_eq!(result.entities[0].total, None);
+    }
+}
+
+#[test]
+fn internal_spans_allow_fifteen_minutes_and_resume_after_a_longer_gap() {
+    for (gap, expected) in [(900_000_000, Some(1.0)), (900_000_001, None)] {
+        let first = EDGE_FROM + 100_000_000;
+        let payload = edge_payload(&[
+            (0, first, 0),
+            (0, first + gap, 900),
+            (0, first + gap + 30_000_000, 930),
+        ]);
+        let (context, _dataset, _resources) = context(&payload);
+        let result = edge_grid(&context);
+        let (cells, totals) = cells_of(&result);
+        assert_eq!(cells[5], expected, "gap {gap}");
+        assert_eq!(cells[10], Some(1.0), "valid pair after gap {gap}");
+        assert_eq!(cells, totals);
+        assert_eq!(result.entities[0].total, Some(930.0));
+    }
+}
+
+#[test]
+fn wide_columns_sum_only_valid_spans_for_entities_groups_and_bands() {
+    let root = tempfile::tempdir().expect("fixture directory");
+    let rows: Vec<_> = [(0, 2), (1, 1)]
+        .into_iter()
+        .flat_map(|(cpu, scale)| {
+            [
+                (0, 0),
+                (300_000_000, 300),
+                (1_200_000_001, 9_000),
+                (1_260_000_001, 9_060),
+            ]
+            .into_iter()
+            .map(move |(offset, value)| (cpu, EDGE_FROM + offset, scale * value))
+        })
+        .collect();
+    write_cpu_segment(root.path(), EDGE_FROM, &rows);
+    let context = posix_context(root.path());
+    for group in [Vec::new(), vec!["cpu_id".to_owned()]] {
+        let query = HeatmapBatchQuery {
+            range: TimeRange::new(EDGE_FROM, EDGE_FROM + 3_600_000_000).expect("hour range"),
+            items: vec![HeatmapItemQuery {
+                view: HeatmapView::Grid {
+                    columns: 1,
+                    group: group.clone(),
+                    type_id: None,
+                },
+                ..cpu_grid()
+            }],
+        };
+        let result = execute_heatmap_batch(&context, query, &NeverCancelled)
+            .expect("wide grid")
+            .results
+            .remove(0);
+        let grid = result.grid.as_ref().expect("grid");
+        assert_eq!(grid.totals.cells, vec![Some(3.0)]);
+        assert_eq!(grid.others.cells, vec![Some(1.0)]);
+        assert_eq!(grid.totals.total, Some(27_180.0));
+        assert_eq!(grid.others.total, Some(9_060.0));
+        if group.is_empty() {
+            assert_eq!(result.entities[0].cells, Some(vec![Some(2.0)]));
+        } else {
+            assert_eq!(grid.groups[0].cells, vec![Some(2.0)]);
+        }
+    }
+}
+
+#[test]
+fn an_earlier_in_range_sample_from_an_overlap_extends_a_valid_cell() {
+    let root = tempfile::tempdir().expect("overlapping directory");
+    write_cpu_segment(
+        root.path(),
+        EDGE_FROM - 10_000_000,
+        &[
+            (1, EDGE_FROM - 10_000_000, 0),
+            (0, EDGE_FROM + 200_000_000, 300),
+        ],
+    );
+    write_cpu_segment(
+        root.path(),
+        EDGE_FROM + 100_000_000,
+        &[
+            (0, EDGE_FROM + 100_000_000, 100),
+            (0, EDGE_FROM + 300_000_000, 400),
+        ],
+    );
+    let context = posix_context(root.path());
+    for group in [Vec::new(), vec!["cpu_id".to_owned()]] {
+        let mut query = edge_batch();
+        query.items[0].view = HeatmapView::Grid {
+            columns: 1,
+            group,
+            type_id: None,
+        };
+        let result = execute_heatmap_batch(&context, query, &NeverCancelled)
+            .expect("overlapping grid")
+            .results
+            .remove(0);
+        assert_eq!(
+            result.grid.as_ref().expect("grid").totals.cells,
+            vec![Some(1.5)]
+        );
+        assert_eq!(result.totals_total, Some(300.0));
+    }
+}
+
+#[test]
+fn a_wide_column_accepts_continuous_samples_for_more_than_fifteen_minutes() {
+    let rows: Vec<_> = (0..=8)
+        .map(|step| (0, EDGE_FROM + step * 300_000_000, step * 300))
+        .collect();
+    let payload = edge_payload(&rows);
+    let (context, _dataset, _resources) = context(&payload);
+    let mut query = edge_batch();
+    query.range = TimeRange::new(EDGE_FROM, EDGE_FROM + 3_600_000_000).expect("hour range");
+    query.items[0].view = HeatmapView::Grid {
+        columns: 1,
+        group: Vec::new(),
+        type_id: None,
+    };
+    let result = execute_heatmap_batch(&context, query, &NeverCancelled)
+        .expect("continuous grid")
+        .results
+        .remove(0);
+    assert_eq!(cells_of(&result), (vec![Some(1.0)], vec![Some(1.0)]));
+    assert_eq!(result.entities[0].total, Some(2_400.0));
+}
+
+#[test]
+fn finished_edge_segments_alone_do_not_make_an_empty_heatmap_immutable() {
+    for timestamps in [[EDGE_FROM - 2, EDGE_FROM - 1], [EDGE_TO, EDGE_TO + 1]] {
+        let payload = edge_payload(&[(0, timestamps[0], 0), (0, timestamps[1], 1)]);
+        let (context, dataset, _resources) = context(&payload);
+        let query = kronika_query::validate_heatmap_request(edge_batch()).expect("valid query");
+        let execution =
+            kronika_query::execute(&context, kronika_query::QueryRequest::Heatmap(query))
+                .expect("prepare heatmap");
+        assert!(execution.metadata().identity().is_none());
+        assert_eq!(
+            execution.metadata().stability(),
+            kronika_query::QueryStability::Revalidate
+        );
+        assert_eq!(
+            dataset.opens.load(Ordering::Relaxed),
+            0,
+            "metadata does not decode rows"
+        );
+    }
 }

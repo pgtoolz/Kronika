@@ -113,6 +113,20 @@ compare(
   "/api/hour",
   `from=${SEGMENT_ID}&to=${SAMPLE_TO}&part=base`,
 );
+for (const [name, from, to, total] of [
+  ["inside", SEGMENT_ID, SAMPLE_TO, 30],
+  ["before", "1709164800250000", SAMPLE_TO, null],
+  ["after", SEGMENT_ID, "1709164800750000", null],
+]) {
+  const heatmap = records(compare(
+    `heatmap-${name}`,
+    "/api/heatmap",
+    `from=${from}&to=${to}&section=os_cpu&field=user&columns=12&top=1`,
+  ));
+  const band = heatmap.find((record) => record.record === "heatmap_band" && record.band === "totals");
+  assert.equal(band.total, total, "edge samples do not enter ranking totals");
+  assert.ok(band.cells.includes(30), "both CPU rates include their nearest edge samples");
+}
 compare(
   "snapshot-large-text-limit",
   `/api/segments/${SEGMENT_ID}/snapshot`,

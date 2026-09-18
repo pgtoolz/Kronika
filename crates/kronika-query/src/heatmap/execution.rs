@@ -30,6 +30,11 @@ use crate::{
 const IDENTITY_ALIASES: [(&str, &str); 2] = [("queryid", "query_id"), ("planid", "plan_id")];
 type RenderedIds = HashMap<(usize, u64), Value>;
 
+/// Counter rates may cross at most fifteen minutes between samples. Timestamps
+/// are in microseconds; this fixed limit is independent of collector cadence and
+/// display column width, so sparse data cannot bridge arbitrarily long gaps.
+const MAX_COUNTER_GAP_US: i64 = 15 * 60 * 1_000_000;
+
 #[derive(Debug)]
 enum HeatmapQueryErrorKind {
     BadFilter(String),
@@ -120,24 +125,19 @@ fn prepare_batch(
         unique,
         original_to_unique,
     } = validated;
-    let (scan_from, scan_to_exclusive) = scan_bounds(&query);
+    let scan_bounds = scan_bounds(&query, &unique);
     let listing = {
         let catalog = dataset
             .catalog()
             .map_err(|error| HeatmapError::storage(0, error))?;
         catalog
-            .segments(SegmentSelection::new(SegmentBounds::half_open(
-                scan_from,
-                scan_to_exclusive,
-            )))
+            .segments(SegmentSelection::new(scan_bounds))
             .map_err(|error| HeatmapError::storage(0, error))?
     };
     let validator_available = listing.warnings.is_empty();
     let mut segments = listing.segments;
-    segments
-        .retain(|segment| segment.max_ts() >= scan_from && segment.min_ts() < scan_to_exclusive);
     segments.sort_by_key(DatasetSegment::min_ts);
-    let validator_shape = format!("summary-v1:{query:?}");
+    let validator_shape = format!("summary-v2:{query:?}");
     Ok(PreparedHeatmapBatch {
         dataset,
         segments,
@@ -149,27 +149,20 @@ fn prepare_batch(
     })
 }
 
-/// Segments are scanned one grid column past each edge of the range: the last
-/// sample before the range and the first sample after it close the edge
-/// columns, which the sampling phase would otherwise leave empty.
-fn scan_bounds(query: &HeatmapBatchQuery) -> (i64, i64) {
+/// Counter grids may use the closest sample within fifteen minutes of either
+/// edge. Other views read only the requested range.
+fn scan_bounds(query: &HeatmapBatchQuery, specs: &[ItemSpec]) -> SegmentBounds {
     let range = query.range;
-    let margin = query
-        .items
-        .iter()
-        .filter_map(|item| match item.view {
-            HeatmapView::Grid { columns, .. } => {
-                i64::try_from(columns).ok().filter(|columns| *columns > 0)
-            }
-            HeatmapView::RankingOnly => None,
-        })
-        .map(|columns| range.to_exclusive.saturating_sub(range.from) / columns)
-        .max()
-        .unwrap_or(0);
-    (
-        range.from.saturating_sub(margin),
-        range.to_exclusive.saturating_add(margin),
-    )
+    if specs.iter().any(|spec| {
+        spec.class == ColumnClass::Cumulative && matches!(spec.query.view, HeatmapView::Grid { .. })
+    }) {
+        SegmentBounds::inclusive(
+            Some(range.from.saturating_sub(MAX_COUNTER_GAP_US)),
+            Some(range.to_exclusive.saturating_add(MAX_COUNTER_GAP_US)),
+        )
+    } else {
+        SegmentBounds::half_open(range.from, range.to_exclusive)
+    }
 }
 
 pub(crate) fn validate_request(
@@ -252,7 +245,11 @@ impl PreparedHeatmapBatch {
 
     pub(crate) fn validator_input(&self) -> Option<(&str, &str, &[DatasetSegment])> {
         (self.validator_available
-            && !self.segments.is_empty()
+            // Edge-only segments cannot establish immutable in-range data.
+            && self.segments.iter().any(|segment| {
+                segment.max_ts() >= self.query.range.from
+                    && segment.min_ts() < self.query.range.to_exclusive
+            })
             && self
                 .segments
                 .iter()
@@ -419,14 +416,22 @@ fn scan_plan(
                 .as_ref()
                 .is_some_and(|statements| statements.excludes(&row));
             let edge = Edge::of(timestamp, range);
+            if timestamp < range.from.saturating_sub(MAX_COUNTER_GAP_US)
+                || timestamp > range.to_exclusive.saturating_add(MAX_COUNTER_GAP_US)
+            {
+                return true;
+            }
             let mut admitted = false;
             for binding in &plan.bindings {
                 if collector_row && binding.workload {
                     continue;
                 }
+                let accumulator = &mut accumulators[binding.accumulator];
+                if edge.is_some() && !(accumulator.grid && accumulator.cumulative) {
+                    continue;
+                }
                 admitted = true;
                 if edge.is_none() {
-                    let accumulator = &mut accumulators[binding.accumulator];
                     accumulator.scan.window_rows = accumulator.scan.window_rows.saturating_add(1);
                 }
             }
@@ -435,19 +440,11 @@ fn scan_plan(
             }
             let section = &mut sections[plan.section];
             let registered = match edge {
-                // A row after the range closes an entity seen inside it; it
-                // never introduces one or moves its detail locator.
-                Some(Edge::After) => section.lookup(plan.type_id, plan.contract, &row).map(Ok),
-                Some(Edge::Before) => Some(section.register(
-                    segment_slot,
-                    segment_id,
-                    plan.type_id,
-                    plan.contract,
-                    &row,
-                    ordinal,
-                    timestamp,
-                )),
-                None => Some(section.observe(
+                // Retain candidates even when an overlapping segment supplies
+                // the in-range row later. Only in-range rows create folds and
+                // contribute labels or detail locators.
+                Some(_) => section.register(segment_slot, plan.type_id, plan.contract, &row),
+                None => section.observe(
                     segment_slot,
                     segment_id,
                     plan.type_id,
@@ -456,15 +453,14 @@ fn scan_plan(
                     ordinal,
                     timestamp,
                     &plan.labels,
-                )),
+                ),
             };
             let entity = match registered {
-                Some(Ok(entity)) => entity,
-                Some(Err(error)) => {
+                Ok(entity) => entity,
+                Err(error) => {
                     failure = Some(error);
                     return false;
                 }
-                None => return true,
             };
             for binding in &plan.bindings {
                 if collector_row && binding.workload {
@@ -472,7 +468,10 @@ fn scan_plan(
                 }
                 let accumulator = &mut accumulators[binding.accumulator];
                 let observed = match edge {
-                    Some(edge) => accumulator.observe_edge(&row, timestamp, entity, binding, edge),
+                    Some(edge) => {
+                        accumulator.observe_edge(&row, timestamp, entity, binding, edge);
+                        Ok(())
+                    }
                     None => accumulator.observe(segment_slot, &row, timestamp, entity, binding),
                 };
                 if let Err(error) = observed {
@@ -543,7 +542,7 @@ struct SharedEntity {
     identity_segment: usize,
     identity: Box<[Cell]>,
     labels: Box<[Option<StoredLabel>]>,
-    locator: StoredLocator,
+    locator: Option<StoredLocator>,
 }
 
 struct StoredLocator {
@@ -635,51 +634,19 @@ impl SharedSection {
     }
 
     /// Register an identity without recording its labels or detail locator.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the shared row identity without its label observation"
-    )]
     fn register(
         &mut self,
         segment_slot: usize,
-        segment_id: i64,
         type_id: u32,
         contract: &'static kronika_registry::TypeContract,
         row: &Row,
-        ordinal: u64,
-        timestamp: i64,
     ) -> Result<EntityId, HeatmapError> {
-        self.lookup(type_id, contract, row).map_or_else(
-            || {
-                self.insert(
-                    segment_slot,
-                    segment_id,
-                    type_id,
-                    contract,
-                    row,
-                    ordinal,
-                    timestamp,
-                )
-            },
-            Ok,
-        )
+        self.lookup(type_id, contract, row)
+            .map_or_else(|| self.insert(segment_slot, type_id), Ok)
     }
 
     /// Insert the identity left in the scratch by [`Self::lookup`].
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the shared row identity and its first detail locator"
-    )]
-    fn insert(
-        &mut self,
-        segment_slot: usize,
-        segment_id: i64,
-        type_id: u32,
-        contract: &'static kronika_registry::TypeContract,
-        row: &Row,
-        ordinal: u64,
-        timestamp: i64,
-    ) -> Result<EntityId, HeatmapError> {
+    fn insert(&mut self, segment_slot: usize, type_id: u32) -> Result<EntityId, HeatmapError> {
         let raw_key: Box<str> = self.key_scratch.clone().into_boxed_str();
         u32::try_from(self.entities.len()).map_err(|_error| {
             HeatmapError::invalid(
@@ -693,21 +660,12 @@ impl SharedSection {
         })?;
         let entity = EntityId(self.entities.len());
         self.by_raw_key.insert(raw_key, entity);
-        let locator_identity = row_key::identity(row.contract().type_id.get(), row)
-            .map_err(|error| HeatmapError::bad_locator(self.first_index, error))?;
         self.entities.push(SharedEntity {
             type_id,
             identity_segment: segment_slot,
             identity: self.identity_scratch.clone().into_boxed_slice(),
             labels: vec![None; self.label_count].into_boxed_slice(),
-            locator: StoredLocator {
-                segment_slot,
-                segment_id,
-                timestamp,
-                ordinal,
-                identity: locator_identity,
-                event_stream: contract.semantics == kronika_registry::Semantics::EventStream,
-            },
+            locator: None,
         });
         Ok(entity)
     }
@@ -727,24 +685,24 @@ impl SharedSection {
         timestamp: i64,
         labels: &[Option<&'static str>],
     ) -> Result<EntityId, HeatmapError> {
-        let entity = if let Some(entity) = self.lookup(type_id, contract, row) {
-            self.entities[entity.index()]
-                .locator
+        let entity = self.register(segment_slot, type_id, contract, row)?;
+        let shared = &mut self.entities[entity.index()];
+        if let Some(locator) = &mut shared.locator {
+            locator
                 .observe(segment_slot, segment_id, timestamp, ordinal, row)
                 .map_err(|error| HeatmapError::bad_locator(self.first_index, error))?;
-            entity
         } else {
-            self.insert(
+            let identity = row_key::identity(type_id, row)
+                .map_err(|error| HeatmapError::bad_locator(self.first_index, error))?;
+            shared.locator = Some(StoredLocator {
                 segment_slot,
                 segment_id,
-                type_id,
-                contract,
-                row,
-                ordinal,
                 timestamp,
-            )?
-        };
-        let shared = &mut self.entities[entity.index()];
+                ordinal,
+                identity,
+                event_stream: contract.semantics == kronika_registry::Semantics::EventStream,
+            });
+        }
         for (slot, column) in shared.labels.iter_mut().zip(labels) {
             let Some(value) = column.and_then(|name| row.get(name)) else {
                 continue;
@@ -941,10 +899,21 @@ struct GridFold {
     window: Obs,
     column: usize,
     current: Obs,
-    carry: Option<(i64, f64)>,
-    cells: Vec<Obs>,
+    cells: GridCells,
     grid_carry: Option<(i64, f64)>,
     group: Option<usize>,
+}
+
+enum GridCells {
+    Counters(Vec<CounterCell>),
+    Gauges(Vec<Obs>),
+}
+
+/// Weighted rate of admitted consecutive spans, excluding missing-time gaps.
+#[derive(Clone, Copy, Default)]
+struct CounterCell {
+    delta: f64,
+    elapsed_us: f64,
 }
 
 enum FoldArena {

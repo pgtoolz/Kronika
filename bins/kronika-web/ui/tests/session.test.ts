@@ -272,8 +272,8 @@ test("API addresses carry the build named by the session check", async () => {
   try {
     const session = await isolatedSession("build-key")
     assert.equal(session.apiAddress("/api/hour?from=1&to=2", "84e1609"), "/api/hour?from=1&to=2&build=84e1609")
-    assert.equal(session.apiAddress("/api/instance-label", "84e1609"), "/api/instance-label")
-    assert.equal(session.apiAddress("/api/mcp-access", "84e1609"), "/api/mcp-access")
+    assert.equal(session.apiAddress("/api/instance-label", "84e1609"), "/api/instance-label?build=84e1609")
+    assert.equal(session.apiAddress("/api/mcp-access", "84e1609"), "/api/mcp-access?build=84e1609")
     assert.equal(session.apiAddress("/api/hour", null), "/api/hour")
     assert.equal(session.apiAddress("/other", "84e1609"), "/other")
     await session.bootstrapSession()
@@ -281,7 +281,7 @@ test("API addresses carry the build named by the session check", async () => {
     assert.equal(calls[1]?.input, "/api/hour?from=1&to=2&build=84e1609")
     await session.apiFetch("/api/instance-label")
     await session.apiFetch("/api/mcp-access")
-    assert.deepEqual(calls.slice(2).map(({ input }) => input), ["/api/instance-label", "/api/mcp-access"])
+    assert.deepEqual(calls.slice(2).map(({ input }) => input), ["/api/instance-label?build=84e1609", "/api/mcp-access?build=84e1609"])
   } finally {
     globalThis.fetch = originalFetch
   }

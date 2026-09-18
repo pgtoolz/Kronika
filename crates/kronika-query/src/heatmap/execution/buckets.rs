@@ -1,6 +1,6 @@
 //! Heatmap time buckets and observation coverage.
 
-use super::{CellSum, Obs};
+use super::{CellSum, CounterCell, GridCells, MAX_COUNTER_GAP_US, Obs};
 
 use crate::heatmap::result::HeatmapInterval;
 
@@ -54,6 +54,59 @@ fn to_i128(value: usize) -> i128 {
 
 fn clamped(offset: i128) -> i64 {
     i64::try_from(offset).unwrap_or(i64::MAX)
+}
+
+impl GridCells {
+    pub(super) fn new(columns: usize, cumulative: bool) -> Self {
+        if cumulative {
+            Self::Counters(vec![CounterCell::default(); columns])
+        } else {
+            Self::Gauges(vec![Obs::default(); columns])
+        }
+    }
+
+    pub(super) fn values(&self) -> impl Iterator<Item = Option<f64>> + '_ {
+        let count = match self {
+            Self::Counters(cells) => cells.len(),
+            Self::Gauges(cells) => cells.len(),
+        };
+        (0..count).map(|column| match self {
+            Self::Counters(cells) => cells[column].value(),
+            Self::Gauges(cells) => cells[column].cell(false),
+        })
+    }
+
+    pub(super) fn observe_span(
+        &mut self,
+        previous: (i64, f64),
+        current: (i64, f64),
+        range: crate::TimeRange,
+    ) {
+        let Self::Counters(cells) = self else {
+            return;
+        };
+        let Some(elapsed) = current
+            .0
+            .checked_sub(previous.0)
+            .filter(|elapsed| (1..=MAX_COUNTER_GAP_US).contains(elapsed))
+            .and_then(|elapsed| u32::try_from(elapsed).ok())
+        else {
+            return;
+        };
+        let delta = current.1 - previous.1;
+        if delta < 0.0 {
+            return;
+        }
+        let column = column_of_span(Some(previous.0), current.0, range, cells.len());
+        cells[column].delta += delta;
+        cells[column].elapsed_us += f64::from(elapsed);
+    }
+}
+
+impl CounterCell {
+    fn value(self) -> Option<f64> {
+        (self.elapsed_us > 0.0).then(|| self.delta / (self.elapsed_us / 1_000_000.0))
+    }
 }
 
 impl Obs {

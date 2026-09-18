@@ -18,28 +18,19 @@ use tokio::sync::{Semaphore, mpsc};
 use crate::api::CachePolicy;
 use crate::body::{BODY_CHANNEL_CAPACITY, BodyError, BodyItem, ChannelBody, ChunkWriter, WebBody};
 use crate::response::{common_headers, refused};
-use crate::route::{MAX_QUERY_BYTES, RouteError};
+use crate::route::RouteError;
 
 // Buffer report output on disk without retaining the full HTML export in memory.
 const FILE_BUFFER_BYTES: usize = 64 * 1_024;
 
 pub(crate) fn parse(query: &str) -> Result<SliceRange, RouteError> {
-    if query.len() > MAX_QUERY_BYTES {
-        return Err(RouteError::BadParameter("query".to_owned()));
-    }
     let mut from = None;
     let mut to = None;
-    if !query.is_empty() {
-        for part in query.split('&') {
-            if part.is_empty() {
-                return Err(RouteError::BadParameter("query".to_owned()));
-            }
-            let (name, value) = part.split_once('=').unwrap_or((part, ""));
-            match name {
-                "from" if from.is_none() => from = Some(second("from", value)?),
-                "to" if to.is_none() => to = Some(second("to", value)?),
-                _ => return Err(RouteError::BadParameter(name.to_owned())),
-            }
+    for (name, value) in kronika_api::query_pairs(query)? {
+        match name {
+            "from" if from.is_none() => from = Some(second("from", value)?),
+            "to" if to.is_none() => to = Some(second("to", value)?),
+            _ => return Err(RouteError::BadParameter(name.to_owned())),
         }
     }
     let from = from.ok_or_else(|| RouteError::BadParameter("from".to_owned()))?;
