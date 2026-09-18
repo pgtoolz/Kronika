@@ -36,6 +36,7 @@ pub(crate) struct OsTick<'a> {
     pub(crate) ts: i64,
     pub(crate) in_container: bool,
     pub(crate) collect_cgroups: bool,
+    pub(crate) collect_psi: bool,
     pub(crate) due: &'a DueSet,
     /// Reuse the cgroup selection and charged devices from this tick's discovery.
     pub(crate) cgroup_pass: Option<&'a CgroupPass>,
@@ -85,7 +86,18 @@ pub(crate) fn collect_os_sources(
         }
     }
     if due.has(SourceKind::OsCore) {
-        core::collect_core_metrics(fs, sys, scope, ts, in_container, selected.as_ref(), &mut os);
+        core::collect_core_metrics(fs, scope, ts, &mut os);
+        if tick.collect_psi && (!in_container || selected.is_some()) {
+            core::collect_pressure_rows(
+                fs,
+                sys,
+                scope,
+                ts,
+                in_container,
+                selected.as_ref(),
+                &mut os,
+            );
+        }
     }
     // OsCore needs mountinfo for the container device filter in diskstats;
     // OsMountTopo needs it to build the attribution section rows.

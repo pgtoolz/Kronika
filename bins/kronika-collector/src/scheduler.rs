@@ -23,6 +23,7 @@ struct ScheduledSource {
 #[derive(Debug)]
 pub(crate) struct Scheduler {
     sources: Vec<ScheduledSource>,
+    collect_psi: bool,
     /// Restore this cadence after a successful activity read finds no blockers.
     pg_activity_interval: Duration,
     /// Apply this cadence during lock waits, capped by the ordinary interval.
@@ -64,9 +65,40 @@ impl Scheduler {
             .collect();
         Self {
             sources,
+            collect_psi: mode.collect_os(),
             pg_activity_interval: Duration::from_secs(intervals.pg_activity),
             pg_activity_blocked_interval: Duration::from_secs(intervals.pg_activity_blocked),
         }
+    }
+
+    pub(crate) fn probe_psi(
+        &mut self,
+        in_container: bool,
+        read: impl FnOnce() -> std::io::Result<usize>,
+    ) {
+        if in_container && !self.collects_cgroups() {
+            self.collect_psi = false;
+        }
+        if !self.collect_psi {
+            return;
+        }
+        if let Err(error) = read()
+            && error.raw_os_error() == Some(rustix::io::Errno::OPNOTSUPP.raw_os_error())
+        {
+            self.collect_psi = false;
+            crate::logging::log_event(
+                crate::logging::LogLevel::Warn,
+                "psi_disabled",
+                &[crate::logging::field(
+                    "reason",
+                    "kernel PSI unsupported. Collection disabled until collector restart",
+                )],
+            );
+        }
+    }
+
+    pub(crate) const fn collects_psi(&self) -> bool {
+        self.collect_psi
     }
 
     pub(crate) fn collects_cgroups(&self) -> bool {

@@ -9,7 +9,7 @@ use kronika_layout::{LayoutLimits, WriterOwner};
 use kronika_source_os::detect_container_with_root_override;
 use kronika_source_os::proc::process::ProcessIoCredentials;
 use kronika_writer::Journal;
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::signal::unix::{SignalKind, signal};
@@ -55,6 +55,9 @@ pub(crate) async fn run() -> Result<()> {
     let mut sigterm = signal(SignalKind::terminate()).context("install the SIGTERM handler")?;
     let mut sigint = signal(SignalKind::interrupt()).context("install the SIGINT handler")?;
     let mut sched = Scheduler::new(config.intervals, config.mode, collect_cgroups);
+    sched.probe_psi(in_container, || {
+        std::fs::File::open(fs.path("pressure/cpu")?)?.read(&mut [0])
+    });
     let mut process_io = config.mode.collect_os().then(ProcessIoCredentials::new);
     let seal_seed = writer_owner
         .load_or_create_seal_seed()

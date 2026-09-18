@@ -434,3 +434,66 @@ fn the_blocked_activity_interval_is_configurable_and_capped_by_the_base() {
         );
     }
 }
+
+#[test]
+fn psi_probe_disables_only_explicit_unsupported() {
+    for error in [None, Some(95), Some(2), Some(13), Some(5), Some(38)] {
+        let mut scheduler = Scheduler::new(intervals(), CollectorMode::Local, true);
+        scheduler.probe_psi(false, || {
+            error.map_or(Ok(1), |code| Err(std::io::Error::from_raw_os_error(code)))
+        });
+        assert_eq!(scheduler.collects_psi(), error != Some(95));
+        scheduler.mark_segment_opened();
+        let due = scheduler.plan(Instant::now(), true);
+        scheduler.recollection_due(&due, Instant::now());
+        assert_eq!(scheduler.collects_psi(), error != Some(95));
+    }
+    for (mode, in_container, cgroups) in [
+        (CollectorMode::Postgresql, false, false),
+        (CollectorMode::Postgresql, true, false),
+        (CollectorMode::Local, true, false),
+    ] {
+        let mut scheduler = Scheduler::new(intervals(), mode, cgroups);
+        scheduler.probe_psi(in_container, || panic!("PSI probe must be skipped"));
+        assert!(!scheduler.collects_psi());
+    }
+}
+
+#[test]
+fn unsupported_psi_warns_once_without_repeating_the_probe() {
+    const CHILD: &str = "KRONIKA_PSI_PROBE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "scheduler::tests::unsupported_psi_warns_once_without_repeating_the_probe",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .expect("child test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(stderr.matches("action=psi_disabled").count(), 1);
+        assert!(stderr.contains("disabled until collector restart"));
+        assert!(!stderr.contains("no pressure files available"));
+        return;
+    }
+    let mut scheduler = Scheduler::new(intervals(), CollectorMode::Local, true);
+    let mut calls = 0;
+    for _ in 0..3 {
+        scheduler.probe_psi(false, || {
+            calls += 1;
+            Err(std::io::Error::from_raw_os_error(95))
+        });
+        scheduler.mark_segment_opened();
+        scheduler.plan(Instant::now(), true);
+    }
+    assert_eq!(calls, 1);
+    assert!(!scheduler.collects_psi());
+}

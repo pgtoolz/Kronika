@@ -238,6 +238,7 @@ impl WindowWriter<'_> {
                     ts,
                     in_container: self.in_container,
                     collect_cgroups: self.sched.collects_cgroups(),
+                    collect_psi: self.sched.collects_psi(),
                     due,
                     cgroup_pass,
                 },

@@ -29,6 +29,7 @@ fn unreadable_membership_emits_one_unknown_context_row() {
             ts: 9,
             in_container: true,
             collect_cgroups: true,
+            collect_psi: true,
             due: &due,
             cgroup_pass: None,
         },
@@ -99,6 +100,7 @@ fn supplied_context_survives_process_only_ticks_and_skips_non_os_ticks() {
                 ts: 9,
                 in_container: true,
                 collect_cgroups: true,
+                collect_psi: true,
                 due: &due,
                 cgroup_pass: Some(&pass),
             },
@@ -257,6 +259,7 @@ fn collect_os_sources_no_diskstats_on_mount_topo_only_tick() {
             ts: 0,
             in_container: false,
             collect_cgroups: false,
+            collect_psi: true,
             due: &due,
             cgroup_pass: None,
         },
@@ -295,4 +298,101 @@ fn container_diskstats_keep_mounted_and_charged_devices_only() {
 
     let machine = collect_diskstats(&fs, &mut interner, 0, 0, None);
     assert_eq!(machine.len(), 3, "a machine keeps every node device");
+}
+
+#[test]
+fn unsupported_psi_skips_reads_across_forced_and_reopened_ticks() {
+    for in_container in [false, true] {
+        for errno in [95, 13, 0] {
+            let dir = tempfile::tempdir().expect("PSI fixture");
+            let root = dir.path();
+            for directory in ["self", "pressure", "sys/fs/cgroup"] {
+                std::fs::create_dir_all(root.join(directory)).expect("fixture directory");
+            }
+            for (path, data) in [
+                (
+                    "stat",
+                    "cpu 1 0 1 8\nbtime 100\nctxt 1\nprocesses 1\nprocs_running 1\nprocs_blocked 0\n",
+                ),
+                ("meminfo", "MemTotal: 1024 kB\nMemFree: 512 kB\n"),
+                ("self/cgroup", "0::/\n"),
+                ("pressure/cpu", HOST_CPU_PRESSURE),
+                ("sys/fs/cgroup/cpu.pressure", CONTAINER_CPU_PRESSURE),
+            ] {
+                std::fs::write(root.join(path), data).expect("fixture file");
+            }
+            std::fs::write(
+                root.join("self/mountinfo"),
+                format!(
+                    "40 1 0:30 / {} rw - cgroup2 cgroup rw\n",
+                    root.join("sys/fs/cgroup").display()
+                ),
+            )
+            .expect("mountinfo");
+            let fs = ProcFs::new(root.to_path_buf());
+            let sys = SysFs::new(root.join("sys"));
+            let notify = rustix::fs::inotify::init(rustix::fs::inotify::CreateFlags::NONBLOCK)
+                .expect("inotify");
+            for path in ["pressure/cpu", "sys/fs/cgroup/cpu.pressure"] {
+                rustix::fs::inotify::add_watch(
+                    &notify,
+                    root.join(path),
+                    rustix::fs::inotify::WatchFlags::OPEN,
+                )
+                .expect("watch PSI");
+            }
+            let mut scheduler = crate::scheduler::Scheduler::new(
+                crate::scheduler::Intervals::default(),
+                crate::config::CollectorMode::Local,
+                true,
+            );
+            scheduler.probe_psi(in_container, || match errno {
+                0 => Ok(1),
+                _ => Err(std::io::Error::from_raw_os_error(errno)),
+            });
+            let mut process_io = ProcessIoCredentials::new();
+            let mut interner = Interner::new(kronika_format::DictLimits::default());
+            let mut users = SegmentUserNames::default();
+            let start = std::time::Instant::now();
+            for (seconds, forced) in [(0, false), (1, true), (60, false)] {
+                let now = start + std::time::Duration::from_secs(seconds);
+                scheduler.mark_segment_opened();
+                let due = scheduler.plan(now, forced);
+                let due = scheduler.recollection_due(&due, now);
+                let os = collect_os_sources(
+                    &fs,
+                    &sys,
+                    &mut process_io,
+                    &mut interner,
+                    &mut users,
+                    &OsTick {
+                        scope: 0,
+                        ts: 7,
+                        in_container,
+                        collect_cgroups: scheduler.collects_cgroups(),
+                        collect_psi: scheduler.collects_psi(),
+                        due: &due,
+                        cgroup_pass: None,
+                    },
+                );
+                assert!(!os.cpu.is_empty());
+                assert!(os.meminfo.is_some());
+                assert_eq!(os.psi.len(), usize::from(errno != 95));
+                if let Some(row) = os.psi.first() {
+                    assert_eq!(row.some_total, if in_container { 20_000 } else { 10_000 });
+                    assert_eq!(row.scope, if in_container { 4 } else { 0 });
+                }
+            }
+            let mut buf = [std::mem::MaybeUninit::uninit(); 512];
+            let mut events = rustix::fs::inotify::Reader::new(&notify, &mut buf);
+            if errno == 95 {
+                assert!(
+                    matches!(events.next(), Err(rustix::io::Errno::AGAIN)),
+                    "disabled PSI was opened"
+                );
+            } else {
+                assert!(events.next().is_ok(), "unknown PSI is retried");
+            }
+        }
+    }
 }

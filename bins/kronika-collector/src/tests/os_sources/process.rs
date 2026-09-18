@@ -324,6 +324,7 @@ fn disabled_cgroup_scenario() {
                         ts: 7,
                         in_container,
                         collect_cgroups: admitted,
+                        collect_psi: true,
                         due,
                         cgroup_pass: None,
                     },
