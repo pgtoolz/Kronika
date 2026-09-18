@@ -3,6 +3,7 @@
 use crate::proc::pressure::{PsiRow, parse_pressure_at};
 use crate::{ProcFs, SysFs};
 
+pub mod discovered_sections;
 pub mod discovery;
 mod model;
 mod parse;
@@ -214,4 +215,5 @@ fn parse_pids_values(current: &str, max: &str) -> Option<(i64, Option<i64>)> {
 }
 
 #[cfg(test)]
+#[path = "tests/cgroup.rs"]
 mod tests;

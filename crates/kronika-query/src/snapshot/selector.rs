@@ -1,6 +1,5 @@
 //! Sample selection shared by the nine current-state finders.
 
-use crate::StatementScope;
 use std::sync::Arc;
 
 use kronika_reader::Cell;
@@ -8,6 +7,8 @@ use kronika_registry::{contract, logical_section_name, registry};
 
 use super::relation::RelationRow;
 use super::{PlainRowOut, PreparedSnapshot, ProcessRowOut, StructuredSearch};
+
+use crate::StatementScope;
 use crate::{
     DatasetSegment, Order, PredecessorSelection, QueryContext, QueryDataset, QueryError,
     RelationGroup, RelationKind, SegmentBounds, SegmentSelection, SnapshotRequest,
@@ -20,7 +21,8 @@ const DEFAULT_POSTGRESQL_CADENCE_SECONDS: u64 = 30;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SamplePolicy {
     logical_name: &'static str,
-    fixed_cadence_seconds: Option<u64>,
+    cadence_column: Option<&'static str>,
+    default_cadence_seconds: u64,
 }
 
 const DERIVED_SORT_TOKENS: [(&str, &str); 7] = [
@@ -76,42 +78,42 @@ impl FinderSurface {
     }
 
     const fn policy(self) -> SamplePolicy {
-        match self {
-            Self::Processes => SamplePolicy {
-                logical_name: "os_process",
-                fixed_cadence_seconds: Some(5),
-            },
-            Self::Tables => SamplePolicy {
-                logical_name: "pg_stat_user_tables",
-                fixed_cadence_seconds: Some(300),
-            },
-            Self::Indexes => SamplePolicy {
-                logical_name: "pg_stat_user_indexes",
-                fixed_cadence_seconds: Some(300),
-            },
-            Self::Activity => SamplePolicy {
-                logical_name: "pg_stat_activity",
-                fixed_cadence_seconds: None,
-            },
-            Self::Locks => SamplePolicy {
-                logical_name: "pg_locks",
-                fixed_cadence_seconds: None,
-            },
-            Self::Vacuum => SamplePolicy {
-                logical_name: "pg_stat_progress_vacuum",
-                fixed_cadence_seconds: None,
-            },
-            Self::Databases => SamplePolicy {
-                logical_name: "pg_stat_database",
-                fixed_cadence_seconds: None,
-            },
-            Self::Statements => SamplePolicy {
-                logical_name: "pg_stat_statements",
-                fixed_cadence_seconds: None,
-            },
-            Self::Plans => SamplePolicy {
-                logical_name: "pg_store_plans",
-                fixed_cadence_seconds: None,
+        let (logical_name, cadence_column) = match self {
+            Self::Processes => ("os_process", None),
+            Self::Tables => (
+                "pg_stat_user_tables",
+                Some("postgresql_relations_interval_seconds"),
+            ),
+            Self::Indexes => (
+                "pg_stat_user_indexes",
+                Some("postgresql_relations_interval_seconds"),
+            ),
+            Self::Activity => ("pg_stat_activity", Some("postgresql_interval_seconds")),
+            Self::Locks => ("pg_locks", Some("postgresql_interval_seconds")),
+            Self::Vacuum => (
+                "pg_stat_progress_vacuum",
+                Some("postgresql_interval_seconds"),
+            ),
+            Self::Databases => (
+                "pg_stat_database",
+                Some("postgresql_instance_interval_seconds"),
+            ),
+            Self::Statements => (
+                "pg_stat_statements",
+                Some("postgresql_statements_interval_seconds"),
+            ),
+            Self::Plans => (
+                "pg_store_plans",
+                Some("postgresql_statements_interval_seconds"),
+            ),
+        };
+        SamplePolicy {
+            logical_name,
+            cadence_column,
+            default_cadence_seconds: match self {
+                Self::Processes => 5,
+                Self::Tables | Self::Indexes => 300,
+                _ => DEFAULT_POSTGRESQL_CADENCE_SECONDS,
             },
         }
     }
@@ -337,6 +339,7 @@ fn prepare_current(
     let by = query.order.into_iter().map(|order| order.field).collect();
     let request = SnapshotRequest {
         segment_id: anchor.id(),
+        latest: false,
         at,
         sections: vec![query.logical_name],
         fields: query.fields,
@@ -354,9 +357,11 @@ fn prepare_current(
         scope: StatementScope::All,
     };
     drop(catalog);
-    super::prepare_selected_state(dataset, anchor, segments, clean, request, true, None)?
-        .finish_prepared()
-        .map(Some)
+    super::preparation::prepare_selected_state(
+        dataset, anchor, segments, clean, request, true, None,
+    )?
+    .finish_prepared()
+    .map(Some)
 }
 
 fn prepare(
@@ -390,15 +395,21 @@ fn prepare(
         SnapshotPoint::At(at) => at,
     };
     let policy = query.surface.policy();
-    let cadence = if let Some(cadence) = policy.fixed_cadence_seconds {
-        cadence
-    } else {
+    let cadence = if policy.cadence_column.is_some() {
         let probe = catalog.segments(SegmentSelection {
             bounds: SegmentBounds::inclusive(Some(at), Some(at)),
             predecessor: PredecessorSelection::ForLayouts(physical_type_ids("instance_metadata")),
         })?;
-        recorded_postgresql_cadence(dataset.as_ref(), &probe.segments, at, cancelled)?
-            .unwrap_or(DEFAULT_POSTGRESQL_CADENCE_SECONDS)
+        recorded_postgresql_cadence(
+            dataset.as_ref(),
+            &probe.segments,
+            query.surface,
+            at,
+            cancelled,
+        )?
+        .unwrap_or(policy.default_cadence_seconds)
+    } else {
+        policy.default_cadence_seconds
     };
     let lookback = cadence_lookback(cadence)?;
     let current_from = at.checked_sub(lookback).unwrap_or(i64::MIN);
@@ -414,6 +425,7 @@ fn prepare(
     let anchor = segments.remove(index);
     let request = SnapshotRequest {
         segment_id: anchor.id(),
+        latest: false,
         at,
         sections: vec![query.surface.logical_name().to_owned()],
         fields: Vec::new(),
@@ -431,7 +443,7 @@ fn prepare(
         scope: StatementScope::All,
     };
     drop(catalog);
-    let prepared = super::prepare_selected(
+    let prepared = super::preparation::prepare_selected(
         dataset,
         anchor,
         segments,
@@ -479,9 +491,13 @@ fn cadence_lookback(cadence_seconds: u64) -> Result<i64, QueryError> {
 fn recorded_postgresql_cadence(
     dataset: &dyn QueryDataset,
     segments: &[DatasetSegment],
+    surface: FinderSurface,
     at: i64,
     cancelled: &(impl Fn() -> bool + ?Sized),
 ) -> Result<Option<u64>, QueryError> {
+    let Some(cadence_column) = surface.policy().cadence_column else {
+        return Ok(None);
+    };
     let mut selected: Option<(i64, u64)> = None;
     for segment_ref in segments {
         if cancelled() {
@@ -495,35 +511,44 @@ fn recorded_postgresql_cadence(
             let Some(layout) = contract(type_id) else {
                 continue;
             };
-            let (Some(timestamp), Some(interval)) = (
-                layout.column("ts"),
-                layout.column("postgresql_interval_seconds"),
-            ) else {
+            // Older recordings used one PostgreSQL cadence except for relations,
+            // whose finders used a fixed five-minute cadence.
+            let interval = layout.column(cadence_column).or_else(|| match surface {
+                FinderSurface::Tables | FinderSurface::Indexes => None,
+                _ => layout.column("postgresql_interval_seconds"),
+            });
+            let Some(timestamp) = layout.column("ts") else {
                 continue;
             };
-            segment.visit_rows(
-                type_id,
-                &[timestamp.name, interval.name],
-                0,
-                usize::MAX,
-                |_ordinal, row| {
-                    if cancelled() {
-                        return false;
-                    }
-                    let (Some(Cell::Ts(timestamp)), Some(Cell::U64(seconds))) =
-                        (row.get(timestamp.name), row.get(interval.name))
-                    else {
+            if interval.is_none() && surface.relation_kind().is_none() {
+                continue;
+            }
+            let columns: Vec<_> = std::iter::once(timestamp.name)
+                .chain(interval.map(|column| column.name))
+                .collect();
+            segment.visit_rows(type_id, &columns, 0, usize::MAX, |_ordinal, row| {
+                if cancelled() {
+                    return false;
+                }
+                let Some(Cell::Ts(timestamp)) = row.get(timestamp.name) else {
+                    return true;
+                };
+                let seconds = if let Some(interval) = interval {
+                    let Some(Cell::U64(seconds)) = row.get(interval.name) else {
                         return true;
                     };
-                    if *timestamp <= at && *seconds > 0 {
-                        let candidate = (*timestamp, *seconds);
-                        if selected.is_none_or(|current| candidate.0 > current.0) {
-                            selected = Some(candidate);
-                        }
+                    *seconds
+                } else {
+                    surface.policy().default_cadence_seconds
+                };
+                if *timestamp <= at && seconds > 0 {
+                    let candidate = (*timestamp, seconds);
+                    if selected.is_none_or(|current| candidate.0 > current.0) {
+                        selected = Some(candidate);
                     }
-                    true
-                },
-            )?;
+                }
+                true
+            })?;
             if cancelled() {
                 return Err(QueryError::Cancelled);
             }
@@ -533,4 +558,5 @@ fn recorded_postgresql_cadence(
 }
 
 #[cfg(test)]
+#[path = "../tests/snapshot_selector.rs"]
 mod tests;

@@ -1,8 +1,5 @@
 //! Storage-neutral execution of recorded-data queries.
 
-#[cfg(test)]
-use kronika_writer as _;
-
 mod catalog;
 mod dataset;
 mod error;
@@ -22,6 +19,7 @@ mod row_key;
 mod rows;
 mod selection;
 pub mod snapshot;
+mod snapshot_neighbor;
 mod statement_scope;
 mod time;
 
@@ -51,8 +49,8 @@ pub use index_provider::{IndexProvider, IndexResource, MemoryIndexProvider};
 pub use projection::{OutputField, Plan, plans, resolved_dictionary};
 pub use request::{
     ActiveCursor, CatalogRequest, DataRequest, Filter, HourPart, HourRequest, HourSeriesRequest,
-    IndexRequest, Order, QueryRequest, RelationGroup, RowsRequest, SegmentRequest, SnapshotRequest,
-    Window,
+    IndexRequest, Order, QueryRequest, RelationGroup, RowsRequest, SegmentRequest,
+    SnapshotNeighborDirection, SnapshotNeighborRequest, SnapshotRequest, Window,
 };
 pub use row_detail::{
     PreparedRowDetail, RowDetailResult, ValidatedRowDetailQuery, execute_row_detail,
@@ -62,6 +60,7 @@ pub use row_key::{
     DETAIL_REF_MAX_ENCODED_BYTES, DetailLocator, RowIdentity, detail_locator, identity,
     identity_columns, is_detail_text, validate,
 };
+pub use snapshot_neighbor::{MAX_SNAPSHOT_NEIGHBOR_SECTIONS, SNAPSHOT_NEIGHBOR_MIN_STEP_MICROS};
 pub use statement_scope::{COLLECTOR_STATEMENT_PREFIX, STATEMENTS_SECTION, StatementScope};
 pub use time::TimeRange;
 
@@ -93,6 +92,7 @@ pub struct QueryContext {
     indexes: Option<std::sync::Arc<dyn IndexProvider>>,
     configured_sources: u32,
     synthetic_demo: bool,
+    build: Option<&'static str>,
 }
 
 impl std::fmt::Debug for QueryContext {
@@ -102,6 +102,7 @@ impl std::fmt::Debug for QueryContext {
             .field("indexes", &self.indexes)
             .field("configured_sources", &self.configured_sources)
             .field("synthetic_demo", &self.synthetic_demo)
+            .field("build", &self.build)
             .finish()
     }
 }
@@ -119,7 +120,16 @@ impl QueryContext {
             indexes: None,
             configured_sources,
             synthetic_demo,
+            build: None,
         }
+    }
+
+    /// Name the build serving this context; catalog records carry it beside
+    /// the version so an interface can tell one deployment from the next.
+    #[must_use]
+    pub const fn with_build(mut self, build: &'static str) -> Self {
+        self.build = Some(build);
+        self
     }
 
     /// Add the derived-index source used by indexed queries.
@@ -186,6 +196,20 @@ impl<'a> QueryMetadata<'a> {
         self.identity
     }
 
+    fn segment_set(
+        stability: QueryStability,
+        validator: Option<(&'a str, &'a str, &'a [DatasetSegment])>,
+    ) -> Self {
+        Self {
+            stability,
+            identity: validator.map(|(resource, shape, segments)| QueryIdentity::SegmentSet {
+                resource,
+                shape,
+                segments,
+            }),
+        }
+    }
+
     const fn revalidate() -> Self {
         Self {
             stability: QueryStability::Revalidate,
@@ -215,6 +239,7 @@ enum Prepared {
     History(PreparedHistory),
     Hour(PreparedHour),
     Snapshot(snapshot::PreparedSnapshot),
+    SnapshotNeighbor(snapshot_neighbor::PreparedNeighbor),
     Rows(PreparedRows),
     Events(PreparedEvents),
     RowDetail(PreparedRowDetail),
@@ -232,16 +257,9 @@ impl QueryExecution {
     pub fn metadata(&self) -> QueryMetadata<'_> {
         match &self.prepared {
             Prepared::Catalog(_) => QueryMetadata::revalidate(),
-            Prepared::Heatmap(prepared) => QueryMetadata {
-                stability: prepared.stability(),
-                identity: prepared
-                    .validator_input()
-                    .map(|(resource, shape, segments)| QueryIdentity::SegmentSet {
-                        resource,
-                        shape,
-                        segments,
-                    }),
-            },
+            Prepared::Heatmap(prepared) => {
+                QueryMetadata::segment_set(prepared.stability(), prepared.validator_input())
+            }
             Prepared::Index(prepared) => QueryMetadata {
                 stability: match prepared.kind() {
                     kronika_reader::SegmentKind::Finished => QueryStability::Immutable,
@@ -253,41 +271,20 @@ impl QueryExecution {
                 stability: prepared.stability(),
                 identity: None,
             },
-            Prepared::Hour(prepared) => QueryMetadata {
-                stability: prepared.stability(),
-                identity: prepared
-                    .validator_input()
-                    .map(|(resource, shape, segments)| QueryIdentity::SegmentSet {
-                        resource,
-                        shape,
-                        segments,
-                    }),
-            },
-            Prepared::Snapshot(prepared) => QueryMetadata {
-                stability: prepared.stability(),
-                identity: prepared
-                    .validator_input()
-                    .map(|(resource, shape, segments)| QueryIdentity::SegmentSet {
-                        resource,
-                        shape,
-                        segments,
-                    }),
-            },
+            Prepared::Hour(prepared) => {
+                QueryMetadata::segment_set(prepared.stability(), prepared.validator_input())
+            }
+            Prepared::Snapshot(prepared) => {
+                QueryMetadata::segment_set(prepared.stability(), prepared.validator_input())
+            }
             Prepared::Rows(prepared) => QueryMetadata {
                 stability: prepared.stability(),
                 identity: None,
             },
-            Prepared::Events(prepared) => QueryMetadata {
-                stability: prepared.stability(),
-                identity: prepared
-                    .validator_input()
-                    .map(|(resource, shape, segments)| QueryIdentity::SegmentSet {
-                        resource,
-                        shape,
-                        segments,
-                    }),
-            },
-            Prepared::RowDetail(_) => QueryMetadata {
+            Prepared::Events(prepared) => {
+                QueryMetadata::segment_set(prepared.stability(), prepared.validator_input())
+            }
+            Prepared::RowDetail(_) | Prepared::SnapshotNeighbor(_) => QueryMetadata {
                 stability: QueryStability::Mutable,
                 identity: None,
             },
@@ -307,6 +304,7 @@ impl QueryExecution {
             Prepared::History(prepared) => prepared.stream(sink),
             Prepared::Hour(prepared) => prepared.stream(sink),
             Prepared::Snapshot(prepared) => prepared.stream(sink),
+            Prepared::SnapshotNeighbor(prepared) => prepared.stream(sink),
             Prepared::Rows(prepared) => prepared.stream(sink),
             Prepared::Events(prepared) => prepared.stream(sink),
             Prepared::RowDetail(prepared) => prepared.stream(sink),
@@ -323,15 +321,13 @@ pub fn execute(
     context: &QueryContext,
     request: QueryRequest,
 ) -> Result<QueryExecution, QueryError> {
-    if let QueryRequest::Snapshot(request) = request {
-        return snapshot::prepare_snapshot(context, request)?.finish();
-    }
     let prepared = match request {
         QueryRequest::Catalog(request) => Prepared::Catalog(PreparedCatalog::prepare(
             context.dataset.as_ref(),
             request,
             context.configured_sources,
             context.synthetic_demo,
+            context.build,
         )?),
         QueryRequest::Heatmap(request) => Prepared::Heatmap(heatmap::prepare(
             std::sync::Arc::clone(&context.dataset),
@@ -351,8 +347,14 @@ pub fn execute(
             request,
             context.configured_sources,
             context.synthetic_demo,
+            context.build,
         )?),
-        QueryRequest::Snapshot(_) => unreachable!("snapshot handled before shared preparation"),
+        QueryRequest::Snapshot(request) => {
+            return snapshot::prepare_snapshot(context, request)?.finish();
+        }
+        QueryRequest::SnapshotNeighbor(request) => Prepared::SnapshotNeighbor(
+            snapshot_neighbor::prepare(std::sync::Arc::clone(&context.dataset), request)?,
+        ),
         QueryRequest::Rows(request) => {
             Prepared::Rows(rows::prepare(context.dataset.as_ref(), request)?)
         }
@@ -368,5 +370,7 @@ pub fn execute(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+use kronika_writer as _;
+#[cfg(test)]
+#[path = "tests/lib.rs"]
 mod tests;

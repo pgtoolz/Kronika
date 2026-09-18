@@ -109,4 +109,5 @@ fn decode_field(field: &str) -> Cow<'_, str> {
 }
 
 #[cfg(test)]
+#[path = "../tests/postgres/csvlog.rs"]
 mod tests;

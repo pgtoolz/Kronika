@@ -145,4 +145,5 @@ async fn run_checkout_window(config: &WorkloadConfig, stop: &Arc<AtomicBool>, du
 }
 
 #[cfg(test)]
+#[path = "../tests/workload/plans.rs"]
 mod tests;

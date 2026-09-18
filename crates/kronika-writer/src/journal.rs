@@ -387,4 +387,5 @@ fn next_journal_generation() -> u64 {
 }
 
 #[cfg(test)]
+#[path = "tests/journal.rs"]
 mod tests;

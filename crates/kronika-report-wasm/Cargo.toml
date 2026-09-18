@@ -15,7 +15,7 @@ crate-type = ["cdylib", "rlib"]
 kronika-api = { path = "../kronika-api", default-features = false }
 kronika-layout = { path = "../kronika-layout", default-features = false }
 kronika-query = { path = "../kronika-query", default-features = false }
-kronika-report = { path = "../../bins/kronika-report", default-features = false }
+kronika-report = { path = "../kronika-report", default-features = false }
 wasm-bindgen = { version = "=0.2.127", default-features = false, features = ["std"] }
 
 [lints]

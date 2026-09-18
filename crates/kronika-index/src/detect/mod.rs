@@ -2,6 +2,7 @@ mod direct;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use self::direct::CpuRaw;
 #[cfg(feature = "posix")]
 use kronika_reader::SegmentRef;
 use kronika_reader::{Cell, Segment};
@@ -14,8 +15,6 @@ use crate::findings::{
     PG_LOG_ERRORS_TYPE_ID,
 };
 use crate::series::{SeriesBlock, SeriesKey, SeriesKind};
-
-use self::direct::CpuRaw;
 
 const OS_CPU: u32 = 1_102_001;
 const OS_MEMINFO: u32 = 1_104_001;
@@ -358,4 +357,5 @@ const fn activity_layouts() -> [u32; 3] {
 }
 
 #[cfg(test)]
+#[path = "../tests/detect.rs"]
 mod tests;

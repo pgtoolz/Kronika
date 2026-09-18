@@ -2,9 +2,12 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import test from "node:test"
 
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+
 import { importModule } from "./import-module.mjs"
 
-const help = await importModule('export { placeTooltip } from "../src/help.tsx"')
+const help = await importModule('export { HelpPanel, placeTooltip, versionLabel } from "../src/help.tsx"')
 
 test("tooltip placement stays in the viewport and flips above a low anchor", () => {
   const size = { height: 80, width: 200 }
@@ -62,4 +65,16 @@ test("a USE cell is one action while methodology help stays in the column header
       assert.match(dictionary, new RegExp(`^use\\.${column}\\.help: ".+"$`, "m"))
     }
   }
+})
+
+test("the help panel ends with the served version and build", () => {
+  const t = (key) => (key === "app.title" ? "Kronika" : key)
+  const items = [{ label: "field", help: "field.help" }]
+  const served = renderToStaticMarkup(createElement(help.HelpPanel, { build: "94cb118", items, onClose: () => {}, t, version: "1.1.2" }))
+  assert.match(served, /data-testid="help-version"[^>]*>Kronika 1\.1\.2 · 94cb118</)
+  const withoutBuild = renderToStaticMarkup(createElement(help.HelpPanel, { items, onClose: () => {}, t, version: "1.1.2" }))
+  assert.match(withoutBuild, />Kronika 1\.1\.2</)
+  const standalone = renderToStaticMarkup(createElement(help.HelpPanel, { items, onClose: () => {}, t }))
+  assert.doesNotMatch(standalone, /help-version/)
+  assert.equal(help.versionLabel("Kronika", "1.1.2", null), "Kronika 1.1.2")
 })

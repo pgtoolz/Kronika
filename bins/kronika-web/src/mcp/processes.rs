@@ -10,8 +10,8 @@ use kronika_query::snapshot::{
 use crate::config::Config;
 use crate::route::MAX_SNAPSHOT_PAGE_SIZE;
 
-use super::catalog::{ProcessesInput, SortInput};
 use super::filter::{FilterInput, build_search};
+use super::input::{ProcessesInput, SortInput};
 use super::semantics::{bounded_limit, finder_output, mcp_structured};
 use super::time::resolve_point;
 
@@ -42,7 +42,7 @@ pub(crate) fn call(
             );
         }
     };
-    call_with(
+    find_processes(
         config,
         point,
         &input.filters,
@@ -52,7 +52,7 @@ pub(crate) fn call(
     )
 }
 
-fn call_with(
+fn find_processes(
     config: &Config,
     point: SnapshotPoint,
     filters: &[FilterInput],

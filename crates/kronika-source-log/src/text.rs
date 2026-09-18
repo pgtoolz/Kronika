@@ -45,4 +45,5 @@ pub(crate) fn append_str(target: &mut String, text: &str) {
 }
 
 #[cfg(test)]
+#[path = "tests/text.rs"]
 mod tests;

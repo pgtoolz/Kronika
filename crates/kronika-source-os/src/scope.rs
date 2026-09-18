@@ -53,7 +53,16 @@ pub(crate) fn detect_container_from_cgroup(cgroup: &str) -> bool {
 /// are checked, matching Wave 1 production behavior.
 #[must_use]
 pub fn detect_container(fs: &ProcFs) -> bool {
-    let proc_root_overridden = std::env::var_os("KRONIKA_PROC_ROOT").is_some();
+    detect_container_with_root_override(fs, std::env::var_os("KRONIKA_PROC_ROOT").is_some())
+}
+
+/// Detect containers using the selected procfs root.
+///
+/// When the root was explicitly configured, ignore `KUBERNETES_SERVICE_HOST`
+/// and `/.dockerenv`: they describe the collector's container, which may differ
+/// from the host mounted at that root. Otherwise, include those signals.
+#[must_use]
+pub fn detect_container_with_root_override(fs: &ProcFs, proc_root_overridden: bool) -> bool {
     if !proc_root_overridden {
         if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
             return true;
@@ -79,29 +88,5 @@ pub const fn net_scope(in_container: bool) -> OsScope {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{OsScope, detect_container_from_cgroup, net_scope};
-
-    #[test]
-    fn scope_encodes_as_stable_u8() {
-        // The reader depends on these exact values; guard every variant.
-        assert_eq!(OsScope::Host.as_u8(), 0);
-        assert_eq!(OsScope::Pod.as_u8(), 1);
-        assert_eq!(OsScope::PodNet.as_u8(), 2);
-        assert_eq!(OsScope::Container.as_u8(), 3);
-        assert_eq!(OsScope::Unknown.as_u8(), 4);
-    }
-
-    #[test]
-    fn cgroup_markers_detect_a_container() {
-        assert!(detect_container_from_cgroup("0::/kubepods/pod123/abc\n"));
-        assert!(detect_container_from_cgroup("12:pids:/docker/deadbeef\n"));
-        assert!(!detect_container_from_cgroup("0::/init.scope\n"));
-    }
-
-    #[test]
-    fn net_scope_maps_container_flag() {
-        assert_eq!(net_scope(true), OsScope::PodNet);
-        assert_eq!(net_scope(false), OsScope::Host);
-    }
-}
+#[path = "tests/scope.rs"]
+mod tests;

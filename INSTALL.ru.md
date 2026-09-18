@@ -9,14 +9,14 @@
 
 ## 1. Скачивание и распаковка
 
-Скачайте [архив 1.1.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.2)
+Скачайте [архив 1.2.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.0)
 для своей архитектуры. Команды ниже — для x86-64. Для ARM64 задайте
 `target=aarch64-unknown-linux-musl`.
 
 ```sh
 target=x86_64-unknown-linux-musl
-archive="kronika-1.1.2-$target.tar.gz"
-curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.1.2/$archive"
+archive="kronika-1.2.0-$target.tar.gz"
+curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.2.0/$archive"
 tar -xzf "$archive"
 cd "${archive%.tar.gz}"
 ```
@@ -53,16 +53,16 @@ sudo install -d -m 0700 /var/lib/kronika
 Запустите сбор метрик Linux:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika
 ```
 
 Процессы опрашиваются каждые 5 секунд, основные метрики Linux — каждые 10 секунд.
 
 `Ctrl+C` останавливает сбор. Для продолжения запустите ту же команду.
 
-Целевой объём хранения `KRONIKA_RETENTION` по умолчанию равен `2147483648` байт
-(2 GiB). Для цели 10 GiB добавьте `KRONIKA_RETENTION=10737418240`.
+Целевой объём хранения `--retention` по умолчанию равен `2GiB`.
+Для цели 10 GiB добавьте `--retention 10GiB`.
 Раздел [«Хранение»](bins/kronika-collector/README.ru.md#storage) описывает,
 какие файлы учитываются и в каком порядке удаляются старые записи.
 
@@ -85,21 +85,22 @@ GRANT EXECUTE ON FUNCTION pg_catalog.pg_current_logfile() TO kronika_monitor;
 [«Роль PostgreSQL»](bins/kronika-collector/README.ru.md#postgresql-role).
 
 Для сбора с нескольких серверов PostgreSQL запустите `kronika-collector`
-для каждого сервера, указав его `KRONIKA_PG_DSN` и отдельный каталог
-`KRONIKA_STORAGE_DIR`. См.
+для каждого сервера, указав его `--pg-dsn` и отдельный каталог
+`--storage-dir`. См.
 [пример двух серверов](bins/kronika-collector/README.ru.md#several-postgresql-servers).
 
 PostgreSQL и метрики Linux из той же VM или pod:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable'
 ```
 
 На общей с PostgreSQL машине число CPU определяется автоматически.
-Оставьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS` незаданным. Установленные расширения
-`pg_stat_statements` и `pg_store_plans` дают статистику запросов и планы.
+Не задавайте `--postgres-effective-cpus` и `KRONIKA_POSTGRES_EFFECTIVE_CPUS`.
+Установленные расширения `pg_stat_statements` и `pg_store_plans` дают статистику
+запросов и планы.
 Для Activity, Locks и статистики таблиц и индексов используются встроенные
 представления PostgreSQL.
 
@@ -110,14 +111,14 @@ sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
 ```sh
 sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 
-KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  /usr/local/bin/kronika-collector
+/usr/local/bin/kronika-collector \
+  --mode postgresql \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres'
 ```
 
-Если число доступных серверу CPU известно, задайте его в
-`KRONIKA_POSTGRES_EFFECTIVE_CPUS` (например, `4`). Если неизвестно, оставьте
+Если число доступных серверу CPU известно, добавьте
+`--postgres-effective-cpus 4`, заменив `4` нужным числом. Если неизвестно, оставьте
 параметр незаданным: SQL-метрики доступны, PostgreSQL Health неизвестен. См. [удалённый PostgreSQL](bins/kronika-collector/README.ru.md#remote-postgresql).
 
 [Настройка сервисов](docs/services.ru.md) показывает, как хранить строки
@@ -132,46 +133,40 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 
 ### Для режима `local`
 
-Для Linux укажите `KRONIKA_WEB_SOURCES=1`, как ниже. Если также собирается
-PostgreSQL, замените `1` на `3`:
+Для Linux укажите `--sources os`, как ниже. Если также собирается
+PostgreSQL, используйте `--sources all`:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
-  KRONIKA_WEB_SOURCES=1 \
-  /usr/local/bin/kronika-web
+sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
+  --listen 0.0.0.0:8080 --sources os
 ```
 
 ### Для режима `postgresql`
 
 ```sh
-KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
-  KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
+/usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
+  --listen 0.0.0.0:8080 --sources postgresql
 ```
 
 Откройте `http://<server-ip>:8080`.
 
-Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.
+Для входа по паролю добавьте `--user kronika --password 'replace-with-a-random-password'`.
+Параметры командной строки имеют приоритет над переменными окружения;
+существующие настройки сервисов `KRONIKA_WEB_*` продолжают работать. Полный
+список параметров показывает `kronika-web --help`.
 
 Веб-серверу нужен доступ на запись в тот же каталог для создания поисковых
 индексов `.idx`.
 
-`KRONIKA_WEB_SOURCES` сообщает, какие источники настроены. Он не включает сбор
-и не скрывает записанные данные. Настройки входа описаны в
+`--sources` (или `KRONIKA_WEB_SOURCES`) сообщает, какие источники настроены.
+Параметр не включает сбор и не скрывает записанные данные. Настройки входа описаны в
 [справочнике веб-сервера](bins/kronika-web/README.ru.md).
 
-Для локального доступа, обратного прокси на той же машине или перенаправления
-порта по SSH укажите `KRONIKA_WEB_LISTEN=127.0.0.1:8080`. Этот же адрес
-используется по умолчанию. Для перенаправления выполните на машине клиента:
+В примерах `--listen 0.0.0.0:8080` задаёт прослушивание всех IPv4-интерфейсов.
+Значение `--listen` по умолчанию — `127.0.0.1:8080`.
 
-```sh
-ssh -N -L 8080:127.0.0.1:8080 user@monitored-host
-```
-
-Затем откройте на ней <http://127.0.0.1:8080/>. ИИ-клиенты используют тот же
-адрес и настройки аутентификации, добавляя `/mcp`. [Настройки подключения](docs/mcp-clients.ru.md)
+ИИ-клиенты используют тот же адрес и настройки аутентификации, добавляя `/mcp`.
+[Настройки подключения](docs/mcp-clients.ru.md)
 также доступны в панели **AI**. [Руководство systemd](docs/services.ru.md)
 описывает автоматический запуск обеих программ.
 

@@ -1912,3 +1912,6 @@ mod controller_continuity;
 
 #[path = "finished_source_parity/encoded_lane_order.rs"]
 mod encoded_lane_order;
+
+#[path = "finished_source_parity/finder_cadence.rs"]
+mod finder_cadence;

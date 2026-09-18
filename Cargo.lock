@@ -297,6 +297,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bsize"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c872febc3a9f154d82c27a6510b1529553e8524e17b40943d73f0621c4b61a97"
+dependencies = [
+ "macroweave",
+]
+
+[[package]]
 name = "bstr"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1494,14 +1503,14 @@ dependencies = [
 
 [[package]]
 name = "kronika-api"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "kronika-query",
 ]
 
 [[package]]
 name = "kronika-bdd"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "cucumber",
@@ -1516,10 +1525,11 @@ dependencies = [
 
 [[package]]
 name = "kronika-collector"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "anyhow",
- "futures-util",
+ "bsize",
+ "clap",
  "kronika-format",
  "kronika-index",
  "kronika-layout",
@@ -1541,9 +1551,12 @@ dependencies = [
 
 [[package]]
 name = "kronika-demo"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "anyhow",
+ "bsize",
+ "clap",
+ "humantime",
  "kronika-format",
  "kronika-registry",
  "nix",
@@ -1555,7 +1568,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-derive"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1564,17 +1577,16 @@ dependencies = [
 
 [[package]]
 name = "kronika-dump"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
- "arrow-array",
- "arrow-select",
  "chrono",
+ "clap",
  "kronika-format",
  "kronika-index",
  "kronika-layout",
  "kronika-reader",
  "kronika-registry",
- "kronika-report",
+ "kronika-slice",
  "kronika-store",
  "kronika-writer",
  "serde_json",
@@ -1583,7 +1595,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-format"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "crc",
  "proptest",
@@ -1594,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-index"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "kronika-format",
  "kronika-layout",
@@ -1606,7 +1618,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-layout"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "rustix",
  "tempfile",
@@ -1614,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-query"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "base64 0.22.1",
  "icu_collator",
@@ -1633,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-reader"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1649,7 +1661,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-registry"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "arrow-array",
  "arrow-ord",
@@ -1665,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-report"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -1682,8 +1694,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kronika-report-cli"
+version = "1.2.0"
+dependencies = [
+ "clap",
+ "kronika-report",
+ "kronika-store",
+ "tempfile",
+]
+
+[[package]]
 name = "kronika-report-wasm"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "kronika-api",
  "kronika-layout",
@@ -1693,8 +1715,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "kronika-slice"
+version = "1.2.0"
+dependencies = [
+ "arrow-array",
+ "arrow-select",
+ "kronika-format",
+ "kronika-index",
+ "kronika-layout",
+ "kronika-reader",
+ "kronika-registry",
+ "kronika-report",
+ "kronika-store",
+ "kronika-writer",
+ "tempfile",
+]
+
+[[package]]
 name = "kronika-source-log"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "chrono",
  "jiff",
@@ -1705,7 +1744,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-source-os"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "kronika-registry",
  "nix",
@@ -1715,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-source-pg"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -1730,7 +1769,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-store"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "kronika-format",
  "kronika-layout",
@@ -1740,17 +1779,17 @@ dependencies = [
 
 [[package]]
 name = "kronika-web"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
+ "clap",
  "flate2",
  "http-body-util",
  "hyper",
  "hyper-util",
  "kronika-api",
- "kronika-dump",
  "kronika-format",
  "kronika-index",
  "kronika-layout",
@@ -1758,6 +1797,7 @@ dependencies = [
  "kronika-reader",
  "kronika-registry",
  "kronika-report",
+ "kronika-slice",
  "kronika-writer",
  "rmcp",
  "schemars",
@@ -1770,7 +1810,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-writer"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1921,6 +1961,16 @@ name = "log"
 version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
+
+[[package]]
+name = "macroweave"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46d62baa36507cf47dce93bac9a747ca97fa03e77ccb7a7ba58d2120088a89f3"
+dependencies = [
+ "proc-macro2",
+ "syn 3.0.3",
+]
 
 [[package]]
 name = "md-5"

@@ -8,101 +8,36 @@
 //! open directory descriptor and nothing else.
 
 mod dictionary;
+#[cfg(feature = "posix")]
+mod discovery;
 mod error;
+mod finished;
 mod segment;
 
 #[cfg(feature = "posix")]
-use std::cmp::Reverse;
-#[cfg(feature = "posix")]
-use std::collections::BTreeSet;
-#[cfg(feature = "posix")]
-use std::ops::{Bound, RangeBounds};
+use std::ops::RangeBounds;
 #[cfg(feature = "posix")]
 use std::path::{Path, PathBuf};
+#[cfg(feature = "posix")]
 use std::sync::Arc;
 
 #[cfg(feature = "posix")]
 use kronika_format::Catalog;
 #[cfg(feature = "posix")]
 use kronika_store::{ActiveSnapshot, FinalUnit, LocalDir, read_catalog};
-use kronika_store::{
-    ImmutableSegmentSource, ResourceCatalog, ResourceError, ResourceListing, SegmentResource,
-    read_resource_catalog,
-};
 
 pub use dictionary::{Dictionary, OwnedDictionaryValue};
+#[cfg(feature = "posix")]
+pub use discovery::CatalogDiscovery;
+#[cfg(feature = "posix")]
+use discovery::ListingMode;
 pub use error::ReaderError;
+pub use finished::FinishedReader;
 pub use kronika_format::{BlobEntry, Resolved, StrId};
 pub use kronika_registry::{Cell, RecordBatch, Row};
 #[cfg(feature = "posix")]
 pub use kronika_store::{StoreObject, StoreWarning, StoreWarningReason};
 pub use segment::{Section, Segment};
-
-/// Product reader for immutable segments from one storage source.
-///
-/// Catalog discovery stays separate from opening positional bytes. The source
-/// decides how an object is prepared; decoding remains synchronous.
-#[derive(Debug)]
-pub struct FinishedReader<S> {
-    source: S,
-}
-
-impl<S> FinishedReader<S> {
-    /// Bind a product reader to one immutable source.
-    #[must_use]
-    pub const fn new(source: S) -> Self {
-        Self { source }
-    }
-}
-
-impl<S: ResourceCatalog> FinishedReader<S> {
-    /// Discover immutable identities and compact catalogs.
-    ///
-    /// # Errors
-    ///
-    /// Returns a storage error when the bounded catalog pass cannot complete.
-    pub fn resources(&self) -> Result<ResourceListing<S::Resource>, ReaderError> {
-        let mut listing = self.source.resources()?;
-        listing
-            .resources
-            .sort_unstable_by_key(SegmentResource::identity);
-        if let Some(identity) = listing
-            .resources
-            .windows(2)
-            .find(|pair| pair[0].identity() == pair[1].identity())
-            .map(|pair| pair[0].identity())
-        {
-            return Err(ResourceError::DuplicateIdentity(identity).into());
-        }
-        Ok(listing)
-    }
-}
-
-impl<S: ImmutableSegmentSource> FinishedReader<S> {
-    /// Open one discovered resource through the production row decoder.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for a foreign or changed resource, an unreadable
-    /// object, or an invalid full catalog.
-    pub fn open_segment(
-        &self,
-        resource: &SegmentResource<S::Resource>,
-    ) -> Result<Segment, ReaderError> {
-        let bytes = self.source.open_resource(resource)?;
-        let catalog = read_resource_catalog(&bytes);
-        self.source.validate_opened(resource, &bytes)?;
-        let catalog = Arc::new(catalog?);
-        Ok(Segment::open_finished(
-            bytes,
-            catalog,
-            resource.identity().segment_id().get(),
-            resource.captured_bytes(),
-            resource.summary(),
-            format!("segment:{}", resource.identity().segment_id().get()),
-        ))
-    }
-}
 
 /// Whether a listed segment is immutable or the captured journal prefix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,272 +178,6 @@ pub struct Listing {
     pub warnings: Vec<StoreWarning>,
 }
 
-/// One catalog-only store scan whose full section catalogs remain unopened.
-///
-/// A caller can inspect all recorded time ranges, choose a window, and then
-/// materialize references only for segments that overlap that window.
-#[cfg(feature = "posix")]
-#[derive(Debug, Clone)]
-pub struct CatalogDiscovery<'a> {
-    reader: &'a Reader,
-    scan: kronika_store::LocalScan,
-}
-
-#[cfg(feature = "posix")]
-#[derive(Clone, Copy)]
-enum ListingMode {
-    Catalog,
-    CatalogWithPredecessor,
-    Validated,
-}
-
-#[cfg(feature = "posix")]
-impl CatalogDiscovery<'_> {
-    /// Time bounds of every canonical segment found by the scan.
-    pub fn ranges(&self) -> impl Iterator<Item = (i64, i64)> + '_ {
-        let active_id = self.scan.active.first().map(|part| part.segment_id.get());
-        let finished_is_canonical = active_id.is_some_and(|active_id| {
-            self.scan
-                .finished
-                .iter()
-                .any(|unit| unit.address.id.get() == active_id)
-        });
-        let active = (!finished_is_canonical)
-            .then(|| active_bounds(&self.scan.active))
-            .flatten();
-        self.scan
-            .finished
-            .iter()
-            .map(|unit| (unit.summary.min_ts, unit.summary.max_ts))
-            .chain(active)
-    }
-
-    /// Open section catalogs only for segments overlapping `range`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an I/O error when a selected segment changed or its catalog
-    /// cannot be read safely.
-    pub fn segments<R: RangeBounds<i64>>(self, range: R) -> Result<Listing, ReaderError> {
-        self.list_segments(range, ListingMode::Catalog)
-    }
-
-    /// Open section catalogs in `range` and the closest canonical predecessor.
-    ///
-    /// This uses the same captured directory scan as [`Self::ranges`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the captured segment catalog cannot be read.
-    pub fn segments_with_predecessor<R: RangeBounds<i64>>(
-        self,
-        range: R,
-    ) -> Result<Listing, ReaderError> {
-        self.list_segments(range, ListingMode::CatalogWithPredecessor)
-    }
-
-    /// Open section catalogs in `range` and the closest predecessor carrying
-    /// rows for each requested physical layout.
-    ///
-    /// Compact finished-segment summaries reject sectionless candidates before
-    /// their full catalogs are opened. Positive summary matches are confirmed
-    /// against the catalog, so a Bloom-filter collision cannot hide an older
-    /// compatible predecessor. The active segment is considered from the same
-    /// captured directory scan.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when a selected segment catalog cannot be read safely.
-    pub fn segments_with_predecessors_for<R: RangeBounds<i64>>(
-        self,
-        range: R,
-        type_ids: &[u32],
-    ) -> Result<Listing, ReaderError> {
-        let bounds = owned_bounds(&range);
-        let mut listing = self.clone().list_segments(bounds, ListingMode::Catalog)?;
-        let mut remaining = type_ids.iter().copied().collect::<BTreeSet<_>>();
-        if remaining.is_empty() {
-            return Ok(listing);
-        }
-
-        let finished = Arc::clone(&self.scan.finished);
-        let active_id = self.scan.active.first().map(|part| part.segment_id.get());
-        let active_time_bounds = active_bounds(&self.scan.active);
-        let finished_exists = active_id.is_some_and(|active_id| {
-            finished
-                .iter()
-                .any(|unit| unit.address.id.get() == active_id)
-        });
-        let canonical_active = (!finished_exists)
-            .then_some(active_id.zip(active_time_bounds))
-            .flatten();
-        let mut candidates = finished
-            .iter()
-            .enumerate()
-            .filter(|(_index, unit)| before_start(&range, unit.summary.max_ts))
-            .map(|(index, unit)| (unit.summary.max_ts, unit.address.id.get(), Some(index)))
-            .chain(
-                canonical_active
-                    .filter(|(_id, (_min_ts, max_ts))| before_start(&range, *max_ts))
-                    .map(|(id, (_min_ts, max_ts))| (max_ts, id, None)),
-            )
-            .collect::<Vec<_>>();
-        candidates.sort_unstable_by_key(|(max_ts, id, _index)| Reverse((*max_ts, *id)));
-
-        for (_max_ts, _id, finished_index) in candidates {
-            let requested = remaining.iter().copied().collect::<Vec<_>>();
-            let segment = if let Some(index) = finished_index {
-                let unit = &finished[index];
-                if !unit.summary.may_contain_any_nonempty_type(&requested) {
-                    continue;
-                }
-                let file = self.reader.dir.open_finished(unit)?;
-                let catalog = read_catalog(&file)?;
-                self.reader.dir.validate_finished_file(&file, unit)?;
-                let sections = sections_of(std::iter::once(&catalog)).into();
-                SegmentRef {
-                    source: SegmentSource::Finished(unit.clone()),
-                    provenance: Arc::clone(&self.reader.provenance),
-                    segment_id: unit.address.id.get(),
-                    min_ts: unit.summary.min_ts,
-                    max_ts: unit.summary.max_ts,
-                    captured_bytes: unit.identity.len,
-                    sections,
-                }
-            } else {
-                let Some(snapshot) = self.reader.dir.open_active_snapshot(&self.scan)? else {
-                    continue;
-                };
-                let Some((min_ts, max_ts)) = active_time_bounds else {
-                    continue;
-                };
-                let sections =
-                    sections_of(snapshot.parts().iter().map(|part| &part.catalog)).into();
-                SegmentRef {
-                    segment_id: snapshot.segment_id().get(),
-                    source: SegmentSource::Active(snapshot),
-                    provenance: Arc::clone(&self.reader.provenance),
-                    min_ts,
-                    max_ts,
-                    captured_bytes: self.scan.valid_len,
-                    sections,
-                }
-            };
-            let matched = segment
-                .sections()
-                .iter()
-                .filter(|section| section.rows > 0 && remaining.contains(&section.type_id))
-                .map(|section| section.type_id)
-                .collect::<Vec<_>>();
-            if matched.is_empty() {
-                continue;
-            }
-            for type_id in matched {
-                remaining.remove(&type_id);
-            }
-            listing.segments.push(segment);
-            if remaining.is_empty() {
-                break;
-            }
-        }
-        listing.segments.sort_unstable_by_key(SegmentRef::id);
-        Ok(listing)
-    }
-
-    fn list_segments<R: RangeBounds<i64>>(
-        mut self,
-        range: R,
-        mode: ListingMode,
-    ) -> Result<Listing, ReaderError> {
-        let mut segments = Vec::new();
-        let finished = Arc::clone(&self.scan.finished);
-        let active_id = self.scan.active.first().map(|part| part.segment_id.get());
-        let active_time_bounds = active_bounds(&self.scan.active);
-        let finished_exists = active_id.is_some_and(|active_id| {
-            finished
-                .iter()
-                .any(|unit| unit.address.id.get() == active_id)
-        });
-        let canonical_active = (matches!(mode, ListingMode::Validated) || !finished_exists)
-            .then_some(active_id.zip(active_time_bounds))
-            .flatten();
-        let predecessor = matches!(mode, ListingMode::CatalogWithPredecessor)
-            .then(|| {
-                finished
-                    .iter()
-                    .filter(|unit| before_start(&range, unit.summary.max_ts))
-                    .map(|unit| (unit.summary.max_ts, unit.address.id.get()))
-                    .chain(
-                        canonical_active
-                            .filter(|(_id, (_min_ts, max_ts))| before_start(&range, *max_ts))
-                            .map(|(id, (_min_ts, max_ts))| (max_ts, id)),
-                    )
-                    .max()
-                    .map(|(_max_ts, id)| id)
-            })
-            .flatten();
-        for unit in finished.iter().filter(|unit| {
-            overlaps(&range, unit.summary.min_ts, unit.summary.max_ts)
-                || predecessor == Some(unit.address.id.get())
-        }) {
-            if matches!(mode, ListingMode::Validated)
-                && !self.reader.dir.validate_finished(&mut self.scan, unit)?
-            {
-                continue;
-            }
-            let file = self.reader.dir.open_finished(unit)?;
-            let catalog = read_catalog(&file)?;
-            self.reader.dir.validate_finished_file(&file, unit)?;
-            let sections = sections_of(std::iter::once(&catalog)).into();
-            segments.push(SegmentRef {
-                source: SegmentSource::Finished(unit.clone()),
-                provenance: Arc::clone(&self.reader.provenance),
-                segment_id: unit.address.id.get(),
-                min_ts: unit.summary.min_ts,
-                max_ts: unit.summary.max_ts,
-                captured_bytes: unit.identity.len,
-                sections,
-            });
-        }
-        let finished_is_canonical = active_id.is_some_and(|active_id| {
-            segments
-                .iter()
-                .any(|segment| segment.segment_id == active_id)
-        });
-        let active = if finished_is_canonical {
-            None
-        } else if let Some((_id, (min_ts, max_ts))) =
-            canonical_active.filter(|(id, (min_ts, max_ts))| {
-                overlaps(&range, *min_ts, *max_ts) || predecessor == Some(*id)
-            })
-        {
-            self.reader
-                .dir
-                .open_active_snapshot(&self.scan)?
-                .map(|snapshot| (snapshot, min_ts, max_ts))
-        } else {
-            None
-        };
-        if let Some((snapshot, min_ts, max_ts)) = active {
-            let sections = sections_of(snapshot.parts().iter().map(|part| &part.catalog)).into();
-            segments.push(SegmentRef {
-                segment_id: snapshot.segment_id().get(),
-                source: SegmentSource::Active(snapshot),
-                provenance: Arc::clone(&self.reader.provenance),
-                min_ts,
-                max_ts,
-                captured_bytes: self.scan.valid_len,
-                sections,
-            });
-        }
-        segments.sort_by_key(|segment| segment.segment_id);
-        Ok(Listing {
-            segments,
-            warnings: self.scan.warnings,
-        })
-    }
-}
-
 /// An open data directory.
 #[cfg(feature = "posix")]
 #[derive(Debug)]
@@ -554,7 +223,8 @@ impl Reader {
     ///
     /// Returns an I/O error when the directory cannot be walked.
     pub fn segments<R: RangeBounds<i64>>(&self, range: R) -> Result<Listing, ReaderError> {
-        self.list_segments(range, ListingMode::Validated)
+        self.catalog_discovery()?
+            .list_segments(range, ListingMode::Validated)
     }
 
     /// Scan compact catalog summaries before choosing which full catalogs to
@@ -619,14 +289,6 @@ impl Reader {
             segments,
             warnings: scan.warnings,
         })
-    }
-
-    fn list_segments<R: RangeBounds<i64>>(
-        &self,
-        range: R,
-        mode: ListingMode,
-    ) -> Result<Listing, ReaderError> {
-        self.catalog_discovery()?.list_segments(range, mode)
     }
 
     /// Open one of the segments a listing returned.
@@ -700,49 +362,6 @@ fn active_bounds(parts: &[kronika_store::ActivePart]) -> Option<(i64, i64)> {
     }
 }
 
-/// Whether a segment covering `[min_ts, max_ts]` has anything inside `range`.
-///
-/// Timestamps are whole microseconds, so an excluded bound moves one
-/// microsecond inwards and both ends become inclusive. An empty range then
-/// yields no instants at all and matches nothing.
-#[cfg(feature = "posix")]
-fn overlaps<R: RangeBounds<i64>>(range: &R, min_ts: i64, max_ts: i64) -> bool {
-    let start = match range.start_bound() {
-        Bound::Unbounded => i64::MIN,
-        Bound::Included(start) => *start,
-        Bound::Excluded(start) => {
-            let Some(start) = start.checked_add(1) else {
-                return false;
-            };
-            start
-        }
-    };
-    let end = match range.end_bound() {
-        Bound::Unbounded => i64::MAX,
-        Bound::Included(end) => *end,
-        Bound::Excluded(end) => {
-            let Some(end) = end.checked_sub(1) else {
-                return false;
-            };
-            end
-        }
-    };
-    min_ts.max(start) <= max_ts.min(end)
-}
-
-#[cfg(feature = "posix")]
-fn before_start<R: RangeBounds<i64>>(range: &R, max_ts: i64) -> bool {
-    match range.start_bound() {
-        Bound::Unbounded => false,
-        Bound::Included(start) => max_ts < *start,
-        Bound::Excluded(start) => max_ts <= *start,
-    }
-}
-
-#[cfg(feature = "posix")]
-fn owned_bounds<R: RangeBounds<i64>>(range: &R) -> (Bound<i64>, Bound<i64>) {
-    (range.start_bound().cloned(), range.end_bound().cloned())
-}
-
 #[cfg(all(test, feature = "posix"))]
+#[path = "tests/reader.rs"]
 mod tests;

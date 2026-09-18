@@ -1,9 +1,12 @@
 //! Opening the journal at startup and publishing a readable WAL.
 
-use super::{
-    Context, FileKind, Instant, Journal, JournalConfig, LogLevel, PathBuf, Result, SegmentAddress,
-    WriterOwner, duration_ms, field, log_close_failure, log_event, peak_rss_kib, write_segment,
-};
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use kronika_layout::{SegmentAddress, WriterOwner};
+use kronika_writer::{Journal, JournalConfig};
+
+use super::close::publish_journal;
 
 /// Open the journal under the storage directory and write out windows a
 /// previous process left behind, so a restart loses no collected data.
@@ -59,56 +62,12 @@ pub(super) fn write_recovered_journal(
         }
     }
     let address = SegmentAddress::new(segment_id).context("derive the recovered UTC address")?;
-    let dest = owner.root().diagnostic_file_path(address, FileKind::Zms);
-    let journal_bytes = journal.bytes();
-    let journal_parts = journal.parts().len();
-    let started = Instant::now();
-    let summary = match write_segment(journal, owner, address) {
-        Ok(summary) => summary,
-        Err(error) => {
-            log_close_failure(
-                &dest,
-                segment_id,
-                "recovered",
-                "write",
-                journal_bytes,
-                journal_parts,
-                started.elapsed(),
-                &error,
-            );
-            return Err(anyhow::Error::new(error).context("write the recovered segment"));
-        }
-    };
-    log_event(
-        LogLevel::Info,
-        "segment_write_finish",
-        &[
-            field("segment_path", dest.display()),
-            field("segment_id", segment_id.get()),
-            field("reason", "recovered"),
-            field("sections", summary.sections),
-            field("segment_bytes", summary.bytes),
-            field("journal_bytes", journal_bytes),
-            field("journal_parts", journal_parts),
-            field("min_ts", summary.min_ts),
-            field("max_ts", summary.max_ts),
-            field("elapsed_ms", duration_ms(started.elapsed())),
-            field("rss_kib", peak_rss_kib()),
-        ],
-    );
-    if let Err(error) = journal.reset() {
-        log_close_failure(
-            &dest,
-            segment_id,
-            "recovered",
-            "journal-reset",
-            journal_bytes,
-            journal_parts,
-            started.elapsed(),
-            &error,
-        );
-        return Err(anyhow::Error::new(error)
-            .context("reset the journal after the recovered segment write"));
-    }
-    Ok(Some(dest))
+    publish_journal(
+        journal,
+        owner,
+        address,
+        "recovered",
+        "the recovered segment",
+    )
+    .map(Some)
 }

@@ -23,7 +23,7 @@ A snapshot is a set of values recorded during one source poll. The cursor select
 | Day/hour, previous/next hour | Selected calendar hour in Browser time or UTC. Charts retain the full hour domain. |
 | Browser time / UTC | Civil-time display and calendar selection. Stored Unix microseconds retain their value. |
 | Workspace clock, timeline pointer | Cursor. Pointer previews a recorded time. Releasing the pointer commits it. Leaving a preview restores the committed cursor. |
-| ← / →, previous/next observation | Previous/next member of the sorted distinct recorded timestamps loaded for the current view, including different source cadences. Buttons, text inputs, selects and editable content retain their own arrow keys. |
+| ← / →, previous/next observation | Nearest recorded snapshot of the open screen at least one second earlier/later. Navigation searches across segments and hours without using collector intervals. Buttons, text inputs, selects and editable content retain their own arrow keys. |
 | Refresh | Reload catalog and selected view. Current visible hour refreshes 15 seconds after completion. Visibility restoration refreshes immediately. Historical hours do not poll. Pinned cursor stays fixed. Following cursor advances to the latest observation. The selected hour remains fixed. |
 | View | Processes, Host, PostgreSQL or Events. |
 | Lens | Column set and default ordering for one table. Metric definitions remain those in the domain reference. |
@@ -73,9 +73,9 @@ Sources: [search parser](../bins/kronika-web/ui/src/search.ts), [shared search d
 
 | Input | Meaning |
 | --- | --- |
-| Collector `KRONIKA_PG_DSN` | One connection selects the PostgreSQL server to collect. |
+| Collector `--pg-dsn` or `KRONIKA_PG_DSN` | One connection selects the PostgreSQL server to collect. |
 | Recorded `instance_metadata` | Environment, collection cadence, PostgreSQL enabled flag and optional explicit database CPU capacity override. Used by scope/time/Health calculations. |
-| Required web `KRONIKA_WEB_SOURCES` | Unsigned catalog bitset: `0` neither configured flag, `1` OS, `2` PostgreSQL, `3` both. It labels configured sources. It does not filter stored data, control collection, hide tabs or calculate Health. |
+| Required web `--sources` or `KRONIKA_WEB_SOURCES` | Source names `none`, `os`, `postgresql`, `all`, or the legacy unsigned catalog bitset: `0` neither configured flag, `1` OS, `2` PostgreSQL, `3` both. It labels configured sources. It does not filter stored data, control collection, hide tabs or calculate Health. |
 | Configured PostgreSQL UI flag | Together with recorded PostgreSQL presence, controls suppression of the PostgreSQL no-data tooltip. The configured OS bit has no UI consumer. |
 | Recorded physical layout | Determines available fields for that PostgreSQL version or extension variant. |
 

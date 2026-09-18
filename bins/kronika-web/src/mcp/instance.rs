@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 
 use kronika_query::snapshot::PlainRowOut;
 
-use super::catalog::{GetInstanceInput, SettingsScopeInput};
+use super::input::{GetInstanceInput, SettingsScopeInput};
 use super::postgresql::{plain_row_to_json, plain_rows};
 use super::semantics::{mcp_error, mcp_structured};
 use crate::config::Config;
@@ -148,4 +148,5 @@ fn newest_rows(
 }
 
 #[cfg(test)]
+#[path = "../tests/mcp/instance.rs"]
 mod tests;

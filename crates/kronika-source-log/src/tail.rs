@@ -4,7 +4,9 @@ use std::fs::File;
 use std::io::{self, Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use memchr::{memchr, memchr_iter};
+mod framing;
+use framing::{OpenRecord, PartialLine, PhysicalLine};
+use memchr::memchr;
 
 /// Bytes handed to the kernel per `read` call. The file itself can be any
 /// size; this is all of it that is ever in memory at once.
@@ -172,16 +174,6 @@ impl Tail {
         self.read_batch_configured(continues, max_records, MAX_READ_BYTES, false)
     }
 
-    #[cfg(test)]
-    fn read_batch_with_limit(
-        &mut self,
-        continues: Continues,
-        max_records: usize,
-        raw_limit: usize,
-    ) -> io::Result<TailBatch> {
-        self.read_batch_configured(continues, max_records, raw_limit, true)
-    }
-
     fn read_batch_configured(
         &mut self,
         continues: Continues,
@@ -294,18 +286,18 @@ impl Tail {
             while at < read {
                 let chunk = buf.get(at..read).unwrap_or_default();
                 let Some(end) = memchr(b'\n', chunk) else {
-                    self.keep_partial(chunk, track_quotes);
+                    self.partial.push(chunk, track_quotes);
                     self.scan_offset = self.scan_offset.saturating_add(as_u64(chunk.len()));
                     break;
                 };
 
                 let before_newline = chunk.get(..end).unwrap_or_default();
-                self.keep_partial(before_newline, track_quotes);
+                self.partial.push(before_newline, track_quotes);
                 self.scan_offset = self
                     .scan_offset
                     .saturating_add(as_u64(before_newline.len() + 1));
                 at += end + 1;
-                let line = self.take_physical_line();
+                let line = self.partial.finish(self.scan_offset);
                 stop = self.accept_line(
                     line,
                     continues,
@@ -319,8 +311,6 @@ impl Tail {
             }
         }
 
-        let mut at_eof = self.scan_offset >= size && self.staged.is_none();
-
         if let Some(offset) = candidate_end {
             self.pending_end = Some(Position {
                 dev: self.position.dev,
@@ -330,7 +320,7 @@ impl Tail {
         }
         // A staged line is logically unread even when its bytes reached the
         // physical end of the observed file.
-        at_eof &= self.staged.is_none();
+        let at_eof = self.scan_offset >= size && self.staged.is_none();
         Ok(TailBatch {
             records,
             raw_bytes,
@@ -361,81 +351,8 @@ impl Tail {
                 return true;
             }
         }
-        self.add_to_open(line);
+        self.open.get_or_insert_with(OpenRecord::new).push(line);
         false
-    }
-
-    fn keep_partial(&mut self, chunk: &[u8], track_quotes: bool) {
-        if track_quotes {
-            self.partial.quotes_odd ^= quote_parity(chunk);
-        }
-        if self.partial.truncated {
-            return;
-        }
-        let room = MAX_LINE_BYTES.saturating_sub(self.partial.bytes.len());
-        let kept = chunk.get(..room.min(chunk.len())).unwrap_or_default();
-        self.partial.bytes.extend_from_slice(kept);
-        if kept.len() < chunk.len() {
-            self.partial.truncated = true;
-        }
-    }
-
-    fn take_physical_line(&mut self) -> PhysicalLine {
-        let end = self.scan_offset;
-        let partial = std::mem::replace(&mut self.partial, PartialLine::new());
-        let PartialLine {
-            bytes: mut raw,
-            mut truncated,
-            quotes_odd,
-        } = partial;
-        if !truncated && raw.last() == Some(&b'\r') {
-            raw.pop();
-        }
-        let text = match String::from_utf8(raw) {
-            Ok(text) => Some(text),
-            Err(error) => {
-                let valid = error.utf8_error().valid_up_to();
-                let mut bytes = error.into_bytes();
-                bytes.truncate(valid);
-                truncated = true;
-                String::from_utf8(bytes).ok()
-            }
-        };
-        PhysicalLine {
-            end,
-            text,
-            truncated,
-            quotes_odd,
-        }
-    }
-
-    fn add_to_open(&mut self, line: PhysicalLine) {
-        let open = self.open.get_or_insert_with(OpenRecord::new);
-        open.end = line.end;
-        open.quotes_odd ^= line.quotes_odd;
-        open.truncated |= line.truncated;
-
-        let Some(mut text) = line.text else {
-            return;
-        };
-        let separator = usize::from(!open.lines.is_empty());
-        let Some(room) = MAX_LINE_BYTES
-            .checked_sub(open.bytes)
-            .and_then(|room| room.checked_sub(separator))
-        else {
-            open.truncated = true;
-            return;
-        };
-        let retained = crate::text::truncate(&text, room);
-        if retained.len() < text.len() {
-            open.truncated = true;
-        }
-        text.truncate(retained.len());
-        if separator != 0 {
-            open.bytes += 1;
-        }
-        open.bytes += text.len();
-        open.lines.push(text);
     }
 
     fn flush_open(&mut self, records: &mut Vec<Record>, candidate_end: &mut Option<u64>) {
@@ -469,60 +386,6 @@ impl Tail {
     }
 }
 
-#[derive(Debug)]
-struct PartialLine {
-    bytes: Vec<u8>,
-    truncated: bool,
-    quotes_odd: bool,
-}
-
-impl PartialLine {
-    const fn new() -> Self {
-        Self {
-            bytes: Vec::new(),
-            truncated: false,
-            quotes_odd: false,
-        }
-    }
-
-    const fn is_empty(&self) -> bool {
-        self.bytes.is_empty() && !self.truncated
-    }
-}
-
-#[derive(Debug)]
-struct OpenRecord {
-    lines: Vec<String>,
-    bytes: usize,
-    end: u64,
-    truncated: bool,
-    quotes_odd: bool,
-}
-
-impl OpenRecord {
-    const fn new() -> Self {
-        Self {
-            lines: Vec::new(),
-            bytes: 0,
-            end: 0,
-            truncated: false,
-            quotes_odd: false,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct PhysicalLine {
-    end: u64,
-    text: Option<String>,
-    truncated: bool,
-    quotes_odd: bool,
-}
-
-fn quote_parity(bytes: &[u8]) -> bool {
-    memchr_iter(b'"', bytes).count() % 2 == 1
-}
-
 fn as_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
@@ -539,4 +402,5 @@ const fn identity(_metadata: &std::fs::Metadata) -> (u64, u64) {
 }
 
 #[cfg(test)]
+#[path = "tests/tail.rs"]
 mod tests;

@@ -32,7 +32,7 @@ cd Kronika
 rustup target add x86_64-unknown-linux-musl
 cargo build --release --locked --target x86_64-unknown-linux-musl \
   -p kronika-collector -p kronika-web -p kronika-dump \
-  -p kronika-report
+  -p kronika-report-cli
 ```
 
 Программы появятся в `target/x86_64-unknown-linux-musl/release/` под именами
@@ -49,7 +49,7 @@ CC_aarch64_unknown_linux_musl=musl-gcc \
 CFLAGS_aarch64_unknown_linux_musl=-mno-outline-atomics \
 cargo build --release --locked --target aarch64-unknown-linux-musl \
   -p kronika-collector -p kronika-web -p kronika-dump \
-  -p kronika-report
+  -p kronika-report-cli
 ```
 
 Результат находится в `target/aarch64-unknown-linux-musl/release/`. Флаг
@@ -91,6 +91,11 @@ make fmt-check lint test
 
 <a id="browser-assets"></a>
 ## Пересборка файлов веб-интерфейса
+
+Пересобирайте WebAssembly отчёта в Ubuntu 24.04 на x86_64 с компилятором Rust
+для `x86_64-unknown-linux-gnu`. Установите Clang 18.1.3 и `llvm-ar-18`
+командой `sudo apt-get install clang-18 llvm-18`.
+Настройка путей описана в [справочнике сборки ресурсов](../crates/kronika-report/assets/README.ru.md).
 
 ```sh
 rustup target add wasm32-unknown-unknown --toolchain 1.96.0

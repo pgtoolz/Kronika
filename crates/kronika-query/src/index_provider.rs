@@ -101,5 +101,5 @@ impl IndexProvider for MemoryIndexProvider {
 }
 
 #[cfg(test)]
-#[path = "index_provider/tests.rs"]
+#[path = "tests/index_provider.rs"]
 mod tests;

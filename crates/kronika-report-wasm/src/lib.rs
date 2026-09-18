@@ -151,7 +151,7 @@ impl ReportResponse {
         }
     }
 
-    fn bad_parameter(parameter: &'static str) -> Self {
+    fn bad_parameter(parameter: &str) -> Self {
         Self::refusal(
             BAD_REQUEST,
             "bad_parameter",
@@ -165,25 +165,12 @@ impl ReportResponse {
             RouteError::NoSuchPath => {
                 Self::refusal(NOT_FOUND, "no_such_path", None, "no such path".to_owned())
             }
-            RouteError::BadParameter(parameter) => Self::refusal(
-                BAD_REQUEST,
-                "bad_parameter",
-                Some(parameter.clone()),
-                format!("invalid parameter {parameter}"),
-            ),
+            RouteError::BadParameter(parameter) => Self::bad_parameter(&parameter),
         }
     }
 
     fn query(error: &QueryError) -> Self {
-        let status = match error {
-            QueryError::NoSuchSegment | QueryError::NoSuchSection => NOT_FOUND,
-            QueryError::NoSuchColumn(_)
-            | QueryError::MixedUnits(_)
-            | QueryError::BadFilter(_)
-            | QueryError::BadCursor
-            | QueryError::BadLocator(_) => BAD_REQUEST,
-            _ => INTERNAL_SERVER_ERROR,
-        };
+        let status = kronika_api::query_error_status(error);
         let code = error.code();
         let parameter = error.parameter().map(str::to_owned);
         Self::refusal(status, code, parameter, error.to_string())
@@ -211,4 +198,5 @@ impl QuerySink for NdjsonSink {
 }
 
 #[cfg(test)]
+#[path = "tests/lib.rs"]
 mod tests;

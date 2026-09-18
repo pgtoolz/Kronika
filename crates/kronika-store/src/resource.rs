@@ -396,5 +396,5 @@ pub trait ImmutableSegmentSource: ResourceCatalog {
 }
 
 #[cfg(test)]
-#[path = "resource/tests.rs"]
+#[path = "tests/resource.rs"]
 mod tests;

@@ -55,4 +55,5 @@ async fn perform(client: &Client, config: &WorkloadConfig, action: Action) -> an
 }
 
 #[cfg(test)]
+#[path = "../tests/workload/events.rs"]
 mod tests;

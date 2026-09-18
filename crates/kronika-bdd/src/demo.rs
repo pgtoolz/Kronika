@@ -113,4 +113,5 @@ impl Drop for DemoRun {
 }
 
 #[cfg(test)]
+#[path = "tests/demo.rs"]
 mod tests;

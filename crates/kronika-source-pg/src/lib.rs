@@ -1,4 +1,13 @@
 //! Collecting metrics from a `PostgreSQL` server.
+//!
+//! [`PgCollector`] owns connection generations, discovery, capability caches and
+//! bounded acquisition. Callers provide a [`Pool`], a [`PgCollectionSelection`]
+//! and synchronous batch-admission and observation callbacks. Scheduling,
+//! persistence and diagnostic formatting remain outside the library.
+//!
+//! [`log_discovery`] reads server log metadata using the same connection setup
+//! and safe endpoint identities. Its timezone resolver keeps log parser types
+//! in the caller, and `PgBouncer` retains its distinct Simple Query Protocol.
 macro_rules! marked {
     () => {
         concat!(
@@ -20,6 +29,15 @@ macro_rules! marked {
         )
     };
 }
+
+mod acquisition;
+mod connection;
+pub mod log_discovery;
+
+pub use acquisition::{
+    ConnectionObservation, PgBatch, PgCollectionSelection, PgCollector, PgObservation, PgWarning,
+    QueryObservation, QueryOutcome,
+};
 
 pub mod activity;
 pub mod archiver;
@@ -57,13 +75,4 @@ fn intern_opt<E>(
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "matches the fallible interner signature used by row converters"
-)]
-fn test_intern(bytes: &[u8]) -> Result<kronika_registry::StrId, std::convert::Infallible> {
-    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    });
-    Ok(kronika_registry::StrId(hash | 1))
-}
+mod tests;

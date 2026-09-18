@@ -1,25 +1,27 @@
 //! Shared recorded-event query, decoding, grouping, and result contract.
 
+mod group;
+mod scan;
+mod source;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use kronika_reader::{Cell, Row, Segment, SegmentKind};
+use group::{EventGroups, SlowThreshold};
+use kronika_reader::SegmentKind;
+use scan::{carries_selected, collect_section};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use super::projection::{Plan, plans, streaming_chunk_dictionary, validate_row_dictionary};
-use super::render::{cell, record};
+use super::render::record;
 use super::row_key::{self, DetailLocator};
 use super::time::TimeRange;
-use crate::request::{DataRequest, Filter, SegmentRequest};
+
+use crate::request::Filter;
 use crate::{
     DatasetSegment, QueryContext, QueryDataset, QueryError, QuerySink, QueryStability,
     SegmentBounds, SegmentSelection,
 };
-
-mod group;
-
-use group::{EventGroups, SlowThreshold};
 
 /// Maximum accepted Events time-window width, in microseconds.
 pub const MAX_EVENTS_WINDOW_MICROS: i64 = 3_600_000_000;
@@ -66,174 +68,6 @@ pub(crate) enum EventSource {
     Lifecycle,
     #[serde(rename = "pgbouncer_events")]
     Pgbouncer,
-}
-
-impl EventSource {
-    const GROUPS: [Self; 7] = [
-        Self::Errors,
-        Self::Checkpoints,
-        Self::Autovacuum,
-        Self::SlowQueries,
-        Self::LockWaits,
-        Self::Lifecycle,
-        Self::Pgbouncer,
-    ];
-    const OCCURRENCES: [Self; 8] = [
-        Self::Errors,
-        Self::Checkpoints,
-        Self::Autovacuum,
-        Self::SlowQueries,
-        Self::LockWaits,
-        Self::TempFiles,
-        Self::Lifecycle,
-        Self::Pgbouncer,
-    ];
-
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Errors => "pg_log_errors",
-            Self::Checkpoints => "pg_log_checkpoints",
-            Self::Autovacuum => "pg_log_autovacuum",
-            Self::SlowQueries => "pg_log_slow_queries",
-            Self::LockWaits => "pg_log_lock_waits",
-            Self::TempFiles => "pg_log_temp_files",
-            Self::Lifecycle => "pg_log_lifecycle",
-            Self::Pgbouncer => "pgbouncer_events",
-        }
-    }
-
-    fn parse(name: &str) -> Option<Self> {
-        Self::OCCURRENCES
-            .into_iter()
-            .find(|source| source.as_str() == name)
-    }
-
-    const fn group_fields(self) -> &'static [&'static str] {
-        match self {
-            Self::Errors => &[
-                "severity", "category", "sqlstate", "pattern", "count", "database", "username",
-            ],
-            Self::Checkpoints => &[
-                "phase",
-                "reason",
-                "seconds_apart",
-                "buffers_written",
-                "sync_ms",
-            ],
-            Self::Autovacuum => &[
-                "kind",
-                "relation",
-                "tuples_removed",
-                "tuples_dead_not_removable",
-                "elapsed_ms",
-            ],
-            Self::SlowQueries => &["pattern", "count", "max_duration_ms", "total_duration_ms"],
-            Self::LockWaits => &["kind", "pid", "lock_target", "duration_ms", "holding_pids"],
-            Self::Lifecycle => &["kind", "pid", "signal", "shutdown_mode"],
-            Self::Pgbouncer => &[
-                "source_file",
-                "level",
-                "database",
-                "username",
-                "host",
-                "text",
-            ],
-            Self::TempFiles => &[],
-        }
-    }
-
-    const fn occurrence_fields(self) -> &'static [&'static str] {
-        match self {
-            Self::Errors => &[
-                "system_identifier",
-                "source_file",
-                "severity",
-                "category",
-                "sqlstate",
-                "pattern",
-                "count",
-                "database",
-                "username",
-            ],
-            Self::Checkpoints => &[
-                "system_identifier",
-                "source_file",
-                "phase",
-                "seconds_apart",
-                "buffers_written",
-                "write_ms",
-                "sync_ms",
-                "total_ms",
-                "distance_kb",
-                "estimate_kb",
-                "wal_added",
-                "wal_removed",
-                "wal_recycled",
-                "sync_files",
-                "longest_sync_ms",
-                "average_sync_ms",
-            ],
-            Self::Autovacuum => &[
-                "system_identifier",
-                "source_file",
-                "kind",
-                "relation",
-                "index_scans",
-                "pages_removed",
-                "pages_remaining",
-                "tuples_removed",
-                "tuples_remaining",
-                "tuples_dead_not_removable",
-                "elapsed_ms",
-                "buffer_hits",
-                "buffer_misses",
-                "buffer_dirtied",
-                "avg_read_rate_mbs",
-                "avg_write_rate_mbs",
-                "cpu_user_ms",
-                "cpu_system_ms",
-                "wal_records",
-                "wal_fpi",
-                "wal_bytes",
-            ],
-            Self::SlowQueries => &[
-                "system_identifier",
-                "source_file",
-                "pattern",
-                "count",
-                "max_duration_ms",
-                "total_duration_ms",
-            ],
-            Self::LockWaits => &[
-                "system_identifier",
-                "source_file",
-                "kind",
-                "pid",
-                "lock_mode",
-                "lock_target",
-                "duration_ms",
-                "holding_pids",
-                "wait_queue",
-            ],
-            Self::TempFiles => &["system_identifier", "source_file", "path", "size_bytes"],
-            Self::Lifecycle => &[
-                "system_identifier",
-                "source_file",
-                "kind",
-                "pid",
-                "signal",
-                "shutdown_mode",
-            ],
-            Self::Pgbouncer => &[
-                "source_file",
-                "level",
-                "database",
-                "username",
-                "host",
-                "text",
-            ],
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -809,164 +643,6 @@ fn public_item<T: Serialize>(
     Ok(value)
 }
 
-fn carries_selected(segment: &DatasetSegment, sources: &[EventSource], settings: bool) -> bool {
-    segment.sections().iter().any(|section| {
-        let name = kronika_registry::logical_section_name(section.type_id);
-        (settings && name == Some("pg_settings"))
-            || sources.iter().any(|source| name == Some(source.as_str()))
-    })
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one low-level section scan receives its exact storage coordinates and sinks"
-)]
-fn collect_section(
-    segment: &Segment,
-    segment_id: i64,
-    logical_name: &str,
-    fields: &[&str],
-    filters: &[Filter],
-    range: TimeRange,
-    output: &mut impl FnMut(EventDataRow) -> Result<(), QueryError>,
-    sink: &dyn QuerySink,
-) -> Result<(), QueryError> {
-    let request = DataRequest {
-        segment: SegmentRequest {
-            segment_id,
-            section: logical_name.to_owned(),
-        },
-        fields: fields.iter().map(|field| (*field).to_owned()).collect(),
-        filters: filters.to_vec(),
-        type_id: None,
-        after: None,
-    };
-    let section_plans = match plans(segment, &request, true) {
-        Ok(section_plans) => section_plans,
-        Err(QueryError::NoSuchSection) => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    for plan in &section_plans {
-        collect_plan(segment, segment_id, plan, range, output, sink)?;
-    }
-    Ok(())
-}
-
-fn collect_plan(
-    segment: &Segment,
-    segment_id: i64,
-    plan: &Plan,
-    range: TimeRange,
-    output: &mut impl FnMut(EventDataRow) -> Result<(), QueryError>,
-    sink: &dyn QuerySink,
-) -> Result<(), QueryError> {
-    if !plan.applies() {
-        return Ok(());
-    }
-    let Some(timestamp_column) = plan.timestamp else {
-        return Ok(());
-    };
-    let mut chunk: Vec<(u64, Row)> = Vec::with_capacity(ROW_CHUNK_ROWS);
-    let mut failure = None;
-    let mut was_cancelled = false;
-    segment.visit_rows(
-        plan.type_id,
-        &plan.projection,
-        plan.start_row,
-        usize::MAX,
-        |ordinal, row| {
-            if sink.cancelled() {
-                was_cancelled = true;
-                return false;
-            }
-            if !row
-                .get(timestamp_column)
-                .is_some_and(|cell| matches!(cell, Cell::Ts(at) if range.contains(*at)))
-            {
-                return true;
-            }
-            chunk.push((ordinal, row));
-            if chunk.len() < ROW_CHUNK_ROWS {
-                return true;
-            }
-            if let Err(error) = append_chunk(
-                segment,
-                segment_id,
-                plan,
-                timestamp_column,
-                &mut chunk,
-                output,
-            ) {
-                failure = Some(error);
-                return false;
-            }
-            true
-        },
-    )?;
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    if was_cancelled {
-        return Err(QueryError::Cancelled);
-    }
-    if !chunk.is_empty() {
-        append_chunk(
-            segment,
-            segment_id,
-            plan,
-            timestamp_column,
-            &mut chunk,
-            output,
-        )?;
-    }
-    Ok(())
-}
-
-fn append_chunk(
-    segment: &Segment,
-    segment_id: i64,
-    plan: &Plan,
-    timestamp_column: &str,
-    chunk: &mut Vec<(u64, Row)>,
-    output: &mut impl FnMut(EventDataRow) -> Result<(), QueryError>,
-) -> Result<(), QueryError> {
-    let dictionary = streaming_chunk_dictionary(segment, chunk)?;
-    for (ordinal, row) in chunk.drain(..) {
-        validate_row_dictionary(&row, &dictionary)?;
-        if !plan.matches(&row, &dictionary) {
-            continue;
-        }
-        let Some(Cell::Ts(at)) = row.get(timestamp_column) else {
-            continue;
-        };
-        let identity = row_key::identity(plan.type_id, &row).map_err(|error| {
-            QueryError::Unreadable(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                error,
-            )))
-        })?;
-        let mut values = Map::new();
-        for field in &plan.fields {
-            values.insert(
-                field.name.clone(),
-                field
-                    .column
-                    .and_then(|name| row.get(name))
-                    .map_or(Ok(Value::Null), |value| cell(value, &dictionary))?,
-            );
-        }
-        output(EventDataRow {
-            segment_id,
-            type_id: plan.type_id,
-            row_ordinal: ordinal,
-            timestamp: *at,
-            identity,
-            values,
-        })?;
-    }
-    Ok(())
-}
-
 fn groups_result(
     query: &EventsQuery,
     groups: EventGroups,
@@ -1051,4 +727,5 @@ fn add_map_label(fields: &mut Map<String, Value>, field: &str, labels: &[&str]) 
 }
 
 #[cfg(test)]
+#[path = "tests/events.rs"]
 mod tests;

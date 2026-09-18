@@ -9,6 +9,11 @@ all IPv4 interfaces. Stop any manually started instance before starting its serv
 
 ## Environment files
 
+This setup keeps collector and web settings in environment files. Both programs
+also accept command-line options; an option in `ExecStart` overrides the corresponding
+environment value. See the [collector options](../bins/kronika-collector/README.md#configuration)
+and [web options](../bins/kronika-web/README.md#configuration).
+
 Create and edit the files:
 
 ```sh
@@ -22,7 +27,7 @@ sudoedit /etc/kronika/collector.env /etc/kronika/web.env
 
 ```ini
 KRONIKA_STORAGE_DIR=/var/lib/kronika
-KRONIKA_RETENTION=2147483648
+KRONIKA_RETENTION=2GiB
 ```
 
 `/etc/kronika/web.env`:
@@ -126,9 +131,7 @@ sudo journalctl -u kronika-collector -u kronika-web --since '5 minutes ago'
 ```
 
 Open `http://<server-ip>:8080`, replacing `<server-ip>` with the server's
-address. The same listener serves `/mcp`. For local access, a reverse proxy on
-the same machine or [SSH forwarding](../INSTALL.md#4-start-web), use
-`KRONIKA_WEB_LISTEN=127.0.0.1:8080` in `web.env` instead.
+address. The same listener serves `/mcp`.
 
 ## Operations
 

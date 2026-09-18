@@ -74,13 +74,28 @@ and CPU time. The image uses it as the supervisor
 for the collector, the default system workload, and the optional PostgreSQL
 workload.
 
-| Variable | Default | Meaning |
+Use `kronika-demo --help` for the generated option reference. Every setting below
+has a CLI option; explicit options override environment variables. Configuration
+is validated before any workload or collector starts.
+
+```sh
+kronika-demo --duration-s 1m --dir demo-data --system-workload-enabled false
+```
+
+Duration values accept integers in the option's named unit or a suffix such as
+`1m`, `5s`, or `4000ms`. They must resolve to whole seconds or milliseconds as
+specified by the option. Memory and scratch sizes accept integers in MiB or an
+explicit byte size such as `32MiB`; disk and network rates similarly accept
+integers in KiB/s or byte sizes per second such as `32KiB`. Sizes must be exact
+multiples of the named unit. Existing defaults and resource limits still apply.
+
+| Option / environment variable | Default | Meaning |
 | --- | ---: | --- |
-| `KRONIKA_DEMO_DIR` | `demo-data` | Where the collector log and `report.json` are written. |
-| `KRONIKA_STORAGE_DIR` | `$KRONIKA_DEMO_DIR/segments` | Collector storage directory. |
-| `KRONIKA_DEMO_DURATION_S` | 60 | Run duration in seconds. `0` runs until `SIGTERM` or `SIGINT`. |
-| `KRONIKA_DEMO_COLLECTOR_LOG` | `file` | `file` writes `collector.log`; `stderr` uses inherited stderr. The image uses `stderr` with bounded Docker log rotation. |
-| `KRONIKA_COLLECTOR_BIN` | `kronika-collector` beside this binary | Collector binary to run. |
+| `--dir` / `KRONIKA_DEMO_DIR` | `demo-data` | Where the collector log and `report.json` are written. |
+| `--storage-dir` / `KRONIKA_STORAGE_DIR` | `$KRONIKA_DEMO_DIR/segments` | Collector storage directory. |
+| `--duration-s` / `KRONIKA_DEMO_DURATION_S` | 60 | Run duration in seconds. `0` runs until `SIGTERM` or `SIGINT`. |
+| `--collector-log` / `KRONIKA_DEMO_COLLECTOR_LOG` | `file` | `file` writes `collector.log`; `stderr` uses inherited stderr. The image uses `stderr` with bounded Docker log rotation. |
+| `--collector-bin` / `KRONIKA_COLLECTOR_BIN` | `kronika-collector` beside this binary | Collector binary to run. |
 
 Other `KRONIKA_*` collector variables pass through unchanged.
 
@@ -89,18 +104,19 @@ Other `KRONIKA_*` collector variables pass through unchanged.
 This workload is enabled by default and does not depend on
 `KRONIKA_DEMO_WORKLOAD_DSN`. The Compose entrypoint enables it explicitly, so
 it continues to run when the PostgreSQL workload is disabled. Invalid or blank
-controls stop `kronika-demo` at startup and name the offending variable.
+controls stop `kronika-demo` at startup and name the offending variable. When
+the workload is disabled, its other controls are ignored.
 
-| Variable | Default | Accepted values |
+| Option / environment variable | Default | Accepted values |
 | --- | ---: | --- |
-| `KRONIKA_DEMO_SYSTEM_WORKLOAD_ENABLED` | `true` | Exactly `true` or `false`. |
-| `KRONIKA_DEMO_SYSTEM_WORKLOAD_DIR` | `$KRONIKA_DEMO_DIR/system-activity` | A non-blank directory separate from `KRONIKA_STORAGE_DIR`. Compose uses `/var/lib/kronika/data/system-activity`. |
-| `KRONIKA_DEMO_SYSTEM_CPU_PERCENT` | 12 | Peak percent of one CPU core, 1–25. |
-| `KRONIKA_DEMO_SYSTEM_MEMORY_MIB` | 32 | Anonymous working set, 8–128 MiB. |
-| `KRONIKA_DEMO_SYSTEM_FILE_MIB` | 8 | Fixed scratch-file size, 1–32 MiB. |
-| `KRONIKA_DEMO_SYSTEM_DISK_KIB_PER_S` | 32 | Peak payload in each of the read and write directions, 1–256 KiB/s. |
-| `KRONIKA_DEMO_SYSTEM_NETWORK_KIB_PER_S` | 32 | Peak one-way loopback payload, 1–256 KiB/s. |
-| `KRONIKA_DEMO_SYSTEM_FLUSH_INTERVAL_S` | 5 | Per-file flush interval, 1–10 seconds. Peak disk rate times this interval must fit in the scratch file. |
+| `--system-workload-enabled` / `KRONIKA_DEMO_SYSTEM_WORKLOAD_ENABLED` | `true` | Exactly `true` or `false`. |
+| `--system-workload-dir` / `KRONIKA_DEMO_SYSTEM_WORKLOAD_DIR` | `$KRONIKA_DEMO_DIR/system-activity` | A non-blank directory separate from `KRONIKA_STORAGE_DIR`. Compose uses `/var/lib/kronika/data/system-activity`. |
+| `--system-cpu-percent` / `KRONIKA_DEMO_SYSTEM_CPU_PERCENT` | 12 | Peak percent of one CPU core, 1–25. |
+| `--system-memory-mib` / `KRONIKA_DEMO_SYSTEM_MEMORY_MIB` | 32 | Anonymous working set, 8–128 MiB. |
+| `--system-file-mib` / `KRONIKA_DEMO_SYSTEM_FILE_MIB` | 8 | Fixed scratch-file size, 1–32 MiB. |
+| `--system-disk-kib-per-s` / `KRONIKA_DEMO_SYSTEM_DISK_KIB_PER_S` | 32 | Peak payload in each of the read and write directions, 1–256 KiB/s. |
+| `--system-network-kib-per-s` / `KRONIKA_DEMO_SYSTEM_NETWORK_KIB_PER_S` | 32 | Peak one-way loopback payload, 1–256 KiB/s. |
+| `--system-flush-interval-s` / `KRONIKA_DEMO_SYSTEM_FLUSH_INTERVAL_S` | 5 | Per-file flush interval, 1–10 seconds. Peak disk rate times this interval must fit in the scratch file. |
 
 Four named threads run inside `kronika-demo`: `krn-demo-cpu`,
 `krn-demo-memory`, `krn-demo-disk`, and `krn-demo-loop`. CPU work is bounded by
@@ -220,32 +236,34 @@ printf 'Smoke data retained at %s\n' "$smoke_dir"
 ### Optional PostgreSQL workload
 
 `KRONIKA_DEMO_WORKLOAD_DSN` enables the PostgreSQL workload. If unset, the
-PostgreSQL workload is disabled; the system workload remains enabled by default.
+PostgreSQL workload is disabled and its other controls are ignored; the system
+workload remains enabled by default.
 
-| Variable | Default | Meaning |
+| Option / environment variable | Default | Meaning |
 | --- | ---: | --- |
-| `KRONIKA_DEMO_WORKLOAD_DSN` | unset | Workload connection, normally through PgBouncer. |
-| `KRONIKA_DEMO_WORKLOAD_DIRECT_DSN` | required with workload | Direct PostgreSQL connection for the plan-change workload and session-scoped Vacuum settings. It must not point at transaction-pooled PgBouncer. The image sets this to its embedded PostgreSQL. |
-| `KRONIKA_DEMO_WORKLOAD_SCHEMAS` | 1 | Commerce schemas to create, from 1 through 8. |
-| `KRONIKA_DEMO_WORKLOAD_TABLES_PER_SCHEMA` | 8 | Tables per schema, from the 8 commerce tables through 64 total tables. |
-| `KRONIKA_DEMO_WORKLOAD_DDL_CONCURRENCY` | 4 | Concurrent setup connections, from 1 through 16. |
-| `KRONIKA_DEMO_WORKLOAD_SESSIONS` | 4 | Long-lived OLTP clients, from 1 through 16. |
-| `KRONIKA_DEMO_WORKLOAD_TPS` | 20 | Maximum aggregate OLTP transactions per second, from 1 through 64. |
-| `KRONIKA_DEMO_WORKLOAD_MAX_ORDERS` | 10000 | Reusable live OLTP order slots, from the client count through 50000. |
-| `KRONIKA_DEMO_WORKLOAD_LOCK_CHAINS` | 1 | Independent lock chains in each bounded round, from 1 through 4. |
-| `KRONIKA_DEMO_WORKLOAD_LOCK_CHAIN_DEPTH` | 4 | Transactions in each lock chain, from 2 through 8. Together with the hold time, this must let an earlier waiter acquire the row and a later waiter reach the fixed 10-second statement timeout. |
-| `KRONIKA_DEMO_WORKLOAD_LOCK_HOLD_MS` | 4000 | Lock hold time per link in a lock round, milliseconds. |
-| `KRONIKA_DEMO_WORKLOAD_LOCK_ROUND_INTERVAL_S` | 120 | Quiet pause after each lock round, seconds. |
-| `KRONIKA_DEMO_WORKLOAD_EVENT_ROUND_INTERVAL_S` | 180 | Quiet pause after one slow query, one bad statement, and one bad-database attempt. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_ROWS` | 300000 | Rows maintained in `shop.orders` for the plan-change workload, from 1 through 500000. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_WORKERS` | 4 | Concurrent `checkout-api` sessions exercising the same query, from 1 through 8. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_BASELINE_S` | 12 | Indexed baseline and recovery window, seconds. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_REGRESSION_S` | 30 | Window without the supporting checkout index, seconds. |
-| `KRONIKA_DEMO_WORKLOAD_PLAN_ROUND_INTERVAL_S` | 120 | Quiet pause after a complete plan-change round, seconds. |
-| `KRONIKA_DEMO_WORKLOAD_VACUUM_ROWS` | 100000 | Rows in the dedicated Vacuum workload table, from 1 through 250000. |
-| `KRONIKA_DEMO_WORKLOAD_VACUUM_ROUND_INTERVAL_S` | 180 | Quiet pause after each Vacuum episode, seconds. |
-| `KRONIKA_DEMO_WORKLOAD_VACUUM_STATEMENT_TIMEOUT_S` | 30 | Finite timeout for each update and Vacuum statement, seconds. |
+| `--workload-dsn` / `KRONIKA_DEMO_WORKLOAD_DSN` | unset | Workload connection, normally through PgBouncer. |
+| `--workload-direct-dsn` / `KRONIKA_DEMO_WORKLOAD_DIRECT_DSN` | required with workload | Direct PostgreSQL connection for the plan-change workload and session-scoped Vacuum settings. It must not point at transaction-pooled PgBouncer. The image sets this to its embedded PostgreSQL. |
+| `--workload-schemas` / `KRONIKA_DEMO_WORKLOAD_SCHEMAS` | 1 | Commerce schemas to create, from 1 through 8. |
+| `--workload-tables-per-schema` / `KRONIKA_DEMO_WORKLOAD_TABLES_PER_SCHEMA` | 8 | Tables per schema, from the 8 commerce tables through 64 total tables. |
+| `--workload-ddl-concurrency` / `KRONIKA_DEMO_WORKLOAD_DDL_CONCURRENCY` | 4 | Concurrent setup connections, from 1 through 16. |
+| `--workload-sessions` / `KRONIKA_DEMO_WORKLOAD_SESSIONS` | 4 | Long-lived OLTP clients, from 1 through 16. |
+| `--workload-tps` / `KRONIKA_DEMO_WORKLOAD_TPS` | 20 | Maximum aggregate OLTP transactions per second, from 1 through 64. |
+| `--workload-max-orders` / `KRONIKA_DEMO_WORKLOAD_MAX_ORDERS` | 10000 | Reusable live OLTP order slots, from the client count through 50000. |
+| `--workload-lock-chains` / `KRONIKA_DEMO_WORKLOAD_LOCK_CHAINS` | 1 | Independent lock chains in each bounded round, from 1 through 4. |
+| `--workload-lock-chain-depth` / `KRONIKA_DEMO_WORKLOAD_LOCK_CHAIN_DEPTH` | 4 | Transactions in each lock chain, from 2 through 8. Together with the hold time, this must let an earlier waiter acquire the row and a later waiter reach the fixed 10-second statement timeout. |
+| `--workload-lock-hold-ms` / `KRONIKA_DEMO_WORKLOAD_LOCK_HOLD_MS` | 4000 | Lock hold time per link in a lock round, milliseconds. |
+| `--workload-lock-round-interval-s` / `KRONIKA_DEMO_WORKLOAD_LOCK_ROUND_INTERVAL_S` | 120 | Quiet pause after each lock round, seconds. |
+| `--workload-event-round-interval-s` / `KRONIKA_DEMO_WORKLOAD_EVENT_ROUND_INTERVAL_S` | 180 | Quiet pause after one slow query, one bad statement, and one bad-database attempt. |
+| `--workload-plan-rows` / `KRONIKA_DEMO_WORKLOAD_PLAN_ROWS` | 300000 | Rows maintained in `shop.orders` for the plan-change workload, from 1 through 500000. |
+| `--workload-plan-workers` / `KRONIKA_DEMO_WORKLOAD_PLAN_WORKERS` | 4 | Concurrent `checkout-api` sessions exercising the same query, from 1 through 8. |
+| `--workload-plan-baseline-s` / `KRONIKA_DEMO_WORKLOAD_PLAN_BASELINE_S` | 12 | Indexed baseline and recovery window, seconds. |
+| `--workload-plan-regression-s` / `KRONIKA_DEMO_WORKLOAD_PLAN_REGRESSION_S` | 30 | Window without the supporting checkout index, seconds. |
+| `--workload-plan-round-interval-s` / `KRONIKA_DEMO_WORKLOAD_PLAN_ROUND_INTERVAL_S` | 120 | Quiet pause after a complete plan-change round, seconds. |
+| `--workload-vacuum-rows` / `KRONIKA_DEMO_WORKLOAD_VACUUM_ROWS` | 100000 | Rows in the dedicated Vacuum workload table, from 1 through 250000. |
+| `--workload-vacuum-round-interval-s` / `KRONIKA_DEMO_WORKLOAD_VACUUM_ROUND_INTERVAL_S` | 180 | Quiet pause after each Vacuum episode, seconds. |
+| `--workload-vacuum-statement-timeout-s` / `KRONIKA_DEMO_WORKLOAD_VACUUM_STATEMENT_TIMEOUT_S` | 30 | Finite timeout for each update and Vacuum statement, seconds. |
 
+The PostgreSQL workload uses two Tokio runtime threads.
 The default steady workload uses four long-lived `shop-oltp-*` clients through
 the PgBouncer connection and runs at most 20 short transactions per second in
 total. Each transaction reads one customer and product through their keys,
@@ -269,18 +287,22 @@ occupy IDs above the plan and Vacuum fixtures.
 The image collects PostgreSQL every 5 seconds. Workload statements and
 transactions have finite timeouts. Source: [workload](src/workload).
 
-For a native run against an existing PostgreSQL and PgBouncer setup, use
-`make demo-run`. It builds collector and demo for the Rust host target, then
-starts them. The [source build guide](../../docs/build.md) lists build
-dependencies. Replace these example connections with your workload connections:
+For a native run with the defaults, use `make demo-run`. To configure an
+existing PostgreSQL and PgBouncer workload, build the binaries and pass options
+to `kronika-demo` as shown below. The [source build guide](../../docs/build.md)
+lists build dependencies. Replace the example connections with your workload
+connections:
 
 ```sh
-KRONIKA_DEMO_WORKLOAD_DSN='host=127.0.0.1 port=6432 user=kronika_demo dbname=kronika_demo' \
-KRONIKA_DEMO_WORKLOAD_DIRECT_DSN='host=127.0.0.1 port=5432 user=kronika_demo dbname=kronika_demo' \
-    make demo-run
+make collector demo
+kronika_target=$(rustc +1.96.0 -vV | sed -n 's/^host: //p')
+"target/$kronika_target/debug/kronika-demo" \
+    --duration-s 1m \
+    --workload-dsn 'host=127.0.0.1 port=6432 user=kronika_demo dbname=kronika_demo' \
+    --workload-direct-dsn 'host=127.0.0.1 port=5432 user=kronika_demo dbname=kronika_demo'
 ```
 
 `SIGTERM` and `SIGINT` stop the workload and collector, retain the collector journal,
 and write the final report before exit.
 
-Sources: [supervisor](src/main.rs), [system workload](src/system_activity), [Compose](../../compose.demo.yml).
+Sources: [run orchestration](src/run.rs), [collector lifecycle](src/collector.rs), [configuration](src/config.rs), [system workload](src/system_activity), [Compose](../../compose.demo.yml).

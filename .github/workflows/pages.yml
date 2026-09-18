@@ -46,7 +46,7 @@ jobs:
           install -d "$CARGO_TARGET_DIR" "$TMPDIR"
           cargo +1.96.0 build --locked --release \
             --target "$CARGO_BUILD_TARGET" \
-            -p kronika-report
+            -p kronika-report-cli
 
       - name: Build and exercise Pages report
         env:
@@ -75,6 +75,8 @@ jobs:
             "$RUNNER_TEMP/site/reports/kronika-v1.0.2.html"
           cp "$RUNNER_TEMP/site/index.html" \
             "$RUNNER_TEMP/site/reports/kronika-v1.1.0.html"
+          cp "$RUNNER_TEMP/site/index.html" \
+            "$RUNNER_TEMP/site/reports/kronika-v1.2.0.html"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

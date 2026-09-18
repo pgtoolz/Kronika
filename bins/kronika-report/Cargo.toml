@@ -1,5 +1,5 @@
 [package]
-name = "kronika-report"
+name = "kronika-report-cli"
 description = "Generates one self-contained Kronika HTML report from one standalone ZMS"
 publish = false
 version.workspace = true
@@ -8,42 +8,17 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-default = ["generator"]
-generator = [
-    "dep:base64",
-    "dep:flate2",
-    "dep:kronika-format",
-    "dep:kronika-reader",
-    "dep:tempfile",
-    "kronika-store/posix",
-]
-
 [[bin]]
 name = "kronika-report"
 path = "src/main.rs"
-required-features = ["generator"]
-
-[[test]]
-name = "html_writer"
-path = "tests/html_writer.rs"
-required-features = ["generator"]
 
 [dependencies]
-base64 = { version = "0.22", optional = true }
-flate2 = { version = "1", optional = true }
-kronika-format = { path = "../../crates/kronika-format", optional = true }
-kronika-index = { path = "../../crates/kronika-index", default-features = false }
-kronika-layout = { path = "../../crates/kronika-layout", default-features = false }
-kronika-query = { path = "../../crates/kronika-query", default-features = false }
-kronika-reader = { path = "../../crates/kronika-reader", default-features = false, optional = true }
-kronika-store = { path = "../../crates/kronika-store", default-features = false }
-tempfile = { version = "3", optional = true }
+clap = { version = "4.6", features = ["derive"] }
+kronika-report = { path = "../../crates/kronika-report", features = ["generator"] }
+tempfile = "3"
 
 [dev-dependencies]
-kronika-registry = { path = "../../crates/kronika-registry" }
-kronika-writer = { path = "../../crates/kronika-writer" }
-serde_json = "1"
+kronika-store = { path = "../../crates/kronika-store" }
 
 [lints]
 workspace = true

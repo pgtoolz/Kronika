@@ -265,4 +265,5 @@ pub fn is_detail_text(section: &str, field: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "tests/row_key.rs"]
 mod tests;

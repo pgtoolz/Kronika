@@ -8,7 +8,7 @@ REPORT_ASSET_FLAGS ?=
 .PHONY: build collector demo report web ui-install ui-build ui-check report-assets report-assets-check fmt fmt-check query-boundary dylint lint test bdd-check check test-bdd demo-run demo-image demo-image-run demo-up demo-stop demo-clean demo-status demo-logs diagrams
 
 build: ## Build every binary for the selected target.
-	@$(CARGO_BUILD) -p kronika-collector -p kronika-dump -p kronika-demo -p kronika-report -p kronika-web
+	@$(CARGO_BUILD) -p kronika-collector -p kronika-dump -p kronika-demo -p kronika-report-cli -p kronika-web
 
 collector: ## Build kronika-collector.
 	@$(CARGO_BUILD) -p kronika-collector
@@ -17,7 +17,7 @@ demo: ## Build kronika-demo.
 	@$(CARGO_BUILD) -p kronika-demo
 
 report: ## Build kronika-report from the committed browser assets.
-	@$(CARGO_BUILD) -p kronika-report
+	@$(CARGO_BUILD) -p kronika-report-cli
 
 web: ## Build kronika-web from the committed interface artifact.
 	@$(CARGO_BUILD) -p kronika-web
@@ -72,8 +72,8 @@ test-bdd: ## Run BDD inside the cached Docker image.
 
 demo-run: ## Run the collector for a bounded window and report its cost.
 	@$(CARGO_BUILD) -p kronika-collector -p kronika-demo
-	@KRONIKA_COLLECTOR_BIN=target/$(TARGET)/debug/kronika-collector \
-		target/$(TARGET)/debug/kronika-demo
+	@target/$(TARGET)/debug/kronika-demo \
+		--collector-bin target/$(TARGET)/debug/kronika-collector
 
 demo-image: ## Build the demo Docker image (PostgreSQL, PgBouncer, collector, web).
 	@scripts/demo-image.sh build

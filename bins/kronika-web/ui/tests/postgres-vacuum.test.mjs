@@ -46,6 +46,23 @@ test("rows at 10:00:00 and 10:05:00 with no recorded sample between them are two
   assert.equal(vacuum.buildVacuumEpisodes(rows, null).length, 1)
 })
 
+test("10-to-5-to-10-second activity cadence preserves one vacuum episode and its actual span", () => {
+  const sample = (seconds) => row(seconds, {
+    heap_blks_scanned: 20, heap_blks_vacuumed: 0, index_vacuum_count: 0,
+    phase: "scanning heap",
+  })
+  const rows = [sample(0), sample(10), sample(15), sample(25)]
+  const episodes = vacuum.buildVacuumEpisodes(rows, 10)
+  assert.equal(episodes.length, 1)
+  assert.equal(episodes[0].rows.length, 4)
+  assert.equal(vacuum.phaseSpanUs(episodes[0]), 25 * S)
+  assert.deepEqual(episodes[0].noMovement, { samples: 4, spanUs: 25 * S })
+
+  // The recorded base interval still splits a gap longer than 25 seconds.
+  const afterGap = vacuum.buildVacuumEpisodes([...rows, sample(51)], 10)
+  assert.deepEqual(afterGap.map((episode) => episode.rows.length), [4, 1])
+})
+
 test("the in-phase span restarts when the index cycle increments under an unchanged phase name", () => {
   const rows = [
     row(0, { index_vacuum_count: 1, indexes_processed: 1, phase: "vacuuming indexes" }, "1012005"),

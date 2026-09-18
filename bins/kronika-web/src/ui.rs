@@ -13,10 +13,10 @@ use hyper::header::{
 };
 use hyper::{Response, StatusCode};
 
-use crate::WebBody;
-use crate::body::BodyError;
+use crate::body::{BodyError, WebBody};
 use crate::encoding::{ContentCoding, etag_matches};
 
+// build.rs validates this bundle and supplies hashes, lengths, and the script CSP.
 const UI_GZIP: &[u8] = include_bytes!("../ui/kronika-ui.html.gz");
 const UI_GZIP_ETAG: &str = env!("KRONIKA_UI_GZIP_ETAG");
 const UI_IDENTITY_ETAG: &str = env!("KRONIKA_UI_IDENTITY_ETAG");
@@ -26,45 +26,32 @@ const UI_CSP: &str = env!("KRONIKA_UI_CSP");
 const UI_GZIP_LEN: &str = env!("KRONIKA_UI_GZIP_LEN");
 const UI_IDENTITY_LEN: &str = env!("KRONIKA_UI_IDENTITY_LEN");
 const UI_VARY: &str = "Authorization, Accept-Encoding";
+// Bound each decode step and yield between chunks so a slow client cannot monopolize a worker.
 const UI_IDENTITY_CHUNK_BYTES: usize = 8 * 1_024;
 
 pub(crate) fn is_path(path: &str) -> bool {
     matches!(path, "/" | "/index.html")
 }
 
-#[cfg(not(test))]
 pub(crate) fn response(
     head: bool,
     if_none_match: Option<&str>,
     coding: ContentCoding,
 ) -> io::Result<Response<WebBody>> {
-    response_inner(head, if_none_match, coding)
-}
-
-#[cfg(test)]
-pub(crate) fn response(
-    head: bool,
-    if_none_match: Option<&str>,
-    coding: ContentCoding,
-) -> io::Result<Response<WebBody>> {
-    response_inner(head, if_none_match, coding, DecodeProbe::default())
-}
-
-#[cfg(test)]
-fn response_observed(
-    head: bool,
-    if_none_match: Option<&str>,
-    coding: ContentCoding,
-    probe: DecodeProbe,
-) -> io::Result<Response<WebBody>> {
-    response_inner(head, if_none_match, coding, probe)
+    response_inner(
+        head,
+        if_none_match,
+        coding,
+        #[cfg(test)]
+        tests::DecodeProbe::default(),
+    )
 }
 
 fn response_inner(
     head: bool,
     if_none_match: Option<&str>,
     coding: ContentCoding,
-    #[cfg(test)] probe: DecodeProbe,
+    #[cfg(test)] probe: tests::DecodeProbe,
 ) -> io::Result<Response<WebBody>> {
     let (length, etag) = match coding {
         ContentCoding::Identity => (UI_IDENTITY_LEN, UI_IDENTITY_ETAG),
@@ -83,7 +70,10 @@ fn response_inner(
             #[cfg(not(test))]
             let body = IdentityBody::new(Bytes::from_static(UI_GZIP), expected_len);
             #[cfg(test)]
-            let body = IdentityBody::new_observed(Bytes::from_static(UI_GZIP), expected_len, probe);
+            let body = IdentityBody {
+                probe,
+                ..IdentityBody::new(Bytes::from_static(UI_GZIP), expected_len)
+            };
             body.boxed_unsync()
         }
     };
@@ -125,10 +115,11 @@ struct IdentityBody {
     expected_len: usize,
     decoded: usize,
     emitted: usize,
+    #[cfg(test)]
     started: bool,
     yield_before_decode: bool,
     #[cfg(test)]
-    probe: DecodeProbe,
+    probe: tests::DecodeProbe,
 }
 
 impl IdentityBody {
@@ -139,18 +130,12 @@ impl IdentityBody {
             expected_len,
             decoded: 0,
             emitted: 0,
+            #[cfg(test)]
             started: false,
             yield_before_decode: false,
             #[cfg(test)]
-            probe: DecodeProbe::default(),
+            probe: tests::DecodeProbe::default(),
         }
-    }
-
-    #[cfg(test)]
-    fn new_observed(gzip: Bytes, expected_len: usize, probe: DecodeProbe) -> Self {
-        let mut body = Self::new(gzip, expected_len);
-        body.probe = probe;
-        body
     }
 
     fn fail(
@@ -193,9 +178,9 @@ impl hyper::body::Body for IdentityBody {
             cx.waker().wake_by_ref();
             return Poll::Pending;
         }
+        #[cfg(test)]
         if !this.started {
             this.started = true;
-            #[cfg(test)]
             this.probe.started();
         }
         loop {
@@ -256,57 +241,6 @@ impl hyper::body::Body for IdentityBody {
     }
 }
 
-#[cfg(test)]
-#[derive(Clone, Default)]
-struct DecodeProbe(std::sync::Arc<DecodeStats>);
-
-#[cfg(test)]
-#[derive(Default)]
-struct DecodeStats {
-    starts: std::sync::atomic::AtomicUsize,
-    completions: std::sync::atomic::AtomicUsize,
-    failures: std::sync::atomic::AtomicUsize,
-    frames: std::sync::atomic::AtomicUsize,
-    bytes: std::sync::atomic::AtomicUsize,
-    max_frame: std::sync::atomic::AtomicUsize,
-    yields: std::sync::atomic::AtomicUsize,
-}
-
-#[cfg(test)]
-impl DecodeProbe {
-    fn started(&self) {
-        self.0
-            .starts
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    fn completed(&self) {
-        self.0
-            .completions
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    fn failed(&self) {
-        self.0
-            .failures
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    fn emitted(&self, bytes: usize) {
-        use std::sync::atomic::Ordering;
-
-        self.0.frames.fetch_add(1, Ordering::Relaxed);
-        self.0.bytes.fetch_add(bytes, Ordering::Relaxed);
-        self.0.max_frame.fetch_max(bytes, Ordering::Relaxed);
-    }
-
-    fn yielded(&self) {
-        self.0
-            .yields
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
 pub(crate) fn set_vary(response: &mut Response<WebBody>) {
     response
         .headers_mut()
@@ -314,4 +248,5 @@ pub(crate) fn set_vary(response: &mut Response<WebBody>) {
 }
 
 #[cfg(test)]
+#[path = "tests/ui.rs"]
 mod tests;

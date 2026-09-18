@@ -453,4 +453,5 @@ impl Interner {
 }
 
 #[cfg(test)]
+#[path = "tests/interner.rs"]
 mod tests;

@@ -9,8 +9,8 @@ use kronika_report_wasm as _;
 use wasm_bindgen as _;
 
 const SEGMENT_ID: &str = "1709164800000000";
-const ZMS: &[u8] = include_bytes!("../../../bins/kronika-report/tests/fixtures/standalone.zms");
-const IDX: &[u8] = include_bytes!("../../../bins/kronika-report/tests/fixtures/standalone.idx");
+const ZMS: &[u8] = include_bytes!("../../../crates/kronika-report/tests/fixtures/standalone.zms");
+const IDX: &[u8] = include_bytes!("../../../crates/kronika-report/tests/fixtures/standalone.idx");
 
 fn argument(position: usize, name: &str) -> Result<String, std::io::Error> {
     std::env::args()

@@ -217,4 +217,5 @@ fn take_value<'a>(rest: &'a str, next: Option<&Token>) -> (&'a str, &'a str) {
 }
 
 #[cfg(test)]
+#[path = "../tests/postgres/prefix.rs"]
 mod tests;

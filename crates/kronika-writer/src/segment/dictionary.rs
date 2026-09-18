@@ -1,13 +1,21 @@
 //! Normalizing the per-window dictionaries into the segment's single pair.
 
-use super::error::WriteError;
-use super::{
-    Array, ArrowReaderOptions, BTreeMap, BinaryArray, BooleanArray, CodecError, DICT_BLOBS_TYPE_ID,
-    DICT_STRINGS_TYPE_ID, DataType, EntrySnapshot, Field, FinishedSection, FixedSizeBinaryArray,
-    HotMark, Journal, MAX_DECODED_SECTION_BYTES, MAX_ROW_GROUPS, MAX_SECTION_BYTES,
-    MAX_SECTION_ROWS, ParquetRecordBatchReaderBuilder, Placement, RecordBatch, Resolved, Schema,
-    SectionDescriptor, StrId, UInt64Array, read_verified_body, validate_plain_parquet_decode_work,
+use std::collections::BTreeMap;
+
+use arrow_array::{
+    Array, BinaryArray, BooleanArray, FixedSizeBinaryArray, RecordBatch, UInt64Array,
 };
+use arrow_schema::{DataType, Field, Schema};
+use kronika_format::{EntrySnapshot, HotMark, Placement, Resolved, StrId};
+use kronika_registry::{
+    CodecError, DICT_BLOBS_TYPE_ID, DICT_STRINGS_TYPE_ID, MAX_DECODED_SECTION_BYTES,
+    MAX_ROW_GROUPS, MAX_SECTION_BYTES, MAX_SECTION_ROWS, validate_plain_parquet_decode_work,
+};
+use parquet::arrow::arrow_reader::{ArrowReaderOptions, ParquetRecordBatchReaderBuilder};
+
+use super::plan::{SectionDescriptor, read_verified_body};
+use super::{FinishedSection, WriteError};
+use crate::Journal;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DictionaryValue {

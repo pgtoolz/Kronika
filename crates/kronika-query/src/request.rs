@@ -133,6 +133,18 @@ pub enum RelationGroup {
 }
 
 impl RelationGroup {
+    /// Parse the public relation `group` parameter value.
+    #[must_use]
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "database" => Some(Self::Database),
+            "schema" => Some(Self::Schema),
+            "tablespace" => Some(Self::Tablespace),
+            "object" => Some(Self::Object),
+            _ => None,
+        }
+    }
+
     /// Stable name used in query output and cursor identities.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -148,8 +160,12 @@ impl RelationGroup {
 /// One current-state snapshot at or before a recorded timestamp.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotRequest {
-    /// Preferred recorded segment identity.
+    /// Preferred recorded segment identity and upper bound on contributing segment IDs.
     pub segment_id: i64,
+    /// Select the latest eligible logical sample across this segment and its
+    /// predecessors, including physical revisions. False prefers this segment's
+    /// own sample. Exact row locators remain pinned regardless of this flag.
+    pub latest: bool,
     /// Requested sample timestamp, Unix microseconds.
     pub at: i64,
     /// Registry logical-section names in output order.
@@ -180,6 +196,28 @@ pub struct SnapshotRequest {
     pub row_ordinal: Option<u64>,
     /// Which statements a paged `pg_stat_statements` snapshot lists.
     pub scope: StatementScope,
+}
+
+/// Direction of navigation between recorded snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotNeighborDirection {
+    /// Earliest sample at least one second after the cursor.
+    Next,
+    /// Latest sample at least one second before the cursor.
+    Previous,
+}
+
+/// One neighboring recorded timestamp across the selected logical sections.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotNeighborRequest {
+    /// Registry logical-section names; collection cadence is not consulted.
+    pub sections: Vec<String>,
+    /// Current cursor, in Unix microseconds.
+    pub at: i64,
+    /// Which side of the cursor to search.
+    pub direction: SnapshotNeighborDirection,
+    /// Optional inclusive bounds, including a report's visible interval.
+    pub window: Window,
 }
 
 /// Projection and predicates shared by history and row pages.
@@ -246,6 +284,8 @@ pub enum QueryRequest {
     Hour(HourRequest),
     /// One current-state snapshot from one explicit segment.
     Snapshot(SnapshotRequest),
+    /// Nearest recorded sample at least one second away from the cursor.
+    SnapshotNeighbor(SnapshotNeighborRequest),
     /// One stable bounded page from one exact segment.
     Rows(RowsRequest),
     /// Recorded event groups or physical occurrences over one window.

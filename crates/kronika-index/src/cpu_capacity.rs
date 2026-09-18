@@ -134,4 +134,5 @@ impl RecordedCpuCapacity {
 }
 
 #[cfg(test)]
+#[path = "tests/cpu_capacity.rs"]
 mod tests;

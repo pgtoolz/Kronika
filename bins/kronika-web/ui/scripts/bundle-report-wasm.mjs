@@ -1,14 +1,16 @@
-import { readFile, writeFile } from "node:fs/promises"
+import { readFile, realpath, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
 import { build } from "esbuild"
+import { gzip } from "pako"
 
-const [inputArgument, outputArgument, ...extra] = process.argv.slice(2)
-if (inputArgument === undefined || outputArgument === undefined || extra.length !== 0) {
-  throw new Error("usage: node scripts/bundle-report-wasm.mjs INPUT OUTPUT")
+const [inputArgument, outputArgument, wasmArgument, gzipArgument, ...extra] = process.argv.slice(2)
+if (inputArgument === undefined || outputArgument === undefined
+  || wasmArgument === undefined || gzipArgument === undefined || extra.length !== 0) {
+  throw new Error("usage: node scripts/bundle-report-wasm.mjs INPUT_JS OUTPUT_JS INPUT_WASM OUTPUT_GZIP")
 }
 
-const input = resolve(inputArgument)
+const input = await realpath(resolve(inputArgument))
 const output = resolve(outputArgument)
 const generated = await readFile(input, "utf8")
 const initMarker = "function initSync(module) {"
@@ -59,6 +61,8 @@ const bundled = result.outputFiles[0]
 if (bundled === undefined) throw new Error("esbuild produced no report bindings")
 
 await writeFile(output, bundled.contents)
+// Use the lockfile-pinned encoder: Apple and GNU gzip produce different bytes.
+await writeFile(resolve(gzipArgument), gzip(await readFile(resolve(wasmArgument)), { level: 9 }))
 
 function occurrences(text, needle) {
   return text.split(needle).length - 1

@@ -4,7 +4,7 @@ import test from "node:test"
 
 import { importFile } from "./import-module.mjs"
 
-const { emptyHourStatusKey, isCurrentHour, latestTimelineTimestamp, REFRESH_INTERVAL_MS, refreshedCursor, scheduleRefresh } = await importFile("../src/refresh.ts")
+const { emptyHourStatusKey, isCurrentHour, latestTimelineTimestamp, REFRESH_INTERVAL_MS, refreshIsInactive, refreshedCursor, scheduleRefresh } = await importFile("../src/refresh.ts")
 
 const HOUR = 1_800_000_000_000_000
 
@@ -64,7 +64,7 @@ test("a hidden page stops polling and refreshes once when it becomes visible", a
   visibility.setHidden(false)
   await tick()
   assert.equal(refreshes, 1)
-  assert.equal(timers.pending(), 0)
+  assert.deepEqual(timers.pendingDelays(), [REFRESH_INTERVAL_MS])
   visibility.setHidden(true)
   assert.equal(timers.pending(), 0)
   dispose()
@@ -78,7 +78,7 @@ test("the latest cursor includes the newest stored source without leaving the ho
   assert.equal(refreshedCursor(HOUR + 12, true, timeline()), HOUR + 50)
 })
 
-test("a slow refresh cannot overlap or enter a fifteen-second cancellation loop", async () => {
+test("a slow refresh cannot overlap, and the ticker outlives it", async () => {
   const visibility = fakeVisibility(false)
   const timers = fakeTimers()
   const first = deferred()
@@ -91,22 +91,53 @@ test("a slow refresh cannot overlap or enter a fifteen-second cancellation loop"
   timers.advance(REFRESH_INTERVAL_MS)
   await tick()
   assert.equal(requests, 1)
-  timers.advance(REFRESH_INTERVAL_MS * 3)
-  await tick()
+  for (let round = 0; round < 3; round += 1) {
+    timers.advance(REFRESH_INTERVAL_MS)
+    await tick()
+  }
   assert.equal(requests, 1)
-  assert.equal(timers.pending(), 0)
+  assert.deepEqual(timers.pendingDelays(), [REFRESH_INTERVAL_MS])
   harness.request()
   assert.equal(requests, 1)
 
   first.resolve()
   await tick()
-  assert.deepEqual(timers.pendingDelays(), [REFRESH_INTERVAL_MS])
   timers.advance(REFRESH_INTERVAL_MS - 1)
   assert.equal(requests, 1)
   timers.advance(1)
   await tick()
   assert.equal(requests, 2)
   harness.dispose()
+})
+
+test("a tick that does nothing, or throws, still arms the next one", async () => {
+  const visibility = fakeVisibility(false)
+  const timers = fakeTimers()
+  let calls = 0
+  const dispose = scheduleRefresh(HOUR, () => {
+    calls += 1
+    if (calls === 2) throw new Error("refresh exploded")
+  }, visibility, timers, () => HOUR + 1)
+  for (let round = 1; round <= 4; round += 1) {
+    assert.deepEqual(timers.pendingDelays(), [REFRESH_INTERVAL_MS], `round ${round}`)
+    try { timers.advance(REFRESH_INTERVAL_MS) } catch {}
+    await tick()
+    assert.equal(calls, round)
+  }
+  dispose()
+  assert.equal(timers.pending(), 0)
+})
+
+test("refresh recovery measures inactivity from the latest progress", () => {
+  assert.equal(typeof refreshIsInactive, "function")
+  assert.equal(refreshIsInactive(0, 29_999), false)
+  assert.equal(refreshIsInactive(0, 30_000), true)
+  // The response has taken minutes, but bytes still arrive every fifteen seconds.
+  for (let now = 45_000; now <= 180_000; now += 15_000) {
+    assert.equal(refreshIsInactive(now - 15_000, now), false)
+  }
+  assert.equal(refreshIsInactive(180_000, 209_999), false)
+  assert.equal(refreshIsInactive(180_000, 210_000), true)
 })
 
 test("refresh keeps a committed cursor stable and reloads latest exactly once when it advances", () => {
@@ -120,7 +151,7 @@ test("refresh keeps a committed cursor stable and reloads latest exactly once wh
 test("a failed following-latest refresh restores one committed view before the retry advances", async () => {
   const source = await readFile(new URL("../src/app.tsx", import.meta.url), "utf8")
   assert.match(source, /readonly previousCursor: number/)
-  assert.match(source, /pendingRefresh\.current = \{ timeline, previousCursor: cursor, previousSegments: segmentsRef\.current \}/)
+  assert.match(source, /pendingRefresh\.current = \{ timeline, previousCursor: selectedCursor, previousSegments: segmentsRef\.current \}/)
   assert.match(source, /else if \(pending !== null\) \{\s*setSegments\(pending\.previousSegments\)\s*setCursor\(pending\.previousCursor\)\s*\}/)
   const failedBranch = source.match(/else if \(pending !== null\) \{([\s\S]*?)\n    \}/)?.[1] ?? ""
   assert.doesNotMatch(failedBranch, /setTimelineData|setCurrentData/)
@@ -202,7 +233,7 @@ test("first table settlement gates slow hour products without gating Process row
 
 test("the instance label waits for one settled foreground table", async () => {
   const app = await readFile(new URL("../src/app.tsx", import.meta.url), "utf8")
-  const ready = app.indexOf('const refreshReady = !loading && cursorState === "ready" && densePageState !== "loading"')
+  const ready = app.indexOf('const refreshReady = !loading && !neighborPending && cursorState !== "loading" && densePageState !== "loading"')
   const requested = app.indexOf("instanceLabelRequest.current = controller")
   const fetch = app.indexOf('apiFetch("/api/instance-label"')
   assert.ok(ready >= 0)
@@ -268,13 +299,12 @@ function refreshHarness(action: () => Promise<void>, visibility: ReturnType<type
   let dispose = () => {}
   const render = () => {
     dispose()
-    dispose = busy ? () => {} : scheduleRefresh(HOUR, request, visibility, timers, now)
+    dispose = scheduleRefresh(HOUR, request, visibility, timers, now)
   }
   const request = () => {
     if (busy) return
     busy = true
-    render()
-    void action().finally(() => { busy = false; render() })
+    void action().finally(() => { busy = false })
   }
   render()
   return { request, dispose: () => dispose() }

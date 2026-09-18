@@ -302,4 +302,5 @@ pub async fn collect_locks<E>(
 }
 
 #[cfg(test)]
+#[path = "tests/locks.rs"]
 mod tests;

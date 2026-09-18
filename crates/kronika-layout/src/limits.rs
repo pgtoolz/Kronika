@@ -1,5 +1,7 @@
 use crate::{LayoutError, LimitKind};
 
+// Entry caps bound traversal work; the independent byte cap bounds retained names
+// and result metadata even when individual directories remain within their limits.
 const HARD_MAX_VISITED_ENTRIES: usize = 4_000_000;
 const HARD_MAX_ENTRIES_PER_DAY: usize = 1_000_000;
 const HARD_MAX_SEGMENTS: usize = 2_000_000;

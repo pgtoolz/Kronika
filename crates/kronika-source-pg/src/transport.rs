@@ -1,5 +1,6 @@
 //! Verified TLS for monitoring sessions and their cancellation connections.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -46,7 +47,20 @@ impl Transport {
     /// # Errors
     /// Returns an error for an unreadable or invalid configured CA bundle.
     pub fn from_env() -> Result<Self> {
-        let Some(path) = std::env::var_os("KRONIKA_PG_SSL_ROOT_CERT") else {
+        let path = std::env::var_os("KRONIKA_PG_SSL_ROOT_CERT");
+        Self::from_ca_file(path.as_deref().map(Path::new))
+    }
+
+    /// Use a PEM CA bundle, or the compiled public CA roots when no path is supplied.
+    ///
+    /// A supplied bundle replaces the public roots. This does not read configuration
+    /// from the environment.
+    ///
+    /// # Errors
+    /// Returns [`CaConfigError`] without the path or file contents if the bundle
+    /// cannot be read or contains no valid CA certificates.
+    pub fn from_ca_file(path: Option<&Path>) -> Result<Self> {
+        let Some(path) = path else {
             return Ok(Self::default());
         };
         let pem = std::fs::read(path).map_err(|_error| CaConfigError)?;
@@ -117,20 +131,5 @@ fn public_roots() -> RootCertStore {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::Transport;
-
-    #[test]
-    fn empty_or_invalid_custom_ca_never_disables_verification() {
-        assert!(Transport::from_pem(b"").is_err());
-        let error = Transport::from_pem(b"not a certificate").expect_err("invalid CA fails closed");
-        assert!(error.is::<super::CaConfigError>());
-        assert!(error.to_string().contains("KRONIKA_PG_SSL_ROOT_CERT"));
-        assert!(
-            Transport::from_pem(
-                b"-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----\n"
-            )
-            .is_err()
-        );
-    }
-}
+#[path = "tests/transport.rs"]
+mod tests;

@@ -17,8 +17,9 @@ Where present, `scope` identifies the machine, pod or container whose resources 
 CPU, memory, disks, mount points, and topology describe the node even when the
 collector runs inside a container. Network sections use `pod_net` in the collector's recorded container environment. Process rows use `container` inside a container and `host` otherwise. Cgroup v2 discovery runs on machines and in containers; the selected ancestor rows serve the container resource charts.
 
-The filesystem roots are overridable with `KRONIKA_PROC_ROOT` (default
-`/proc`) and `KRONIKA_SYS_ROOT` (default `/sys`).
+The filesystem roots are overridable with `--proc-root` (default `/proc`)
+and `--sys-root` (default `/sys`), or `KRONIKA_PROC_ROOT` and `KRONIKA_SYS_ROOT`.
+Command-line options take precedence.
 
 ## Registered types
 
@@ -38,7 +39,7 @@ The filesystem roots are overridable with `KRONIKA_PROC_ROOT` (default
 | `1_109_001` | `/proc/net/dev` plus sysfs link facts | `snapshot_full` | `(iface, ts)` |
 | `1_110_001` | `/proc/net/snmp` | `snapshot_full` | `(ts)` |
 | `1_111_001` | `/proc/net/netstat` | `snapshot_full` | `(ts)` |
-| `1_112_002` | `mountinfo` plus bounded local-filesystem byte/inode `statvfs` | `on_change` | `(major, minor, mount_point, ts)` |
+| `1_112_002` | `mountinfo` plus byte/inode `statvfs` probes in a helper process | `on_change` | `(major, minor, mount_point, ts)` |
 | `1_113_001` | `/proc/cpuinfo` plus sysfs topology | `on_change` | `(cpu_id, ts)` |
 | `1_114_001` | `/proc/interrupts` | `snapshot_full` | `(irq, ts)` |
 | `1_115_001` | `/proc/softirqs` | `snapshot_full` | `(vector, ts)` |
@@ -242,11 +243,29 @@ Each family maps to the registered section prefix below. Display formulas and re
 | Exact partition-to-parent device edges | `1_123` |
 | File handles, inodes, dentries | `1_116` |
 
-Filesystem capacity is populated only for the explicit local allowlist:
+Filesystem capacity is collected only for the explicit filesystem-type allowlist:
 `ext2`, `ext3`, `ext4`, `xfs`, `btrfs`, `f2fs`, `zfs`, `tmpfs`, and `overlay`.
-Network, FUSE/userspace, `autofs`, and unknown types remain `null`. The entire
-capacity pass has a single one-second deadline; results completed before it are
-retained.
+Other types, including NFS, CIFS, FUSE and `autofs`, retain `null` capacity fields.
+This filter does not establish that storage is physically local: for example,
+ext4 can reside on a [network block device](https://www.kernel.org/doc/html/latest/admin-guide/blockdev/nbd.html).
+
+The collector runs `statvfs` in a child process because the call can block
+indefinitely on unresponsive storage. A timeout does not interrupt the system
+call, and Rust cannot safely terminate its thread. The child keeps the blocked
+call outside the collector and allows a separate termination request. The
+kernel can delay termination even after `SIGKILL`.
+The [single-thread alternative](../../TODO.md) is deferred. This isolation
+does not protect WAL writes or other filesystem calls in the collector itself.
+
+One shared waiting budget expires one second after the capacity pass starts.
+On expiry the parent requests termination without waiting for the helper to
+exit, then reads the complete response records available at that point. Missing
+results remain `null`; a stalled mount can leave later mounts unmeasured too.
+Setup, process creation and cleanup have no hard timeout, so this is not a strict
+one-second limit on the whole call. Records have no timestamps and may include
+a result written just after the nominal deadline. An unreaped helper prevents
+new helper launches until its exit is confirmed. See the
+[implementation](../../bins/kronika-collector/src/filesystem_capacity.rs).
 
 `1_112_002` identity is
 `(major, minor, mount_point)`, so two mount points exposing the same filesystem

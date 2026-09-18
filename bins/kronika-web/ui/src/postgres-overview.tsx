@@ -57,6 +57,8 @@ const STREAM_FIELDS: Readonly<Record<keyof VitalStreams, readonly [string, reado
   lifecycle: ["pg_log_lifecycle", ["kind", "message"]],
 }
 
+export const POSTGRES_OVERVIEW_SECTIONS: readonly string[] = Object.values(STREAM_FIELDS).map(([section]) => section)
+
 interface VitalRow {
   readonly key: string
   // Empty points hide the row because the fact was not recorded.
@@ -337,9 +339,10 @@ function buildBands(streams: VitalStreams, lanePoints: readonly LanePoint[], loc
 
   const xidAge = gaugeSeries(streams.database, "frozen_xid_age", "max")
   const mxidAge = gaugeSeries(streams.database, "min_mxid_age", "max")
+  // VACUUM follows the activity cadence; database counters can be slower.
   const vacuumWorkers = anchoredSeries(
     streams.vacuum.filter((row) => row.values.is_autovacuum === true),
-    streams.database,
+    streams.activity,
     (pass) => pass.length,
   )
 

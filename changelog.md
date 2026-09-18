@@ -2,6 +2,30 @@
 
 [Русская версия](changelog.ru.md)
 
+## [1.2.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.0)
+
+### Collection and configuration
+
+- Collector, web, dump, report and the development demo now use clap for command-line parsing, short `-h` help and detailed `--help`. Collector, web and demo options override their environment settings. Collector storage limits accept sizes such as `64MiB` and `10GB`; plain byte counts still work. Decimal suffixes use powers of 1000, IEC suffixes powers of 1024.
+- PostgreSQL source groups have independent intervals. Defaults are 30 seconds for server counters/settings, 10 seconds for activity/lock waits/VACUUM progress, 5 seconds during detected lock waits, and 300 seconds for statements/plans and tables/indexes. See [collector configuration](bins/kronika-collector/README.md#collection-intervals).
+- Collector and web use two Tokio worker threads. The musl collector disables jemalloc transparent huge pages by default.
+
+**Upgrade:** `KRONIKA_PG_INTERVAL_S` now controls only server counters/settings (`--pg-instance-interval-s`). To configure activity or statements/plans, use `KRONIKA_PG_ACTIVITY_INTERVAL_S` / `--pg-activity-interval-s` and `KRONIKA_PG_STATEMENTS_INTERVAL_S` / `--pg-statements-interval-s`. The statements/plans interval has a 300-second minimum and starts when their PostgreSQL collection pass finishes; `SIGUSR2` cannot bypass it.
+
+### Browser and reports
+
+- Cursor arrows follow recorded samples for the current screen, across segment boundaries, with at least one second between steps. Screen snapshots select the latest observation at or before the cursor, including overlapping segments. This works in web and offline reports; the API adds [`/api/snapshot/neighbor`](bins/kronika-web/README.md#endpoints).
+- Statements and Plans heatmaps use 12 columns per hour, matching the five-minute columns in Tables and Indexes. Nearest samples outside the range can complete edge columns. Edge lookups and counter gaps are limited to 15 minutes; longer gaps contribute no rate. Valid zero differences remain zero, and ranking totals still use only in-range endpoints. See [heatmap timing](docs/metrics-time.md#heatmaps).
+- Browser API caches distinguish serving builds. Help shows the served version and, when available, its build commit.
+- Refresh recovers stalled requests without cancelling streams that keep receiving data; cancelled responses cannot replace the current view. Snapshot loading can recover, and the timeline distinguishes loading, errors and empty data. Fixed chart initialization before its container has a measurable size.
+
+### Libraries and builds
+
+- Moved reusable source acquisition into `kronika-source-os` and `kronika-source-pg`, report queries/generation into `kronika-report`, and recording extraction into `kronika-slice`. CLI and server responsibilities remain in the applications. See [library boundaries](crates/README.md).
+- Report asset generation uses pinned Rust, wasm-bindgen and Clang versions on a canonical Linux host, with reproducibility checks for embedded HTML and WebAssembly.
+
+**Source builds:** use `cargo build -p kronika-report-cli` for the report executable. The binary remains `kronika-report`; the Cargo package `kronika-report` now contains the shared library.
+
 ## [1.1.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.1.2)
 
 - Fixed PostgreSQL event timestamps when the server and collector use different time zones.

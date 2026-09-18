@@ -35,14 +35,3 @@ pub trait Section: crate::private::Private + Sized {
     /// performing bounded admission cannot underestimate work on overflow.
     fn list_i32_child_value_count(rows: &[Self]) -> usize;
 }
-
-/// Shared roundtrip assertion for generated codecs.
-#[cfg(test)]
-pub(crate) fn assert_roundtrips<T>(rows: &[T])
-where
-    T: Section + PartialEq + std::fmt::Debug,
-{
-    let bytes = T::encode(rows).expect("encode");
-    let decoded = T::decode(VerifiedSection::for_test(bytes.into())).expect("decode");
-    assert_eq!(decoded.as_slice(), rows);
-}

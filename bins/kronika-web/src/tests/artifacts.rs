@@ -36,7 +36,11 @@ use crate::api::{ApiError, CachePolicy, Prepared, ResponseMeta};
 use crate::config::SOURCE_OS;
 use crate::encoding::AcceptedEncodings;
 
+#[path = "heatmap_rss.rs"]
 mod heatmap_rss;
+
+#[path = "snapshot_navigation.rs"]
+mod snapshot_navigation;
 
 const SEGMENT_ID: i64 = 1_709_164_800_000_000;
 const SOURCES: u32 = 0b11;
@@ -1784,7 +1788,7 @@ impl Fixture {
             .split_once('?')
             .map_or((target, None), |(path, query)| (path, Some(query)));
         let route = crate::route::parse(path, query).expect("valid fixture route");
-        crate::api::prepare(self.root(), sources, route, if_none_match)
+        crate::api::prepare(self.root(), sources, false, route, if_none_match)
             .expect("prepare fixture resource")
     }
 }
@@ -2329,7 +2333,7 @@ fn prepare_result(fixture: &Fixture, target: &str) -> Result<Prepared, ApiError>
         Ok(route) => route,
         Err(error) => panic!("valid fixture route: {error}"),
     };
-    crate::api::prepare(fixture.root(), SOURCES, route, None)
+    crate::api::prepare(fixture.root(), SOURCES, false, route, None)
 }
 
 fn source_flags(records: &[Value], name: &str) -> (bool, bool) {
@@ -2385,7 +2389,8 @@ async fn large_ndjson_gzip_round_trips_to_the_identity_representation() {
     let resource = target("history", "field=reads");
 
     let prepared = fixture.prepare(&resource, None);
-    let response = crate::blocking_stream(move || Ok(prepared), AcceptedEncodings::default()).await;
+    let response =
+        crate::tests::stream_once(move || Ok(prepared), AcceptedEncodings::default()).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.headers().get(CONTENT_ENCODING),
@@ -2414,7 +2419,7 @@ async fn large_ndjson_gzip_round_trips_to_the_identity_representation() {
         .expect("decode response gzip");
 
     let prepared = fixture.prepare(&resource, None);
-    let identity = crate::blocking_stream(move || Ok(prepared), accepted("identity")).await;
+    let identity = crate::tests::stream_once(move || Ok(prepared), accepted("identity")).await;
     assert_eq!(identity.status(), StatusCode::OK);
     assert!(!identity.headers().contains_key(CONTENT_ENCODING));
     let identity = identity
@@ -2432,7 +2437,8 @@ async fn below_threshold_ndjson_stays_identity_when_it_is_allowed() {
     let mut fixture = Fixture::new();
     fixture.append_diskstats(&[(100, 0, 7)]);
     let prepared = fixture.prepare(&target("history", "field=reads"), None);
-    let response = crate::blocking_stream(move || Ok(prepared), AcceptedEncodings::default()).await;
+    let response =
+        crate::tests::stream_once(move || Ok(prepared), AcceptedEncodings::default()).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert!(!response.headers().contains_key(CONTENT_ENCODING));
     let body = response
@@ -2453,7 +2459,7 @@ async fn below_threshold_ndjson_stays_identity_when_it_is_allowed() {
 
     let prepared = fixture.prepare(&target("history", "field=reads"), None);
     let response =
-        crate::blocking_stream(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
+        crate::tests::stream_once(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
     assert_eq!(
         response.headers().get(CONTENT_ENCODING),
         Some(&HeaderValue::from_static("gzip"))
@@ -2480,7 +2486,7 @@ async fn an_active_snapshot_restarts_from_the_finished_segment_after_rollover() 
     );
     let (path, query) = target.split_once('?').expect("snapshot query");
     let route = crate::route::parse(path, Some(query)).expect("snapshot route");
-    let first = crate::api::prepare(fixture.root(), SOURCES, route.clone(), None)
+    let first = crate::api::prepare(fixture.root(), SOURCES, false, route.clone(), None)
         .expect("prepare active snapshot");
     fixture.finish_and_continue(SEGMENT_ID + 1_000);
 
@@ -2488,13 +2494,13 @@ async fn an_active_snapshot_restarts_from_the_finished_segment_after_rollover() 
     let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&attempts);
     let mut first = Some(first);
-    let response = crate::blocking_stream_with_replay(
+    let response = crate::streaming::prepare_response(
         move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(first) = first.take() {
                 return Ok(first);
             }
-            crate::api::prepare(&root, SOURCES, route.clone(), None)
+            crate::api::prepare(&root, SOURCES, false, route.clone(), None)
         },
         accepted("identity"),
     )
@@ -2527,6 +2533,76 @@ async fn an_active_snapshot_restarts_from_the_finished_segment_after_rollover() 
 }
 
 #[tokio::test]
+async fn a_staged_replay_can_return_not_modified_or_a_preparation_error() {
+    for status in [StatusCode::NOT_MODIFIED, StatusCode::NOT_FOUND] {
+        let mut fixture = Fixture::new();
+        fixture.append_health();
+        let target = format!(
+            "/api/segments/{SEGMENT_ID}/snapshot?at=200&section=instance_metadata&field=postgresql_interval_seconds&text=160"
+        );
+        let (path, query) = target.split_once('?').expect("snapshot query");
+        let route = crate::route::parse(path, Some(query)).expect("snapshot route");
+        let first = crate::api::prepare(fixture.root(), SOURCES, false, route, None)
+            .expect("prepare active snapshot");
+        fixture.finish_and_continue(SEGMENT_ID + 1_000);
+
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = std::sync::Arc::clone(&attempts);
+        let mut first = Some(first);
+        let response = crate::streaming::prepare_response(
+            move || {
+                observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if let Some(first) = first.take() {
+                    return Ok(first);
+                }
+                if status == StatusCode::NOT_MODIFIED {
+                    Ok(Prepared::Empty(ResponseMeta {
+                        status,
+                        cache: CachePolicy::Immutable,
+                        etag: Some("W/\"finished\"".to_owned()),
+                    }))
+                } else {
+                    Err(ApiError::NoSuchSegment)
+                }
+            },
+            accepted("gzip, identity;q=0"),
+        )
+        .await;
+
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert_eq!(response.status(), status);
+        assert!(!response.headers().contains_key(CONTENT_ENCODING));
+        if status == StatusCode::NOT_MODIFIED {
+            assert_eq!(response.headers()[ETAG], "W/\"finished\"");
+            assert!(!response.headers().contains_key(CONTENT_TYPE));
+            assert_eq!(
+                response.headers()[hyper::header::CACHE_CONTROL],
+                "private,max-age=31536000,immutable"
+            );
+        } else {
+            assert!(!response.headers().contains_key(ETAG));
+            assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
+            assert_eq!(
+                response.headers()[hyper::header::CACHE_CONTROL],
+                "private,no-store"
+            );
+        }
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("replacement response body")
+            .to_bytes();
+        let expected: &[u8] = if status == StatusCode::NOT_MODIFIED {
+            b""
+        } else {
+            br#"{"error":"no_such_segment"}"#
+        };
+        assert_eq!(body.as_ref(), expected, "staged bytes must be discarded");
+    }
+}
+
+#[tokio::test]
 async fn a_started_active_response_is_not_spliced_to_a_new_generation() {
     let mut fixture = Fixture::new();
     fixture.append_diskstats(
@@ -2540,19 +2616,19 @@ async fn a_started_active_response_is_not_spliced_to_a_new_generation() {
     );
     let (path, query) = target.split_once('?').expect("snapshot query");
     let route = crate::route::parse(path, Some(query)).expect("snapshot route");
-    let first = crate::api::prepare(fixture.root(), SOURCES, route.clone(), None)
+    let first = crate::api::prepare(fixture.root(), SOURCES, false, route.clone(), None)
         .expect("prepare large active snapshot");
     let root = fixture.root().to_owned();
     let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed = std::sync::Arc::clone(&attempts);
     let mut first = Some(first);
-    let response = crate::blocking_stream_with_replay(
+    let response = crate::streaming::prepare_response(
         move || {
             observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(first) = first.take() {
                 return Ok(first);
             }
-            crate::api::prepare(&root, SOURCES, route.clone(), None)
+            crate::api::prepare(&root, SOURCES, false, route.clone(), None)
         },
         accepted("identity"),
     )
@@ -2573,7 +2649,8 @@ async fn a_small_real_read_failure_returns_500_before_success_headers() {
     let mut fixture = Fixture::new();
     fixture.append_diskstats(&[(100, 0, 7)]);
     let prepared = fixture.prepare(&target("history", "field=device"), None);
-    let response = crate::blocking_stream(move || Ok(prepared), AcceptedEncodings::default()).await;
+    let response =
+        crate::tests::stream_once(move || Ok(prepared), AcceptedEncodings::default()).await;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(
         response.headers().get(CONTENT_TYPE),
@@ -2599,7 +2676,7 @@ async fn a_real_read_failure_after_a_valid_prefix_fails_the_body_without_a_trail
     let resource = target("history", "field=device");
 
     let prepared = fixture.prepare(&resource, None);
-    let response = crate::blocking_stream(move || Ok(prepared), accepted("identity")).await;
+    let response = crate::tests::stream_once(move || Ok(prepared), accepted("identity")).await;
     assert_eq!(response.status(), StatusCode::OK);
     let error = response
         .into_body()
@@ -2610,7 +2687,7 @@ async fn a_real_read_failure_after_a_valid_prefix_fails_the_body_without_a_trail
 
     let prepared = fixture.prepare(&resource, None);
     let response =
-        crate::blocking_stream(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
+        crate::tests::stream_once(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
     assert_eq!(
         response.headers().get(CONTENT_ENCODING),
         Some(&HeaderValue::from_static("gzip"))
@@ -2622,7 +2699,7 @@ async fn a_real_read_failure_after_a_valid_prefix_fails_the_body_without_a_trail
         .expect_err("late read failure also aborts gzip");
 
     let prepared = fixture.prepare(&resource, None);
-    let response = crate::blocking_stream(move || Ok(prepared), accepted("identity")).await;
+    let response = crate::tests::stream_once(move || Ok(prepared), accepted("identity")).await;
     let mut prefix = Vec::new();
     let mut failure = None;
     let mut body = response.into_body();
@@ -3484,7 +3561,7 @@ fn heatmap_validates_the_endpoint_before_opening_the_source() {
     let directory = tempfile::tempdir().expect("temporary parent");
     let missing = directory.path().join("missing-root");
     let target = "/api/heatmap?from=100&to=9223372036854775807&section=os_diskstats&field=reads&columns=2&top=2";
-    let error = crate::api::prepare(&missing, SOURCES, fixture_route(target), None)
+    let error = crate::api::prepare(&missing, SOURCES, false, fixture_route(target), None)
         .err()
         .expect("heatmap rejects an overflowing endpoint");
     assert_api_error(
@@ -3503,7 +3580,10 @@ fn row_detail_rejects_a_malformed_ref_before_opening_storage() {
     let error = crate::api::prepare(
         &missing,
         SOURCES,
-        crate::route::Route::Recorded(kronika_api::Route::RowDetail("not+base64".to_owned())),
+        false,
+        crate::route::Route::Recorded(Box::new(kronika_api::Route::RowDetail(
+            "not+base64".to_owned(),
+        ))),
         None,
     )
     .err()
@@ -3796,7 +3876,7 @@ async fn weak_index_etag_revalidates_both_representations_without_a_304_body() {
     let resource = format!("/api/segments/{SEGMENT_ID}/sections/health/index");
 
     let prepared = fixture.prepare(&resource, None);
-    let response = crate::blocking_stream(move || Ok(prepared), accepted("identity")).await;
+    let response = crate::tests::stream_once(move || Ok(prepared), accepted("identity")).await;
     assert_eq!(response.status(), StatusCode::OK);
     let etag = response
         .headers()
@@ -3826,7 +3906,7 @@ async fn weak_index_etag_revalidates_both_representations_without_a_304_body() {
     for offered in [format!("\"stale\", {strong}"), "*".to_owned()] {
         let prepared = fixture.prepare(&resource, Some(&offered));
         let response =
-            crate::blocking_stream(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
+            crate::tests::stream_once(move || Ok(prepared), accepted("gzip, identity;q=0")).await;
         assert_eq!(response.status(), StatusCode::NOT_MODIFIED, "{offered}");
         assert_eq!(
             response
@@ -4233,8 +4313,10 @@ fn empty_finished_heatmap_has_no_validator() {
     fixture.append_diskstats(&[(100, 0, 1), (200, 0, 2)]);
     fixture.finish();
 
+    // Nearby edge samples cannot make an empty window immutable: another
+    // segment may later supply its first in-range observation.
     let prepared = fixture.prepare(
-        "/api/heatmap?from=300&to=400&section=os_diskstats&field=reads&columns=1&top=1",
+        "/api/heatmap?from=500&to=600&section=os_diskstats&field=reads&columns=1&top=1",
         None,
     );
     assert_eq!(prepared.meta().cache, CachePolicy::Revalidate);
@@ -5106,7 +5188,7 @@ fn active_snapshot_cursor_pins_the_original_wal_prefix() {
         .expect("finished cursor target");
     let route = crate::route::parse(&path, Some(&query)).expect("finished cursor route");
     assert!(matches!(
-        crate::api::prepare(fixture.root(), SOURCES, route, None),
+        crate::api::prepare(fixture.root(), SOURCES, false, route, None),
         Err(ApiError::BadCursor)
     ));
 }
@@ -5599,6 +5681,45 @@ fn quantitative_search_keeps_layout_absence_null() {
 }
 
 #[test]
+fn statement_and_plan_rate_filters_use_five_minute_and_delayed_samples() {
+    let mut fixture = Fixture::new();
+    let mut snapshots = Vec::new();
+    // Three counters grow at 1, 2 and 3 calls/s, first over 300 s and then
+    // over 600 s (one collection was missed).
+    for elapsed in [0, 300, 900] {
+        for queryid in 1..=3 {
+            let calls = 100 + elapsed * queryid;
+            snapshots.push((1_000_000 + elapsed * 1_000_000, queryid, calls, 0.0));
+        }
+    }
+    fixture.append_statement_snapshots(&snapshots);
+    fixture.append_plan_snapshots(&snapshots);
+    fixture.finish();
+
+    for section in ["pg_stat_statements", "pg_store_plans"] {
+        for at in [301_000_000, 901_000_000] {
+            for (search, expected) in [
+                ("call_rate%3E1.5%2Fs", ["2", "3"]),
+                ("call_rate%3C2.5%2Fs", ["1", "2"]),
+            ] {
+                let records = stream(fixture.prepare(
+                    &format!(
+                        "/api/segments/{SEGMENT_ID}/snapshot?at={at}&section={section}&field=queryid&by=queryid&direction=asc&page_size=10&search={search}"
+                    ),
+                    None,
+                ))
+                .expect("rate-filtered snapshot");
+                let ids: Vec<_> = row_records(&records)
+                    .iter()
+                    .map(|row| row["values"][0].as_str().expect("query id"))
+                    .collect();
+                assert_eq!(ids, expected, "{section} at {at}: {search}");
+            }
+        }
+    }
+}
+
+#[test]
 fn postgres_rates_use_adjacent_samples_without_optional_proof_metadata() {
     let mut fixture = Fixture::new();
     fixture.append_ranked_statements();
@@ -5756,7 +5877,7 @@ fn statement_text_first_match_rejects_a_general_search_expression() {
     let (path, query) = target.split_once('?').expect("snapshot target");
     let route = crate::route::parse(path, Some(query)).expect("strict route shape");
     assert!(matches!(
-        crate::api::prepare(fixture.root(), SOURCES, route, None),
+        crate::api::prepare(fixture.root(), SOURCES, false, route, None),
         Err(ApiError::BadFilter(name)) if name == "first_match"
     ));
 }
@@ -6040,14 +6161,14 @@ fn snapshot_cursor_rejects_every_bound_query_shape_mismatch() {
         let path = format!("/api/segments/{segment_id}/snapshot");
         let query = format!("{query}&cursor={cursor}");
         let route = crate::route::parse(&path, Some(&query)).expect("mismatch route");
-        let result = crate::api::prepare(fixture.root(), SOURCES, route, None);
+        let result = crate::api::prepare(fixture.root(), SOURCES, false, route, None);
         assert!(matches!(result, Err(ApiError::BadCursor)), "{query}");
     }
 
     let compatible_size = shape.replacen("page_size=1", "page_size=4", 1);
     let query = format!("{compatible_size}&cursor={cursor}");
     let route = crate::route::parse(&path, Some(&query)).expect("compatible route");
-    assert!(crate::api::prepare(fixture.root(), SOURCES, route, None).is_ok());
+    assert!(crate::api::prepare(fixture.root(), SOURCES, false, route, None).is_ok());
 }
 
 #[test]
@@ -6062,7 +6183,7 @@ fn snapshot_search_uses_the_fixed_section_allowlist_outside_the_projection() {
         "at=100&section=pg_stat_statements&search=needle",
     ] {
         let route = crate::route::parse(&path, Some(query)).expect("search route");
-        assert!(crate::api::prepare(fixture.root(), SOURCES, route, None).is_ok());
+        assert!(crate::api::prepare(fixture.root(), SOURCES, false, route, None).is_ok());
     }
     let route = crate::route::parse(
         &path,
@@ -6070,7 +6191,7 @@ fn snapshot_search_uses_the_fixed_section_allowlist_outside_the_projection() {
     )
     .expect("unsupported search route");
     assert!(matches!(
-        crate::api::prepare(fixture.root(), SOURCES, route, None),
+        crate::api::prepare(fixture.root(), SOURCES, false, route, None),
         Err(ApiError::BadFilter(parameter)) if parameter == "search"
     ));
 }
@@ -6143,7 +6264,7 @@ fn an_exact_source_pointer_must_name_a_captured_row_at_its_timestamp() {
     )
     .expect("exact route");
     assert!(matches!(
-        crate::api::prepare(active.root(), SOURCES, route, None),
+        crate::api::prepare(active.root(), SOURCES, false, route, None),
         Err(ApiError::BadCursor)
     ));
 
@@ -6155,7 +6276,7 @@ fn an_exact_source_pointer_must_name_a_captured_row_at_its_timestamp() {
         let path = format!("/api/segments/{SEGMENT_ID}/snapshot");
         let route = crate::route::parse(&path, Some(query)).expect("exact route");
         assert!(matches!(
-            crate::api::prepare(active.root(), SOURCES, route, None),
+            crate::api::prepare(active.root(), SOURCES, false, route, None),
             Err(ApiError::BadCursor)
         ));
     }
@@ -7677,7 +7798,7 @@ fn relation_comparison_filters_reduced_hidden_metrics_before_page() {
     let query = "at=100&section=pg_stat_user_tables&group=schema&field=table_count&page_size=1&search=schema%3Apair%20OR%20size%3E100MB";
     let route = crate::route::parse(&path, Some(query)).expect("mixed grouped OR route");
     assert!(matches!(
-        crate::api::prepare(fixture.root(), SOURCES, route, None),
+        crate::api::prepare(fixture.root(), SOURCES, false, route, None),
         Err(ApiError::BadFilter(parameter)) if parameter == "search"
     ));
 
@@ -7886,8 +8007,8 @@ fn the_first_moment_of_a_segment_rates_against_the_segment_before_it() {
     let path = target.split('?').next().expect("path");
     let query = target.split_once('?').expect("query").1;
     let route = crate::route::parse(path, Some(query)).expect("route");
-    let prepared =
-        crate::api::prepare(directory.path(), SOURCES, route, None).expect("prepare snapshot");
+    let prepared = crate::api::prepare(directory.path(), SOURCES, false, route, None)
+        .expect("prepare snapshot");
     let records = stream(prepared).expect("snapshot body");
     let rows = records
         .iter()
@@ -7963,7 +8084,7 @@ fn string_identity_matches_across_segment_dictionaries() {
     );
     let (path, query) = target.split_once('?').expect("snapshot query");
     let route = crate::route::parse(path, Some(query)).expect("snapshot route");
-    let prepared = crate::api::prepare(directory.path(), SOURCES, route, None)
+    let prepared = crate::api::prepare(directory.path(), SOURCES, false, route, None)
         .expect("prepare netdev snapshot");
     let records = stream(prepared).expect("netdev snapshot");
     let rows = row_records(&records);
@@ -7999,8 +8120,8 @@ fn a_moment_before_the_first_sample_here_is_answered_from_the_segment_before() {
     let path = format!("/api/segments/{}/snapshot", SEGMENT_ID + 1_000);
     let route =
         crate::route::parse(&path, Some("at=400&section=os_diskstats&field=reads")).expect("route");
-    let prepared =
-        crate::api::prepare(directory.path(), SOURCES, route, None).expect("prepare snapshot");
+    let prepared = crate::api::prepare(directory.path(), SOURCES, false, route, None)
+        .expect("prepare snapshot");
     let records = stream(prepared).expect("snapshot body");
     let rows = records
         .iter()

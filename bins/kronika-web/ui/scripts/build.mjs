@@ -22,7 +22,7 @@ if (reportMode && fixtureOutput !== null) throw new Error("--report and --fixtur
 const artifact = fixtureOutput !== null
   ? resolve(fixtureOutput)
   : reportMode
-    ? join(repository, "bins/kronika-report/assets/kronika-report-shell.html.gz")
+    ? join(repository, "crates/kronika-report/assets/kronika-report-shell.html.gz")
     : join(uiDirectory, "kronika-ui.html.gz")
 const checkOnly = process.argv.includes("--check")
 if (checkOnly && fixtureOutput !== null) throw new Error("--check and --fixture-output cannot be combined")

@@ -136,4 +136,5 @@ pub fn to_section<E>(
 }
 
 #[cfg(test)]
+#[path = "tests/settings.rs"]
 mod tests;

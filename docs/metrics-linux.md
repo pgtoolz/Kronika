@@ -18,7 +18,7 @@ Scope identifies whether a row describes the machine, a container or its surroun
 | Cgroup resource lanes | Highest accessible cgroup v2 ancestor. Counters and capacity use that recorded group and identity. |
 | Filesystems | Data mounts visible in the collector's mount namespace, with capacity from `statvfs` on the visible mount path. |
 
-Linux collection is disabled in `KRONIKA_COLLECTOR_MODE=postgresql`. In `local` mode, machines, VMs and containers record all visible, accessible cgroup v2 directories. The existing container resource lanes use the highest accessible ancestor of collector membership. See [cgroup collection](#container-cgroups).
+Linux collection is disabled in `--mode postgresql`. In `local` mode, machines, VMs and containers record all visible, accessible cgroup v2 directories. The existing container resource lanes use the highest accessible ancestor of collector membership. See [cgroup collection](#container-cgroups).
 
 ## Processes
 

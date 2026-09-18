@@ -50,12 +50,15 @@ pub const RESET_MARKER_LEN: usize = 32;
 pub const FRAME_HEADER_LEN: usize = 16;
 
 /// Hard version-1 admission limit for the complete active journal, bytes.
+/// Bounds recovery I/O even when frame counts remain small.
 pub const MAX_JOURNAL_LEN: usize = 1024 * 1024 * 1024;
 
 /// Hard version-1 admission limit for one part body, bytes.
+/// Bounds the reusable buffer allocated before a frame can be validated.
 pub const MAX_PART_LEN: u64 = 64 * 1024 * 1024;
 
 /// Hard version-1 admission limit for valid frames in one active journal.
+/// Bounds retained part metadata independently of journal byte length.
 pub const MAX_JOURNAL_PARTS: usize = 1_000_000;
 
 /// Fixed read-buffer size used by the streaming recovery scanner.
@@ -64,7 +67,9 @@ pub const MAX_JOURNAL_PARTS: usize = 1_000_000;
 pub const RECOVERY_SCAN_CHUNK_LEN: usize = 64 * 1024;
 
 #[cfg(test)]
+#[path = "tests/parts_streaming.rs"]
 mod streaming_tests;
 
 #[cfg(test)]
+#[path = "tests/parts.rs"]
 mod tests;

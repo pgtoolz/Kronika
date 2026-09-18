@@ -24,8 +24,7 @@ use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 
 use kronika_query::{QueryContext, QueryError};
 
-use crate::WebBody;
-use crate::body::BodyError;
+use crate::body::{BodyError, WebBody};
 use crate::config::Config;
 use crate::query_adapter::NativeDataset;
 
@@ -34,33 +33,15 @@ mod context;
 mod dispatch;
 mod events;
 mod filter;
+mod input;
 mod instance;
 mod overview;
 mod postgresql;
 mod processes;
 mod row_detail;
+mod schema;
 mod semantics;
 mod time;
-
-#[cfg(test)]
-mod finder_tests;
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-fn test_config(data_root: std::path::PathBuf) -> Arc<Config> {
-    Arc::new(Config {
-        data_root,
-        listen: "127.0.0.1:0".parse().expect("listen address"),
-        account: Some(crate::config::Account {
-            user: "dba".to_owned(),
-            password: "secret".to_owned(),
-        }),
-        sources: crate::config::SOURCE_OS | crate::config::SOURCE_POSTGRESQL,
-        synthetic_demo: false,
-        export_gate: Arc::new(tokio::sync::Semaphore::new(1)),
-    })
-}
 
 /// Runs one typed snapshot query against a fresh native capture, replaying once
 /// when the active source rolls over during the read.
@@ -183,3 +164,7 @@ pub(crate) fn with_private_headers(mut response: Response<WebBody>) -> Response<
         .insert(VARY, HeaderValue::from_static("Authorization, Cookie"));
     response
 }
+
+#[cfg(test)]
+#[path = "tests/mcp/mod.rs"]
+mod tests;

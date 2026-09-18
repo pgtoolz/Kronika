@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use super::projection::{Plan, apply_tail, chunk_dictionary, plans};
 use super::render::{cell, projected_layout, record};
 use super::selection::{active_tail, exact_segment};
+
 use crate::request::{Order, RowsRequest};
 use crate::{DatasetSegment, QueryDataset, QueryError, QuerySink, QueryStability};
 
@@ -461,4 +462,5 @@ fn hash_byte(hash: &mut u64, byte: u8) {
 }
 
 #[cfg(test)]
+#[path = "tests/rows.rs"]
 mod tests;

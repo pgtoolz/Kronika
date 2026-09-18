@@ -14,7 +14,8 @@ use crate::config::Config;
 use crate::query_adapter::NativeDataset;
 use crate::route::MAX_QUERY_BYTES;
 
-use super::catalog::{OVERVIEW_TOOL, OverviewInput, OverviewRankingInput};
+use super::catalog::OVERVIEW_TOOL;
+use super::input::{OverviewInput, OverviewRankingInput};
 use super::semantics::{
     CancellationSink, arguments_within_budget, invalid_arguments, mcp_error, mcp_error_indexed,
     mcp_error_indexed_with, mcp_structured,
@@ -25,67 +26,18 @@ pub(crate) fn call(
     arguments: Map<String, Value>,
     cancelled: &dyn Fn() -> bool,
 ) -> CallToolResult {
-    if let Err((index, message)) = check_request_budget(&arguments) {
-        return mcp_error_indexed(format!("rankings[{index}]: {message}"), index);
-    }
-    if let Some(rankings) = arguments.get("rankings").and_then(Value::as_array) {
-        for (index, ranking) in rankings.iter().enumerate() {
-            if let Err(error) = serde_json::from_value::<OverviewRankingInput>(ranking.clone()) {
-                return mcp_error_indexed(
-                    format!("invalid {OVERVIEW_TOOL} rankings[{index}]: {error}"),
-                    index,
-                );
-            }
-        }
-    }
-    let input: OverviewInput = match serde_json::from_value(Value::Object(arguments)) {
+    let input = match parse_request(arguments) {
         Ok(input) => input,
-        Err(error) => {
-            return invalid_arguments(
-                OVERVIEW_TOOL,
-                "from, to, and a nonempty rankings array are required; each ranking contains section, 1-4 independently ranked fields, and optional top",
-                error,
-            );
-        }
+        Err(error) => return error,
     };
-    if input.rankings.is_empty() {
-        return mcp_error_indexed("rankings[0]: rankings must not be empty", 0);
-    }
     let range = match super::time::resolve_range(&input.from, &input.to) {
         Ok(range) => range,
         Err(error) => return mcp_error_indexed(format!("rankings[0]: {error}"), 0),
     };
-    let mut items = Vec::new();
-    let mut source_indices = Vec::new();
-    for (index, ranking) in input.rankings.into_iter().enumerate() {
-        if !(1..=MAX_FIELDS).contains(&ranking.fields.len()) {
-            return mcp_error_indexed(
-                format!("rankings[{index}]: fields must contain 1 to {MAX_FIELDS} names"),
-                index,
-            );
-        }
-        let top = match usize::try_from(ranking.top) {
-            Ok(top) => top,
-            Err(_error) => {
-                return mcp_error_indexed(
-                    format!("rankings[{index}]: top does not fit this platform"),
-                    index,
-                );
-            }
-        };
-        for field in ranking.fields {
-            items.push(HeatmapItemQuery {
-                ranking: NormalizedRanking {
-                    section: ranking.section.clone(),
-                    fields: vec![field],
-                    top,
-                },
-                view: HeatmapView::RankingOnly,
-                scope: StatementScope::All,
-            });
-            source_indices.push(index);
-        }
-    }
+    let (items, source_indices) = match expand_rankings(input.rankings) {
+        Ok(expanded) => expanded,
+        Err(error) => return error,
+    };
     let dataset = match NativeDataset::from_root(&config.data_root) {
         Ok(dataset) => Arc::new(dataset),
         Err(error) => {
@@ -107,6 +59,81 @@ pub(crate) fn call(
         Err(_error) => return mcp_error("could not produce detail_ref"),
     };
     mcp_structured(structured)
+}
+
+fn parse_request(arguments: Map<String, Value>) -> Result<OverviewInput, CallToolResult> {
+    if let Err((index, message)) = check_request_budget(&arguments) {
+        return Err(mcp_error_indexed(
+            format!("rankings[{index}]: {message}"),
+            index,
+        ));
+    }
+    if let Some(rankings) = arguments.get("rankings").and_then(Value::as_array) {
+        for (index, ranking) in rankings.iter().enumerate() {
+            if let Err(error) = serde_json::from_value::<OverviewRankingInput>(ranking.clone()) {
+                return Err(mcp_error_indexed(
+                    format!("invalid {OVERVIEW_TOOL} rankings[{index}]: {error}"),
+                    index,
+                ));
+            }
+        }
+    }
+    let input: OverviewInput = match serde_json::from_value(Value::Object(arguments)) {
+        Ok(input) => input,
+        Err(error) => {
+            return Err(invalid_arguments(
+                OVERVIEW_TOOL,
+                "from, to, and a nonempty rankings array are required; each ranking contains section, 1-4 independently ranked fields, and optional top",
+                error,
+            ));
+        }
+    };
+    if input.rankings.is_empty() {
+        return Err(mcp_error_indexed(
+            "rankings[0]: rankings must not be empty",
+            0,
+        ));
+    }
+    Ok(input)
+}
+
+/// Expands each requested field independently, retaining its original ranking
+/// index so query errors still point to the caller's unexpanded request.
+fn expand_rankings(
+    rankings: Vec<OverviewRankingInput>,
+) -> Result<(Vec<HeatmapItemQuery>, Vec<usize>), CallToolResult> {
+    let mut items = Vec::new();
+    let mut source_indices = Vec::new();
+    for (index, ranking) in rankings.into_iter().enumerate() {
+        if !(1..=MAX_FIELDS).contains(&ranking.fields.len()) {
+            return Err(mcp_error_indexed(
+                format!("rankings[{index}]: fields must contain 1 to {MAX_FIELDS} names"),
+                index,
+            ));
+        }
+        let top = match usize::try_from(ranking.top) {
+            Ok(top) => top,
+            Err(_error) => {
+                return Err(mcp_error_indexed(
+                    format!("rankings[{index}]: top does not fit this platform"),
+                    index,
+                ));
+            }
+        };
+        for field in ranking.fields {
+            items.push(HeatmapItemQuery {
+                ranking: NormalizedRanking {
+                    section: ranking.section.clone(),
+                    fields: vec![field],
+                    top,
+                },
+                view: HeatmapView::RankingOnly,
+                scope: StatementScope::All,
+            });
+            source_indices.push(index);
+        }
+    }
+    Ok((items, source_indices))
 }
 
 fn heatmap_error(error: HeatmapError, source_indices: &[usize]) -> CallToolResult {

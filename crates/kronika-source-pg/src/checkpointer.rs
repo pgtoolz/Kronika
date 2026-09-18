@@ -114,4 +114,5 @@ pub async fn collect_checkpointer(
 }
 
 #[cfg(test)]
+#[path = "tests/checkpointer.rs"]
 mod tests;

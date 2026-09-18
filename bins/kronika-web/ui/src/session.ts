@@ -8,6 +8,14 @@ const listeners = new Set<SessionListener>()
 let currentSnapshot: SessionSnapshot = "pending"
 let generation = 0
 let cleanupPromise: Promise<void> | null = null
+// The serving build, learned from the session check; API addresses carry it
+// so a browser cache from an earlier build is never reused.
+let build: string | null = null
+
+export function apiAddress(path: string, build: string | null): string {
+  if (build === null || !path.startsWith("/api/")) return path
+  return `${path}${path.includes("?") ? "&" : "?"}build=${encodeURIComponent(build)}`
+}
 
 export function getSessionSnapshot(): SessionSnapshot {
   return currentSnapshot
@@ -50,7 +58,8 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
   headers.delete("Authorization")
   headers.set("X-Kronika-UI", "1")
 
-  const response = await fetch(input, { ...init, credentials: "same-origin", headers })
+  const address = typeof input === "string" ? apiAddress(input, build) : input
+  const response = await fetch(address, { ...init, credentials: "same-origin", headers })
   if (response.status === 401 && generation === captured) void clearSession("expired")
   return response
 }
@@ -71,10 +80,12 @@ function clearSession(destination: SignedOutSnapshot): Promise<void> {
   return cleanupPromise
 }
 
-function sessionFetch(method: string, authorization?: string, signal: AbortSignal | null = null): Promise<Response> {
+async function sessionFetch(method: string, authorization?: string, signal: AbortSignal | null = null): Promise<Response> {
   const headers: Record<string, string> = { "X-Kronika-UI": "1" }
   if (authorization !== undefined) headers.Authorization = authorization
-  return fetch("/auth/session", { credentials: "same-origin", headers, method, signal })
+  const response = await fetch("/auth/session", { credentials: "same-origin", headers, method, signal })
+  build = response.headers.get("Kronika-Build") ?? build
+  return response
 }
 
 function transition(snapshot: SessionSnapshot): void {

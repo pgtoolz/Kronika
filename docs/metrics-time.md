@@ -11,29 +11,49 @@ A snapshot contains values collected at one time. A gauge, such as process RSS (
 | Calendar hour | Selects the recorded interval `[h, h + 3,600,000,000)` in microseconds. The displayed calendar and clock use the selected display timezone. |
 | Cursor | Requested position inside that hour. A table resolves the latest eligible snapshot at or before the cursor. Sections with different cadences can resolve different timestamps. PostgreSQL sections partitioned by database resolve each database independently. |
 | Sample time | Actual timestamp of the selected data. The common time label displays the resolved sample time; a requested cursor between samples does not create a sample. |
-| Previous/next sample | Moves through the merged, sorted, distinct observation timestamps of the current surface. The selected timeline lane does not set the navigation cadence. |
+| Previous/next sample | Finds the nearest recorded snapshot of the open screen at least one second in the chosen direction. Activity uses Activity samples, Processes uses process samples, and other screens use their own sections. Collector intervals and unrelated chart timestamps do not set the step. |
 | Chart hover/readout | Reads recorded chart points. Chart selection updates the common cursor. A null chart point remains null and terminates the corresponding drawn path. |
 | Heatmap cell click | Sets the cursor to the cell's exclusive upper boundary minus one microsecond; the table then applies its snapshot selection. |
 | Entity row | Selects an entity and its Inspector detail panel. A history button selects its plotted field; a lens is a named set of fields such as CPU or Memory. |
 | Live refresh | The visible current hour schedules its next refresh 15 seconds after the previous load completes. A hidden document stops the timer; visibility restoration refreshes the current hour. A cursor following the newest point advances; a manually selected cursor stays fixed. Completed hours have no periodic refresh. |
 
-Sources: [snapshot selection](../crates/kronika-query/src/snapshot/mod.rs), [surface selector](../crates/kronika-query/src/snapshot/selector.rs), [cursor timestamps](../bins/kronika-web/ui/src/cursor-timestamps.ts), [refresh](../bins/kronika-web/ui/src/refresh.ts), [heatmap cursor](../bins/kronika-web/ui/src/activity.tsx).
+Sources: [snapshot selection](../crates/kronika-query/src/snapshot/mod.rs), [surface selector](../crates/kronika-query/src/snapshot/selector.rs), [neighbor search](../crates/kronika-query/src/snapshot_neighbor.rs), [refresh](../bins/kronika-web/ui/src/refresh.ts), [heatmap cursor](../bins/kronika-web/ui/src/activity.tsx).
 
-Collector intervals are seconds. A per-source zero interval makes that source due on each timer wake; it does not advance the wake by itself. `KRONIKA_INTERVAL_S` is the maximum collection-timer sleep, default 5 seconds; positive source deadlines or segment age can shorten it. `KRONIKA_INTERVAL_S=0` disables timed collection; `SIGUSR2` forces all sources due. Rotation retains its separate timer. The denominator of a displayed rate is elapsed recorded time.
+Collector intervals are seconds. Except for statements/plans, a per-source zero interval makes that source due on each timer wake; it does not advance the wake by itself. `--interval-s` is the maximum collection-timer sleep, default 5 seconds; positive source deadlines or segment age can shorten it. `--interval-s 0` disables timed collection, including accelerated activity snapshots during lock waits. `SIGUSR2` forces collection but does not bypass the statements/plans interval. Rotation retains its separate timer. The denominator of a displayed rate is elapsed recorded time.
 
-| Source | Environment variable | Default, s |
-|---|---|---:|
-| Core Linux counters | `KRONIKA_OS_CORE_INTERVAL_S` | 10 |
-| Processes | `KRONIKA_OS_PROCESS_INTERVAL_S` | 5 |
-| Process status | `KRONIKA_OS_PROCESS_STATUS_INTERVAL_S` | 30 |
-| Mounts and topology | `KRONIKA_OS_MOUNTTOPO_INTERVAL_S` | 60 |
-| Cgroup controllers | `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 |
-| PID-to-cgroup mapping | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 |
-| Logs | `KRONIKA_LOG_INTERVAL_S` | 10 |
-| PostgreSQL | `KRONIKA_PG_INTERVAL_S` | 30 |
-| PostgreSQL relations | `KRONIKA_PG_RELATIONS_INTERVAL_S` | 300 |
+Options override environment variables; see [collector configuration](../bins/kronika-collector/README.md#configuration).
 
-Sources: [scheduler defaults](../bins/kronika-collector/src/scheduler.rs), [configuration](../bins/kronika-collector/src/config.rs), [`timer_sleep_delay`](../bins/kronika-collector/src/main.rs).
+| Source | Option | Environment variable | Default, s |
+|---|---|---|---:|
+| Core Linux counters | `--os-core-interval-s` | `KRONIKA_OS_CORE_INTERVAL_S` | 10 |
+| Processes | `--os-process-interval-s` | `KRONIKA_OS_PROCESS_INTERVAL_S` | 5 |
+| Process status | `--os-process-status-interval-s` | `KRONIKA_OS_PROCESS_STATUS_INTERVAL_S` | 30 |
+| Mounts and topology | `--os-mount-topo-interval-s` | `KRONIKA_OS_MOUNTTOPO_INTERVAL_S` | 60 |
+| Cgroup controllers | `--os-cgroup-interval-s` | `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 |
+| PID-to-cgroup mapping | `--os-cgroup-mapping-interval-s` | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 |
+| Logs | `--log-interval-s` | `KRONIKA_LOG_INTERVAL_S` | 10 |
+| PostgreSQL server counters and settings | `--pg-instance-interval-s` | `KRONIKA_PG_INTERVAL_S` | 30 |
+| PostgreSQL activity, lock waits and VACUUM progress | `--pg-activity-interval-s` | `KRONIKA_PG_ACTIVITY_INTERVAL_S` | 10 |
+| Activity while lock waits are present | `--pg-activity-blocked-interval-s` | `KRONIKA_PG_ACTIVITY_BLOCKED_INTERVAL_S` | 5 |
+| PostgreSQL statements/plans and their info views | `--pg-statements-interval-s` | `KRONIKA_PG_STATEMENTS_INTERVAL_S` | 300 (minimum 300) |
+| PostgreSQL relations | `--pg-relations-interval-s` | `KRONIKA_PG_RELATIONS_INTERVAL_S` | 300 |
+
+A successful, nonempty lock-wait snapshot changes the activity interval to the smaller of `--pg-activity-interval-s` and `--pg-activity-blocked-interval-s`. A successful empty snapshot restores the configured interval; a failed read leaves it unchanged. Statements/plans wait at least their configured interval after the preceding PostgreSQL pass containing them finishes, including on `SIGUSR2`. Reads are sequential, so a slow SQL query or another running source can delay a snapshot beyond its interval.
+
+Sources: [scheduler defaults](../bins/kronika-collector/src/scheduler.rs), [configuration](../bins/kronika-collector/src/config.rs), [`timer_sleep_delay`](../bins/kronika-collector/src/collector.rs).
+
+### Recorded intervals and current-state lookup
+
+`instance_metadata` V4 records separate PostgreSQL intervals so current-state lookups can distinguish a slow source from missing data. For a requested cursor, the typed finders accept the latest sample no more than `max(20, 2.5 × interval)` seconds old. They obtain the interval from the recorded metadata, including custom collector settings:
+
+| Finder | Recorded interval field |
+|---|---|
+| Activity, Locks, Vacuum | `postgresql_interval_seconds` |
+| Databases | `postgresql_instance_interval_seconds` |
+| Tables, Indexes | `postgresql_relations_interval_seconds` |
+| Statements, Plans | `postgresql_statements_interval_seconds` |
+
+For older metadata without the family field, Databases, Statements and Plans use `postgresql_interval_seconds`; Tables and Indexes retain a 300-second interval. Zero intervals are ignored. If no positive recorded interval is available, the fallback is 30 seconds for Activity, Locks, Vacuum, Databases, Statements and Plans, or 300 seconds for Tables and Indexes. Processes use a fixed 5-second interval for this lookup. These bounds select samples; rate calculations still divide by the actual time between observations. Source: [current-state selector](../crates/kronika-query/src/snapshot/selector.rs).
 
 ## Pair rules and units
 
@@ -70,13 +90,15 @@ Chart statistics describe the distribution of each drawn line. Only its finite n
 
 ### Cells and ranking
 
-An activity heatmap shows each entity’s contribution over the selected hour and when it was busiest. Processes, Statements, Plans, databases, cgroup CPU and cgroup I/O use 60 columns; Tables and Indexes use 12. Let `h` be the hour start in Unix microseconds, `C` the column count and `j` a boundary number from 0 to `C`. The boundary is `bⱼ = h + floor(j × 3,600,000,000 / C)`, where `floor` rounds down. Cell `j` covers `[bⱼ, bⱼ₊₁)`, including its start and excluding its end.
+An activity heatmap shows each entity’s contribution over the selected hour and when it was busiest. Processes, databases, cgroup CPU and cgroup I/O use 60 columns; Statements, Plans, Tables and Indexes use 12 (five minutes per column). Let `h` be the hour start in Unix microseconds, `C` the column count and `j` a boundary number from 0 to `C`. The boundary is `bⱼ = h + floor(j × 3,600,000,000 / C)`, where `floor` rounds down. Cell `j` covers `[bⱼ, bⱼ₊₁)`, including its start and excluding its end.
 
-The engine assigns an observation to the column containing the midpoint between that observation and its previous observation for the identity; the first observation uses its own timestamp. A counter entering a new column carries the previous observation into the column's calculation. It allocates the interval to one column; it does not split the counter difference proportionally over every crossed boundary.
+Counter intervals are assigned to the column containing their midpoint. The nearest samples before and after the requested range can complete its edge columns. Both the neighboring-sample lookup and the gap between consecutive counter samples have a hard limit of 15 minutes, independent of collector settings. Exactly 15 minutes is allowed; a longer gap contributes no rate, and rate calculation resumes from the next valid pair. The bound applies to rows as well as segments. Samples outside the range do not enter the ranking totals.
+
+The interval is allocated to one column rather than split across every crossed boundary. Heatmaps show approximate activity over time. Gauge placement retains its midpoint rule; gauge values are not extended into empty columns.
 
 | Value | Counter | Gauge |
 |---|---|---|
-| Entity cell | `(last − first) / elapsed_seconds` where `first`/`last` are the first/last observations in the cell, including its carried predecessor, and `elapsed_seconds` is their elapsed time | Last observation accumulated in the cell |
+| Entity cell | Sum of valid counter differences divided by their total elapsed seconds; negative differences and gaps longer than 15 minutes do not contribute | Last observation accumulated in the cell |
 | Entity ranking and right summary | Last minus first counter over the requested range | Maximum observed value over the range, except RSS Grid below |
 | Group ranking | Sum of member entity summaries | Sum of member entity summaries |
 | Group cell | Sum of available member cells | Sum of available member cells |
@@ -88,7 +110,7 @@ No contributing value produces null. A single counter observation cannot form a 
 
 ### RSS Grid mean
 
-For `os_process.rmem_kb` in Grid mode, let `T` be the set of distinct timestamps at which the query observes a usable RSS value, and `N = |T|`. The summary of PID `p` is `meanRSS(p) = Σ recordedRSS(p,t) / N`. A PID absent at a timestamp contributes nothing to the numerator; the denominator is shared by all PIDs. Group, Total, and Other summaries sum these means and retain the same denominator. Multiply KiB by 1,024 for bytes. This is a sample mean, without time weighting. Cells retain their gauge rule. `RankingOnly`, including MCP rankings, retains gauge maxima. Source: [`RssMean`, `score`, `additive_summary`](../crates/kronika-query/src/heatmap/execution.rs); existing checks: [RSS artifact test](../bins/kronika-web/src/tests/artifacts/heatmap_rss.rs).
+For `os_process.rmem_kb` in Grid mode, let `T` be the set of distinct timestamps at which the query observes a usable RSS value, and `N = |T|`. The summary of PID `p` is `meanRSS(p) = Σ recordedRSS(p,t) / N`. A PID absent at a timestamp contributes nothing to the numerator; the denominator is shared by all PIDs. Group, Total, and Other summaries sum these means and retain the same denominator. Multiply KiB by 1,024 for bytes. This is a sample mean, without time weighting. Cells retain their gauge rule. `RankingOnly`, including MCP rankings, retains gauge maxima. Source: [`RssMean`, `score`, `additive_summary`](../crates/kronika-query/src/heatmap/execution.rs); existing checks: [RSS artifact test](../bins/kronika-web/src/tests/heatmap_rss.rs).
 
 ### Cuts, grouping, and scales
 
@@ -132,7 +154,7 @@ Capacity is selected at each PostgreSQL sample timestamp in this order:
 
 | Source | Value of `C` |
 | --- | --- |
-| Explicit positive `instance_metadata.postgresql_effective_cpus` | Recorded `KRONIKA_POSTGRES_EFFECTIVE_CPUS` (`1..4294967295`), overriding automatic calculation |
+| Explicit positive `instance_metadata.postgresql_effective_cpus` | Recorded `--postgres-effective-cpus` or `KRONIKA_POSTGRES_EFFECTIVE_CPUS` (`1..4294967295`), overriding automatic calculation |
 | Shared local machine/VM, no override | Count of distinct `os_cpu.cpu_id ≥ 0` in the latest complete CPU snapshot at or before the PostgreSQL timestamp; excludes aggregate `cpu_id = −1` |
 | PostgreSQL-only, container or older metadata without recorded shared placement, no override | `null`; collector resources are not PostgreSQL capacity |
 
@@ -142,7 +164,7 @@ change affects later samples only. The DSN, hostname and matching PIDs do not
 establish placement. Container cgroup capacity belongs to the selected group,
 which can include several containers; it is not automatically PostgreSQL capacity.
 
-`KRONIKA_PG_DSN` enables PostgreSQL collection independently of capacity.
+`--pg-dsn` or `KRONIKA_PG_DSN` enables PostgreSQL collection independently of capacity.
 Unknown capacity does not disable collection; it leaves PostgreSQL Health and
 capacity-dependent marks unavailable. Missing active-count input also gives
 null Health. Conflicting activity layouts at one timestamp give an unknown count.
@@ -152,13 +174,15 @@ recorded WAL/ZMS facts; resources of the machine opening the recording do not
 participate. An HTML report keeps the query engine embedded when it was generated;
 generate a new report to use a newer calculation.
 
+New recordings store the normal activity/VACUUM-progress interval in `postgresql_interval_seconds` (10 seconds by default). The shorter interval used during lock waits stays within this freshness bound; it does not rewrite the recorded value. Older recordings keep their recorded interval.
+
 At each OS health timestamp, overall health uses the latest PostgreSQL health at or before it, no older than recorded `postgresql_interval_seconds`:
 
 `Overall health = max(0, OS health − PG penalty)`.
 
 Older recordings without `os_enabled` have unknown Overall unless PostgreSQL was explicitly disabled, even with a CPU override.
 
-In recorded PostgreSQL-only mode (`os_enabled = false`), Overall is calculated at PostgreSQL samples and equals PostgreSQL Health, including null when its operands are unknown. With OS enabled, disabled PostgreSQL contributes zero penalty; unknown or older enabled PostgreSQL input, or unknown OS Health, makes Overall null. Web source flags do not participate in these formulas. Sources: [formulas](../crates/kronika-index/src/health.rs), [CPU capacity](../crates/kronika-index/src/cpu_capacity.rs), [scope, activity counts, and time selection](../crates/kronika-index/src/build.rs), [collector metadata](../bins/kronika-collector/src/service_sections.rs).
+In recorded PostgreSQL-only mode (`os_enabled = false`), Overall is calculated at PostgreSQL samples and equals PostgreSQL Health, including null when its operands are unknown. With OS enabled, disabled PostgreSQL contributes zero penalty; unknown or older enabled PostgreSQL input, or unknown OS Health, makes Overall null. Web source flags do not participate in these formulas. Sources: [formulas](../crates/kronika-index/src/health.rs), [CPU capacity](../crates/kronika-index/src/cpu_capacity.rs), [scope, activity counts, and time selection](../crates/kronika-index/src/build.rs), [collector metadata](../bins/kronika-collector/src/instance_metadata.rs).
 
 ## Timeline marks
 

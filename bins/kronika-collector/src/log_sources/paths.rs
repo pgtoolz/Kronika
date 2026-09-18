@@ -82,4 +82,5 @@ fn matches(pattern: &str, name: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/log_sources/paths.rs"]
 mod tests;

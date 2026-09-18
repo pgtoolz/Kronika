@@ -6,11 +6,14 @@ use std::collections::{BTreeMap, HashSet};
 use kronika_reader::{Cell, Row};
 use serde_json::{Map, Value, json};
 
+use super::filter::search_matches;
+use super::preparation::validate_search_projection;
 use super::{
     CounterReadings, PageContext, Plan, PreparedSnapshot, SearchClause, SearchOperator,
     SearchValue, SectionPlans, SnapshotCursor, StructuredSearch, identity_of, result_field,
-    search_fields, search_matches, search_value_matches, validate_search_projection,
+    search_fields, search_value_matches,
 };
+
 use crate::render::record;
 use crate::{
     Filter, GroupKey, Metric, Order, QueryError, RelationAggregate, RelationGroup, RelationKind,

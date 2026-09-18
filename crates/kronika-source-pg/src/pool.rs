@@ -6,23 +6,20 @@
 
 use std::error::Error;
 use std::fmt;
-use std::net::IpAddr;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result};
 use tokio::time::Instant;
 use tokio_postgres::Config;
-use tokio_postgres::config::Host;
 
-use crate::query;
+use crate::connection::{self, ConnectionFailure, connection_label};
 use crate::{Session, Transport};
 
 /// Maximum time allowed for opening a `PostgreSQL` connection.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Maximum lifetime of one healthy frontend session.
 pub const MAX_AGE: Duration = Duration::from_hours(1);
-const DEFAULT_PORT: u16 = 5432;
 static APPLICATION_NAME: OnceLock<String> = OnceLock::new();
 
 /// Failure to open a `PostgreSQL` connection.
@@ -97,9 +94,18 @@ impl Pool {
     /// Returns the parse error when `dsn` is neither a keyword string nor a
     /// connection URL, or an error when the configured CA bundle is invalid.
     pub fn new(dsn: &str) -> Result<Self> {
+        Self::with_transport(dsn, Transport::from_env()?)
+    }
+
+    /// Parse a DSN using an already configured certificate policy.
+    ///
+    /// No connection is opened and no TLS configuration is read from the environment.
+    ///
+    /// # Errors
+    /// Returns the parse error when `dsn` is not a valid connection string or URL.
+    pub fn with_transport(dsn: &str, transport: Transport) -> Result<Self> {
         let mut config: Config = dsn.parse().context("parse the PostgreSQL DSN")?;
         config.application_name(collector_application_name());
-        let transport = Transport::from_env()?;
         Ok(Self {
             config,
             transport,
@@ -212,25 +218,13 @@ impl Pool {
     }
 
     async fn connect(&mut self) -> std::result::Result<Open, ConnectError> {
-        let connecting = self.transport.connect(&self.config);
-        let (client, connection) = tokio::time::timeout(CONNECT_TIMEOUT, connecting)
-            .await
-            .map_err(|_elapsed| ConnectError::Timeout)?
-            .map_err(ConnectError::PostgreSql)?;
-        let driver = tokio::spawn(async move {
-            let _ended = connection.await;
-        });
-        match tokio::time::timeout(CONNECT_TIMEOUT, query::configure_session(&client)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                driver.abort();
-                return Err(ConnectError::PostgreSql(error));
-            }
-            Err(_elapsed) => {
-                driver.abort();
-                return Err(ConnectError::Timeout);
-            }
-        }
+        let connection::MonitoringConnection { client, driver } =
+            connection::connect_monitoring(&self.config, &self.transport)
+                .await
+                .map_err(|failure| match failure.error {
+                    ConnectionFailure::PostgreSql(error) => ConnectError::PostgreSql(error),
+                    ConnectionFailure::Timeout(_) => ConnectError::Timeout,
+                })?;
         let opened_at = Instant::now();
         let generation = self.next_generation;
         self.next_generation = self.next_generation.saturating_add(1);
@@ -258,67 +252,6 @@ fn application_name(process_id: u32, started: Duration) -> String {
     format!("kronika-collector-{process_id}-{}", started.as_nanos())
 }
 
-fn connection_label(config: &Config, user: Option<&str>, source_index: usize) -> String {
-    let user = user.unwrap_or("server-default");
-    let ports = config.get_ports();
-    let endpoints = if config.get_hosts().is_empty() {
-        config
-            .get_hostaddrs()
-            .iter()
-            .enumerate()
-            .map(|(index, host)| endpoint(user, &ip_label(*host), port_at(ports, index)))
-            .collect::<Vec<_>>()
-    } else {
-        config
-            .get_hosts()
-            .iter()
-            .enumerate()
-            .map(|(index, host)| {
-                let host = match host {
-                    Host::Tcp(host) => tcp_label(host),
-                    #[cfg(unix)]
-                    Host::Unix(path) => format!("unix:{}", path.display()),
-                };
-                endpoint(user, &host, port_at(ports, index))
-            })
-            .collect::<Vec<_>>()
-    };
-    if endpoints.is_empty() {
-        format!("{user}@source[{source_index}]")
-    } else {
-        endpoints.join(",")
-    }
-}
-
-fn port_at(ports: &[u16], index: usize) -> u16 {
-    match ports {
-        [] => DEFAULT_PORT,
-        [port] => *port,
-        many => many.get(index).copied().unwrap_or(DEFAULT_PORT),
-    }
-}
-
-fn endpoint(user: &str, host: &str, port: u16) -> String {
-    format!("{user}@{host}:{port}")
-}
-
-fn tcp_label(host: &str) -> String {
-    if host.starts_with('[') && host.ends_with(']') {
-        host.to_owned()
-    } else if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host.to_owned()
-    }
-}
-
-fn ip_label(host: IpAddr) -> String {
-    match host {
-        IpAddr::V4(host) => host.to_string(),
-        IpAddr::V6(host) => format!("[{host}]"),
-    }
-}
-
 impl Drop for Pool {
     fn drop(&mut self) {
         self.close();
@@ -326,4 +259,5 @@ impl Drop for Pool {
 }
 
 #[cfg(test)]
+#[path = "tests/pool.rs"]
 mod tests;

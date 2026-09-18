@@ -9,7 +9,9 @@ use kronika_format::{
 
 use crate::{CatalogSummary, ResourceError};
 
+// Bound catalog allocation before trusting the tail index (64 MiB).
 pub(crate) const MAX_CATALOG_BYTES: u64 = 64 * 1024 * 1024;
+// Checksum validation uses fixed stack space regardless of section size (16 KiB).
 const CRC_CHUNK_BYTES: usize = 16 * 1024;
 
 #[derive(Debug)]
@@ -44,10 +46,6 @@ struct EncodedCatalog {
     body_end: u64,
 }
 
-const fn metadata_limit(limit: usize) -> ZmsError {
-    ZmsError::MetadataLimit { limit }
-}
-
 fn read_encoded_catalog<R: ReadAt>(
     reader: &R,
     metadata_budget: Option<(usize, usize)>,
@@ -78,7 +76,7 @@ fn read_encoded_catalog<R: ReadAt>(
             .checked_add(catalog_bytes)
             .is_none_or(|peak| peak > limit)
     {
-        return Err(metadata_limit(limit));
+        return Err(ZmsError::MetadataLimit { limit });
     }
 
     let mut bytes = Vec::new();
@@ -110,9 +108,13 @@ pub(crate) fn read_zms_summary<R: ReadAt>(
     let transient = retained_metadata
         .checked_add(encoded.bytes.len())
         .and_then(|bytes| bytes.checked_add(entry_allocation))
-        .ok_or_else(|| metadata_limit(metadata_limit_bytes))?;
+        .ok_or(ZmsError::MetadataLimit {
+            limit: metadata_limit_bytes,
+        })?;
     if transient > metadata_limit_bytes {
-        return Err(metadata_limit(metadata_limit_bytes));
+        return Err(ZmsError::MetadataLimit {
+            limit: metadata_limit_bytes,
+        });
     }
     let catalog = Catalog {
         entries: view.entries().collect(),

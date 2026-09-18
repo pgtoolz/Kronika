@@ -44,7 +44,7 @@ Feature: What happens to a metric the host will not give up
     When it runs for 3 seconds
     Then every segment holds these sections
       | type_id | section           | min rows |
-      | 1021003 | instance_metadata | 1        |
+      | 1021004 | instance_metadata | 1        |
     And some segment holds these sections
       | type_id | section           | min rows |
       | 1102001 | os_cpu            | 2        |

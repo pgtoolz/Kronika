@@ -2,20 +2,20 @@
 
 use anyhow::Result;
 use kronika_registry::StrId;
-use kronika_source_pg::activity::{self, ActivityRow, ActivityVersion};
+use kronika_source_pg::activity::{self, ActivityVersion};
 use kronika_source_pg::archiver;
 use kronika_source_pg::bgwriter::BgwriterSnapshot;
 use kronika_source_pg::checkpointer::CheckpointerSnapshot;
-use kronika_source_pg::database::{self, DatabaseRow, DatabaseVersion};
-use kronika_source_pg::io::{self, IoRow, IoVersion};
-use kronika_source_pg::locks::{self, LockRow, LocksVersion};
+use kronika_source_pg::database::{self, DatabaseVersion};
+use kronika_source_pg::io::{self, IoVersion};
+use kronika_source_pg::locks::{self, LocksVersion};
 use kronika_source_pg::prepared_xacts;
 use kronika_source_pg::progress_vacuum::{self, ProgressVacuumRow};
 use kronika_source_pg::settings::{self, SettingsRow};
-use kronika_source_pg::statements::{self, StatementsRow, StatementsVersion};
+use kronika_source_pg::statements::{self, StatementsVersion};
 use kronika_source_pg::store_plans;
-use kronika_source_pg::user_indexes::{self, UserIndexesRow, UserIndexesVersion};
-use kronika_source_pg::user_tables::{self, UserTablesRow, UserTablesVersion};
+use kronika_source_pg::user_indexes::{self, UserIndexesVersion};
+use kronika_source_pg::user_tables::{self, UserTablesVersion};
 use kronika_source_pg::wal::WalSnapshot;
 use kronika_writer::{Interner, SectionBuffers};
 
@@ -35,6 +35,16 @@ pub(crate) fn push_pg_batch(
     if !matches!(batch, PgBatch::Settings(_)) {
         push_settings(buffers, interner, opening_settings)?;
     }
+    // Convert and buffer each row before touching the next one; stop on the first error.
+    macro_rules! push_rows {
+        ($rows:expr, $convert:path) => {{
+            for row in $rows {
+                buffer_row(buffers, $convert(row, intern(interner))?)?;
+            }
+            Ok(())
+        }};
+    }
+
     match batch {
         PgBatch::Settings(rows) => push_settings(buffers, interner, rows),
         PgBatch::Archiver(row) => {
@@ -47,77 +57,51 @@ pub(crate) fn push_pg_batch(
         PgBatch::Wal(WalSnapshot::V1(row)) => buffer_row(buffers, *row),
         PgBatch::Wal(WalSnapshot::V2(row)) => buffer_row(buffers, *row),
         PgBatch::WalStorage(row) => buffer_row(buffers, *row),
-        PgBatch::PreparedXacts(rows) => {
-            for row in rows {
-                buffer_row(
-                    buffers,
-                    prepared_xacts::to_prepared_xacts(row, intern(interner))?,
-                )?;
-            }
-            Ok(())
-        }
-        PgBatch::Database(version, rows) => push_database(buffers, interner, *version, rows),
-        PgBatch::Io(version, rows) => push_io(buffers, interner, *version, rows),
-        PgBatch::Activity(version, rows) => push_activity(buffers, interner, *version, rows),
-        PgBatch::Locks(version, rows) => push_locks(buffers, interner, *version, rows),
-        PgBatch::ProgressVacuum(rows) => {
-            for row in rows {
-                match row {
-                    ProgressVacuumRow::V1(row) => {
-                        buffer_row(buffers, progress_vacuum::to_v1(row, intern(interner))?)?;
-                    }
-                    ProgressVacuumRow::V2(row) => {
-                        buffer_row(buffers, progress_vacuum::to_v2(row, intern(interner))?)?;
-                    }
-                    ProgressVacuumRow::V3(row) => {
-                        buffer_row(buffers, progress_vacuum::to_v3(row, intern(interner))?)?;
-                    }
-                }
-            }
-            Ok(())
-        }
-        PgBatch::Statements(version, rows) => push_statements(buffers, interner, *version, rows),
+        PgBatch::PreparedXacts(rows) => push_rows!(rows, prepared_xacts::to_prepared_xacts),
+        PgBatch::Database(version, rows) => match version {
+            DatabaseVersion::V1 => push_rows!(rows, database::to_v1),
+            DatabaseVersion::V2 => push_rows!(rows, database::to_v2),
+            DatabaseVersion::V3 => push_rows!(rows, database::to_v3),
+            DatabaseVersion::V4 => push_rows!(rows, database::to_v4),
+        },
+        PgBatch::Io(version, rows) => match version {
+            IoVersion::V1 => push_rows!(rows, io::to_v1),
+            IoVersion::V2 => push_rows!(rows, io::to_v2),
+        },
+        PgBatch::Activity(version, rows) => match version {
+            ActivityVersion::V1 => push_rows!(rows, activity::to_v1),
+            ActivityVersion::V2 => push_rows!(rows, activity::to_v2),
+            ActivityVersion::V3 => push_rows!(rows, activity::to_v3),
+        },
+        PgBatch::Locks(version, rows) => match version {
+            LocksVersion::V1 => push_rows!(rows, locks::to_v1),
+            LocksVersion::V2 => push_rows!(rows, locks::to_v2),
+        },
+        PgBatch::ProgressVacuum(rows) => push_progress_vacuum(buffers, interner, rows),
+        PgBatch::Statements(version, rows) => match version {
+            StatementsVersion::V1 => push_rows!(rows, statements::to_v1),
+            StatementsVersion::V2 => push_rows!(rows, statements::to_v2),
+            StatementsVersion::V3 => push_rows!(rows, statements::to_v3),
+            StatementsVersion::V4 => push_rows!(rows, statements::to_v4),
+            StatementsVersion::V5 => push_rows!(rows, statements::to_v5),
+            StatementsVersion::V6 => push_rows!(rows, statements::to_v6),
+        },
         PgBatch::StatementsInfo(row) => buffer_row(buffers, *row),
-        PgBatch::StorePlansOssc(rows) => {
-            for row in rows {
-                buffer_row(buffers, store_plans::to_ossc(row, intern(interner))?)?;
-            }
-            Ok(())
-        }
-        PgBatch::StorePlansDatasentinel(rows) => {
-            for row in rows {
-                buffer_row(
-                    buffers,
-                    store_plans::to_datasentinel(row, intern(interner))?,
-                )?;
-            }
-            Ok(())
-        }
-        PgBatch::StorePlansVadv(rows) => {
-            for row in rows {
-                buffer_row(buffers, store_plans::to_vadv(row, intern(interner))?)?;
-            }
-            Ok(())
-        }
+        PgBatch::StorePlansOssc(rows) => push_rows!(rows, store_plans::to_ossc),
+        PgBatch::StorePlansDatasentinel(rows) => push_rows!(rows, store_plans::to_datasentinel),
+        PgBatch::StorePlansVadv(rows) => push_rows!(rows, store_plans::to_vadv),
         PgBatch::StorePlansInfo(row) => buffer_row(buffers, *row),
-        PgBatch::UserTables(version, rows) => push_user_tables(buffers, interner, *version, rows),
-        PgBatch::UserIndexes(version, rows) => push_user_indexes(buffers, interner, *version, rows),
+        PgBatch::UserTables(version, rows) => match version {
+            UserTablesVersion::V1 => push_rows!(rows, user_tables::to_v1),
+            UserTablesVersion::V2 => push_rows!(rows, user_tables::to_v2),
+            UserTablesVersion::V3 => push_rows!(rows, user_tables::to_v3),
+            UserTablesVersion::V4 => push_rows!(rows, user_tables::to_v4),
+        },
+        PgBatch::UserIndexes(version, rows) => match version {
+            UserIndexesVersion::V1 => push_rows!(rows, user_indexes::to_v1),
+            UserIndexesVersion::V2 => push_rows!(rows, user_indexes::to_v2),
+        },
     }
-}
-
-fn push_locks(
-    buffers: &mut SectionBuffers,
-    interner: &mut Interner,
-    version: LocksVersion,
-    rows: &[LockRow],
-) -> Result<()> {
-    for row in rows {
-        match version {
-            LocksVersion::V1 => buffer_row(buffers, locks::to_v1(row, intern(interner))?)?,
-            LocksVersion::V2 => buffer_row(buffers, locks::to_v2(row, intern(interner))?)?,
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn push_settings(
@@ -131,123 +115,22 @@ pub(crate) fn push_settings(
     Ok(())
 }
 
-fn push_database(
+fn push_progress_vacuum(
     buffers: &mut SectionBuffers,
     interner: &mut Interner,
-    version: DatabaseVersion,
-    rows: &[DatabaseRow],
+    rows: &[ProgressVacuumRow],
 ) -> Result<()> {
+    // A batch may contain several layouts; preserve its row and dictionary order.
     for row in rows {
-        match version {
-            DatabaseVersion::V1 => buffer_row(buffers, database::to_v1(row, intern(interner))?)?,
-            DatabaseVersion::V2 => buffer_row(buffers, database::to_v2(row, intern(interner))?)?,
-            DatabaseVersion::V3 => buffer_row(buffers, database::to_v3(row, intern(interner))?)?,
-            DatabaseVersion::V4 => buffer_row(buffers, database::to_v4(row, intern(interner))?)?,
-        }
-    }
-    Ok(())
-}
-
-fn push_io(
-    buffers: &mut SectionBuffers,
-    interner: &mut Interner,
-    version: IoVersion,
-    rows: &[IoRow],
-) -> Result<()> {
-    for row in rows {
-        match version {
-            IoVersion::V1 => buffer_row(buffers, io::to_v1(row, intern(interner))?)?,
-            IoVersion::V2 => buffer_row(buffers, io::to_v2(row, intern(interner))?)?,
-        }
-    }
-    Ok(())
-}
-
-fn push_activity(
-    buffers: &mut SectionBuffers,
-    interner: &mut Interner,
-    version: ActivityVersion,
-    rows: &[ActivityRow],
-) -> Result<()> {
-    for row in rows {
-        match version {
-            ActivityVersion::V1 => buffer_row(buffers, activity::to_v1(row, intern(interner))?)?,
-            ActivityVersion::V2 => buffer_row(buffers, activity::to_v2(row, intern(interner))?)?,
-            ActivityVersion::V3 => buffer_row(buffers, activity::to_v3(row, intern(interner))?)?,
-        }
-    }
-    Ok(())
-}
-
-fn push_statements(
-    buffers: &mut SectionBuffers,
-    interner: &mut Interner,
-    version: StatementsVersion,
-    rows: &[StatementsRow],
-) -> Result<()> {
-    for row in rows {
-        match version {
-            StatementsVersion::V1 => {
-                buffer_row(buffers, statements::to_v1(row, intern(interner))?)?;
+        match row {
+            ProgressVacuumRow::V1(row) => {
+                buffer_row(buffers, progress_vacuum::to_v1(row, intern(interner))?)?;
             }
-            StatementsVersion::V2 => {
-                buffer_row(buffers, statements::to_v2(row, intern(interner))?)?;
+            ProgressVacuumRow::V2(row) => {
+                buffer_row(buffers, progress_vacuum::to_v2(row, intern(interner))?)?;
             }
-            StatementsVersion::V3 => {
-                buffer_row(buffers, statements::to_v3(row, intern(interner))?)?;
-            }
-            StatementsVersion::V4 => {
-                buffer_row(buffers, statements::to_v4(row, intern(interner))?)?;
-            }
-            StatementsVersion::V5 => {
-                buffer_row(buffers, statements::to_v5(row, intern(interner))?)?;
-            }
-            StatementsVersion::V6 => {
-                buffer_row(buffers, statements::to_v6(row, intern(interner))?)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn push_user_tables(
-    buffers: &mut SectionBuffers,
-    interner: &mut Interner,
-    version: UserTablesVersion,
-    rows: &[UserTablesRow],
-) -> Result<()> {
-    for row in rows {
-        match version {
-            UserTablesVersion::V1 => {
-                buffer_row(buffers, user_tables::to_v1(row, intern(interner))?)?;
-            }
-            UserTablesVersion::V2 => {
-                buffer_row(buffers, user_tables::to_v2(row, intern(interner))?)?;
-            }
-            UserTablesVersion::V3 => {
-                buffer_row(buffers, user_tables::to_v3(row, intern(interner))?)?;
-            }
-            UserTablesVersion::V4 => {
-                buffer_row(buffers, user_tables::to_v4(row, intern(interner))?)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn push_user_indexes(
-    buffers: &mut SectionBuffers,
-    interner: &mut Interner,
-    version: UserIndexesVersion,
-    rows: &[UserIndexesRow],
-) -> Result<()> {
-    for row in rows {
-        match version {
-            UserIndexesVersion::V1 => {
-                buffer_row(buffers, user_indexes::to_v1(row, intern(interner))?)?;
-            }
-            UserIndexesVersion::V2 => {
-                buffer_row(buffers, user_indexes::to_v2(row, intern(interner))?)?;
+            ProgressVacuumRow::V3(row) => {
+                buffer_row(buffers, progress_vacuum::to_v3(row, intern(interner))?)?;
             }
         }
     }
@@ -262,3 +145,7 @@ fn intern(interner: &mut Interner) -> impl FnMut(&[u8]) -> Result<StrId> + '_ {
             .map_err(|err| anyhow::anyhow!("intern a PostgreSQL string: {err}"))
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/pg_sources/buffering.rs"]
+mod tests;

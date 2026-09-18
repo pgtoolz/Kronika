@@ -4,6 +4,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::SysFs;
+use kronika_registry::{
+    StrId, Ts,
+    os_cpufreq::{OsCpufreq, OsCpufreqPolicy},
+};
 
 /// Maximum `CPUFreq` policies accepted in one complete collection.
 pub const MAX_CPUFREQ_POLICIES: usize = 512;
@@ -20,6 +24,18 @@ pub enum ActualFrequencySource {
     CpuinfoAverage = 1,
     /// `cpuinfo_cur_freq`, used when the average attribute cannot be read.
     CpuinfoCurrent = 2,
+}
+
+impl ActualFrequencySource {
+    /// Sysfs attribute used for this frequency, or `None` when unavailable.
+    #[must_use]
+    pub const fn attribute_name(self) -> Option<&'static str> {
+        match self {
+            Self::Unavailable => None,
+            Self::CpuinfoAverage => Some("cpuinfo_avg_freq"),
+            Self::CpuinfoCurrent => Some("cpuinfo_cur_freq"),
+        }
+    }
 }
 
 /// Static reference for one kernel `CPUFreq` policy.
@@ -165,11 +181,14 @@ fn policy_id(name: &str) -> Option<i32> {
 }
 
 fn actual_frequency(sys: &SysFs, root: &str) -> (ActualFrequencySource, Option<i64>) {
-    for (source, name) in [
-        (ActualFrequencySource::CpuinfoAverage, "cpuinfo_avg_freq"),
-        (ActualFrequencySource::CpuinfoCurrent, "cpuinfo_cur_freq"),
+    for source in [
+        ActualFrequencySource::CpuinfoAverage,
+        ActualFrequencySource::CpuinfoCurrent,
     ] {
-        if let Some(frequency) = read_hz(sys, root, name) {
+        if let Some(frequency) = source
+            .attribute_name()
+            .and_then(|name| read_hz(sys, root, name))
+        {
             return (source, Some(frequency));
         }
     }
@@ -211,87 +230,59 @@ fn parse_cpu_list(content: &str) -> Option<BTreeSet<i32>> {
     (!cpus.is_empty()).then_some(cpus)
 }
 
-#[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use tempfile::tempdir;
-
-    use super::{ActualFrequencySource, collect};
-    use crate::SysFs;
-
-    #[test]
-    fn policies_prefer_average_and_keep_scaling_frequency_separate() {
-        let directory = tempdir().expect("create CPUFreq root");
-        let policy = directory.path().join("devices/system/cpu/cpufreq/policy2");
-        fs::create_dir_all(&policy).expect("create policy");
-        fs::create_dir_all(directory.path().join("devices/system/cpu")).expect("create CPU root");
-        fs::write(directory.path().join("devices/system/cpu/online"), "0-3\n")
-            .expect("write online CPUs");
-        for (name, value) in [
-            ("related_cpus", "0-3\n"),
-            ("affected_cpus", "0 2\n"),
-            ("scaling_driver", "intel_pstate\n"),
-            ("cpuinfo_avg_freq", "2450000\n"),
-            ("cpuinfo_cur_freq", "2300000\n"),
-            ("cpuinfo_min_freq", "800000\n"),
-            ("cpuinfo_max_freq", "3600000\n"),
-            ("scaling_cur_freq", "2200000\n"),
-            ("scaling_min_freq", "1000000\n"),
-            ("scaling_max_freq", "3200000\n"),
-        ] {
-            fs::write(policy.join(name), value).expect("write policy attribute");
-        }
-
-        let observed =
-            collect(&SysFs::new(directory.path().to_path_buf()), true, true).expect("collect");
-        assert_eq!(observed.policies.len(), 1);
-        assert_eq!(observed.policies[0].policy_id, 2);
-        assert_eq!(
-            observed.policies[0].actual_source,
-            ActualFrequencySource::CpuinfoAverage
-        );
-        assert_eq!(observed.policies[0].related_cpus.as_deref(), Some("0-3"));
-        assert_eq!(observed.samples[0].actual_frequency_hz, Some(2_450_000_000));
-        assert_eq!(observed.samples[0].scaling_cur_freq_hz, Some(2_200_000_000));
-        assert_eq!(observed.samples[0].online_cpus, Some(2));
-    }
-
-    #[test]
-    fn a_malformed_average_falls_through_to_current() {
-        let directory = tempdir().expect("create CPUFreq root");
-        let policy = directory.path().join("devices/system/cpu/cpufreq/policy0");
-        fs::create_dir_all(&policy).expect("create policy");
-        fs::write(policy.join("cpuinfo_avg_freq"), "not-a-frequency\n")
-            .expect("write malformed average");
-        fs::write(policy.join("cpuinfo_cur_freq"), "2300000\n").expect("write current");
-
-        let observed =
-            collect(&SysFs::new(directory.path().to_path_buf()), true, true).expect("collect");
-        assert_eq!(
-            observed.policies[0].actual_source,
-            ActualFrequencySource::CpuinfoCurrent
-        );
-        assert_eq!(observed.samples[0].actual_frequency_hz, Some(2_300_000_000));
-    }
-
-    #[test]
-    fn each_observation_uses_the_first_source_it_can_parse() {
-        let directory = tempdir().expect("create CPUFreq root");
-        let policy = directory.path().join("devices/system/cpu/cpufreq/policy0");
-        fs::create_dir_all(&policy).expect("create policy");
-        fs::write(policy.join("cpuinfo_avg_freq"), "2400000\n").expect("write average");
-        fs::write(policy.join("cpuinfo_cur_freq"), "2300000\n").expect("write current");
-        let sys = SysFs::new(directory.path().to_path_buf());
-        let first = collect(&sys, true, true).expect("collect first sample");
-        assert_eq!(first.samples[0].actual_frequency_hz, Some(2_400_000_000));
-
-        fs::remove_file(policy.join("cpuinfo_avg_freq")).expect("remove chosen average");
-        let second = collect(&sys, true, true).expect("collect second sample");
-        assert_eq!(
-            second.policies[0].actual_source,
-            ActualFrequencySource::CpuinfoCurrent
-        );
-        assert_eq!(second.samples[0].actual_frequency_hz, Some(2_300_000_000));
-    }
+/// Convert one policy using caller-owned dictionary admission.
+///
+/// # Errors
+/// Returns the first interning failure before attempting later fields.
+pub fn policy_row<E>(
+    policy: &CpuFreqPolicy,
+    intern: &mut impl FnMut(&str) -> Result<StrId, E>,
+    scope: u8,
+    ts: i64,
+) -> Result<OsCpufreqPolicy, E> {
+    Ok(OsCpufreqPolicy {
+        ts: Ts(ts),
+        policy_id: policy.policy_id,
+        related_cpus: intern_optional(intern, policy.related_cpus.as_deref())?,
+        scaling_driver: intern_optional(intern, policy.scaling_driver.as_deref())?,
+        actual_source: intern_optional(intern, policy.actual_source.attribute_name())?,
+        cpuinfo_min_freq_hz: policy.cpuinfo_min_freq_hz,
+        cpuinfo_max_freq_hz: policy.cpuinfo_max_freq_hz,
+        scope,
+    })
 }
+
+/// Convert one sample, retaining nullable hardware readings.
+///
+/// # Errors
+/// Returns the interning failure for the selected source name.
+pub fn sample_row<E>(
+    sample: &CpuFreqSample,
+    intern: &mut impl FnMut(&str) -> Result<StrId, E>,
+    scope: u8,
+    ts: i64,
+) -> Result<OsCpufreq, E> {
+    Ok(OsCpufreq {
+        ts: Ts(ts),
+        policy_id: sample.policy_id,
+        actual_source: intern_optional(intern, sample.actual_source.attribute_name())?,
+        actual_frequency_hz: sample.actual_frequency_hz,
+        scaling_cur_freq_hz: sample.scaling_cur_freq_hz,
+        scaling_min_freq_hz: sample.scaling_min_freq_hz,
+        scaling_max_freq_hz: sample.scaling_max_freq_hz,
+        online_cpus: sample.online_cpus,
+        scope,
+    })
+}
+
+/// Missing values remain NULL; dictionary failures propagate to skip the row.
+fn intern_optional<E>(
+    intern: &mut impl FnMut(&str) -> Result<StrId, E>,
+    value: Option<&str>,
+) -> Result<Option<StrId>, E> {
+    value.map(intern).transpose()
+}
+
+#[cfg(test)]
+#[path = "tests/cpufreq.rs"]
+mod tests;

@@ -17,7 +17,7 @@ pub(crate) fn call(
     arguments: Map<String, Value>,
     _cancelled: &dyn Fn() -> bool,
 ) -> CallToolResult {
-    let input: super::catalog::GetContextInput =
+    let input: super::input::GetContextInput =
         match serde_json::from_value(Value::Object(arguments)) {
             Ok(input) => input,
             Err(error) => {
@@ -112,4 +112,5 @@ fn exclusive_recorded_range(range: Option<(i64, i64)>) -> Result<Option<(i64, i6
 }
 
 #[cfg(test)]
+#[path = "../tests/mcp/context.rs"]
 mod tests;

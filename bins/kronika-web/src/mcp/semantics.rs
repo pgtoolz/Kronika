@@ -202,4 +202,5 @@ pub(crate) fn mcp_structured(value: Value) -> CallToolResult {
 }
 
 #[cfg(test)]
+#[path = "../tests/mcp/semantics.rs"]
 mod tests;

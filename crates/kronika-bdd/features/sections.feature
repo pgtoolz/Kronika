@@ -48,5 +48,5 @@ Feature: Which sections reach the segment, and how many rows they may hold
       | 1210001 | os_cgroup_v2_io     | 1        |
     And every segment holds these sections
       | type_id | section           | min rows |
-      | 1021003 | instance_metadata | 1        |
+      | 1021004 | instance_metadata | 1        |
       | 3001001 | dict.strings      | 1        |

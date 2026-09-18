@@ -1,75 +1,52 @@
-//! Web parameter reference.
+//! Launch examples and operational notes appended to generated parameter help.
 
-pub(crate) const HELP: &str = r"kronika-web - browse a Kronika recording and serve its HTTP API and MCP tools
+pub(crate) const EXAMPLES: &str = r"Examples:
+  Linux recording, listening on all IPv4 interfaces:
+    sudo kronika-web --storage-dir /var/lib/kronika --sources os \
+      --listen 0.0.0.0:8080
 
-Usage: kronika-web
-       kronika-web --help | -h | --version
+  PostgreSQL recording, with authentication:
+    kronika-web --storage-dir ./recording --sources postgresql \
+      --user kronika --password 'replace-with-a-random-password'
 
-Runs in the foreground. Configuration is environment-only. Required variables:
-KRONIKA_STORAGE_DIR and KRONIKA_WEB_SOURCES.
+  Existing environment configuration also works:
+    KRONIKA_STORAGE_DIR=./recording KRONIKA_WEB_SOURCES=3 kronika-web
 
-EXAMPLES
-  Without authentication, leave both credentials unset:
+  Open http://SERVER_IP:8080/. The default listener accepts local connections only.
 
-  sudo env KRONIKA_STORAGE_DIR=/path/to/recording KRONIKA_WEB_SOURCES=1 \
-    KRONIKA_WEB_LISTEN=0.0.0.0:8080 kronika-web
+Configuration:
+  CLI arguments override environment variables, then built-in defaults apply.
+  --storage-dir and --sources are required unless their environment fallback is set.
+  To clear optional credentials or demo mode, unset the corresponding variables.
+  Both credentials unset: browser, API and MCP access is unauthenticated.
+  Both nonempty: browser sessions and HTTP Basic authentication are enabled.
+  A missing partner or an explicitly empty credential is a startup error.
+  --demo synthetic (KRONIKA_WEB_DEMO=synthetic) marks generated demo data.
 
-  To require a login, set both credentials:
+Configured sources:
+  none        (0) Neither source family configured.
+  os          (1) Linux OS configured.
+  postgresql  (2) PostgreSQL configured.
+  all         (3) Linux OS and PostgreSQL configured.
+  Names and legacy bitsets 0..3 work in both --sources and KRONIKA_WEB_SOURCES.
+  This labels the API catalog; all recorded data remains available for every value.
+  PostgreSQL configured or recorded data suppresses its no-data tooltip. The OS
+  flag is catalog metadata only. Health uses instance information saved by the
+  collector. Enable PostgreSQL collection with kronika-collector --pg-dsn or
+  KRONIKA_PG_DSN.
 
-  sudo env KRONIKA_STORAGE_DIR=/path/to/recording KRONIKA_WEB_SOURCES=1 \
-    KRONIKA_WEB_LISTEN=0.0.0.0:8080 KRONIKA_WEB_USER=kronika \
-    KRONIKA_WEB_PASSWORD='replace-with-a-random-password' kronika-web
+Storage and exports:
+  Use one collector's recording directory containing active.wal and dated
+  YYYY/MM/DD/<segment-id>.zms files. Individual ZMS files and flat directories of
+  segments are not accepted. Web needs write access for search indexes and locks.
+  TMPDIR selects writable export scratch space (default: system temporary directory).
+  Temporary ZMS and HTML files coexist during export and are removed when closed.
 
-  Open http://SERVER_IP:8080/.
-
-KRONIKA_WEB_SOURCES (required, no default)
-  0  Neither source family declared configured.
-  1  Linux OS declared configured (bit 0).
-  2  PostgreSQL declared configured (bit 1).
-  3  Linux OS and PostgreSQL declared configured.
-
-  This setting tells the API catalog which sources are configured. The browser
-  hides the PostgreSQL no-data tooltip when PostgreSQL is marked configured or
-  PostgreSQL data has been recorded. The Linux OS flag is only API metadata.
-  All recorded data remains available for every value. Health uses instance
-  information saved by the collector.
-  KRONIKA_PG_DSN on kronika-collector enables PostgreSQL metric collection.
-
-REQUIRED ENVIRONMENT
-  KRONIKA_STORAGE_DIR
-      No default. One collector's recording directory. Use a separate web
-      process and listen address for each server's directory. Contains active.wal
-      and YYYY/MM/DD/<segment-id>.zms. An individual ZMS file or a flat directory
-      of segment files is not accepted. The directory must exist. Web needs
-      write access to save search indexes (.idx files) and locks that prevent
-      two processes from building the same index at once.
-  KRONIKA_WEB_SOURCES
-      No default. Accepted values: 0, 1, 2, 3. See meanings above.
-
-OPTIONAL ENVIRONMENT
-  KRONIKA_WEB_LISTEN   default 127.0.0.1:8080
-      IP address and port, e.g. 127.0.0.1:8080, 0.0.0.0:8080, or [::1]:8080.
-      Hostnames are not accepted. The default accepts local connections only.
-      The listener serves plain HTTP.
-  KRONIKA_WEB_USER and KRONIKA_WEB_PASSWORD
-      Both unset: browser, API, and MCP access is unauthenticated.
-      Both nonempty: browser sessions and HTTP Basic authentication are enabled.
-      Setting only one or an explicitly empty value is a startup error.
-  KRONIKA_WEB_DEMO     unset by default
-      The only accepted value is synthetic. Tells API catalog clients that the
-      recording contains generated demo data.
-  TMPDIR              default the system temporary directory (normally /tmp)
-      Temporary ZMS and HTML files during browser exports. Requires write
-      access and capacity for both files. Files are removed when closed.
-
-LOGIN, API, AND MCP
-  With credentials configured, browser login creates a session. API requests
-  accept that session or HTTP Basic. MCP uses HTTP Basic at
-  http://SERVER_IP:8080/mcp. With credentials unset, omit Authorization.
-
-LOGS AND STOPPING
-  Readiness (ready IP:PORT) goes to stdout. Request/connection/export errors and
-  export timings go to stderr. There is no web log-level environment setting.
-  Ctrl+C or SIGTERM terminates web. Invalid configuration or listener failure
-  exits nonzero.
+Access and process:
+  The listener serves plain HTTP. API accepts a browser session or HTTP Basic;
+  MCP uses HTTP Basic at http://SERVER_IP:8080/mcp. Without credentials, omit
+  Authorization. Readiness goes to stdout; request/connection/export errors and
+  export timings go to stderr. There is no web log-level setting.
+  Runs in the foreground. Ctrl+C or SIGTERM stops web. Invalid settings fail
+  before runtime startup; listener failures exit nonzero.
 ";

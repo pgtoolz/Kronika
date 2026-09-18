@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 use super::projection::chunk_dictionary;
 use super::render::{cell, record};
 use super::row_key::{self, DetailLocator};
+
 use crate::{
     DatasetSegment, QueryContext, QueryDataset, QueryError, QuerySink, SegmentBounds,
     SegmentSelection,
@@ -645,4 +646,5 @@ fn unreadable(message: impl Into<String>) -> QueryError {
 }
 
 #[cfg(test)]
+#[path = "tests/row_detail.rs"]
 mod tests;

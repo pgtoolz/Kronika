@@ -79,4 +79,5 @@ pub struct PgStatBgwriterV2 {
 }
 
 #[cfg(test)]
+#[path = "../tests/codec/pg_stat_bgwriter.rs"]
 mod tests;

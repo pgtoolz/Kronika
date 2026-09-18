@@ -592,4 +592,5 @@ pub async fn collect_user_tables<E>(
 }
 
 #[cfg(test)]
+#[path = "tests/user_tables.rs"]
 mod tests;

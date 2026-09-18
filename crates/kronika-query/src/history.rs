@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 
 use kronika_index::{
     DERIVED_HEALTH_TYPE_ID, INSTANCE_METADATA_TYPE_ID, INSTANCE_METADATA_V1_TYPE_ID,
-    OS_PSI_TYPE_ID, visit_health_points,
+    INSTANCE_METADATA_V3_TYPE_ID, INSTANCE_METADATA_V4_TYPE_ID, OS_PSI_TYPE_ID,
+    visit_health_points,
 };
 use kronika_reader::{Cell, Row, Segment, SegmentKind};
 use serde_json::{Value, json};
@@ -15,6 +16,7 @@ use super::projection::{
 };
 use super::render::{cell, projected_layout, record};
 use super::selection::{active_tail, exact_segment as explicit_segment};
+
 use crate::request::{ActiveCursor, DataRequest, Window};
 use crate::{DatasetSegment, QueryDataset, QueryError, QuerySink, QueryStability};
 
@@ -369,7 +371,8 @@ fn health_layout() -> Value {
             "inputs": [
                 INSTANCE_METADATA_TYPE_ID.to_string(),
                 INSTANCE_METADATA_V1_TYPE_ID.to_string(),
-                "1021003",
+                INSTANCE_METADATA_V3_TYPE_ID.to_string(),
+                INSTANCE_METADATA_V4_TYPE_ID.to_string(),
                 "1205002",
                 OS_PSI_TYPE_ID.to_string(),
                 "1001001",

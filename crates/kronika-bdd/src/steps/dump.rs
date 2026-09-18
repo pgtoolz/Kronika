@@ -95,5 +95,86 @@ pub(crate) fn strict_lines(printed: &str, description: &str) -> Result<Vec<Line>
     Ok(listed)
 }
 
+/// A listing allowed to contain no segment or scan warnings.
+///
+/// Range and set-aside scenarios exercise exactly those outcomes. Ordinary
+/// listing assertions go through `listing` instead.
+pub(super) fn permissive_listing(world: &BddWorld, range: &[&str]) -> Result<Vec<Line>> {
+    let mut flags = vec!["--json"];
+    flags.extend_from_slice(range);
+    lines(&dump(world, &flags)?)
+}
+
+/// A complete listing with at least one admitted segment and no scan warning.
+pub(super) fn listing(world: &BddWorld) -> Result<Vec<Line>> {
+    let printed = dump(world, &["--json"])?;
+    let listed = strict_lines(&printed, "the full listing")?;
+    anyhow::ensure!(
+        listed.iter().any(|line| line.holds("kind", "segment")),
+        "the full listing admitted no segments"
+    );
+    Ok(listed)
+}
+
+/// One line per published segment: its window, its span, what it cost.
+pub(super) fn segments(world: &BddWorld) -> Result<Vec<Line>> {
+    Ok(listing(world)?
+        .into_iter()
+        .filter(|line| line.holds("kind", "segment"))
+        .collect())
+}
+
+/// Segments selected by a range, including an intentionally empty result.
+pub(super) fn segments_in_range(world: &BddWorld, range: &[&str]) -> Result<Vec<Line>> {
+    Ok(permissive_listing(world, range)?
+        .into_iter()
+        .filter(|line| line.holds("kind", "segment"))
+        .collect())
+}
+
+/// One line per section of every published segment.
+pub(super) fn sections(world: &BddWorld) -> Result<Vec<Line>> {
+    Ok(listing(world)?
+        .into_iter()
+        .filter(|line| line.holds("kind", "section"))
+        .collect())
+}
+
+/// The rows of one section across every published segment.
+pub(super) fn rows(world: &BddWorld, type_id: u32) -> Result<Vec<Line>> {
+    let printed = dump(
+        world,
+        &["--json", "--limit", "0", "--section", &type_id.to_string()],
+    )?;
+    let listed = strict_lines(&printed, "the row listing")?;
+    Ok(listed
+        .into_iter()
+        .filter(|line| {
+            line.holds("kind", "row") && line.number("type_id") == Some(i64::from(type_id))
+        })
+        .collect())
+}
+
+/// The window every published segment covers, oldest first.
+pub(super) fn windows(world: &BddWorld) -> Result<Vec<(i64, i64)>> {
+    segments(world)?
+        .iter()
+        .map(|line| {
+            let min_ts = line.number("min_ts").context("a segment without min_ts")?;
+            let max_ts = line.number("max_ts").context("a segment without max_ts")?;
+            Ok((min_ts, max_ts))
+        })
+        .collect()
+}
+
+/// The path of every segment a listing named.
+pub(super) fn paths(segments: &[Line]) -> Vec<String> {
+    segments
+        .iter()
+        .filter_map(|line| line.get("path"))
+        .collect()
+}
+
 #[cfg(test)]
+#[path = "../tests/steps/dump.rs"]
 mod tests;

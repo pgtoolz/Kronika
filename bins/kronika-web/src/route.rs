@@ -6,8 +6,8 @@ pub(crate) use kronika_query::{Order, RelationGroup};
 /// A parsed native web route.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Route {
-    Recorded(kronika_api::Route),
-    Export(kronika_dump::SliceRange),
+    Recorded(Box<kronika_api::Route>),
+    Export(kronika_slice::SliceRange),
     McpAccess,
     InstanceLabel,
 }
@@ -18,12 +18,14 @@ pub(crate) fn parse(path: &str, query: Option<&str>) -> Result<Route, RouteError
         "/api/export" => crate::export::parse(query).map(Route::Export),
         "/api/mcp-access" => native(query, Route::McpAccess),
         "/api/instance-label" => native(query, Route::InstanceLabel),
-        _ => kronika_api::parse(path, Some(query)).map(Route::Recorded),
+        _ => kronika_api::parse(path, Some(query))
+            .map(Box::new)
+            .map(Route::Recorded),
     }
 }
 
 fn native(query: &str, route: Route) -> Result<Route, RouteError> {
-    if query.is_empty() {
+    if kronika_api::query_pairs(query)?.is_empty() {
         Ok(route)
     } else {
         Err(RouteError::BadParameter("query".to_owned()))
@@ -31,4 +33,5 @@ fn native(query: &str, route: Route) -> Result<Route, RouteError> {
 }
 
 #[cfg(test)]
+#[path = "tests/route.rs"]
 mod tests;

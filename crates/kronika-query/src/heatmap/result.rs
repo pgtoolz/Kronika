@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::query::NormalizedRanking;
+
 use crate::row_key::{DetailLocator, serialize_decimal};
 
 /// Stable name-to-value object used for identities and labels.

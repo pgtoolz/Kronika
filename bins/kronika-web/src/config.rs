@@ -1,16 +1,17 @@
-//! Environment-only configuration, validated before the listener starts.
+//! CLI arguments and environment fallbacks, validated before runtime startup.
 
+use std::ffi::OsString;
 use std::fmt;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
+use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use tokio::sync::Semaphore;
 
-const DEFAULT_LISTEN: &str = "127.0.0.1:8080";
-
 pub(crate) use kronika_query::{SOURCE_OS, SOURCE_POSTGRESQL};
+// --sources describes configured families in the catalog; it does not filter recorded data.
 const SUPPORTED_SOURCES: u32 = SOURCE_OS | SOURCE_POSTGRESQL;
 
 /// The validated server contract.
@@ -24,7 +25,7 @@ pub(crate) struct Config {
     pub(crate) account: Option<Account>,
     /// Source-family configuration reported by the catalog.
     pub(crate) sources: u32,
-    /// Whether the server exposes the bundled synthetic demo dataset.
+    /// Label this recording as synthetic demo data in the catalog.
     pub(crate) synthetic_demo: bool,
     /// Process-wide admission for standalone export preparation.
     pub(crate) export_gate: Arc<Semaphore>,
@@ -45,82 +46,101 @@ impl fmt::Debug for Account {
     }
 }
 
-impl Config {
-    /// Read and validate the environment contract.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the data root or source bitset is absent, only one
-    /// credential is set, or a configured value is invalid.
-    pub(crate) fn from_env() -> Result<Self> {
-        let data_root: PathBuf = std::env::var("KRONIKA_STORAGE_DIR")
-            .context("KRONIKA_STORAGE_DIR is not set")?
-            .into();
-        let raw_listen =
-            std::env::var("KRONIKA_WEB_LISTEN").unwrap_or_else(|_unset| DEFAULT_LISTEN.to_owned());
-        let listen = raw_listen.parse().with_context(|| {
-            format!("KRONIKA_WEB_LISTEN={raw_listen:?} is not an address and port")
-        })?;
-        let account = account(
-            credential("KRONIKA_WEB_USER")?,
-            credential("KRONIKA_WEB_PASSWORD")?,
-        )?;
-        let sources = source_set(std::env::var("KRONIKA_WEB_SOURCES").ok())?;
-        let synthetic_demo = synthetic_demo(std::env::var("KRONIKA_WEB_DEMO").ok().as_deref())?;
-        Ok(Self {
-            data_root,
-            listen,
-            account,
-            sources,
-            synthetic_demo,
-            export_gate: Arc::new(Semaphore::new(1)),
-        })
-    }
+/// Browse a Kronika recording and serve its HTTP API and MCP tools.
+#[derive(Parser)]
+#[command(name = "kronika-web", version, after_long_help = crate::help::EXAMPLES)]
+struct Args {
+    /// Existing collector recording directory; needs read/write access for indexes.
+    #[arg(
+        long,
+        env = "KRONIKA_STORAGE_DIR",
+        value_name = "DIR",
+        hide_env_values = true
+    )]
+    storage_dir: PathBuf,
+    /// IP address and port for plain HTTP; hostnames are not accepted.
+    #[arg(
+        long,
+        env = "KRONIKA_WEB_LISTEN",
+        default_value = "127.0.0.1:8080",
+        value_name = "IP:PORT",
+        hide_env_values = true
+    )]
+    listen: SocketAddr,
+    /// Configured sources: none, os, postgresql, all (legacy bitsets 0..3 also work).
+    #[arg(long, env = "KRONIKA_WEB_SOURCES", value_name = "SOURCES", value_parser = source_set, hide_env_values = true)]
+    sources: u32,
+    /// Authentication user; set together with --password, or leave both unset.
+    #[arg(long, env = "KRONIKA_WEB_USER", hide_env_values = true)]
+    user: Option<String>,
+    /// Authentication password; set together with --user, or leave both unset.
+    #[arg(long, env = "KRONIKA_WEB_PASSWORD", hide_env_values = true)]
+    password: Option<String>,
+    /// Mark the recording as generated demo data.
+    #[arg(long, env = "KRONIKA_WEB_DEMO", value_enum, hide_env_values = true)]
+    demo: Option<Demo>,
 }
 
-fn synthetic_demo(raw: Option<&str>) -> Result<bool> {
-    match raw {
-        None => Ok(false),
-        Some("synthetic") => Ok(true),
-        Some(value) => anyhow::bail!("KRONIKA_WEB_DEMO={value:?} is not synthetic"),
-    }
+#[derive(Clone, Copy, ValueEnum)]
+enum Demo {
+    Synthetic,
 }
 
-fn credential(name: &str) -> Result<Option<String>> {
-    match std::env::var(name) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} is not valid Unicode"),
-    }
+/// Parse and validate without starting runtime threads or touching storage/network.
+pub(crate) fn parse_from(
+    args: impl IntoIterator<Item = impl Into<OsString> + Clone>,
+) -> Result<Config, clap::Error> {
+    let mut command = Args::command();
+    let matches = command.try_get_matches_from_mut(args)?;
+    let args = Args::from_arg_matches(&matches)?;
+    let account = account(args.user, args.password).map_err(|error| {
+        command.error(clap::error::ErrorKind::ValueValidation, error.to_string())
+    })?;
+    Ok(Config {
+        data_root: args.storage_dir,
+        listen: args.listen,
+        account,
+        sources: args.sources,
+        synthetic_demo: args.demo.is_some(),
+        export_gate: Arc::new(Semaphore::new(1)),
+    })
 }
 
 fn account(user: Option<String>, password: Option<String>) -> Result<Option<Account>> {
     if user.is_none() && password.is_none() {
         return Ok(None);
     }
-    let user =
-        user.context("KRONIKA_WEB_USER is not set; set both credentials or leave both unset")?;
-    let password = password
-        .context("KRONIKA_WEB_PASSWORD is not set; set both credentials or leave both unset")?;
+    let user = user.context(
+        "--user / KRONIKA_WEB_USER is not set; set both credentials or leave both unset",
+    )?;
+    let password = password.context(
+        "--password / KRONIKA_WEB_PASSWORD is not set; set both credentials or leave both unset",
+    )?;
     if user.is_empty() {
-        anyhow::bail!("KRONIKA_WEB_USER is empty");
+        anyhow::bail!("--user / KRONIKA_WEB_USER is empty");
     }
     if password.is_empty() {
-        anyhow::bail!("KRONIKA_WEB_PASSWORD is empty");
+        anyhow::bail!("--password / KRONIKA_WEB_PASSWORD is empty");
     }
     Ok(Some(Account { user, password }))
 }
 
-fn source_set(raw: Option<String>) -> Result<u32> {
-    let raw = raw.context("KRONIKA_WEB_SOURCES is not set")?;
-    let sources = raw
-        .parse::<u32>()
-        .with_context(|| format!("KRONIKA_WEB_SOURCES={raw:?} is not a u32 bitset"))?;
+fn source_set(raw: &str) -> Result<u32, String> {
+    let sources = match raw {
+        "none" => 0,
+        "os" => SOURCE_OS,
+        "postgresql" => SOURCE_POSTGRESQL,
+        "all" => SUPPORTED_SOURCES,
+        value => value.parse::<u32>().map_err(|_error| {
+            "expected none, os, postgresql, all, or a source bitset 0..3".to_owned()
+        })?,
+    };
     if sources & !SUPPORTED_SOURCES != 0 {
-        anyhow::bail!("KRONIKA_WEB_SOURCES={raw:?} contains unsupported source bits");
+        return Err("source bitset must contain only OS (1) and PostgreSQL (2) bits".to_owned());
     }
     Ok(sources)
 }
 
 #[cfg(test)]
+#[path = "tests/config.rs"]
 mod tests;

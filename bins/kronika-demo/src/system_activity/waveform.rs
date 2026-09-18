@@ -44,4 +44,5 @@ pub(super) const fn hourly_cpu_millis(peak_percent: u64) -> u64 {
 }
 
 #[cfg(test)]
+#[path = "../tests/system_activity/waveform.rs"]
 mod tests;

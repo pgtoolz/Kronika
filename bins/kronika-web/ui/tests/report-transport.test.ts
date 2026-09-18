@@ -160,10 +160,14 @@ test("report transport keeps every product range inside the embedded visible ran
     await reportFetch("/api/events?from=1788523199999999&to=1788526800000001&representation=groups&limit=5000")
     await reportFetch("/api/hour?from=1788523199999999&to=1788526800000001&section=os_process&field=pid")
     await reportFetch("/api/heatmap?from=1788523199999999&to=1788526800000001&section=os_process&field=cpu_ticks&columns=60&top=25")
+    await reportFetch("/api/snapshot/neighbor?from=1788523199999999&to=1788526800000001&section=pg_stat_activity&at=1788523200000000&direction=next")
+    await reportFetch("/api/snapshot/neighbor?section=pg_stat_activity&at=1788526799999999&direction=previous")
     assert.deepEqual(seen, [
       "/api/events?from=1788523200000000&to=1788526800000000&representation=groups&limit=5000",
       "/api/hour?from=1788523200000000&to=1788526799999999&section=os_process&field=pid",
       "/api/heatmap?from=1788523200000000&to=1788526799999999&section=os_process&field=cpu_ticks&columns=60&top=25",
+      "/api/snapshot/neighbor?from=1788523200000000&to=1788526799999999&section=pg_stat_activity&at=1788523200000000&direction=next",
+      "/api/snapshot/neighbor?section=pg_stat_activity&at=1788526799999999&direction=previous&from=1788523200000000&to=1788526799999999",
     ])
   } finally {
     restore()

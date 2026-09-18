@@ -181,4 +181,5 @@ fn validate(block: &FindingBlock) -> Result<(), IndexError> {
 }
 
 #[cfg(test)]
+#[path = "tests/findings.rs"]
 mod tests;

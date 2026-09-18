@@ -13,7 +13,12 @@
 
 pub mod block_topology;
 pub mod cgroup;
+mod collection;
 pub mod cpufreq;
+pub mod kernel;
+pub mod network;
+pub mod topology;
+pub use collection::CollectionError;
 
 mod fs;
 pub use fs::{
@@ -22,7 +27,7 @@ pub use fs::{
 };
 
 mod instance;
-pub use instance::{OsInstanceFacts, collect_os_instance_facts};
+pub use instance::{OsInstanceFacts, collect_os_instance_facts, collect_os_instance_facts_from};
 
 pub mod mount;
 pub use mount::{
@@ -40,4 +45,4 @@ pub mod passwd;
 pub use passwd::PasswdSnapshot;
 
 mod scope;
-pub use scope::{OsScope, detect_container, net_scope};
+pub use scope::{OsScope, detect_container, detect_container_with_root_override, net_scope};

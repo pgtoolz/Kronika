@@ -1,6 +1,12 @@
 //! What can go wrong while turning a journal into a segment.
 
-use super::{CodecError, Error, JournalError, LayoutError, PartError, SegmentId, fmt, io};
+use std::{error::Error, fmt, io};
+
+use kronika_format::PartError;
+use kronika_layout::{LayoutError, SegmentId};
+use kronika_registry::CodecError;
+
+use crate::JournalError;
 
 /// Why writing a segment failed.
 #[derive(Debug)]

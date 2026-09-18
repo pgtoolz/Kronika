@@ -1,7 +1,18 @@
 //! Accepting an existing final file only after an exact byte comparison.
 
-use super::*;
+use std::fs::File;
+use std::io;
+use std::os::unix::fs::FileExt as _;
+
+use kronika_format::{
+    Catalog, ENTRY_LEN, FORMAT_VERSION, MAGIC, META_LEN, TAIL_INDEX_LEN, TailIndex,
+};
+
+#[cfg(test)]
+use super::AFTER_FIRST_COMPARISON_CHUNK;
+use super::{COMPARE_BUFFER_BYTES, MAX_CATALOG_BYTES, WriteSummary};
 use crate::write_test_hook;
+use kronika_layout::FileIdentity;
 
 pub(super) fn validate_segment(file: &File, expected: WriteSummary) -> Result<bool, io::Error> {
     let length = file.metadata()?.len();

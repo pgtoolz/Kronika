@@ -250,4 +250,5 @@ impl<'a> ProcessReader<'a> {
 }
 
 #[cfg(test)]
+#[path = "../tests/proc/process.rs"]
 mod tests;

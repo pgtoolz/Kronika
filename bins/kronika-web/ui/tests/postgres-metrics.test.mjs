@@ -174,6 +174,30 @@ test("history subtracts exact counters before conversion and rejects unusable in
   assert.equal(metrics.postgresInterval(after, executionReset).mean_exec_ms_per_call, null)
 })
 
+test("statement and plan histories use actual five-minute gaps, including a delayed pass", () => {
+  const start = 1_780_000_000_000_000
+  for (const typeId of ["1002001", "1002006", "1003001", "1004001", "1018001"]) {
+    const execution = metrics.physicalField(typeId, "execution_ms_per_second")
+    const sample = (seconds, calls, elapsedMs, rows) => row(typeId, start + seconds * 1_000_000, {
+      queryid: "17", userid: 10, dbid: 5, planid: "29", toplevel: true,
+      calls, [execution]: elapsedMs, rows,
+    })
+    const history = metrics.postgresHistory([
+      sample(0, 100, 1_000, 20),
+      sample(300, 700, 10_000, 1_220),
+      sample(615, 1_330, 19_450, 2_480),
+    ])
+    assert.deepEqual(history.map((point) => [
+      point.calls_per_second, point.execution_ms_per_second,
+      point.rows_per_second, point.mean_exec_ms_per_call,
+    ]), [
+      [null, null, null, null],
+      [2, 30, 4, 15],
+      [2, 30, 4, 15],
+    ], typeId)
+  }
+})
+
 test("a physical statement spike selects interval mean execution time", () => {
   assert.equal(metrics.findingSemanticField("1002001", "total_time"), "mean_exec_ms_per_call")
   assert.equal(metrics.findingSemanticField("1002005", "total_exec_time"), "mean_exec_ms_per_call")

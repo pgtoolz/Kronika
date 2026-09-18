@@ -1,5 +1,8 @@
+mod facts;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use facts::{FIELDS, Previous, Summary, WANTED, integer};
 use kronika_reader::{Row, Segment};
 use kronika_registry::{contract, logical_section_name};
 use serde_json::{Value, json};
@@ -9,12 +12,6 @@ use crate::statement_scope::{CollectorStatements, plan_statement_query_id_column
 use crate::{
     DatasetSegment, HourSeriesRequest, QueryDataset, QueryError, QuerySink, StatementScope, Window,
 };
-
-mod facts;
-#[cfg(test)]
-mod tests;
-
-use facts::{FIELDS, Previous, Summary, WANTED, integer};
 
 pub(super) const SECTION: &str = "postgresql_summary";
 const SOURCES: [&str; 5] = [
@@ -284,3 +281,7 @@ fn layout() -> Value {
         "provenance": { "inputs": SOURCES },
     })
 }
+
+#[cfg(test)]
+#[path = "../tests/hour_postgres_summary.rs"]
+mod tests;

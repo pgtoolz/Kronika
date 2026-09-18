@@ -14,6 +14,7 @@ import {
   hourOf,
   loadSnapshot,
   loadSnapshotGroups,
+  loadSnapshotNeighbor,
   mergeSnapshotData,
   snapshotRequestGroups,
   fieldNameForLocator,
@@ -28,6 +29,7 @@ import {
   type Finding,
   type HourData,
   type SnapshotOptions,
+  type SnapshotDirection,
   type StatementScope,
   type SnapshotRequestGroup,
   type TimelineData,
@@ -41,19 +43,20 @@ import { loadDisplayTimeZone, saveDisplayTimeZone, type DisplayTimeZone } from "
 import { DisplayTimeProvider, DisplayTimeScope, useDisplayTime } from "./display-time-context"
 import { contextualRows, entityContext, findingRoute, type EntityContext } from "./entity-context"
 import { mergeObservationTimestamps, observationTimestamps } from "./cursor-timestamps"
+import { CursorNavigationContext, snapshotNavigationSections } from "./cursor-navigation"
 import { EventsView } from "./events-view"
 import { ExportProvider } from "./export-context"
 import { hourRange, rangeOnHour, type ExportRange } from "./export-range"
 import { ExportDialog } from "./export-dialog"
 import { findingProjection } from "./finding-presentation"
-import { HelpPanel, type Translate } from "./help"
+import { HelpPanel, type Translate, versionLabel } from "./help"
 import { McpPanel } from "./mcp-connect"
 import { MobileControls } from "./mobile-controls"
 import { useHistoryRequest } from "./history-request"
 import { HourSkeleton, type LoadProgress } from "./hour-skeleton"
 import { HourPicker } from "./hour-picker"
 import { Inspector, InspectorPortalProvider, InspectorRelatedPortal } from "./inspector"
-import { keyboardTargetOwnsArrows } from "./keyboard"
+import { keyboardTargetOwnsArrows, overlayShortcut } from "./keyboard"
 import { rowMatchesLocator } from "./locator"
 import { Login } from "./login"
 import { parseSearch, type SearchSurface } from "./search"
@@ -76,7 +79,7 @@ import { planRequest, statementRequest, type PlanLens, type StatementLens } from
 import { isRelationLens, relationRequest, type RelationGroup, type RelationLens, type RelationNavigation, type RelationSection } from "./postgres-relations"
 import { EMPTY_PROCESS_SUMMARY, LENS_FIELDS, ProcessSummary, ProcessTable, processSummaryReducer, processTableDefaultOrder } from "./process-table"
 import { buildProcessForest } from "./process-tree"
-import { latestTimelineTimestamp, refreshedCursor, scheduleRefresh } from "./refresh"
+import { latestTimelineTimestamp, refreshedCursor, refreshIsInactive, scheduleRefresh } from "./refresh"
 import { reportLatestHour, reportVisibleAt, reportVisibleCursor, reportVisibleRange } from "./report-transport"
 import type { ChartPoint } from "./series-chart"
 import { apiFetch, bootstrapSession, getSessionSnapshot, logout, subscribeSession } from "./session"
@@ -86,11 +89,12 @@ import {
   cgroupTableRequest,
   cgroupTableSection,
   SYSTEM_REQUESTS,
+  systemNavigationSections,
   SystemView,
   recordedEnvironment,
 } from "./system-view"
 import { beginSnapshotRequest, READY_SNAPSHOT_REQUEST, settleSnapshotRequest, snapshotRowsVisible, tableRequestPhase, visibleSnapshotRequest, type SnapshotRequestState } from "./table-request"
-import { Timeline } from "./timeline"
+import { Timeline, TimelineRequestContext, type TimelineRequestPhase } from "./timeline"
 import { TimezoneSelect } from "./timezone-select"
 
 type Theme = "dark" | "light"
@@ -220,6 +224,8 @@ function App({ locale, onLocale, t }: {
   const initialAt = reportVisibleAt(opened.current.at, reportRange)
   const replaceReportAddress = useRef(true)
   const [cursor, setCursor] = useState(0)
+  const neighborRequest = useRef<AbortController | null>(null)
+  const [neighborPending, setNeighborPending] = useState(false)
   const cursorClock = useRef<HTMLSpanElement>(null)
   const cursorClockPreview = useRef<number | null>(null)
   const cursorClockValue = useRef({ cursor, time })
@@ -249,7 +255,9 @@ function App({ locale, onLocale, t }: {
   const followsLatest = useRef(initialAt === null)
   const [timelineData, setTimelineData] = useState<HourData>(EMPTY_DATA)
   const [backgroundTimeline, setBackgroundTimeline] = useState<TimelineData | null>(null)
+  const [settledLanes, setSettledLanes] = useState<{ timeline: TimelineData; phase: "ready" | "error" } | null>(null)
   const [serverVersion, setServerVersion] = useState<string | null>(null)
+  const [serverBuild, setServerBuild] = useState<string | null>(null)
   const backgroundTimelineRef = useRef(backgroundTimeline)
   backgroundTimelineRef.current = backgroundTimeline
   const [backgroundReadyHour, setBackgroundReadyHour] = useState<number | null>(null)
@@ -442,6 +450,7 @@ function App({ locale, onLocale, t }: {
       setAvailableHours(pending.timeline.availableHours)
       setSegments(pending.timeline.segments)
       setServerVersion(pending.timeline.kronikaVersion ?? null)
+      setServerBuild(pending.timeline.kronikaBuild ?? null)
       setTimelineData((current) => withTimelineLanes(hourOf(pending.timeline), {
         contexts: current.laneContexts,
         points: current.lanePoints,
@@ -458,14 +467,23 @@ function App({ locale, onLocale, t }: {
     setRefreshing(false)
     setRefreshFailed(!succeeded)
   }, [])
+  const refreshProgressAt = useRef(0)
   const beginRefresh = useCallback(() => {
-    if (refreshRequested.current || drawn.current === null || drawn.current !== selectedHour.current) return
+    // Recover a silent request without interrupting a long, progressing stream.
+    if (refreshRequested.current && !refreshIsInactive(refreshProgressAt.current)) return
+    if (neighborRequest.current !== null || drawn.current === null || drawn.current !== selectedHour.current) return
+    pendingRefresh.current = null
+    refreshAwaitingSnapshot.current = false
     refreshRequested.current = true
+    refreshProgressAt.current = Date.now()
     setRefreshing(true)
     setRefreshVersion((current) => current + 1)
   }, [])
   const requestRefresh = beginRefresh
   const chooseCursor = useCallback((next: number) => {
+    neighborRequest.current?.abort()
+    neighborRequest.current = null
+    setNeighborPending(false)
     followsLatest.current = false
     setCursor(reportVisibleCursor(next, reportRange))
   }, [reportRange])
@@ -495,19 +513,26 @@ function App({ locale, onLocale, t }: {
       setLoadProgress({ received: 0, startedAt: Date.now() * 1_000, lastSeconds: readLastLoadSeconds() })
     }
     const loadStartedAt = Date.now() * 1_000
-    void loadTimeline(requestedHour, controller.signal, refresh ? undefined : (received) => {
+    void loadTimeline(requestedHour, controller.signal, (received) => {
+      if (controller.signal.aborted) return
       const now = Date.now()
+      if (refresh) {
+        refreshProgressAt.current = now
+        return
+      }
       if (now - loadThrottle.current < 250) return
       loadThrottle.current = now
       setLoadProgress((current) => current === undefined ? current : { ...current, received })
     }, reportRange).then((timeline) => {
+      if (controller.signal.aborted) return
       const asked = wanted.current
       wanted.current = null
       const latest = reportVisibleCursor(latestTimelineTimestamp(timeline), reportRange)
       if (refresh) {
-        pendingRefresh.current = { timeline, previousCursor: cursor, previousSegments: segmentsRef.current }
-        const next = refreshedCursor(cursor, followsLatest.current, timeline)
-        if (next !== cursor) {
+        const selectedCursor = cursorClockValue.current.cursor
+        pendingRefresh.current = { timeline, previousCursor: selectedCursor, previousSegments: segmentsRef.current }
+        const next = refreshedCursor(selectedCursor, followsLatest.current, timeline)
+        if (next !== selectedCursor) {
           setSegments(timeline.segments)
           setCursor(next)
           refreshAwaitingSnapshot.current = true
@@ -520,6 +545,7 @@ function App({ locale, onLocale, t }: {
         setHour(timeline.hour)
         setSegments(timeline.segments)
         setServerVersion(timeline.kronikaVersion ?? null)
+        setServerBuild(timeline.kronikaBuild ?? null)
         setTimelineData(hourOf(timeline))
         setBackgroundTimeline(timeline)
         setSnapshotReloadVersion((version) => version + 1)
@@ -555,6 +581,64 @@ function App({ locale, onLocale, t }: {
   const [densePageState, setDensePageState] = useState<"idle" | "loading" | "error">("idle")
   const cursorState = visibleSnapshotRequest(snapshotRequest, snapshotTarget)
   const currentTableRequest = tableRequestPhase(cursorState, densePageState)
+  const neighborSections = snapshotNavigationSections(visibleSource, pgSection, systemNavigationSections(systemMetric))
+  const neighborKey = JSON.stringify([hour, cursor, foregroundKey, neighborSections])
+  const neighborOwner = useRef(neighborKey)
+  neighborOwner.current = neighborKey
+  useEffect(() => {
+    neighborRequest.current?.abort()
+    neighborRequest.current = null
+    setNeighborPending(false)
+    return () => neighborRequest.current?.abort()
+  }, [neighborKey])
+  const stepCursor = useCallback((direction: SnapshotDirection) => {
+    if (hour === null || loading || refreshing
+      || neighborRequest.current !== null || neighborSections.length === 0) return
+    const controller = new AbortController()
+    neighborRequest.current = controller
+    setNeighborPending(true)
+    previewClock(null)
+    const bounds = reportRange === null ? undefined : { from: reportRange.from, to: reportRange.toExclusive - 1 }
+    const stale = () => controller.signal.aborted || neighborOwner.current !== neighborKey
+    void loadSnapshotNeighbor(neighborSections, cursor, direction, controller.signal, bounds).then(async (neighbor) => {
+      if (stale() || neighbor === null) return
+      const neighborHour = floorHour(neighbor.at)
+      const known = segmentsRef.current.find((segment) => segment.id === neighbor.segmentId)
+      if (neighborHour !== hour || known === undefined || known.maxTs < neighbor.at
+        || !known.sections.some((section) => neighborSections.includes(section.logicalName))) {
+        // A newly published segment may not exist in the hour catalog yet.
+        // Discover its layouts before the normal cursor snapshot is planned.
+        const timeline = await loadTimeline(neighborHour, controller.signal, undefined, reportRange)
+        if (stale()) return
+        if (timeline.hour !== neighborHour || !timeline.segments.some((segment) => segment.id === neighbor.segmentId)) throw new Error("snapshot neighbor segment is not available")
+        if (neighborHour !== hour) {
+          drawn.current = timeline.hour
+          setHour(timeline.hour)
+          setBackgroundReadyHour(null)
+          setCurrentSnapshot(EMPTY_CURRENT_SNAPSHOT)
+        }
+        setAvailableHours(timeline.availableHours)
+        setSegments(timeline.segments)
+        setServerVersion(timeline.kronikaVersion ?? null)
+        setServerBuild(timeline.kronikaBuild ?? null)
+        setTimelineData((current) => neighborHour === hour
+          ? withTimelineLanes(hourOf(timeline), { contexts: current.laneContexts, points: current.lanePoints })
+          : hourOf(timeline))
+        setBackgroundTimeline(timeline)
+      }
+      if (!stale()) {
+        followsLatest.current = false
+        setCursor(neighbor.at)
+      }
+    }).catch((reason: unknown) => {
+      if (!stale()) console.error("kronika: snapshot navigation failed", reason)
+    }).finally(() => {
+      if (neighborRequest.current !== controller) return
+      neighborRequest.current = null
+      setNeighborPending(false)
+    })
+  }, [cursor, hour, loading, neighborKey, previewClock, refreshing, reportRange])
+  const cursorNavigation = useMemo(() => ({ pending: neighborPending, step: stepCursor }), [neighborPending, stepCursor])
   const snapshotGeneration = useRef(0)
   const densePage = useRef<{
     failed: string | undefined
@@ -723,12 +807,18 @@ function App({ locale, onLocale, t }: {
     void loadTimelineLanes(backgroundTimeline, controller.signal, reportRange).then((lanes) => {
       if (controller.signal.aborted || backgroundTimelineRef.current !== backgroundTimeline) return
       setTimelineData((current) => withTimelineLanes(current, lanes))
+      setSettledLanes({ timeline: backgroundTimeline, phase: "ready" })
     }).catch((reason: unknown) => {
-      if (!controller.signal.aborted) console.error("kronika: timeline lanes failed", reason)
+      if (controller.signal.aborted || backgroundTimelineRef.current !== backgroundTimeline) return
+      setSettledLanes({ timeline: backgroundTimeline, phase: "error" })
+      console.error("kronika: timeline lanes failed", reason)
     })
     return () => controller.abort()
   }, [backgroundReadyHour, backgroundTimeline, hour, reportRange])
-  const refreshReady = !loading && cursorState === "ready" && densePageState !== "loading"
+  const refreshReady = !loading && !neighborPending && cursorState !== "loading" && densePageState !== "loading"
+  const timelinePhase: TimelineRequestPhase = backgroundTimeline?.segments.length === 0 ? "ready"
+    : settledLanes?.timeline === backgroundTimeline ? settledLanes.phase
+      : currentTableRequest === "error" ? "error" : "pending"
   useEffect(() => {
     if (KRONIKA_REPORT || instanceLabelRequest.current !== null || hour === null || !refreshReady
       || backgroundReadyHour !== hour || foregroundReadyKey.current !== foregroundKey) return
@@ -742,8 +832,8 @@ function App({ locale, onLocale, t }: {
       })
       .catch(() => {})
   }, [backgroundReadyHour, foregroundKey, hour, refreshReady])
-  useEffect(() => KRONIKA_REPORT || hour === null || !refreshReady || refreshing
-    ? undefined : scheduleRefresh(hour, requestRefresh), [hour, refreshReady, refreshing, requestRefresh])
+  useEffect(() => KRONIKA_REPORT || hour === null || !refreshReady
+    ? undefined : scheduleRefresh(hour, requestRefresh), [hour, refreshReady, requestRefresh])
   const denseMetadata = currentData.snapshotRows[0]
   const loadMoreDense = useCallback(() => {
     const next = denseMetadata?.hasMore === true ? denseMetadata.nextCursor : null
@@ -756,18 +846,11 @@ function App({ locale, onLocale, t }: {
 
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
-      if (keyboardTargetOwnsArrows(event.target)) return
-      if (event.key === "?" && !exportActive.current) {
-        setHelpOpen((current) => !current)
-        setMcpOpen(false)
-        closeExport()
-      }
-      if (event.key === "Escape") {
-        setHelpOpen(false)
-        setMcpOpen(false)
-        closeExport()
-      }
+      const action = overlayShortcut(event.key, keyboardTargetOwnsArrows(event.target), event.defaultPrevented)
+      if (action === null || (action === "help" && exportActive.current)) return
+      setHelpOpen((current) => action === "help" && !current)
+      setMcpOpen(false)
+      closeExport()
     }
     window.addEventListener("keydown", shortcuts)
     return () => window.removeEventListener("keydown", shortcuts)
@@ -1094,11 +1177,11 @@ function App({ locale, onLocale, t }: {
     : visibleSource === "postgresql" ? pgSection === "statements" || pgSection === "plans" ? "pg_running" : pgSection === "activity" || pgSection === "locks" || pgSection === "vacuum" ? "pg_waiting" : "health"
       : "health"
   const exportSelection = !KRONIKA_REPORT && exportOpen && hour !== null && exportRange !== null ? rangeOnHour(exportRange, hour) : null
-  return <DisplayTimeScope hour={hour}><main className={`app-shell flex h-dvh min-h-0 flex-col overflow-hidden${stretchPostgres ? " pg-table-shell" : ""}${inspectorOpen ? " inspector-open" : ""}${inspectorOpen && inspectorPanel === "chart" && !(entityChartAvailable && detailAvailable) ? " inspector-chart-open" : ""}${mobileSearch ? " mobile-search-open" : ""}`}>
+  return <DisplayTimeScope hour={hour}><CursorNavigationContext value={cursorNavigation}><TimelineRequestContext value={timelinePhase}><main className={`app-shell flex h-dvh min-h-0 flex-col overflow-hidden${stretchPostgres ? " pg-table-shell" : ""}${inspectorOpen ? " inspector-open" : ""}${inspectorOpen && inspectorPanel === "chart" && !(entityChartAvailable && detailAvailable) ? " inspector-chart-open" : ""}${mobileSearch ? " mobile-search-open" : ""}`}>
     {data.syntheticDemo === true && <p className="pointer-events-none fixed bottom-2 left-2 z-[70] m-0 rounded border border-line3 bg-s1/95 px-2 py-1 font-sans text-[11px] font-medium tracking-[0.04em] text-fg3 shadow-sm" data-testid="demo-notice">{t("demo.synthetic")}</p>}
     <header className="topbar [.pg-table-shell>&]:flex-none">
       <span className="flex flex-none items-center text-accent2"><Activity aria-hidden="true" size={15} strokeWidth={2} /></span>
-      <h1 title={serverVersion === null ? undefined : `${t("app.title")} ${serverVersion}`}>{database === null ? t("app.title") : `${t("app.title")} — ${database}`}</h1>
+      <h1 title={serverVersion === null ? undefined : versionLabel(t("app.title"), serverVersion, serverBuild)}>{database === null ? t("app.title") : `${t("app.title")} — ${database}`}</h1>
 
       <nav aria-label={t("nav.sources")} className="source-tabs max-[760px]:overflow-x-auto">
         {osEnabled && <button aria-current={visibleSource === "host" ? "page" : undefined} className={visibleSource === "host" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(null); setSystemFocus(null); setSelectedKey(null); setInspectorPanel(null); setSource("host") }} type="button">{t("nav.host")}</button>}
@@ -1111,7 +1194,7 @@ function App({ locale, onLocale, t }: {
       <div className="cursor-time max-[760px]:order-9">
         <span data-testid="cursor-time" ref={cursorClock}>{cursor === 0 ? "—" : time.clock(cursor)}</span>
         {cursorState === "loading" && <span className="ml-2.5 flex flex-none items-center gap-1.5 font-sans text-xs text-fg3" data-testid="cursor-behind" role="status"><span aria-hidden="true" className="loading-ring animate-loading-spin motion-reduce:animate-none" />{t("status.updating")}</span>}
-        {cursorState === "missing" && <span className="cursor-missing ml-2 font-sans text-xs text-warn" data-testid="cursor-behind">{t("status.no_sample")}</span>}
+        {!loading && cursorState === "missing" && <span className="cursor-missing ml-2 font-sans text-xs text-warn" data-testid="cursor-behind">{t("status.error")}</span>}
         {refreshFailed && <span>{t("refresh.error")}</span>}
       </div>
 
@@ -1185,9 +1268,9 @@ function App({ locale, onLocale, t }: {
     </ExportProvider>
     {!KRONIKA_REPORT && exportOpen && hour !== null && exportRange !== null && <ExportDialog availableHours={availableHours} cursor={cursor} hour={hour} locale={locale} onActiveChange={setExportActive} onClose={dismissExport} onRange={setExportRange} range={exportRange} t={t} />}
 
-    {helpOpen && <HelpPanel items={helpItems} onClose={() => setHelpOpen(false)} t={t} />}
+    {helpOpen && <HelpPanel build={serverBuild} items={helpItems} onClose={() => setHelpOpen(false)} t={t} version={serverVersion} />}
     {!KRONIKA_REPORT && mcpOpen && <McpPanel database={database} onClose={() => setMcpOpen(false)} t={t} />}
-  </main></DisplayTimeScope>
+  </main></TimelineRequestContext></CursorNavigationContext></DisplayTimeScope>
 }
 
 const LOAD_SECONDS_KEY = "kronika.hourload-seconds"

@@ -22,10 +22,10 @@ use kronika_source_pg::user_indexes::{UserIndexesRow, UserIndexesVersion};
 use kronika_source_pg::user_tables::{UserTablesRow, UserTablesVersion};
 use kronika_writer::{Journal, JournalConfig, SectionBuffers};
 
-use crate::append_pending_pg_batch;
+use crate::collector::WindowWriter;
 use crate::config::Config;
 use crate::logging::peak_rss_kib;
-use crate::os_sources::{OsSources, UserReferences, push_os_sources};
+use crate::os_sources::{OsSources, SegmentUserNames, push_os_sources};
 use crate::pg_sources::{PgBatch, push_pg_batch};
 use crate::scheduler::{Intervals, Scheduler};
 use crate::segments::{
@@ -132,6 +132,10 @@ fn config(root: &Path, journal_max_bytes: u64) -> Config {
         journal_max_bytes,
         retention: None,
         pg_dsn: None,
+        pg_ssl_root_cert: None,
+        log_level: crate::logging::LogLevel::Info,
+        proc_root: None,
+        sys_root: "/sys".into(),
         postgres_effective_cpus: None,
         pg_logs: Vec::new(),
         pg_log_max_lag_secs: 900,
@@ -375,7 +379,7 @@ fn plan_batch(batch_index: usize) -> (PgBatch, usize, usize) {
 impl ReplayAppend<'_> {
     fn append(&mut self, batch: &PgBatch, ts: i64) {
         for attempt in 0..2 {
-            let includes_settings = self.segment.needs_pg_settings() && !self.settings.is_empty();
+            let includes_settings = !self.segment.pg_settings_present && !self.settings.is_empty();
             let opening_settings = if includes_settings {
                 self.settings
             } else {
@@ -384,12 +388,12 @@ impl ReplayAppend<'_> {
             let mut buffers = SectionBuffers::new();
             push_pg_batch(
                 &mut buffers,
-                self.segment.interner_mut(),
+                &mut self.segment.interner,
                 batch,
                 opening_settings,
             )
             .expect("buffer retained PostgreSQL batch");
-            let flushed = encode_window(buffers, self.segment.interner())
+            let flushed = encode_window(buffers, &self.segment.interner)
                 .expect("encode retained PostgreSQL batch");
             let appended_bytes = u64::try_from(flushed.summary.part_bytes)
                 .unwrap_or(u64::MAX)
@@ -414,7 +418,7 @@ impl ReplayAppend<'_> {
                 continue;
             }
             if includes_settings && !self.segment.is_empty() {
-                self.segment.mark_pg_settings_present();
+                self.segment.pg_settings_present = true;
             }
             self.report.cumulative_appended_wal_bytes = self
                 .report
@@ -514,7 +518,7 @@ fn statement_sql_timestamp_survives_source_batches_in_one_active_segment() {
         Journal::open(&writer, JournalConfig::default()).expect("open statement timestamp journal");
     let config = config(directory.path(), u64::MAX);
     let mut segment = SegmentState::default();
-    let mut scheduler = Scheduler::new(Intervals::default());
+    let mut scheduler = Scheduler::new(Intervals::default(), true);
     let mut process_io = Some(ProcessIoCredentials::new());
     let mut rows = (0..=BATCH_ROWS)
         .map(|query_index| {
@@ -527,19 +531,16 @@ fn statement_sql_timestamp_survives_source_batches_in_one_active_segment() {
     assert!(rows.len() > 256);
     let last = rows.pop().expect("row beyond the source batch bound");
     let first_batch = PgBatch::Statements(StatementsVersion::V6, rows);
-    append_pending_pg_batch(
-        &mut journal,
-        &writer,
-        &config,
-        false,
-        &first_batch,
-        &[],
-        BASE_TS + 10,
-        &mut process_io,
-        &mut segment,
-        &mut scheduler,
-        None,
-    )
+    (WindowWriter {
+        journal: &mut journal,
+        owner: &writer,
+        config: &config,
+        in_container: false,
+        process_io: &mut process_io,
+        segment: &mut segment,
+        sched: &mut scheduler,
+    })
+    .append_postgres(&first_batch, &[], BASE_TS + 10, None)
     .expect("append the first natural SQL timestamp batch");
 
     let reader = Reader::open(directory.path()).expect("open active statement prefix reader");
@@ -561,19 +562,16 @@ fn statement_sql_timestamp_survives_source_batches_in_one_active_segment() {
     );
 
     let second_batch = PgBatch::Statements(StatementsVersion::V6, vec![last]);
-    let outcome = append_pending_pg_batch(
-        &mut journal,
-        &writer,
-        &config,
-        false,
-        &second_batch,
-        &[],
-        BASE_TS + 20,
-        &mut process_io,
-        &mut segment,
-        &mut scheduler,
-        None,
-    )
+    let outcome = (WindowWriter {
+        journal: &mut journal,
+        owner: &writer,
+        config: &config,
+        in_container: false,
+        process_io: &mut process_io,
+        segment: &mut segment,
+        sched: &mut scheduler,
+    })
+    .append_postgres(&second_batch, &[], BASE_TS + 20, None)
     .expect("append the remaining natural SQL timestamp row");
     assert!(outcome.written.is_empty());
 
@@ -1373,10 +1371,10 @@ fn append_relation_cost_batch(
     let mut paths = Vec::new();
     for attempt in 0..2 {
         let mut buffers = SectionBuffers::new();
-        push_pg_batch(&mut buffers, segment.interner_mut(), batch, &[])
+        push_pg_batch(&mut buffers, &mut segment.interner, batch, &[])
             .expect("buffer relation cost rows");
         let flushed =
-            encode_window(buffers, segment.interner()).expect("encode relation cost window");
+            encode_window(buffers, &segment.interner).expect("encode relation cost window");
         let completed =
             append_window_and_maybe_close(journal, writer, config, segment, ts, false, &flushed)
                 .expect("append relation cost window");
@@ -1628,7 +1626,7 @@ fn cpufreq_hour_reports_collection_and_production_writer_costs() {
         let sample_i64 = i64::try_from(sample).expect("sample count fits i64");
         let ts = BASE_TS.saturating_add(sample_i64.saturating_mul(10_000_000));
         let source = segment
-            .interner_mut()
+            .interner
             .intern(b"cpuinfo_avg_freq")
             .map(|id| StrId(id.get()))
             .expect("intern CPUFreq source");
@@ -1653,7 +1651,7 @@ fn cpufreq_hour_reports_collection_and_production_writer_costs() {
             .collect::<Vec<_>>();
         let policies = if sample % 6 == 0 {
             let driver = segment
-                .interner_mut()
+                .interner
                 .intern(b"intel_pstate")
                 .map(|id| StrId(id.get()))
                 .expect("intern CPUFreq driver");
@@ -1661,7 +1659,7 @@ fn cpufreq_hour_reports_collection_and_production_writer_costs() {
                 .map(|policy| {
                     let policy_id = i32::try_from(policy).expect("policy count fits i32");
                     let related = segment
-                        .interner_mut()
+                        .interner
                         .intern(policy.to_string().as_bytes())
                         .map(|id| StrId(id.get()))
                         .expect("intern related CPUs");
@@ -1683,7 +1681,7 @@ fn cpufreq_hour_reports_collection_and_production_writer_costs() {
         let mut buffers = SectionBuffers::new();
         push_os_sources(&mut buffers, &OsSources::cpufreq_only(policies, samples))
             .expect("buffer CPUFreq rows");
-        let flushed = encode_window(buffers, segment.interner()).expect("encode CPUFreq window");
+        let flushed = encode_window(buffers, &segment.interner).expect("encode CPUFreq window");
         for section in &flushed.summary.sections {
             let bytes = u64::try_from(section.body_bytes).unwrap_or(u64::MAX);
             match section.type_id {
@@ -1844,7 +1842,7 @@ fn user_cost_artifact(
         Journal::open(&writer, JournalConfig::default()).expect("open user cost journal");
     let config = config(directory.path(), u64::MAX);
     let mut segment = SegmentState::default();
-    let mut references = UserReferences::with_passwd(passwd);
+    let mut references = SegmentUserNames::with_passwd(passwd);
     let collection_rss_baseline_kib = peak_rss_kib().unwrap_or_default();
     let mut collection_elapsed_us = 0_u64;
     let mut collection_cpu_ticks = 0_u64;
@@ -1861,7 +1859,10 @@ fn user_cost_artifact(
         let observed = uids.iter().copied().cycle().take(observations_per_sample);
         let collection_cpu_before = self_cpu_ticks();
         let collection_started = std::time::Instant::now();
-        let (rows, pending) = references.prepare_rows(segment.interner_mut(), 0, ts, observed);
+        for uid in observed {
+            references.observe_user(0, uid);
+        }
+        let (rows, pending) = references.prepare_rows(&mut segment.interner, ts);
         collection_elapsed_us = collection_elapsed_us.saturating_add(
             u64::try_from(collection_started.elapsed().as_micros()).unwrap_or(u64::MAX),
         );
@@ -1879,7 +1880,7 @@ fn user_cost_artifact(
         let mut buffers = SectionBuffers::new();
         push_os_sources(&mut buffers, &OsSources::users_only(rows))
             .expect("buffer user reference rows");
-        let flushed = encode_window(buffers, segment.interner()).expect("encode user window");
+        let flushed = encode_window(buffers, &segment.interner).expect("encode user window");
         raw_section_bytes = raw_section_bytes.saturating_add(
             flushed
                 .summary
@@ -1909,7 +1910,7 @@ fn user_cost_artifact(
         )
         .expect("append user window");
         assert!(completed.is_empty());
-        references.mark_recorded(&pending);
+        references.confirm_written(&pending);
         writer_elapsed_us = writer_elapsed_us.saturating_add(
             u64::try_from(writer_started.elapsed().as_micros()).unwrap_or(u64::MAX),
         );
@@ -2032,11 +2033,12 @@ fn process_user_references_report_production_storage_and_resource_costs() {
     let high = user_cost_artifact(high_passwd, &high_uids, 1, 4_096);
 
     let (unresolved_passwd, _unresolved_uids) = passwd_fixture(1);
-    let mut unresolved = UserReferences::with_passwd(unresolved_passwd);
+    let mut unresolved = SegmentUserNames::with_passwd(unresolved_passwd);
     let mut unresolved_interner =
         kronika_writer::Interner::new(kronika_format::DictLimits::default());
+    unresolved.observe_user(0, u32::MAX);
     let (unresolved_rows, unresolved_pending) =
-        unresolved.prepare_rows(&mut unresolved_interner, 0, BASE_TS, [u32::MAX]);
+        unresolved.prepare_rows(&mut unresolved_interner, BASE_TS);
     assert!(unresolved_rows.is_empty());
     assert!(unresolved_pending.is_empty());
 
@@ -2122,12 +2124,12 @@ fn storage_hour_reports_collection_and_production_writer_costs() {
         let sample_i64 = i64::try_from(sample).expect("sample count fits i64");
         let ts = BASE_TS.saturating_add(sample_i64.saturating_mul(60_000_000));
         let fstype = segment
-            .interner_mut()
+            .interner
             .intern(b"ext4")
             .map(|id| StrId(id.get()))
             .expect("intern filesystem type");
         let root = segment
-            .interner_mut()
+            .interner
             .intern(b"/")
             .map(|id| StrId(id.get()))
             .expect("intern filesystem root");
@@ -2135,12 +2137,12 @@ fn storage_hour_reports_collection_and_production_writer_costs() {
             .map(|mount| {
                 let minor = i32::try_from(mount + 1).expect("mount count fits i32");
                 let mount_point = segment
-                    .interner_mut()
+                    .interner
                     .intern(format!("/srv/data/{mount}").as_bytes())
                     .map(|id| StrId(id.get()))
                     .expect("intern mount point");
                 let source = segment
-                    .interner_mut()
+                    .interner
                     .intern(format!("/dev/nvme0n1p{}", mount + 1).as_bytes())
                     .map(|id| StrId(id.get()))
                     .expect("intern mount source");
@@ -2178,7 +2180,7 @@ fn storage_hour_reports_collection_and_production_writer_costs() {
         let mut buffers = SectionBuffers::new();
         push_os_sources(&mut buffers, &OsSources::storage_only(mounts, edges))
             .expect("buffer storage rows");
-        let flushed = encode_window(buffers, segment.interner()).expect("encode storage window");
+        let flushed = encode_window(buffers, &segment.interner).expect("encode storage window");
         for section in &flushed.summary.sections {
             let bytes = u64::try_from(section.body_bytes).unwrap_or(u64::MAX);
             match section.type_id {
@@ -2296,17 +2298,17 @@ fn cgroup_context_hour_reports_raw_and_finished_costs() {
         let sample = i64::try_from(sample).expect("sample count fits i64");
         let ts = BASE_TS.saturating_add(sample.saturating_mul(10_000_000));
         let path = segment
-            .interner_mut()
+            .interner
             .intern(b"/")
             .map(|id| StrId(id.get()))
             .expect("intern cgroup path");
         let identity = segment
-            .interner_mut()
+            .interner
             .intern(b"fs/cgroup:/kubepods/pod-a:1:2:3:0")
             .map(|id| StrId(id.get()))
             .expect("intern selected directory identity");
         let root = segment
-            .interner_mut()
+            .interner
             .intern(b"/kubepods/pod-a")
             .map(|id| StrId(id.get()))
             .expect("intern visible mount boundary");
@@ -2333,7 +2335,7 @@ fn cgroup_context_hour_reports_raw_and_finished_costs() {
             scope: 4,
         });
         push_os_sources(&mut buffers, &sources).expect("buffer cgroup context");
-        let flushed = encode_window(buffers, segment.interner()).expect("encode cgroup context");
+        let flushed = encode_window(buffers, &segment.interner).expect("encode cgroup context");
         let completed = append_window_and_maybe_close(
             &mut journal,
             &writer,

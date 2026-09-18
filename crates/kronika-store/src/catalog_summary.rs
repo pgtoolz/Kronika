@@ -341,4 +341,5 @@ const fn mix64(mut value: u64) -> u64 {
 }
 
 #[cfg(test)]
+#[path = "tests/catalog_summary.rs"]
 mod tests;

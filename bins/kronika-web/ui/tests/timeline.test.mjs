@@ -1,8 +1,12 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
+import { createRequire } from "node:module"
+import { dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import { build } from "esbuild"
 
 import { importModule, registryPlugin } from "./import-module.mjs"
 
@@ -10,6 +14,44 @@ const helpers = await importModule(
   'export { CursorRow } from "../src/cursor-row.tsx"; export { FindingMarker, MARKER_CLUSTER_PX, exactValue, findingShape, findingTrack, groupFindings, healthEvaluationAtOrBefore, healthThreshold, healthTimelineSeries, laneReading, sampleWindow, timelineDecorations, timelineNavigationTimes, timelineRecordedTimes, timelineSeriesHelpKey } from "../src/timeline.tsx"',
   { plugins: [registryPlugin([{ typeId: "1104001", logicalName: "os_meminfo", columns: ["ts", "mem_total", "mem_free", "mem_available"] }])] },
 )
+
+const rendered = await build({
+  bundle: true, format: "cjs", platform: "node", write: false,
+  external: ["react", "react-dom", "react/jsx-runtime"],
+  plugins: [registryPlugin([])],
+  stdin: { loader: "tsx", resolveDir: dirname(fileURLToPath(import.meta.url)), contents: `
+  import { createElement } from "react";
+  import { renderToStaticMarkup } from "react-dom/server";
+  import { Timeline, TimelineRequestContext } from "../src/timeline.tsx";
+  export function render(phase, health = [], presentation = "preview") {
+    return renderToStaticMarkup(createElement(TimelineRequestContext, { value: phase },
+      createElement(Timeline, { cursor: 200, hour: 0, environment: null, findings: [], health,
+        lanePoints: [], locale: "en", presentation, onCursor() {}, onFinding() {}, t: (key) => key })));
+  }
+` },
+})
+const loaded = { exports: {} }
+new Function("module", "exports", "require", rendered.outputFiles[0].text)(loaded, loaded.exports, createRequire(import.meta.url))
+const requestTimeline = loaded.exports
+
+test("deferred timeline data stays pending or failed until a successful empty response", () => {
+  for (const presentation of ["preview", "inspector"]) {
+    const pending = requestTimeline.render("pending", [], presentation)
+    assert.match(pending, /aria-busy="true"/)
+    assert.match(pending, /role="status"[^>]*>status.loading/)
+    assert.doesNotMatch(pending, /status.no_data/)
+    const failed = requestTimeline.render("error", [], presentation)
+    assert.match(failed, /role="alert"[^>]*>status.error/)
+    assert.doesNotMatch(failed, /status.no_data/)
+    const empty = requestTimeline.render("ready", [], presentation)
+    assert.match(empty, /status.no_data_completed/)
+    for (const markup of [pending, failed, empty]) assert.match(markup, /h-\[124px\]/)
+    const retained = requestTimeline.render("pending", [{ segmentId: "a", timestamp: 100,
+      logicalName: "health", typeId: "0", ordinal: "0", values: { overall_health: 80 } }], presentation)
+    assert.match(retained, /timeline-shell/)
+    assert.doesNotMatch(retained, /status.loading|status.no_data/)
+  }
+})
 
 function finding(kind, timestamp, ordinal) {
   return {
@@ -26,10 +68,10 @@ function finding(kind, timestamp, ordinal) {
 
 test("the shared empty timeline uses the hour-aware status", async () => {
   const source = await readFile(new URL("../src/timeline.tsx", import.meta.url), "utf8")
-  assert.match(source, /t\(emptyHourStatusKey\(hour\)\)/)
+  assert.match(source, /emptyHourStatusKey\(hour\)/)
 })
 
-test("the selected lane draws while one explicit domain owns every shared cursor path", async () => {
+test("the selected lane draws while shared step controls use source navigation", async () => {
   const [app, keyboard, timeline] = await Promise.all([
     readFile(new URL("../src/app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/keyboard.ts", import.meta.url), "utf8"),
@@ -40,6 +82,9 @@ test("the selected lane draws while one explicit domain owns every shared cursor
   assert.match(timeline, /timelineNavigationTimes\(lanes\)/)
   assert.match(timeline, /navigationTimestamps=\{cursorTimes\}/)
   assert.match(timeline, /moveCursor\(cursor, cursorTimes, event\.key\)/)
+  assert.match(timeline, /navigation\.step\(event\.key === "ArrowRight" \? "next" : "previous"\)/)
+  assert.match(timeline, /onStep=\{navigation\?\.step\}/)
+  assert.doesNotMatch(timeline, /mergeObservationTimestamps/)
   assert.match(timeline, /<UPlotChart/)
   assert.match(timeline, /window\.addEventListener\("keydown", move\)/)
   assert.match(timeline, /if \(controlledLane !== undefined\) return/)

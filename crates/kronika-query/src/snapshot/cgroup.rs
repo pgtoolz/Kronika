@@ -1,11 +1,11 @@
-use super::{
-    CounterReadings, PageContext, PageOrder, PageOrderKind, SectionPlans, StructuredSearch,
-};
-use crate::projection::Plan;
-use crate::{DataRequest, DatasetSegment, QueryDataset, QueryError, SnapshotRequest};
 use kronika_reader::{Cell, Row, Segment};
 use kronika_registry::{logical_section_name, registry};
 use serde_json::{Value, json};
+
+use super::{CounterReadings, PageContext, PageOrder, PageOrderKind};
+
+use crate::projection::Plan;
+use crate::{DataRequest, QueryError};
 
 pub(super) fn legacy(name: &str) -> Option<&'static str> {
     match name {
@@ -84,70 +84,6 @@ pub(super) fn plans(segment: &Segment, request: &DataRequest) -> Result<Vec<Plan
     } else {
         Ok(result)
     }
-}
-
-pub(super) fn extend_plans(
-    dataset: &dyn QueryDataset,
-    anchor: &DatasetSegment,
-    candidates: &[DatasetSegment],
-    request: &SnapshotRequest,
-    sections: &mut Vec<SectionPlans>,
-    search: Option<&StructuredSearch>,
-) -> Result<(), QueryError> {
-    let names = request
-        .sections
-        .iter()
-        .filter(|name| legacy(name).is_some())
-        .cloned()
-        .collect::<Vec<_>>();
-    if names.is_empty() {
-        return Ok(());
-    }
-    let mut selected = request.clone();
-    selected.sections = names;
-    for candidate in candidates {
-        if candidate.id() >= anchor.id() || candidate.min_ts() > request.at {
-            continue;
-        }
-        let missing = candidate.sections().iter().any(|layout| {
-            selected.sections.iter().any(|name| {
-                let physical = logical_section_name(layout.type_id);
-                (physical == Some(name.as_str()) || physical == legacy(name))
-                    && sections
-                        .iter()
-                        .flat_map(|section| &section.plans)
-                        .all(|plan| plan.type_id != layout.type_id)
-            })
-        });
-        if !missing {
-            continue;
-        }
-        let source = dataset.open(candidate)?;
-        for found in super::section_plans(&source, &selected, &[], search)? {
-            if let Some(existing) = sections
-                .iter_mut()
-                .find(|section| section.logical_name == found.logical_name)
-            {
-                for plan in found.plans {
-                    if existing
-                        .plans
-                        .iter()
-                        .all(|present| present.type_id != plan.type_id)
-                    {
-                        existing.plans.push(plan);
-                    }
-                }
-            } else {
-                sections.push(found);
-            }
-        }
-    }
-    for section in sections {
-        if legacy(&section.logical_name).is_some() {
-            section.plans.sort_unstable_by_key(|plan| plan.type_id);
-        }
-    }
-    Ok(())
 }
 
 pub(super) fn retain_family(contexts: &mut Vec<PageContext<'_>>, name: &str) {

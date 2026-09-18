@@ -410,6 +410,10 @@ const ALL_SYSTEM_REQUESTS = systemRequests()
 const CGROUP_SECTIONS = new Set(["os_cgroup_context", "os_cgroup_cpu", "os_cgroup_memory", "os_cgroup_io", "os_cgroup_pids"])
 
 export const SYSTEM_REQUESTS = ALL_SYSTEM_REQUESTS.filter(({ section }) => !CGROUP_SECTIONS.has(section) || section === "os_cgroup_context")
+const SYSTEM_NAVIGATION_SECTIONS = uniqueStrings([
+  ...SYSTEM_REQUESTS.map(({ section }) => section),
+  ...CGROUP_TABLE_SECTIONS.flatMap((name) => [name, name.replace("_v2_", "_")]),
+])
 
 export function recordedEnvironment(data: Pick<HourData, "sections">, cursor: number): "machine" | "container" | null {
   const row = snapshot(data.sections.instance_metadata ?? [], cursor)[0]
@@ -1363,6 +1367,20 @@ export function metricHistoryRequest(spec: MetricSpec): MetricHistoryRequest | n
     section,
     where: spec.resource === undefined ? {} : { resource: String(spec.resource) },
   }
+}
+
+export function systemNavigationSections(metric: string | null): readonly string[] {
+  const cgroup = cgroupTableSection(metric)
+  if (cgroup !== null) return [cgroup, cgroup.replace("_v2_", "_")]
+  const spec = SYSTEM_METRICS.find((candidate) => candidate.id === metric)
+  const section = spec === undefined ? undefined : metricHistoryRequest(spec)?.section
+  if (section !== undefined) return [section]
+  const laneSections: Readonly<Record<string, string>> = {
+    cpu_stall: "os_psi", memory: "os_meminfo", mem_swap: "os_vmstat",
+    disk_busy: "os_diskstats", disk_queue: "os_diskstats", net_drop: "os_netdev",
+  }
+  if (metric !== null && laneSections[metric] !== undefined) return [laneSections[metric]!]
+  return SYSTEM_NAVIGATION_SECTIONS
 }
 
 export function metricRequestKey(hour: number, spec: MetricSpec, request: MetricHistoryRequest): string {

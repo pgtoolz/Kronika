@@ -214,13 +214,5 @@ fn streaming_frame_at<R: ReadAt>(
     let Ok(catalog) = validate_part(&part_buf[..body_len]) else {
         return Ok(StreamingFrame::Damaged);
     };
-    if catalog
-        .entries
-        .iter()
-        .try_fold(0_u64, |rows, entry| rows.checked_add(u64::from(entry.rows)))
-        .is_none()
-    {
-        return Ok(StreamingFrame::Damaged);
-    }
     Ok(StreamingFrame::Valid { body_len, catalog })
 }

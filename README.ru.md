@@ -13,11 +13,11 @@ Linux либо записывает только данные PostgreSQL с ло
 [Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/).
 
 Запись за 5 сентября 2026 года, 19:00–20:00 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.0.2.html?at=1788634833931637&view=host).
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=host).
 
 ## Установка и запуск
 
-[Установите Kronika 1.1.2](INSTALL.ru.md) из [архива для Linux](docs/releases.ru.md#download)
+[Установите Kronika 1.2.0](INSTALL.ru.md) из [архива для Linux](docs/releases.ru.md#download)
 или [соберите из исходников](docs/build.ru.md).
 
 Выберите `local` для метрик Linux и, при необходимости, PostgreSQL в той же VM
@@ -29,36 +29,40 @@ Linux либо записывает только данные PostgreSQL с ло
 Запустите сбор метрик Linux:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika
 ```
 
 <a id="linux-и-postgresql"></a>
-Для PostgreSQL на машине сборщика укажите строку подключения в `KRONIKA_PG_DSN`
+Для PostgreSQL на машине сборщика укажите строку подключения через `--pg-dsn`
 при запуске. Используйте учётную запись PostgreSQL с
 [правами для сбора данных](INSTALL.ru.md#5-postgresql).
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable' \
-  /usr/local/bin/kronika-collector
+sudo /usr/local/bin/kronika-collector \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres sslmode=disable'
 ```
 
-Для этого локального запуска не задавайте `KRONIKA_POSTGRES_EFFECTIVE_CPUS`:
-число CPU берётся из записанных снимков машины.
+В этом режиме `local`, выбранном по умолчанию, сборщик также узнаёт путь
+текущего журнала PostgreSQL. Если файл доступен для чтения на машине сборщика,
+`--pg-log` не нужен.
+
+Для этого локального запуска не задавайте `--postgres-effective-cpus`
+и `KRONIKA_POSTGRES_EFFECTIVE_CPUS`: число CPU берётся из записанных снимков машины.
 
 ### Только PostgreSQL — локальный или удалённый сервер
 
 ```sh
 sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 
-KRONIKA_COLLECTOR_MODE=postgresql \
-  KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_PG_DSN='host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres' \
-  /usr/local/bin/kronika-collector
+/usr/local/bin/kronika-collector \
+  --mode postgresql \
+  --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=pg.example.net port=5432 user=kronika_monitor password=replace-with-password dbname=postgres'
 ```
 
-Если число CPU PostgreSQL известно, добавьте `KRONIKA_POSTGRES_EFFECTIVE_CPUS=4`,
+Если число CPU PostgreSQL известно, добавьте `--postgres-effective-cpus 4`,
 заменив `4` нужным числом.
 Без него SQL-метрики доступны, а PostgreSQL Health неизвестен. Подробнее — в [настройках сборщика](bins/kronika-collector/README.ru.md#remote-postgresql).
 
@@ -72,28 +76,27 @@ KRONIKA_COLLECTOR_MODE=postgresql \
 
 #### Для режима `local`
 
-Для Linux укажите `KRONIKA_WEB_SOURCES=1`, как ниже. Если также собирается
-PostgreSQL, замените `1` на `3`:
+Для Linux укажите `--sources os`, как ниже. Если также собирается
+PostgreSQL, используйте `--sources all`:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
-  KRONIKA_WEB_SOURCES=1 \
-  /usr/local/bin/kronika-web
+sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
+  --listen 0.0.0.0:8080 --sources os
 ```
 
 #### Для режима `postgresql`
 
 ```sh
-KRONIKA_STORAGE_DIR=/var/lib/kronika \
-  KRONIKA_WEB_LISTEN=0.0.0.0:8080 \
-  KRONIKA_WEB_SOURCES=2 /usr/local/bin/kronika-web
+/usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
+  --listen 0.0.0.0:8080 --sources postgresql
 ```
 
 Откройте `http://<server-ip>:8080`.
 
-Для входа по паролю добавьте `KRONIKA_WEB_USER=kronika` и
-`KRONIKA_WEB_PASSWORD='replace-with-a-random-password'` в команду запуска.
+Для входа по паролю добавьте `--user kronika --password 'replace-with-a-random-password'`.
+Параметры командной строки имеют приоритет над переменными окружения;
+существующие настройки сервисов `KRONIKA_WEB_*` продолжают работать. Полный
+список параметров показывает `kronika-web --help`.
 
 [Настройка systemd](docs/services.ru.md) описывает запуск
 обеих программ как служб и изменение настроек уже работающей службы.
@@ -104,10 +107,10 @@ KRONIKA_STORAGE_DIR=/var/lib/kronika \
 **около 200 MB сжатых записей в сутки**. Объём зависит от интервалов сбора,
 числа записываемых объектов и уникальных запросов.
 
-`KRONIKA_RETENTION=2147483648` задаёт бюджет хранения **2 GiB** по умолчанию,
+`--retention 2GiB` задаёт бюджет хранения **2 GiB** по умолчанию,
 включая журналы и индексы. При превышении целевого объёма сборщик автоматически
 удаляет самые старые завершённые записи вместе с их индексами.
-Для **10 GiB** задайте `KRONIKA_RETENTION=10737418240` (значение в байтах).
+Для **10 GiB** задайте `--retention 10GiB`.
 
 `auto` и `auto:P` вместо фиксированного объёма задают целевую долю занятого места
 на всей файловой системе хранилища. Правила ротации и автоматический режим —
@@ -173,6 +176,6 @@ ZMS в HTML.
 - Справочники: [Интерфейс](docs/features.ru.md) · [Время](docs/metrics-time.ru.md) · [Linux](docs/metrics-linux.ru.md) · [PostgreSQL](docs/metrics-postgresql.ru.md) · [MCP](docs/mcp-clients.ru.md)
 - Программы: [Сборщик](bins/kronika-collector/README.ru.md) · [Веб-сервер](bins/kronika-web/README.ru.md) · [Dump](bins/kronika-dump/README.ru.md) · [Report](bins/kronika-report/README.ru.md)
 - Записанные поля: [Linux](docs/type-registry/os.ru.md) · [Метрики PostgreSQL](docs/type-registry/postgresql-metrics.ru.md) · [События PostgreSQL](docs/type-registry/postgresql.ru.md) · [События PgBouncer](docs/type-registry/pgbouncer.ru.md)
-- Разработка: [Формат сегмента](crates/kronika-format/README.ru.md) · [Демонстрационная нагрузка для разработки](bins/kronika-demo/README.ru.md)
+- Разработка: [Библиотеки](crates/README.ru.md) · [Формат сегмента](crates/kronika-format/README.ru.md) · [Демонстрационная нагрузка для разработки](bins/kronika-demo/README.ru.md)
 
 [Лицензия MIT](LICENSE).

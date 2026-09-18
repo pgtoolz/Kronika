@@ -85,4 +85,5 @@ async fn run_one_round(client: &Client, timeout_s: u64) -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
+#[path = "../tests/workload/vacuum.rs"]
 mod tests;

@@ -1,4 +1,7 @@
-//! Bounded discovery portions written through the ordinary collection journal.
+//! Walk visible cgroups and append them to the collection journal in bounded portions.
+//!
+//! Row conversion lives in `buffering`; this module handles portion limits and
+//! rebuilds a portion with the new segment dictionary after a full-WAL retry.
 
 use std::collections::HashSet;
 use std::io;
@@ -7,34 +10,34 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use kronika_layout::WriterOwner;
-use kronika_registry::os_cgroup_context::OsCgroupContextV2;
-use kronika_registry::os_cgroup_cpu::OsCgroupCpuV3;
-use kronika_registry::os_cgroup_io::OsCgroupIoV2;
-use kronika_registry::os_cgroup_memory::OsCgroupMemoryV3;
-use kronika_registry::os_cgroup_pids::OsCgroupPids;
-use kronika_registry::os_cgroup_v2_cpu::OsCgroupV2Cpu;
-use kronika_registry::os_cgroup_v2_group::OsCgroupV2Group;
-use kronika_registry::os_cgroup_v2_io::OsCgroupV2Io;
-use kronika_registry::os_cgroup_v2_memory::OsCgroupV2Memory;
-use kronika_registry::os_cgroup_v2_pids::OsCgroupV2Pids;
-use kronika_registry::{StrId, Ts};
 use kronika_source_os::cgroup::discovery::{
     DiscoveredGroup, DiscoveredIo, DiscoveryRow, DiscoveryStats, walk_visible_v2_with_primary,
 };
 use kronika_source_os::cgroup::{self, AncestorContext};
-use kronika_source_os::{OsScope, ProcFs, SysFs};
+use kronika_source_os::{ProcFs, SysFs};
 use kronika_source_pg::settings::SettingsRow;
-use kronika_writer::{Interner, Journal, SectionBuffers};
+use kronika_writer::{Journal, SectionBuffers};
 
 use crate::buffering::buffer_row;
 use crate::config::Config;
+use crate::instance_metadata::push_instance_metadata;
 use crate::logging::{LogLevel, field, log_event, peak_rss_kib, process_cpu_ticks};
 use crate::scheduler::Scheduler;
 use crate::segments::{SegmentState, append_window_and_maybe_close, encode_window};
-use crate::service_sections::push_instance_metadata;
 
+mod buffering;
+
+pub(crate) use buffering::context_section;
+use buffering::{push_group, push_io};
+
+// Maximum group observations retained before encoding a portion. Each group
+// produces inventory, CPU, memory and PID rows, plus selected-container rows.
 const GROUPS_PER_PORTION: usize = 64;
+// Device rows have a separate bound: one group can contain many devices.
 const IO_PER_PORTION: usize = 256;
+// Bound owned path/identity strings while discovery waits for the next append.
+// A single observation above this bound is omitted; aggregate overflow flushes
+// the current portion before accepting the next observation.
 const STRING_BYTES_PER_PORTION: usize = 128 * 1024;
 
 #[derive(Default)]
@@ -264,7 +267,7 @@ impl Appender<'_> {
             return Ok(());
         }
         for attempt in 0..2 {
-            let open_ts = crate::collection_timestamp_after(self.previous_open_ts)
+            let open_ts = crate::clock::collection_timestamp_after(self.previous_open_ts)
                 .context("read cgroup append timestamp")?;
             self.previous_open_ts = Some(open_ts);
             let mut buffers = SectionBuffers::new();
@@ -272,7 +275,7 @@ impl Appender<'_> {
             if fresh {
                 push_instance_metadata(
                     &mut buffers,
-                    self.segment.interner_mut(),
+                    &mut self.segment.interner,
                     self.in_container,
                     self.config,
                     open_ts,
@@ -280,25 +283,25 @@ impl Appender<'_> {
             }
             let mut pending_context = None;
             if self.in_container {
-                let context = context_section(self.segment.interner_mut(), &pass.selected)?;
-                if self.segment.cgroup_context() != Some(&context) {
+                let context = context_section(&mut self.segment.interner, &pass.selected)?;
+                if self.segment.cgroup_context.as_ref() != Some(&context) {
                     buffer_row(&mut buffers, context)?;
                     pending_context = Some(context);
                 }
             }
             let includes_settings =
-                self.segment.needs_pg_settings() && !self.opening_settings.is_empty();
+                !self.segment.pg_settings_present && !self.opening_settings.is_empty();
             if includes_settings {
-                crate::push_pg_settings(
+                crate::pg_sources::push_pg_settings(
                     &mut buffers,
-                    self.segment.interner_mut(),
+                    &mut self.segment.interner,
                     self.opening_settings,
                 )?;
             }
             for (group, primary) in &self.portion.groups {
                 push_group(
                     &mut buffers,
-                    self.segment.interner_mut(),
+                    &mut self.segment.interner,
                     group,
                     primary.then_some(&pass.selected),
                 )?;
@@ -306,12 +309,12 @@ impl Appender<'_> {
             for (row, primary) in &self.portion.io {
                 push_io(
                     &mut buffers,
-                    self.segment.interner_mut(),
+                    &mut self.segment.interner,
                     row,
                     primary.then_some(&pass.selected),
                 )?;
             }
-            let flushed = encode_window(buffers, self.segment.interner())?;
+            let flushed = encode_window(buffers, &self.segment.interner)?;
             let finished = append_window_and_maybe_close(
                 self.journal,
                 self.owner,
@@ -325,7 +328,7 @@ impl Appender<'_> {
             let retry = finished.iter().any(|(_, reason)| *reason == "journal-full");
             for (path, reason) in finished {
                 self.sched.mark_segment_opened();
-                crate::announce(&format!("wrote {} reason={reason}", path.display()));
+                crate::segments::report_written(&path, reason);
                 pass.written.push(path);
             }
             if retry {
@@ -333,11 +336,12 @@ impl Appender<'_> {
                 continue;
             }
             if includes_settings && !self.segment.is_empty() {
-                self.segment.mark_pg_settings_present();
+                self.segment.pg_settings_present = true;
             }
-            if !self.segment.is_empty() {
-                self.segment
-                    .mark_cgroup_context_recorded(pending_context.as_ref());
+            if !self.segment.is_empty()
+                && let Some(context) = pending_context
+            {
+                self.segment.cgroup_context = Some(context);
             }
             pass.appended = true;
             self.portion.clear();
@@ -347,248 +351,6 @@ impl Appender<'_> {
     }
 }
 
-fn intern(interner: &mut Interner, value: &str) -> Result<StrId> {
-    interner
-        .intern(value.as_bytes())
-        .map(|id| StrId(id.get()))
-        .map_err(|error| anyhow::anyhow!("intern discovered cgroup: {error}"))
-}
-
-pub(crate) fn context_section(
-    interner: &mut Interner,
-    selected: &AncestorContext,
-) -> Result<OsCgroupContextV2> {
-    let (path, identity, root) = match &selected.group {
-        Some(group) => (
-            Some(intern(interner, &group.path)?),
-            Some(intern(interner, &group.identity)?),
-            Some(intern(interner, &group.root)?),
-        ),
-        None => (None, None, None),
-    };
-    Ok(cgroup::to_ancestor_context_section(
-        selected,
-        [path; 4],
-        [identity; 4],
-        [root; 4],
-    ))
-}
-
-fn finite_limit(value: Option<i64>) -> (Option<i64>, Option<bool>) {
-    let value = value.filter(|value| *value >= -1);
-    (
-        value.filter(|value| *value >= 0),
-        value.map(|value| value == -1),
-    )
-}
-
-fn push_group(
-    buffers: &mut SectionBuffers,
-    interner: &mut Interner,
-    group: &DiscoveredGroup,
-    primary: Option<&AncestorContext>,
-) -> Result<()> {
-    let ts = Ts(group.ts);
-    let cgroup_path = intern(interner, &group.cgroup_path)?;
-    let cgroup_identity = intern(interner, &group.cgroup_identity)?;
-    buffer_row(
-        buffers,
-        OsCgroupV2Group {
-            ts,
-            cgroup_path,
-            cgroup_identity,
-            mount_root: intern(interner, &group.mount_root)?,
-            parent_identity: group
-                .parent_identity
-                .as_deref()
-                .map(|value| intern(interner, value))
-                .transpose()?,
-            memory_localevents: group.memory_localevents,
-            pids_localevents: group.pids_localevents,
-        },
-    )?;
-    let cpu = &group.cpu;
-    buffer_row(
-        buffers,
-        OsCgroupV2Cpu {
-            ts,
-            cgroup_path,
-            cgroup_identity,
-            usage_usec: cpu.usage_usec,
-            user_usec: cpu.user_usec,
-            system_usec: cpu.system_usec,
-            nr_periods: cpu.nr_periods,
-            nr_throttled: cpu.nr_throttled,
-            throttled_usec: cpu.throttled_usec,
-            quota_usec: cpu.quota_usec,
-            period_usec: cpu.period_usec,
-            cpuset_cpus: cpu.cpuset_cpus,
-        },
-    )?;
-    let memory = &group.memory;
-    let (max, max_unlimited) = finite_limit(memory.max);
-    let (high, high_unlimited) = finite_limit(memory.high);
-    buffer_row(
-        buffers,
-        OsCgroupV2Memory {
-            ts,
-            cgroup_path,
-            cgroup_identity,
-            current: memory.current,
-            max,
-            max_unlimited,
-            high,
-            high_unlimited,
-            anon: memory.anon,
-            file: memory.file,
-            kernel: memory.kernel,
-            slab: memory.slab,
-            low_events: memory.low_events,
-            high_events: memory.high_events,
-            max_events: memory.max_events,
-            oom_events: memory.oom_events,
-            oom_kill: memory.oom_kill,
-            local_high_events: memory.local_high_events,
-            local_max_events: memory.local_max_events,
-            local_oom_events: memory.local_oom_events,
-            local_oom_kill: memory.local_oom_kill,
-            local_oom_group_kill: memory.local_oom_group_kill,
-        },
-    )?;
-    let pids = &group.pids;
-    let (max, max_unlimited) = finite_limit(pids.max);
-    buffer_row(
-        buffers,
-        OsCgroupV2Pids {
-            ts,
-            cgroup_path,
-            cgroup_identity,
-            current: pids.current,
-            max,
-            max_unlimited,
-            failure_max: pids.failure_max,
-            events_source: pids.events_source,
-        },
-    )?;
-    if let Some(primary) = primary {
-        push_primary_group(buffers, interner, group, primary)?;
-    }
-    Ok(())
-}
-
-fn push_primary_group(
-    buffers: &mut SectionBuffers,
-    interner: &mut Interner,
-    group: &DiscoveredGroup,
-    selected: &AncestorContext,
-) -> Result<()> {
-    let Some(primary) = &selected.group else {
-        return Ok(());
-    };
-    let cgroup_path = intern(interner, &primary.path)?;
-    let cgroup_identity = intern(interner, &primary.identity)?;
-    let ts = Ts(group.ts);
-    let scope = OsScope::Unknown.as_u8();
-    let cpu = &group.cpu;
-    if let (Some(usage_usec), Some(user_usec), Some(system_usec)) =
-        (cpu.usage_usec, cpu.user_usec, cpu.system_usec)
-    {
-        buffer_row(
-            buffers,
-            OsCgroupCpuV3 {
-                ts,
-                cgroup_path,
-                cgroup_identity,
-                usage_usec,
-                user_usec,
-                system_usec,
-                throttled_usec: cpu.throttled_usec,
-                nr_throttled: cpu.nr_throttled,
-                quota_usec: cpu.quota_usec,
-                period_usec: cpu.period_usec,
-                scope,
-            },
-        )?;
-    }
-    let memory = &group.memory;
-    if let Some(current) = memory.current {
-        let (max, max_unlimited) = finite_limit(memory.max);
-        buffer_row(
-            buffers,
-            OsCgroupMemoryV3 {
-                ts,
-                cgroup_path,
-                cgroup_identity,
-                current,
-                max,
-                max_unlimited,
-                anon: memory.anon,
-                file: memory.file,
-                kernel: memory.kernel,
-                slab: memory.slab,
-                low_events: memory.low_events,
-                high_events: memory.high_events,
-                max_events: memory.max_events,
-                oom_events: memory.oom_events,
-                oom_kill: memory.oom_kill,
-                scope,
-            },
-        )?;
-    }
-    if let (Some(current), Some(max)) = (group.pids.current, group.pids.max) {
-        buffer_row(
-            buffers,
-            OsCgroupPids {
-                ts,
-                cgroup_path,
-                current,
-                max: finite_limit(Some(max)).0,
-                scope,
-            },
-        )?;
-    }
-    Ok(())
-}
-
-fn push_io(
-    buffers: &mut SectionBuffers,
-    interner: &mut Interner,
-    row: &DiscoveredIo,
-    primary: Option<&AncestorContext>,
-) -> Result<()> {
-    buffer_row(
-        buffers,
-        OsCgroupV2Io {
-            ts: Ts(row.ts),
-            cgroup_path: intern(interner, &row.cgroup_path)?,
-            cgroup_identity: intern(interner, &row.cgroup_identity)?,
-            major: row.major,
-            minor: row.minor,
-            rbytes: row.rbytes,
-            wbytes: row.wbytes,
-            rios: row.rios,
-            wios: row.wios,
-        },
-    )?;
-    if let Some(group) = primary.and_then(|selected| selected.group.as_ref()) {
-        buffer_row(
-            buffers,
-            OsCgroupIoV2 {
-                ts: Ts(row.ts),
-                cgroup_path: intern(interner, &group.path)?,
-                cgroup_identity: intern(interner, &group.identity)?,
-                major: row.major,
-                minor: row.minor,
-                rbytes: row.rbytes,
-                wbytes: row.wbytes,
-                rios: row.rios,
-                wios: row.wios,
-                scope: OsScope::Unknown.as_u8(),
-            },
-        )?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
+#[path = "tests/cgroup_discovery/mod.rs"]
 mod tests;

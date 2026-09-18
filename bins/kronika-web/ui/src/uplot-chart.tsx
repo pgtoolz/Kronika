@@ -6,6 +6,7 @@ import { useDisplayTime } from "./display-time-context"
 import { LabelHelp, type Translate } from "./help"
 import { orderedRecordedTimes } from "./keyboard"
 import { humanDurationAxis, type Locale } from "./model"
+import type { SnapshotDirection } from "./api"
 import { niceCeiling } from "./spark"
 
 export type ChartScale = "percent" | "nonnegative" | "signed"
@@ -146,6 +147,7 @@ export function UPlotChart({
   locale,
   onCursor,
   onPreview,
+  onStep,
   reading,
   series,
   className,
@@ -170,6 +172,7 @@ export function UPlotChart({
   readonly navigationTimestamps?: readonly number[] | undefined
   readonly onCursor?: ((timestamp: number) => void) | undefined
   readonly onPreview?: ((timestamp: number | null) => void) | undefined
+  readonly onStep?: ((direction: SnapshotDirection) => void) | undefined
   readonly onPlotWidth?: ((width: number) => void) | undefined
   readonly reading?: string | undefined
   readonly series: readonly RecordedSeries[]
@@ -213,9 +216,11 @@ export function UPlotChart({
   const topologySignature = chartTopology(visibleSeries, compact).signature
   const topology = useMemo(() => chartTopology(visibleSeries, compact), [compact, topologySignature])
   const [themeRevision, setThemeRevision] = useState(0)
+  // Bumped when a host without a box (hidden behind the chart panel) gets one.
+  const [layoutRevision, setLayoutRevision] = useState(0)
   const exact = hovered === null ? null : exactReadings(frame, drawnSeries, hovered, locale, time)
   const selected = cursor === undefined || cursor < hour || cursor >= end ? null : cursor
-  const keyboardTimestamp = navigationTimes[keyboardIndex] ?? null
+  const keyboardTimestamp = onStep === undefined ? navigationTimes[keyboardIndex] ?? null : selected
   const runtime = useRef<ChartRuntimeState>({ decorations, frame, locale, navigationTimes, series: visibleSeries, threshold, time })
   const hoveredRef = useRef(hovered)
   onCursorRef.current = onCursor
@@ -229,6 +234,15 @@ export function UPlotChart({
     const element = host.current
     if (element === null || runtime.current.frame.timestamps.length === 0) return
     const initialBounds = element.getBoundingClientRect()
+    if (initialBounds.width === 0) {
+      // A chart built while hidden would size its time range to one pixel;
+      // wait for the host to get a box instead.
+      const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver((entries) => {
+        if (entries.some((entry) => entry.contentRect.width > 0)) setLayoutRevision((revision) => revision + 1)
+      })
+      observer?.observe(element)
+      return () => observer?.disconnect()
+    }
     const options = chartOptions(topology, runtime, hour, end, selectedRef, Math.max(1, Math.round(initialBounds.width)), Math.max(1, Math.round(initialBounds.height)), compact, variant !== "default", markerLayer !== undefined, (chart) => {
       if (variant !== "default") return
       const index = chart.cursor.idx
@@ -295,7 +309,9 @@ export function UPlotChart({
       cancelAnimationFrame(resizeFrame)
       resizeFrame = requestAnimationFrame(() => {
         const bounds = element.getBoundingClientRect()
+        if (bounds.width === 0) return
         chart.setSize({ width: Math.max(1, Math.round(bounds.width)), height: Math.max(1, Math.round(bounds.height)) })
+        chart.setScale("x", { min: hour, max: end })
       })
     }
     resize()
@@ -315,7 +331,7 @@ export function UPlotChart({
       chart.destroy()
       plot.current = null
     }
-  }, [compact, end, frame.timestamps.length === 0, hour, markerLayer !== undefined, themeRevision, topology, variant])
+  }, [compact, end, frame.timestamps.length === 0, hour, layoutRevision, markerLayer !== undefined, themeRevision, topology, variant])
 
   useLayoutEffect(() => {
     const chart = plot.current
@@ -414,11 +430,23 @@ export function UPlotChart({
       aria-valuetext={keyboardTimestamp === null ? undefined : navigationSampleText(series, frame, navigationTimes, keyboardTimestamp, locale, time)}
       className="chart-navigator absolute m-0 h-px w-px overflow-hidden whitespace-nowrap [clip-path:inset(50%)] focus:left-2 focus:z-[9] focus:h-7 focus:w-[min(320px,calc(100%-16px))] focus:[clip-path:none]"
       data-recorded-timestamp={keyboardTimestamp ?? undefined}
-      disabled={navigationTimes.length === 0}
+      disabled={onStep === undefined && navigationTimes.length === 0}
+      onKeyDown={(event) => {
+        if (onStep === undefined || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+          || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+        event.preventDefault()
+        event.stopPropagation()
+        onPreview?.(null)
+        onStep(event.key === "ArrowRight" ? "next" : "previous")
+      }}
       max={Math.max(0, navigationTimes.length - 1)}
       min="0"
       onChange={(event) => {
         const index = Number(event.currentTarget.value)
+        if (onStep !== undefined) {
+          if (index !== keyboardIndex) onStep(index > keyboardIndex ? "next" : "previous")
+          return
+        }
         const timestamp = navigationTimes[index]
         setKeyboardIndex(index)
         if (timestamp !== undefined) {
@@ -696,7 +724,9 @@ function chartOptions(
     pxAlign: true,
     legend: { show: false },
     ...(markerLane ? { padding: [MARKER_LANE_PX + 2, null, null, null] } : {}),
-    scales: { x: { auto: false, range: chartTimeRange(hour, end, width, compact ? 38 : 52, topology.partitions.length * (compact ? 46 : 70)), time: false }, ...scales },
+    // The range follows the live width: a chart created while hidden starts
+    // at 1px and would otherwise keep that hour-squeezing range after resizes.
+    scales: { x: { auto: false, range: (plot) => chartTimeRange(hour, end, plot.width, compact ? 38 : 52, topology.partitions.length * (compact ? 46 : 70)), time: false }, ...scales },
     axes: [
       { scale: "x", side: 2, size: compact ? 18 : 30, gap: compact ? 2 : 4, ticks: { size: compact ? 4 : 6, stroke: color("--color-line3") }, font: axisFont, space: (_chart, _axis, _scale, _increment, space) => Math.max(compact ? 62 : 84, space), stroke: color("--color-fg3"), grid: { show: false }, values: (_chart, splits) => splits.map((timestamp) => timestamp > end ? "" : axisTimeLabel(timestamp, runtime.current.time)) },
       ...topology.partitions.map(({ key, seriesIndices }, axisIndex) => {

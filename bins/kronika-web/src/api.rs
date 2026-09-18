@@ -1,6 +1,7 @@
-//! Preparing blocking resource reads and streaming small self-describing records.
+//! Prepare recorded queries and translate their metadata into HTTP cache headers.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use hyper::StatusCode;
 use kronika_query::{
@@ -9,10 +10,8 @@ use kronika_query::{
 use sha2::{Digest as _, Sha256};
 
 use crate::encoding::etag_matches;
+use crate::query_adapter::NativeDataset;
 use crate::route::Route;
-
-#[cfg(test)]
-mod tests;
 
 /// Cache policy applied centrally after preparation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,16 +41,6 @@ pub(crate) struct ResponseMeta {
     pub(crate) etag: Option<String>,
 }
 
-impl ResponseMeta {
-    const fn ok_with_etag(cache: CachePolicy, etag: Option<String>) -> Self {
-        Self {
-            status: StatusCode::OK,
-            cache,
-            etag,
-        }
-    }
-}
-
 /// A prepared response whose disk/Parquet work remains on the blocking thread.
 pub(crate) enum Prepared {
     Query(Box<PreparedQuery>),
@@ -61,6 +50,53 @@ pub(crate) enum Prepared {
 pub(crate) struct PreparedQuery {
     execution: kronika_query::QueryExecution,
     meta: ResponseMeta,
+}
+
+/// Validate the query and prepare its headers on the blocking worker.
+pub(crate) fn prepare(
+    root: &Path,
+    sources: u32,
+    synthetic_demo: bool,
+    route: Route,
+    if_none_match: Option<&str>,
+) -> Result<Prepared, ApiError> {
+    let Route::Recorded(route) = route else {
+        // Native endpoints are handled by `server` before reaching the query engine.
+        return Err(ApiError::NoSuchSection);
+    };
+    let request = route.into_query()?;
+    let dataset = Arc::new(NativeDataset::from_root(root)?);
+    let mut context = QueryContext::new(
+        Arc::<NativeDataset>::clone(&dataset),
+        sources,
+        synthetic_demo,
+    );
+    if matches!(request, QueryRequest::Index(_) | QueryRequest::Hour(_)) {
+        context = context.with_index_provider(dataset);
+    }
+    let build = env!("KRONIKA_BUILD_COMMIT");
+    if !build.is_empty() {
+        context = context.with_build(build);
+    }
+    let execution = match request {
+        QueryRequest::Snapshot(request) => {
+            let preparation = kronika_query::snapshot::prepare_snapshot(&context, request)?;
+            let meta = query_meta(preparation.metadata());
+            // A concrete ETag can skip row decoding. `*` still requires checking
+            // that the requested snapshot can be built.
+            let concrete_validator = if_none_match.filter(|offered| offered.trim() != "*");
+            if let Some(not_modified) = conditional_not_modified(meta, concrete_validator) {
+                return Ok(not_modified);
+            }
+            preparation.finish()?
+        }
+        request => kronika_query::execute(&context, request)?,
+    };
+    let meta = query_meta(execution.metadata());
+    if let Some(not_modified) = conditional_not_modified(meta.clone(), if_none_match) {
+        return Ok(not_modified);
+    }
+    Ok(Prepared::Query(Box::new(PreparedQuery { execution, meta })))
 }
 
 impl Prepared {
@@ -90,16 +126,9 @@ impl Prepared {
 
 pub(crate) type ApiError = QueryError;
 
-pub(crate) const fn api_error_status(error: &ApiError) -> StatusCode {
-    match error {
-        ApiError::NoSuchSegment | ApiError::NoSuchSection => StatusCode::NOT_FOUND,
-        ApiError::NoSuchColumn(_)
-        | ApiError::MixedUnits(_)
-        | ApiError::BadFilter(_)
-        | ApiError::BadCursor
-        | ApiError::BadLocator(_) => StatusCode::BAD_REQUEST,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
-    }
+pub(crate) fn api_error_status(error: &ApiError) -> StatusCode {
+    StatusCode::from_u16(kronika_api::query_error_status(error))
+        .expect("the shared API returns a valid HTTP status")
 }
 
 struct NativeSink<'a, E, C> {
@@ -135,80 +164,11 @@ fn query_meta(metadata: kronika_query::QueryMetadata<'_>) -> ResponseMeta {
             segments,
         } => weak_dataset_etag(resource, shape, segments),
     });
-    ResponseMeta::ok_with_etag(cache, etag)
-}
-
-fn prepared_query(execution: kronika_query::QueryExecution) -> Prepared {
-    let meta = query_meta(execution.metadata());
-    Prepared::Query(Box::new(PreparedQuery { execution, meta }))
-}
-
-/// Perform request validation and initial I/O outside the Tokio worker.
-#[cfg(test)]
-pub(crate) fn prepare(
-    root: &Path,
-    sources: u32,
-    route: Route,
-    if_none_match: Option<&str>,
-) -> Result<Prepared, ApiError> {
-    prepare_with_demo(root, sources, false, route, if_none_match)
-}
-
-/// Prepare a response with the deployment identity exposed in its catalog.
-pub(crate) fn prepare_with_demo(
-    root: &Path,
-    sources: u32,
-    synthetic_demo: bool,
-    route: Route,
-    if_none_match: Option<&str>,
-) -> Result<Prepared, ApiError> {
-    let Route::Recorded(route) = route else {
-        // Answered directly in `main.rs`.
-        return Err(ApiError::NoSuchSection);
-    };
-    let request = route.into_query()?;
-    let prepared = match request {
-        request @ (QueryRequest::Catalog(_)
-        | QueryRequest::History(_)
-        | QueryRequest::Events(_)
-        | QueryRequest::RowDetail(_)
-        | QueryRequest::Rows(_)
-        | QueryRequest::Heatmap(_)) => {
-            let dataset =
-                std::sync::Arc::new(crate::query_adapter::NativeDataset::from_root(root)?);
-            let context = QueryContext::new(dataset, sources, synthetic_demo);
-            kronika_query::execute(&context, request).map(prepared_query)
-        }
-        request @ (QueryRequest::Index(_) | QueryRequest::Hour(_)) => {
-            let dataset =
-                std::sync::Arc::new(crate::query_adapter::NativeDataset::from_root(root)?);
-            let context = QueryContext::new(
-                std::sync::Arc::<crate::query_adapter::NativeDataset>::clone(&dataset),
-                sources,
-                synthetic_demo,
-            )
-            .with_index_provider(dataset);
-            kronika_query::execute(&context, request).map(prepared_query)
-        }
-        QueryRequest::Snapshot(request) => {
-            let dataset =
-                std::sync::Arc::new(crate::query_adapter::NativeDataset::from_root(root)?);
-            let context = QueryContext::new(dataset, sources, synthetic_demo);
-            let preparation = kronika_query::snapshot::prepare_snapshot(&context, request)?;
-            let meta = query_meta(preparation.metadata());
-            let concrete_validator = if_none_match.filter(|offered| offered.trim() != "*");
-            if let Some(not_modified) = conditional_not_modified(meta, concrete_validator) {
-                return Ok(not_modified);
-            }
-            preparation.finish().map(prepared_query)
-        }
-        _ => return Err(ApiError::NoSuchSection),
-    }?;
-    let meta = prepared.meta();
-    if let Some(not_modified) = conditional_not_modified(meta, if_none_match) {
-        return Ok(not_modified);
+    ResponseMeta {
+        status: StatusCode::OK,
+        cache,
+        etag,
     }
-    Ok(prepared)
 }
 
 fn conditional_not_modified(meta: ResponseMeta, if_none_match: Option<&str>) -> Option<Prepared> {
@@ -252,3 +212,7 @@ fn weak_dataset_etag(
     }
     found.then(|| format!("W/\"{:x}\"", digest.finalize()))
 }
+
+#[cfg(test)]
+#[path = "tests/api.rs"]
+mod tests;

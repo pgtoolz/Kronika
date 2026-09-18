@@ -87,19 +87,6 @@ pub fn final_single_batch_plain_body_bound(
     Ok(body)
 }
 
-/// The `ZSTD_COMPRESSBOUND` formula from the pinned Zstandard 1.5 contract.
-#[cfg(test)]
-pub(super) fn zstd_compress_bound(src_size: usize) -> Option<usize> {
-    let small_input_margin = if src_size < 128 * 1024 {
-        ((128 * 1024) - src_size) >> 11
-    } else {
-        0
-    };
-    src_size
-        .checked_add(src_size >> 8)
-        .and_then(|bytes| bytes.checked_add(small_input_margin))
-}
-
 /// Prove the page and final-body bounds for one registered final section.
 ///
 /// `list_i32_child_values` is the aggregate child count reported by the
@@ -116,10 +103,7 @@ pub fn final_data_body_bound(
     list_i32_child_values: usize,
 ) -> Result<usize, CodecError> {
     check_row_cap(rows)?;
-    let contract = crate::registry()
-        .iter()
-        .find(|contract| contract.type_id.get() == type_id)
-        .ok_or(CodecError::UnknownType { type_id })?;
+    let contract = crate::contract(type_id).ok_or(CodecError::UnknownType { type_id })?;
     let list_name = contract
         .columns
         .iter()

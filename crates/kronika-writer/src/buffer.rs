@@ -242,4 +242,5 @@ impl SectionBuffers {
 }
 
 #[cfg(test)]
+#[path = "tests/buffer.rs"]
 mod tests;

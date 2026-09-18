@@ -114,4 +114,5 @@ pub fn parse_softirqs(content: &str) -> Vec<SoftirqRow> {
 }
 
 #[cfg(test)]
+#[path = "../tests/proc/interrupts.rs"]
 mod tests;

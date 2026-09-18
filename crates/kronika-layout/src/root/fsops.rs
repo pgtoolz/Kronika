@@ -290,7 +290,7 @@ pub(super) fn verify_named_identity(
     temporary_name: &str,
 ) -> Result<(), LayoutError> {
     let file = open_regular_at(directory, file_name, OFlags::RDONLY)?;
-    if !FileIdentity::from_file(&file)?.same_named_object(expected) {
+    if FileIdentity::from_file(&file)? != expected {
         return Err(LayoutError::TemporaryChanged {
             name: temporary_name.to_owned(),
         });
@@ -310,7 +310,7 @@ pub(super) fn unlink_named_if_identity(
         }
         Err(error) => return Err(error),
     };
-    if !FileIdentity::from_file(&named)?.same_named_object(expected) {
+    if FileIdentity::from_file(&named)? != expected {
         return Ok(false);
     }
     rustix::fs::unlinkat(directory, name, AtFlags::empty())

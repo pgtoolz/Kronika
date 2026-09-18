@@ -16,7 +16,7 @@ assert.ok(nativeArgument, "native oracle path is required");
 const gluePath = resolve(glueArgument);
 const wasmPath = resolve(wasmArgument);
 const nativePath = resolve(nativeArgument);
-const fixtureRoot = new URL("../../../bins/kronika-report/tests/fixtures/", import.meta.url);
+const fixtureRoot = new URL("../../../crates/kronika-report/tests/fixtures/", import.meta.url);
 const [glue, wasmGzip, zms, idx] = await Promise.all([
   readFile(gluePath, "utf8"),
   readFile(wasmPath),
@@ -87,6 +87,22 @@ function records(body) {
 }
 
 compare("catalog", "/api/catalog", "");
+for (const [name, at, direction, expected] of [
+  ["next", SEGMENT_ID, "next", SAMPLE_TO],
+  ["previous", "1709164802000000", "previous", SAMPLE_TO],
+  ["absent", SAMPLE_TO, "next", null],
+]) {
+  const neighbor = records(compare(
+    `snapshot-neighbor-${name}`,
+    "/api/snapshot/neighbor",
+    `section=pg_stat_activity&at=${at}&direction=${direction}`,
+  ));
+  assert.deepEqual(neighbor, [{
+    record: "snapshot_neighbor",
+    at: expected,
+    segment_id: expected === null ? null : SEGMENT_ID,
+  }]);
+}
 compare(
   "index",
   `/api/segments/${SEGMENT_ID}/sections/pg_stat_database/index`,
@@ -97,11 +113,31 @@ compare(
   "/api/hour",
   `from=${SEGMENT_ID}&to=${SAMPLE_TO}&part=base`,
 );
+for (const [name, from, to, total] of [
+  ["inside", SEGMENT_ID, SAMPLE_TO, 30],
+  ["before", "1709164800250000", SAMPLE_TO, null],
+  ["after", SEGMENT_ID, "1709164800750000", null],
+]) {
+  const heatmap = records(compare(
+    `heatmap-${name}`,
+    "/api/heatmap",
+    `from=${from}&to=${to}&section=os_cpu&field=user&columns=12&top=1`,
+  ));
+  const band = heatmap.find((record) => record.record === "heatmap_band" && record.band === "totals");
+  assert.equal(band.total, total, "edge samples do not enter ranking totals");
+  assert.ok(band.cells.includes(30), "both CPU rates include their nearest edge samples");
+}
 compare(
   "snapshot-large-text-limit",
   `/api/segments/${SEGMENT_ID}/snapshot`,
   `at=${SAMPLE_TO}&section=os_cpu&field=user&page_size=1&text=5000000000`,
 );
+const latest = records(compare(
+  "snapshot-latest-selection",
+  `/api/segments/${SEGMENT_ID}/snapshot`,
+  `at=${SAMPLE_TO}&section=pg_stat_activity&field=pid&selection=latest`,
+));
+assert.ok(latest.some((record) => record.record === "row" && record.timestamp === SAMPLE_TO));
 
 const rowsPath = `/api/segments/${SEGMENT_ID}/sections/os_process/rows`;
 const firstQuery = "field=comm&field=utime&order=asc&page_size=1";

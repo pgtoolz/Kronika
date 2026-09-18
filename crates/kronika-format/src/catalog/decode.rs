@@ -5,12 +5,12 @@ use super::{ENTRY_LEN, Entry, Error, META_LEN, fmt};
 /// Why catalog or tail index bytes failed to decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
-    /// The last four bytes of the tail index are not [`MAGIC`].
+    /// The last four bytes of the tail index are not [`crate::MAGIC`].
     BadTailMagic {
         /// The bytes actually found.
         actual: [u8; 4],
     },
-    /// Catalog byte length is not `entries × 32 + 40`.
+    /// Catalog byte length is not `entries × 32 + 32`.
     BadCatalogLen {
         /// The byte length actually given.
         actual: usize,

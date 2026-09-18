@@ -1,37 +1,25 @@
 use crate::IndexError;
 
-pub(crate) fn u16_at(bytes: &[u8], at: usize) -> Result<u16, IndexError> {
-    let raw: [u8; 2] = bytes
-        .get(at..at.checked_add(2).ok_or(IndexError::Truncated)?)
+fn bytes_at<const N: usize>(bytes: &[u8], at: usize) -> Result<[u8; N], IndexError> {
+    bytes
+        .get(at..at.checked_add(N).ok_or(IndexError::Truncated)?)
         .ok_or(IndexError::Truncated)?
         .try_into()
-        .map_err(|_error| IndexError::Truncated)?;
-    Ok(u16::from_le_bytes(raw))
+        .map_err(|_error| IndexError::Truncated)
+}
+
+pub(crate) fn u16_at(bytes: &[u8], at: usize) -> Result<u16, IndexError> {
+    bytes_at(bytes, at).map(u16::from_le_bytes)
 }
 
 pub(crate) fn u32_at(bytes: &[u8], at: usize) -> Result<u32, IndexError> {
-    let raw: [u8; 4] = bytes
-        .get(at..at.checked_add(4).ok_or(IndexError::Truncated)?)
-        .ok_or(IndexError::Truncated)?
-        .try_into()
-        .map_err(|_error| IndexError::Truncated)?;
-    Ok(u32::from_le_bytes(raw))
+    bytes_at(bytes, at).map(u32::from_le_bytes)
 }
 
 pub(crate) fn u64_at(bytes: &[u8], at: usize) -> Result<u64, IndexError> {
-    let raw: [u8; 8] = bytes
-        .get(at..at.checked_add(8).ok_or(IndexError::Truncated)?)
-        .ok_or(IndexError::Truncated)?
-        .try_into()
-        .map_err(|_error| IndexError::Truncated)?;
-    Ok(u64::from_le_bytes(raw))
+    bytes_at(bytes, at).map(u64::from_le_bytes)
 }
 
 pub(crate) fn i64_at(bytes: &[u8], at: usize) -> Result<i64, IndexError> {
-    let raw: [u8; 8] = bytes
-        .get(at..at.checked_add(8).ok_or(IndexError::Truncated)?)
-        .ok_or(IndexError::Truncated)?
-        .try_into()
-        .map_err(|_error| IndexError::Truncated)?;
-    Ok(i64::from_le_bytes(raw))
+    bytes_at(bytes, at).map(i64::from_le_bytes)
 }

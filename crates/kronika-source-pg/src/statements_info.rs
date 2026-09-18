@@ -48,4 +48,5 @@ pub async fn collect(
 }
 
 #[cfg(test)]
+#[path = "tests/statements_info.rs"]
 mod tests;

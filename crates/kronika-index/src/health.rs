@@ -107,4 +107,5 @@ fn percent_left(stalled: i64, elapsed: i64) -> u8 {
 }
 
 #[cfg(test)]
+#[path = "tests/health.rs"]
 mod tests;

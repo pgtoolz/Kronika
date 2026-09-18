@@ -4,10 +4,14 @@
 <h1>Kronika third-party licenses</h1>
 <p>This inventory follows the repository dependency inputs recorded in <a href="licenses/dependency-inputs.sha256">licenses/dependency-inputs.sha256</a>. It includes normal Cargo dependency closures for the four native utilities (kronika-collector, kronika-web, kronika-dump, kronika-report) on x86-64 and ARM64 Linux and the browser WebAssembly report engine, production npm lock entries including type support, embedded fonts, and runtime notice reference texts.</p>
 <p>The dependency inventory describes the packaging checkout. It does not establish the source revision or compiler identity of reused executables. Runtime notice source versions identify the retained license texts; they are not build provenance. See BUILDINFO for the package build mode.</p>
-<h2>Rust packages (238)</h2>
+<h2>Rust packages (257)</h2>
 <table><thead><tr><th>Package</th><th>Version</th><th>License expression</th><th>Dependency closure</th></tr></thead><tbody>
 <tr><td>adler2</td><td>2.0.1</td><td>0BSD OR MIT OR Apache-2.0</td><td>kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>ahash</td><td>0.8.12</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
+<tr><td>anstream</td><td>1.0.0</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
+<tr><td>anstyle-parse</td><td>1.0.0</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
+<tr><td>anstyle-query</td><td>1.1.5</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
+<tr><td>anstyle</td><td>1.0.14</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
 <tr><td>anyhow</td><td>1.0.102</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-web</td></tr>
 <tr><td>arrow-array</td><td>55.2.0</td><td>Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>arrow-buffer</td><td>55.2.0</td><td>Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
@@ -23,16 +27,23 @@
 <tr><td>base64</td><td>0.22.1</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>base64</td><td>0.23.1</td><td>MIT OR Apache-2.0</td><td>kronika-web</td></tr>
 <tr><td>base64ct</td><td>1.8.3</td><td>Apache-2.0 OR MIT</td><td>kronika-collector</td></tr>
+<tr><td>bitflags</td><td>1.3.2</td><td>MIT/Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>bitflags</td><td>2.13.0</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>block-buffer</td><td>0.10.4</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>block-buffer</td><td>0.12.1</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
+<tr><td>bsize</td><td>0.3.0</td><td>Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>bumpalo</td><td>3.20.3</td><td>MIT OR Apache-2.0</td><td>kronika-report-wasm</td></tr>
 <tr><td>byteorder</td><td>1.5.0</td><td>Unlicense OR MIT</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>bytes</td><td>1.11.1</td><td>MIT</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>cfg-if</td><td>1.0.4</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>chacha20</td><td>0.10.1</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-web</td></tr>
 <tr><td>chrono</td><td>0.4.45</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
+<tr><td>clap</td><td>4.6.6</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
+<tr><td>clap_builder</td><td>4.6.6</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
+<tr><td>clap_derive</td><td>4.6.4</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
+<tr><td>clap_lex</td><td>1.1.0</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
 <tr><td>cmov</td><td>0.5.4</td><td>Apache-2.0 OR MIT</td><td>kronika-collector</td></tr>
+<tr><td>colorchoice</td><td>1.0.5</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
 <tr><td>const-oid</td><td>0.10.2</td><td>Apache-2.0 OR MIT</td><td>kronika-collector</td></tr>
 <tr><td>const-oid</td><td>0.9.6</td><td>Apache-2.0 OR MIT</td><td>kronika-collector</td></tr>
 <tr><td>const-random-macro</td><td>0.1.16</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
@@ -49,6 +60,9 @@
 <tr><td>darling</td><td>0.24.1</td><td>MIT</td><td>kronika-web</td></tr>
 <tr><td>darling_core</td><td>0.24.1</td><td>MIT</td><td>kronika-web</td></tr>
 <tr><td>darling_macro</td><td>0.24.1</td><td>MIT</td><td>kronika-web</td></tr>
+<tr><td>defmt-macros</td><td>1.1.1</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
+<tr><td>defmt-parser</td><td>1.0.0</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
+<tr><td>defmt</td><td>1.1.1</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>der</td><td>0.7.10</td><td>Apache-2.0 OR MIT</td><td>kronika-collector</td></tr>
 <tr><td>der_derive</td><td>0.7.3</td><td>Apache-2.0 OR MIT</td><td>kronika-collector</td></tr>
 <tr><td>digest</td><td>0.10.7</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
@@ -79,6 +93,7 @@
 <tr><td>half</td><td>2.7.1</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>hashbrown</td><td>0.15.5</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>hashbrown</td><td>0.17.1</td><td>MIT OR Apache-2.0</td><td>kronika-web</td></tr>
+<tr><td>heck</td><td>0.5.0</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
 <tr><td>hmac</td><td>0.13.0</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>http-body-util</td><td>0.1.4</td><td>MIT</td><td>kronika-web</td></tr>
 <tr><td>http-body</td><td>1.1.0</td><td>MIT</td><td>kronika-web</td></tr>
@@ -103,6 +118,7 @@
 <tr><td>ident_case</td><td>1.0.1</td><td>MIT/Apache-2.0</td><td>kronika-web</td></tr>
 <tr><td>indexmap</td><td>2.14.0</td><td>Apache-2.0 OR MIT</td><td>kronika-web</td></tr>
 <tr><td>integer-encoding</td><td>3.0.4</td><td>MIT</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
+<tr><td>is_terminal_polyfill</td><td>1.70.2</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
 <tr><td>itoa</td><td>1.0.18</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>jiff-core</td><td>0.1.1</td><td>Unlicense OR MIT</td><td>kronika-collector</td></tr>
 <tr><td>jiff-tzdb</td><td>0.1.8</td><td>Unlicense OR MIT</td><td>kronika-collector</td></tr>
@@ -119,6 +135,7 @@
 <tr><td>litemap</td><td>0.8.3</td><td>Unicode-3.0</td><td>kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>lock_api</td><td>0.4.14</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>log</td><td>0.4.32</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
+<tr><td>macroweave</td><td>0.1.1</td><td>Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>md-5</td><td>0.11.0</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>memchr</td><td>2.8.2</td><td>Unlicense OR MIT</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>miniz_oxide</td><td>0.8.9</td><td>MIT OR Zlib OR Apache-2.0</td><td>kronika-report, kronika-report-wasm, kronika-web</td></tr>
@@ -181,14 +198,15 @@
 <tr><td>sse-stream</td><td>0.2.5</td><td>MIT OR Apache-2.0</td><td>kronika-web</td></tr>
 <tr><td>stable_deref_trait</td><td>1.2.1</td><td>MIT OR Apache-2.0</td><td>kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>stringprep</td><td>0.1.5</td><td>MIT/Apache-2.0</td><td>kronika-collector</td></tr>
-<tr><td>strsim</td><td>0.11.1</td><td>MIT</td><td>kronika-web</td></tr>
+<tr><td>strsim</td><td>0.11.1</td><td>MIT</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
 <tr><td>subtle</td><td>2.6.1</td><td>BSD-3-Clause</td><td>kronika-collector</td></tr>
 <tr><td>syn</td><td>2.0.117</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>syn</td><td>3.0.3</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>synstructure</td><td>0.13.2</td><td>MIT</td><td>kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>tempfile</td><td>3.27.0</td><td>MIT OR Apache-2.0</td><td>kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
-<tr><td>thiserror-impl</td><td>2.0.20</td><td>MIT OR Apache-2.0</td><td>kronika-web</td></tr>
-<tr><td>thiserror</td><td>2.0.20</td><td>MIT OR Apache-2.0</td><td>kronika-web</td></tr>
+<tr><td>terminal_size</td><td>0.4.4</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-web</td></tr>
+<tr><td>thiserror-impl</td><td>2.0.20</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-web</td></tr>
+<tr><td>thiserror</td><td>2.0.20</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-web</td></tr>
 <tr><td>thrift</td><td>0.17.0</td><td>Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>tikv-jemalloc-sys</td><td>0.6.1+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7</td><td>MIT/Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>tikv-jemallocator</td><td>0.6.1</td><td>MIT/Apache-2.0</td><td>kronika-collector</td></tr>
@@ -218,6 +236,7 @@
 <tr><td>untrusted</td><td>0.9.0</td><td>ISC</td><td>kronika-collector</td></tr>
 <tr><td>utf16_iter</td><td>1.0.5</td><td>Apache-2.0 OR MIT</td><td>kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>utf8_iter</td><td>1.0.4</td><td>Apache-2.0 OR MIT</td><td>kronika-report, kronika-report-wasm, kronika-web</td></tr>
+<tr><td>utf8parse</td><td>0.2.2</td><td>Apache-2.0 OR MIT</td><td>kronika-collector, kronika-dump, kronika-report, kronika-web</td></tr>
 <tr><td>uuid</td><td>1.25.0</td><td>Apache-2.0 OR MIT</td><td>kronika-web</td></tr>
 <tr><td>wasm-bindgen-macro-support</td><td>0.2.127</td><td>MIT OR Apache-2.0</td><td>kronika-report-wasm</td></tr>
 <tr><td>wasm-bindgen-macro</td><td>0.2.127</td><td>MIT OR Apache-2.0</td><td>kronika-report-wasm</td></tr>
@@ -270,7 +289,7 @@
 </tbody></table>
 <h2>Runtime notice reference components</h2>
 <p>gcc-crt, llvm-libunwind, musl, rust-standard-library</p>
-<h2>License and notice texts (188)</h2>
+<h2>License and notice texts (193)</h2>
 <details id="005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d"><summary>LICENSE-BoringSSL — <code>005fc765ddc5115d</code></summary><p><b>Components:</b> cargo:ring@0.17.14</p><p><b>Source:</b> cargo-registry://ring@0.17.14/LICENSE-BoringSSL</p><pre>
                                  Apache License
                            Version 2.0, January 2004
@@ -1738,6 +1757,31 @@ the License, but only in their entirety and only with respect to the Combined
 Software.
 
 </pre></details>
+<details id="2710a622a896bba67356913d4d0492cab5465f61b2ecce6d880aeb483834fb50"><summary>LICENSE-MIT — <code>2710a622a896bba6</code></summary><p><b>Components:</b> cargo:defmt-macros@1.1.1, cargo:defmt-parser@1.0.0, cargo:defmt@1.1.1</p><p><b>Source:</b> cargo-registry://defmt-macros@1.1.1/LICENSE-MIT; cargo-registry://defmt@1.1.1/LICENSE-MIT; https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-MIT</p><pre>Copyright (c) Ferrous Systems
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the &quot;Software&quot;), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.</pre></details>
 <details id="275c491d6d1160553c32fd6127061d7f9606c3ea25abfad6ca3f6ed088785427"><summary>LICENSE-APACHE — <code>275c491d6d116055</code></summary><p><b>Components:</b> cargo:futures-channel@0.3.33, cargo:futures-core@0.3.33, cargo:futures-executor@0.3.33, cargo:futures-io@0.3.33, cargo:futures-macro@0.3.33, cargo:futures-sink@0.3.33, cargo:futures-task@0.3.33, cargo:futures-util@0.3.33, cargo:futures@0.3.33</p><p><b>Source:</b> cargo-registry://futures-channel@0.3.33/LICENSE-APACHE; cargo-registry://futures-core@0.3.33/LICENSE-APACHE; cargo-registry://futures-executor@0.3.33/LICENSE-APACHE; cargo-registry://futures-io@0.3.33/LICENSE-APACHE; cargo-registry://futures-macro@0.3.33/LICENSE-APACHE; cargo-registry://futures-sink@0.3.33/LICENSE-APACHE; cargo-registry://futures-task@0.3.33/LICENSE-APACHE; cargo-registry://futures-util@0.3.33/LICENSE-APACHE; cargo-registry://futures@0.3.33/LICENSE-APACHE</p><pre>                              Apache License
                         Version 2.0, January 2004
                      http://www.apache.org/licenses/
@@ -4335,7 +4379,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 </pre></details>
-<details id="62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"><summary>LICENSE-APACHE — <code>62c7a1e35f564068</code></summary><p><b>Components:</b> cargo:anyhow@1.0.102, cargo:async-trait@0.1.91, cargo:dyn-clone@1.0.20, cargo:itoa@1.0.18, cargo:libc@0.2.186, cargo:paste@1.0.15, cargo:pastey@0.2.3, cargo:proc-macro2@1.0.106, cargo:quote@1.0.45, cargo:ref-cast-impl@1.0.27, cargo:ref-cast@1.0.27, cargo:ryu@1.0.23, cargo:seq-macro@0.3.6, cargo:serde@1.0.229, cargo:serde_core@1.0.229, cargo:serde_derive@1.0.229, cargo:serde_derive_internals@0.30.0, cargo:serde_json@1.0.150, cargo:syn@2.0.117, cargo:syn@3.0.3, cargo:thiserror-impl@2.0.20, cargo:thiserror@2.0.20, cargo:unicode-ident@1.0.24, cargo:whoami@2.1.2</p><p><b>Source:</b> cargo-registry://anyhow@1.0.102/LICENSE-APACHE; cargo-registry://async-trait@0.1.91/LICENSE-APACHE; cargo-registry://dyn-clone@1.0.20/LICENSE-APACHE; cargo-registry://itoa@1.0.18/LICENSE-APACHE; cargo-registry://libc@0.2.186/LICENSE-APACHE; cargo-registry://paste@1.0.15/LICENSE-APACHE; cargo-registry://pastey@0.2.3/LICENSE-APACHE; cargo-registry://proc-macro2@1.0.106/LICENSE-APACHE; cargo-registry://quote@1.0.45/LICENSE-APACHE; cargo-registry://ref-cast-impl@1.0.27/LICENSE-APACHE; cargo-registry://ref-cast@1.0.27/LICENSE-APACHE; cargo-registry://ryu@1.0.23/LICENSE-APACHE; cargo-registry://seq-macro@0.3.6/LICENSE-APACHE; cargo-registry://serde@1.0.229/LICENSE-APACHE; cargo-registry://serde_core@1.0.229/LICENSE-APACHE; cargo-registry://serde_derive@1.0.229/LICENSE-APACHE; cargo-registry://serde_derive_internals@0.30.0/LICENSE-APACHE; cargo-registry://serde_json@1.0.150/LICENSE-APACHE; cargo-registry://syn@2.0.117/LICENSE-APACHE; cargo-registry://syn@3.0.3/LICENSE-APACHE; cargo-registry://thiserror-impl@2.0.20/LICENSE-APACHE; cargo-registry://thiserror@2.0.20/LICENSE-APACHE; cargo-registry://unicode-ident@1.0.24/LICENSE-APACHE; cargo-registry://whoami@2.1.2/LICENSE_APACHE</p><pre>                              Apache License
+<details id="62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"><summary>LICENSE-APACHE — <code>62c7a1e35f564068</code></summary><p><b>Components:</b> cargo:anyhow@1.0.102, cargo:async-trait@0.1.91, cargo:dyn-clone@1.0.20, cargo:itoa@1.0.18, cargo:libc@0.2.186, cargo:paste@1.0.15, cargo:pastey@0.2.3, cargo:proc-macro2@1.0.106, cargo:quote@1.0.45, cargo:ref-cast-impl@1.0.27, cargo:ref-cast@1.0.27, cargo:ryu@1.0.23, cargo:seq-macro@0.3.6, cargo:serde@1.0.229, cargo:serde_core@1.0.229, cargo:serde_derive@1.0.229, cargo:serde_derive_internals@0.30.0, cargo:serde_json@1.0.150, cargo:syn@2.0.117, cargo:syn@3.0.3, cargo:thiserror-impl@2.0.20, cargo:thiserror@2.0.20, cargo:unicode-ident@1.0.24, cargo:utf8parse@0.2.2, cargo:whoami@2.1.2</p><p><b>Source:</b> cargo-registry://anyhow@1.0.102/LICENSE-APACHE; cargo-registry://async-trait@0.1.91/LICENSE-APACHE; cargo-registry://dyn-clone@1.0.20/LICENSE-APACHE; cargo-registry://itoa@1.0.18/LICENSE-APACHE; cargo-registry://libc@0.2.186/LICENSE-APACHE; cargo-registry://paste@1.0.15/LICENSE-APACHE; cargo-registry://pastey@0.2.3/LICENSE-APACHE; cargo-registry://proc-macro2@1.0.106/LICENSE-APACHE; cargo-registry://quote@1.0.45/LICENSE-APACHE; cargo-registry://ref-cast-impl@1.0.27/LICENSE-APACHE; cargo-registry://ref-cast@1.0.27/LICENSE-APACHE; cargo-registry://ryu@1.0.23/LICENSE-APACHE; cargo-registry://seq-macro@0.3.6/LICENSE-APACHE; cargo-registry://serde@1.0.229/LICENSE-APACHE; cargo-registry://serde_core@1.0.229/LICENSE-APACHE; cargo-registry://serde_derive@1.0.229/LICENSE-APACHE; cargo-registry://serde_derive_internals@0.30.0/LICENSE-APACHE; cargo-registry://serde_json@1.0.150/LICENSE-APACHE; cargo-registry://syn@2.0.117/LICENSE-APACHE; cargo-registry://syn@3.0.3/LICENSE-APACHE; cargo-registry://thiserror-impl@2.0.20/LICENSE-APACHE; cargo-registry://thiserror@2.0.20/LICENSE-APACHE; cargo-registry://unicode-ident@1.0.24/LICENSE-APACHE; cargo-registry://utf8parse@0.2.2/LICENSE-APACHE; cargo-registry://whoami@2.1.2/LICENSE_APACHE</p><pre>                              Apache License
                         Version 2.0, January 2004
                      http://www.apache.org/licenses/
 
@@ -4512,7 +4556,7 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
 END OF TERMS AND CONDITIONS
 </pre></details>
-<details id="6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"><summary>LICENSE-MIT — <code>6485b8ed310d3f03</code></summary><p><b>Components:</b> cargo:bitflags@2.13.0, cargo:log@0.4.32, cargo:num-bigint@0.4.6, cargo:num-complex@0.4.6, cargo:num-integer@0.1.46, cargo:num-iter@0.1.45, cargo:num-rational@0.4.2, cargo:num-traits@0.2.19, cargo:num@0.4.3</p><p><b>Source:</b> cargo-registry://bitflags@2.13.0/LICENSE-MIT; cargo-registry://log@0.4.32/LICENSE-MIT; cargo-registry://num-bigint@0.4.6/LICENSE-MIT; cargo-registry://num-complex@0.4.6/LICENSE-MIT; cargo-registry://num-integer@0.1.46/LICENSE-MIT; cargo-registry://num-iter@0.1.45/LICENSE-MIT; cargo-registry://num-rational@0.4.2/LICENSE-MIT; cargo-registry://num-traits@0.2.19/LICENSE-MIT; cargo-registry://num@0.4.3/LICENSE-MIT</p><pre>Copyright (c) 2014 The Rust Project Developers
+<details id="6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"><summary>LICENSE-MIT — <code>6485b8ed310d3f03</code></summary><p><b>Components:</b> cargo:bitflags@1.3.2, cargo:bitflags@2.13.0, cargo:log@0.4.32, cargo:num-bigint@0.4.6, cargo:num-complex@0.4.6, cargo:num-integer@0.1.46, cargo:num-iter@0.1.45, cargo:num-rational@0.4.2, cargo:num-traits@0.2.19, cargo:num@0.4.3</p><p><b>Source:</b> cargo-registry://bitflags@1.3.2/LICENSE-MIT; cargo-registry://bitflags@2.13.0/LICENSE-MIT; cargo-registry://log@0.4.32/LICENSE-MIT; cargo-registry://num-bigint@0.4.6/LICENSE-MIT; cargo-registry://num-complex@0.4.6/LICENSE-MIT; cargo-registry://num-integer@0.1.46/LICENSE-MIT; cargo-registry://num-iter@0.1.45/LICENSE-MIT; cargo-registry://num-rational@0.4.2/LICENSE-MIT; cargo-registry://num-traits@0.2.19/LICENSE-MIT; cargo-registry://num@0.4.3/LICENSE-MIT</p><pre>Copyright (c) 2014 The Rust Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -5048,6 +5092,26 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+</pre></details>
+<details id="6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"><summary>LICENSE-MIT — <code>6efb0476a1cc0850</code></summary><p><b>Components:</b> cargo:anstream@1.0.0, cargo:anstyle-parse@1.0.0, cargo:anstyle-query@1.1.5, cargo:anstyle@1.0.14, cargo:clap@4.6.6, cargo:clap_builder@4.6.6, cargo:clap_derive@4.6.4, cargo:clap_lex@1.1.0, cargo:colorchoice@1.0.5, cargo:is_terminal_polyfill@1.70.2</p><p><b>Source:</b> cargo-registry://anstream@1.0.0/LICENSE-MIT; cargo-registry://anstyle-parse@1.0.0/LICENSE-MIT; cargo-registry://anstyle-query@1.1.5/LICENSE-MIT; cargo-registry://anstyle@1.0.14/LICENSE-MIT; cargo-registry://clap@4.6.6/LICENSE-MIT; cargo-registry://clap_builder@4.6.6/LICENSE-MIT; cargo-registry://clap_derive@4.6.4/LICENSE-MIT; cargo-registry://clap_lex@1.1.0/LICENSE-MIT; cargo-registry://colorchoice@1.0.5/LICENSE-MIT; cargo-registry://is_terminal_polyfill@1.70.2/LICENSE-MIT</p><pre>Copyright (c) Individual contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 </pre></details>
 <details id="7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"><summary>zstd/LICENSE — <code>7055266497633c90</code></summary><p><b>Components:</b> cargo:zstd-sys@2.0.16+zstd.1.5.7</p><p><b>Source:</b> cargo-registry://zstd-sys@2.0.16+zstd.1.5.7/zstd/LICENSE</p><pre>BSD License
 
@@ -13489,7 +13553,7 @@ SOFTWARE.
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 </pre></details>
-<details id="7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0"><summary>LICENSE-MIT — <code>7b63ecd5f1902af1</code></summary><p><b>Components:</b> cargo:unicode-bidi@0.3.18, cargo:unicode-normalization@0.1.25, cargo:unicode-properties@0.1.4</p><p><b>Source:</b> cargo-registry://unicode-bidi@0.3.18/LICENSE-MIT; cargo-registry://unicode-normalization@0.1.25/LICENSE-MIT; cargo-registry://unicode-properties@0.1.4/LICENSE-MIT</p><pre>Copyright (c) 2015 The Rust Project Developers
+<details id="7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0"><summary>LICENSE-MIT — <code>7b63ecd5f1902af1</code></summary><p><b>Components:</b> cargo:heck@0.5.0, cargo:unicode-bidi@0.3.18, cargo:unicode-normalization@0.1.25, cargo:unicode-properties@0.1.4</p><p><b>Source:</b> cargo-registry://heck@0.5.0/LICENSE-MIT; cargo-registry://unicode-bidi@0.3.18/LICENSE-MIT; cargo-registry://unicode-normalization@0.1.25/LICENSE-MIT; cargo-registry://unicode-properties@0.1.4/LICENSE-MIT</p><pre>Copyright (c) 2015 The Rust Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -13531,7 +13595,32 @@ PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
 ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 </pre></details>
-<details id="8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90"><summary>LICENSE-APACHE — <code>8173d5c29b4f956d</code></summary><p><b>Components:</b> cargo:lexical-core@1.0.6, cargo:lexical-parse-float@1.0.6, cargo:lexical-parse-integer@1.0.6, cargo:lexical-util@1.0.7, cargo:lexical-write-float@1.0.6, cargo:lexical-write-integer@1.0.6</p><p><b>Source:</b> cargo-registry://lexical-core@1.0.6/LICENSE-APACHE; cargo-registry://lexical-parse-float@1.0.6/LICENSE-APACHE; cargo-registry://lexical-parse-integer@1.0.6/LICENSE-APACHE; cargo-registry://lexical-util@1.0.7/LICENSE-APACHE; cargo-registry://lexical-write-float@1.0.6/LICENSE-APACHE; cargo-registry://lexical-write-integer@1.0.6/LICENSE-APACHE</p><pre>                              Apache License
+<details id="7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"><summary>UNLICENSE — <code>7e12e5df4bae12cb</code></summary><p><b>Components:</b> cargo:jiff-core@0.1.1, cargo:jiff-tzdb@0.1.8, cargo:jiff@0.2.37</p><p><b>Source:</b> cargo-registry://jiff-core@0.1.1/UNLICENSE; cargo-registry://jiff-tzdb@0.1.8/UNLICENSE; cargo-registry://jiff@0.2.37/UNLICENSE</p><pre>This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to &lt;http://unlicense.org/&gt;
+</pre></details>
+<details id="8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90"><summary>LICENSE-APACHE — <code>8173d5c29b4f956d</code></summary><p><b>Components:</b> cargo:defmt-macros@1.1.1, cargo:defmt-parser@1.0.0, cargo:defmt@1.1.1, cargo:lexical-core@1.0.6, cargo:lexical-parse-float@1.0.6, cargo:lexical-parse-integer@1.0.6, cargo:lexical-util@1.0.7, cargo:lexical-write-float@1.0.6, cargo:lexical-write-integer@1.0.6</p><p><b>Source:</b> cargo-registry://defmt-macros@1.1.1/LICENSE-APACHE; cargo-registry://defmt@1.1.1/LICENSE-APACHE; cargo-registry://lexical-core@1.0.6/LICENSE-APACHE; cargo-registry://lexical-parse-float@1.0.6/LICENSE-APACHE; cargo-registry://lexical-parse-integer@1.0.6/LICENSE-APACHE; cargo-registry://lexical-util@1.0.7/LICENSE-APACHE; cargo-registry://lexical-write-float@1.0.6/LICENSE-APACHE; cargo-registry://lexical-write-integer@1.0.6/LICENSE-APACHE; https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-APACHE</p><pre>                              Apache License
                         Version 2.0, January 2004
                      http://www.apache.org/licenses/
 
@@ -16395,7 +16484,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 </pre></details>
-<details id="a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"><summary>LICENSE-APACHE — <code>a60eea8175145316</code></summary><p><b>Components:</b> cargo:ahash@0.8.12, cargo:atomic-waker@1.1.2, cargo:base64@0.22.1, cargo:base64@0.23.1, cargo:bitflags@2.13.0, cargo:bumpalo@3.20.3, cargo:cfg-if@1.0.4, cargo:const-random-macro@0.1.16, cargo:const-random@0.1.18, cargo:displaydoc@0.2.7, cargo:equivalent@1.0.2, cargo:errno@0.3.14, cargo:fastrand@2.4.1, cargo:flate2@1.1.9, cargo:hashbrown@0.15.5, cargo:hashbrown@0.17.1, cargo:httparse@1.10.1, cargo:indexmap@2.14.0, cargo:linux-raw-sys@0.12.1, cargo:lock_api@0.4.14, cargo:log@0.4.32, cargo:num-bigint@0.4.6, cargo:num-complex@0.4.6, cargo:num-integer@0.1.46, cargo:num-iter@0.1.45, cargo:num-rational@0.4.2, cargo:num-traits@0.2.19, cargo:num@0.4.3, cargo:once_cell@1.21.4, cargo:parking_lot@0.12.5, cargo:parking_lot_core@0.9.12, cargo:percent-encoding@2.3.2, cargo:postgres-protocol@0.6.12, cargo:postgres-types@0.2.14, cargo:ring@0.17.14, cargo:rustix@1.1.4, cargo:rustls-pemfile@2.2.0, cargo:rustls@0.23.43, cargo:scopeguard@1.2.0, cargo:signal-hook-registry@1.4.8, cargo:smallvec@1.15.2, cargo:socket2@0.6.5, cargo:stable_deref_trait@1.2.1, cargo:tempfile@3.27.0, cargo:tikv-jemalloc-sys@0.6.1+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7, cargo:tikv-jemallocator@0.6.1, cargo:tokio-postgres@0.7.18, cargo:unicode-bidi@0.3.18, cargo:unicode-normalization@0.1.25, cargo:unicode-properties@0.1.4, cargo:uuid@1.25.0, cargo:wasm-bindgen-macro-support@0.2.127, cargo:wasm-bindgen-macro@0.2.127, cargo:wasm-bindgen-shared@0.2.127, cargo:wasm-bindgen@0.2.127</p><p><b>Source:</b> cargo-registry://ahash@0.8.12/LICENSE-APACHE; cargo-registry://atomic-waker@1.1.2/LICENSE-APACHE; cargo-registry://base64@0.22.1/LICENSE-APACHE; cargo-registry://base64@0.23.1/LICENSE-APACHE; cargo-registry://bitflags@2.13.0/LICENSE-APACHE; cargo-registry://bumpalo@3.20.3/LICENSE-APACHE; cargo-registry://cfg-if@1.0.4/LICENSE-APACHE; cargo-registry://const-random-macro@0.1.16/LICENSE-APACHE; cargo-registry://const-random@0.1.18/LICENSE-APACHE; cargo-registry://displaydoc@0.2.7/LICENSE-APACHE; cargo-registry://equivalent@1.0.2/LICENSE-APACHE; cargo-registry://errno@0.3.14/LICENSE-APACHE; cargo-registry://fastrand@2.4.1/LICENSE-APACHE; cargo-registry://flate2@1.1.9/LICENSE-APACHE; cargo-registry://hashbrown@0.15.5/LICENSE-APACHE; cargo-registry://hashbrown@0.17.1/LICENSE-APACHE; cargo-registry://httparse@1.10.1/LICENSE-APACHE; cargo-registry://indexmap@2.14.0/LICENSE-APACHE; cargo-registry://linux-raw-sys@0.12.1/LICENSE-APACHE; cargo-registry://lock_api@0.4.14/LICENSE-APACHE; cargo-registry://log@0.4.32/LICENSE-APACHE; cargo-registry://num-bigint@0.4.6/LICENSE-APACHE; cargo-registry://num-complex@0.4.6/LICENSE-APACHE; cargo-registry://num-integer@0.1.46/LICENSE-APACHE; cargo-registry://num-iter@0.1.45/LICENSE-APACHE; cargo-registry://num-rational@0.4.2/LICENSE-APACHE; cargo-registry://num-traits@0.2.19/LICENSE-APACHE; cargo-registry://num@0.4.3/LICENSE-APACHE; cargo-registry://once_cell@1.21.4/LICENSE-APACHE; cargo-registry://parking_lot@0.12.5/LICENSE-APACHE; cargo-registry://parking_lot_core@0.9.12/LICENSE-APACHE; cargo-registry://percent-encoding@2.3.2/LICENSE-APACHE; cargo-registry://postgres-protocol@0.6.12/LICENSE-APACHE; cargo-registry://postgres-types@0.2.14/LICENSE-APACHE; cargo-registry://ring@0.17.14/src/polyfill/once_cell/LICENSE-APACHE; cargo-registry://rustix@1.1.4/LICENSE-APACHE; cargo-registry://rustls-pemfile@2.2.0/LICENSE-APACHE; cargo-registry://rustls@0.23.43/LICENSE-APACHE; cargo-registry://scopeguard@1.2.0/LICENSE-APACHE; cargo-registry://signal-hook-registry@1.4.8/LICENSE-APACHE; cargo-registry://smallvec@1.15.2/LICENSE-APACHE; cargo-registry://socket2@0.6.5/LICENSE-APACHE; cargo-registry://stable_deref_trait@1.2.1/LICENSE-APACHE; cargo-registry://tempfile@3.27.0/LICENSE-APACHE; cargo-registry://tikv-jemalloc-sys@0.6.1+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7/LICENSE-APACHE; cargo-registry://tikv-jemallocator@0.6.1/LICENSE-APACHE; cargo-registry://tokio-postgres@0.7.18/LICENSE-APACHE; cargo-registry://unicode-bidi@0.3.18/LICENSE-APACHE; cargo-registry://unicode-normalization@0.1.25/LICENSE-APACHE; cargo-registry://unicode-properties@0.1.4/LICENSE-APACHE; cargo-registry://uuid@1.25.0/LICENSE-APACHE; cargo-registry://wasm-bindgen-macro-support@0.2.127/LICENSE-APACHE; cargo-registry://wasm-bindgen-macro@0.2.127/LICENSE-APACHE; cargo-registry://wasm-bindgen-shared@0.2.127/LICENSE-APACHE; cargo-registry://wasm-bindgen@0.2.127/LICENSE-APACHE</p><pre>                              Apache License
+<details id="a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"><summary>LICENSE-APACHE — <code>a60eea8175145316</code></summary><p><b>Components:</b> cargo:ahash@0.8.12, cargo:atomic-waker@1.1.2, cargo:base64@0.22.1, cargo:base64@0.23.1, cargo:bitflags@1.3.2, cargo:bitflags@2.13.0, cargo:bumpalo@3.20.3, cargo:cfg-if@1.0.4, cargo:const-random-macro@0.1.16, cargo:const-random@0.1.18, cargo:displaydoc@0.2.7, cargo:equivalent@1.0.2, cargo:errno@0.3.14, cargo:fastrand@2.4.1, cargo:flate2@1.1.9, cargo:hashbrown@0.15.5, cargo:hashbrown@0.17.1, cargo:heck@0.5.0, cargo:httparse@1.10.1, cargo:indexmap@2.14.0, cargo:linux-raw-sys@0.12.1, cargo:lock_api@0.4.14, cargo:log@0.4.32, cargo:num-bigint@0.4.6, cargo:num-complex@0.4.6, cargo:num-integer@0.1.46, cargo:num-iter@0.1.45, cargo:num-rational@0.4.2, cargo:num-traits@0.2.19, cargo:num@0.4.3, cargo:once_cell@1.21.4, cargo:parking_lot@0.12.5, cargo:parking_lot_core@0.9.12, cargo:percent-encoding@2.3.2, cargo:postgres-protocol@0.6.12, cargo:postgres-types@0.2.14, cargo:ring@0.17.14, cargo:rustix@1.1.4, cargo:rustls-pemfile@2.2.0, cargo:rustls@0.23.43, cargo:scopeguard@1.2.0, cargo:signal-hook-registry@1.4.8, cargo:smallvec@1.15.2, cargo:socket2@0.6.5, cargo:stable_deref_trait@1.2.1, cargo:tempfile@3.27.0, cargo:tikv-jemalloc-sys@0.6.1+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7, cargo:tikv-jemallocator@0.6.1, cargo:tokio-postgres@0.7.18, cargo:unicode-bidi@0.3.18, cargo:unicode-normalization@0.1.25, cargo:unicode-properties@0.1.4, cargo:uuid@1.25.0, cargo:wasm-bindgen-macro-support@0.2.127, cargo:wasm-bindgen-macro@0.2.127, cargo:wasm-bindgen-shared@0.2.127, cargo:wasm-bindgen@0.2.127</p><p><b>Source:</b> cargo-registry://ahash@0.8.12/LICENSE-APACHE; cargo-registry://atomic-waker@1.1.2/LICENSE-APACHE; cargo-registry://base64@0.22.1/LICENSE-APACHE; cargo-registry://base64@0.23.1/LICENSE-APACHE; cargo-registry://bitflags@1.3.2/LICENSE-APACHE; cargo-registry://bitflags@2.13.0/LICENSE-APACHE; cargo-registry://bumpalo@3.20.3/LICENSE-APACHE; cargo-registry://cfg-if@1.0.4/LICENSE-APACHE; cargo-registry://const-random-macro@0.1.16/LICENSE-APACHE; cargo-registry://const-random@0.1.18/LICENSE-APACHE; cargo-registry://displaydoc@0.2.7/LICENSE-APACHE; cargo-registry://equivalent@1.0.2/LICENSE-APACHE; cargo-registry://errno@0.3.14/LICENSE-APACHE; cargo-registry://fastrand@2.4.1/LICENSE-APACHE; cargo-registry://flate2@1.1.9/LICENSE-APACHE; cargo-registry://hashbrown@0.15.5/LICENSE-APACHE; cargo-registry://hashbrown@0.17.1/LICENSE-APACHE; cargo-registry://heck@0.5.0/LICENSE-APACHE; cargo-registry://httparse@1.10.1/LICENSE-APACHE; cargo-registry://indexmap@2.14.0/LICENSE-APACHE; cargo-registry://linux-raw-sys@0.12.1/LICENSE-APACHE; cargo-registry://lock_api@0.4.14/LICENSE-APACHE; cargo-registry://log@0.4.32/LICENSE-APACHE; cargo-registry://num-bigint@0.4.6/LICENSE-APACHE; cargo-registry://num-complex@0.4.6/LICENSE-APACHE; cargo-registry://num-integer@0.1.46/LICENSE-APACHE; cargo-registry://num-iter@0.1.45/LICENSE-APACHE; cargo-registry://num-rational@0.4.2/LICENSE-APACHE; cargo-registry://num-traits@0.2.19/LICENSE-APACHE; cargo-registry://num@0.4.3/LICENSE-APACHE; cargo-registry://once_cell@1.21.4/LICENSE-APACHE; cargo-registry://parking_lot@0.12.5/LICENSE-APACHE; cargo-registry://parking_lot_core@0.9.12/LICENSE-APACHE; cargo-registry://percent-encoding@2.3.2/LICENSE-APACHE; cargo-registry://postgres-protocol@0.6.12/LICENSE-APACHE; cargo-registry://postgres-types@0.2.14/LICENSE-APACHE; cargo-registry://ring@0.17.14/src/polyfill/once_cell/LICENSE-APACHE; cargo-registry://rustix@1.1.4/LICENSE-APACHE; cargo-registry://rustls-pemfile@2.2.0/LICENSE-APACHE; cargo-registry://rustls@0.23.43/LICENSE-APACHE; cargo-registry://scopeguard@1.2.0/LICENSE-APACHE; cargo-registry://signal-hook-registry@1.4.8/LICENSE-APACHE; cargo-registry://smallvec@1.15.2/LICENSE-APACHE; cargo-registry://socket2@0.6.5/LICENSE-APACHE; cargo-registry://stable_deref_trait@1.2.1/LICENSE-APACHE; cargo-registry://tempfile@3.27.0/LICENSE-APACHE; cargo-registry://tikv-jemalloc-sys@0.6.1+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7/LICENSE-APACHE; cargo-registry://tikv-jemallocator@0.6.1/LICENSE-APACHE; cargo-registry://tokio-postgres@0.7.18/LICENSE-APACHE; cargo-registry://unicode-bidi@0.3.18/LICENSE-APACHE; cargo-registry://unicode-normalization@0.1.25/LICENSE-APACHE; cargo-registry://unicode-properties@0.1.4/LICENSE-APACHE; cargo-registry://uuid@1.25.0/LICENSE-APACHE; cargo-registry://wasm-bindgen-macro-support@0.2.127/LICENSE-APACHE; cargo-registry://wasm-bindgen-macro@0.2.127/LICENSE-APACHE; cargo-registry://wasm-bindgen-shared@0.2.127/LICENSE-APACHE; cargo-registry://wasm-bindgen@0.2.127/LICENSE-APACHE</p><pre>                              Apache License
                         Version 2.0, January 2004
                      http://www.apache.org/licenses/
 
@@ -17880,6 +17969,26 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 </pre></details>
+<details id="bc8dcbbd559a61b8a8c0c89d5c3e15d0dc47c6fae94e78ac428d6a7b7da3c4f9"><summary>LICENSE-MIT — <code>bc8dcbbd559a61b8</code></summary><p><b>Components:</b> cargo:terminal_size@0.4.4</p><p><b>Source:</b> cargo-registry://terminal_size@0.4.4/LICENSE-MIT</p><pre>Copyright (c) 2015 The terminal-size Developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+</pre></details>
 <details id="c2534e065069887565f871f0648b013a7e5f4a422809faf4ae3c590b7c0bf561"><summary>Apache Thrift NOTICE — c2534e0650698875 — c2534e0650698875 — <code>c2534e0650698875</code></summary><p><b>Components:</b> cargo:thrift@0.17.0</p><p><b>Source:</b> https://raw.githubusercontent.com/apache/thrift/60655d2de79e973b89fab52af82f9628d4843b0f/NOTICE</p><pre>Apache Thrift
 Copyright (C) 2006 - 2019, The Apache Software Foundation
 
@@ -17962,7 +18071,7 @@ respectively.  You may use this software under the terms of any
 of these licenses, at your option.
 
 </pre></details>
-<details id="c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"><summary>LICENSE-APACHE — <code>c6596eb7be8581c1</code></summary><p><b>Components:</b> cargo:crc32fast@1.5.0, cargo:fallible-iterator@0.2.0, cargo:stringprep@0.1.5</p><p><b>Source:</b> cargo-registry://crc32fast@1.5.0/LICENSE-APACHE; cargo-registry://fallible-iterator@0.2.0/LICENSE-APACHE; cargo-registry://stringprep@0.1.5/LICENSE-APACHE</p><pre>                                 Apache License
+<details id="c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"><summary>LICENSE-APACHE — <code>c6596eb7be8581c1</code></summary><p><b>Components:</b> cargo:anstream@1.0.0, cargo:anstyle-parse@1.0.0, cargo:anstyle-query@1.1.5, cargo:anstyle@1.0.14, cargo:clap@4.6.6, cargo:clap_builder@4.6.6, cargo:clap_derive@4.6.4, cargo:clap_lex@1.1.0, cargo:colorchoice@1.0.5, cargo:crc32fast@1.5.0, cargo:fallible-iterator@0.2.0, cargo:is_terminal_polyfill@1.70.2, cargo:stringprep@0.1.5, cargo:terminal_size@0.4.4</p><p><b>Source:</b> cargo-registry://anstream@1.0.0/LICENSE-APACHE; cargo-registry://anstyle-parse@1.0.0/LICENSE-APACHE; cargo-registry://anstyle-query@1.1.5/LICENSE-APACHE; cargo-registry://anstyle@1.0.14/LICENSE-APACHE; cargo-registry://clap@4.6.6/LICENSE-APACHE; cargo-registry://clap_builder@4.6.6/LICENSE-APACHE; cargo-registry://clap_derive@4.6.4/LICENSE-APACHE; cargo-registry://clap_lex@1.1.0/LICENSE-APACHE; cargo-registry://colorchoice@1.0.5/LICENSE-APACHE; cargo-registry://crc32fast@1.5.0/LICENSE-APACHE; cargo-registry://fallible-iterator@0.2.0/LICENSE-APACHE; cargo-registry://is_terminal_polyfill@1.70.2/LICENSE-APACHE; cargo-registry://stringprep@0.1.5/LICENSE-APACHE; cargo-registry://terminal_size@0.4.4/LICENSE-APACHE</p><pre>                                 Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
 
@@ -18164,6 +18273,208 @@ of these licenses, at your option.
    See the License for the specific language governing permissions and
    limitations under the License.
 
+</pre></details>
+<details id="c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"><summary>LICENSE — <code>c71d239df91726fc</code></summary><p><b>Components:</b> cargo:bsize@0.3.0, cargo:macroweave@0.1.1</p><p><b>Source:</b> https://raw.githubusercontent.com/fast/bsize/9ca20f6aa32d563d732d42e29c7ff25f8d7792ef/LICENSE; https://raw.githubusercontent.com/fast/macroweave/e4d47b0cfc6dc72c5f6987056509c2c89faeff81/LICENSE</p><pre>                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      &quot;License&quot; shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      &quot;Licensor&quot; shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      &quot;Legal Entity&quot; shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      &quot;control&quot; means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      &quot;You&quot; (or &quot;Your&quot;) shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      &quot;Source&quot; form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      &quot;Object&quot; form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      &quot;Work&quot; shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      &quot;Derivative Works&quot; shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      &quot;Contribution&quot; shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, &quot;submitted&quot;
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as &quot;Not a Contribution.&quot;
+
+      &quot;Contributor&quot; shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a &quot;NOTICE&quot; text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an &quot;AS IS&quot; BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets &quot;[]&quot;
+      replaced with your own identifying information. (Don&#x27;t include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same &quot;printed page&quot; as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
 </pre></details>
 <details id="c962ee4d1d05ddc138b202b2540219ebc57893fcf97b364852094a9a94ce1365"><summary>COPYING — <code>c962ee4d1d05ddc1</code></summary><p><b>Components:</b> cargo:siphasher@1.0.3</p><p><b>Source:</b> cargo-registry://siphasher@1.0.3/COPYING</p><pre>Copyright 2012-2016 The Rust Project Developers.
 Copyright 2016-2026 Frank Denis.
@@ -19426,6 +19737,32 @@ agreement.
 of Data, including for example machine learning models and models&#x27;
 insights.
 </pre></details>
+<details id="e4c9b06fa850cb9b540a5e400e9f6394cf15efcf4098144de477d1d3dae10150"><summary>LICENSE-MIT — <code>e4c9b06fa850cb9b</code></summary><p><b>Components:</b> cargo:utf8parse@0.2.2</p><p><b>Source:</b> cargo-registry://utf8parse@0.2.2/LICENSE-MIT</p><pre>Copyright (c) 2016 Joe Wilm
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the &quot;Software&quot;), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+</pre></details>
 <details id="e98047a5dee068b33f82e8c4b7a63037b5108c93393198efd4097753004af5dd"><summary>LICENSE — <code>e98047a5dee068b3</code></summary><p><b>Components:</b> npm:reselect@5.2.0</p><p><b>Source:</b> npm://reselect@5.2.0/LICENSE</p><pre>The MIT License (MIT)
 
 Copyright (c) 2015-2018 Reselect Contributors
@@ -20331,30 +20668,5 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-</pre></details>
-<details id="7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"><summary>UNLICENSE — <code>7e12e5df4bae12cb</code></summary><p><b>Components:</b> cargo:jiff-core@0.1.1, cargo:jiff-tzdb@0.1.8, cargo:jiff@0.2.37</p><p><b>Source:</b> cargo-registry://jiff-core@0.1.1/UNLICENSE; cargo-registry://jiff-tzdb@0.1.8/UNLICENSE; cargo-registry://jiff@0.2.37/UNLICENSE</p><pre>This is free and unencumbered software released into the public domain.
-
-Anyone is free to copy, modify, publish, use, compile, sell, or
-distribute this software, either in source code form or as a compiled
-binary, for any purpose, commercial or non-commercial, and by any
-means.
-
-In jurisdictions that recognize copyright laws, the author or authors
-of this software dedicate any and all copyright interest in the
-software to the public domain. We make this dedication for the benefit
-of the public at large and to the detriment of our heirs and
-successors. We intend this dedication to be an overt act of
-relinquishment in perpetuity of all present and future rights to this
-software under copyright law.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-OTHER DEALINGS IN THE SOFTWARE.
-
-For more information, please refer to &lt;http://unlicense.org/&gt;
 </pre></details>
 </body></html>

@@ -84,73 +84,9 @@ pub struct OsCgroupIoV2 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::OsCgroupIo;
-    use crate::{Section, StrId, Ts, contract::lint};
-
-    #[test]
-    fn contract_passes_the_linter() {
-        assert_eq!(lint(&[OsCgroupIo::CONTRACT]), Ok(()));
-    }
-
-    #[test]
-    fn contract_shape() {
-        let c = OsCgroupIo::CONTRACT;
-        assert_eq!(c.type_id.get(), 1_203_002);
-        assert_eq!(c.sort_key, ["cgroup_path", "major", "minor", "ts"]);
-        assert_eq!(c.identity, ["cgroup_path", "major", "minor"]);
-    }
-
-    #[test]
-    fn roundtrip() {
-        crate::assert_roundtrips(&[OsCgroupIo {
-            ts: Ts(1),
-            cgroup_path: StrId(10),
-            major: 8,
-            minor: 0,
-            rbytes: Some(100),
-            wbytes: Some(200),
-            rios: Some(3),
-            wios: Some(4),
-            scope: 1,
-        }]);
-    }
-}
+#[path = "../tests/codec/os_cgroup_io.rs"]
+mod tests;
 
 #[cfg(test)]
-mod ancestor_tests {
-    use super::OsCgroupIoV2;
-    use crate::{Section, StrId, Ts, contract::lint};
-
-    #[test]
-    fn ancestor_io_identity_and_unknown_counters_roundtrip() {
-        let contract = OsCgroupIoV2::CONTRACT;
-        assert_eq!(contract.type_id.get(), 1_203_003);
-        assert_eq!(
-            contract.identity,
-            ["cgroup_path", "cgroup_identity", "major", "minor"]
-        );
-        assert_eq!(lint(&[contract]), Ok(()));
-        let row = OsCgroupIoV2 {
-            ts: Ts(1),
-            cgroup_path: StrId(1),
-            cgroup_identity: StrId(2),
-            major: 8,
-            minor: 0,
-            rbytes: Some(100),
-            wbytes: None,
-            rios: None,
-            wios: None,
-            scope: 4,
-        };
-        crate::assert_roundtrips(&[
-            row,
-            OsCgroupIoV2 {
-                ts: Ts(2),
-                cgroup_identity: StrId(3),
-                rbytes: Some(900),
-                ..row
-            },
-        ]);
-    }
-}
+#[path = "../tests/codec/os_cgroup_io_ancestor.rs"]
+mod ancestor_tests;

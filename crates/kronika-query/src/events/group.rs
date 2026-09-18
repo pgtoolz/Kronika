@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use super::{
     EventDataRow, EventGroup, EventSource, EventStat, EventTier, MINUTE_COLUMNS, MINUTE_MICROS,
 };
+
 use crate::QueryError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
