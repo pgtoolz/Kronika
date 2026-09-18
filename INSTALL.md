@@ -124,7 +124,7 @@ defines intervals, supported extension layouts and log formats.
 
 ## 4. Start web
 
-In a second terminal, start web with the same recording directory.
+Run `kronika-web` with the collector’s data directory.
 
 ### For `local` mode
 

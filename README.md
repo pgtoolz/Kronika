@@ -70,9 +70,9 @@ To collect from several PostgreSQL servers, run a `kronika-collector` process
 for each server with its DSN and a separate storage directory. See the
 [two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
-### Open the web interface
+### View recorded data
 
-Start `kronika-web` in a second terminal with the collector’s data directory.
+Run `kronika-web` with the collector’s data directory.
 
 #### For `local` mode
 

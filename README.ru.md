@@ -70,9 +70,9 @@ sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 из них процесс `kronika-collector` со своим DSN и отдельным каталогом хранения. См.
 [пример двух серверов](bins/kronika-collector/README.ru.md#several-postgresql-servers).
 
-### Открыть веб-интерфейс
+### Просмотр данных
 
-Запустите `kronika-web` во втором терминале с каталогом данных сборщика.
+Запустите `kronika-web`, указав каталог данных сборщика.
 
 #### Для режима `local`
 
