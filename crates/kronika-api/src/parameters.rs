@@ -4,6 +4,8 @@ use kronika_query::{ActiveCursor, Filter, RelationGroup, StatementScope};
 
 use super::{MAX_FIELDS, MAX_FILTERS, RouteError};
 
+/// The interface keys browser caches on the serving build with a `build`
+/// parameter; it carries no request meaning and is dropped here.
 pub(super) fn pairs(query: &str) -> Result<Vec<(&str, &str)>, RouteError> {
     if query.is_empty() {
         return Ok(Vec::new());
@@ -16,6 +18,7 @@ pub(super) fn pairs(query: &str) -> Result<Vec<(&str, &str)>, RouteError> {
             }
             Ok(part.split_once('=').unwrap_or((part, "")))
         })
+        .filter(|pair| !matches!(pair, Ok(("build", _))))
         .collect()
 }
 

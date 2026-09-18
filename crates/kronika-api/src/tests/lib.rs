@@ -8,6 +8,18 @@ use kronika_query::{
 };
 
 #[test]
+fn the_build_cache_key_carries_no_request_meaning() {
+    assert_eq!(
+        parse("/api/catalog", Some("from=1&to=2&build=84e1609")),
+        parse("/api/catalog", Some("from=1&to=2"))
+    );
+    assert_eq!(
+        parse("/api/catalog", Some("build=84e1609")),
+        parse("/api/catalog", None)
+    );
+}
+
+#[test]
 fn catalog_accepts_only_valid_ordered_bounds() {
     assert_eq!(
         parse("/api/catalog", Some("from=-5&to=20")),

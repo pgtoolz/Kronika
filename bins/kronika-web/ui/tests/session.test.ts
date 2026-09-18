@@ -260,3 +260,25 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
   }
   throw new Error("condition was not reached")
 }
+
+test("API addresses carry the build named by the session check", async () => {
+  const originalFetch = globalThis.fetch
+  const calls: FetchCall[] = []
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input, init })
+    return new Response(null, { headers: { "Kronika-Build": "84e1609" }, status: 204 })
+  }
+
+  try {
+    const session = await isolatedSession("build-key")
+    assert.equal(session.apiAddress("/api/hour?from=1&to=2", "84e1609"), "/api/hour?from=1&to=2&build=84e1609")
+    assert.equal(session.apiAddress("/api/instance-label", "84e1609"), "/api/instance-label?build=84e1609")
+    assert.equal(session.apiAddress("/api/hour", null), "/api/hour")
+    assert.equal(session.apiAddress("/other", "84e1609"), "/other")
+    await session.bootstrapSession()
+    await session.apiFetch("/api/hour?from=1&to=2")
+    assert.equal(calls[1]?.input, "/api/hour?from=1&to=2&build=84e1609")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

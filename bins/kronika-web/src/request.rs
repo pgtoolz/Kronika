@@ -295,6 +295,12 @@ pub(crate) fn session_response(
     response
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    // The interface keys its API cache on the serving build.
+    if let Ok(build) = HeaderValue::from_str(env!("KRONIKA_BUILD_COMMIT"))
+        && !build.is_empty()
+    {
+        response.headers_mut().insert("kronika-build", build);
+    }
     response.headers_mut().insert(
         VARY,
         HeaderValue::from_static("Authorization, Cookie, X-Kronika-UI"),

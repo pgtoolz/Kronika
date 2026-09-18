@@ -92,6 +92,18 @@ fn session_request_from_origins(
     request
 }
 
+#[test]
+fn session_responses_name_the_serving_build() {
+    let response =
+        session_response(None, SessionTarget::Check { admitted: true }).expect("session response");
+    let build = env!("KRONIKA_BUILD_COMMIT");
+    let named = response
+        .headers()
+        .get("kronika-build")
+        .map(|value| value.to_str().expect("ASCII build"));
+    assert_eq!(named, (!build.is_empty()).then_some(build));
+}
+
 fn session_route_response(
     request: &Request<()>,
     now: u64,
