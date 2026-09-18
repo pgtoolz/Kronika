@@ -13,8 +13,8 @@ test("the MCP panel is reachable from the top bar and self-addresses the page or
   assert.match(app, /setHelpOpen\(\(current\) => !current\);?\s*setMcpOpen\(false\)/)
   // The app-level keyboard fallback closes both panels when neither modal
   // owns the event.
-  assert.match(app, /event\.key === "\?"(?:(?!event\.key)[\s\S])*?setMcpOpen\(false\)/)
-  assert.match(app, /event\.key === "Escape"(?:(?!event\.key)[\s\S])*?setMcpOpen\(false\)/)
+  // Both ? and Escape close the panel; the key semantics live in overlayShortcut.
+  assert.match(app, /overlayShortcut\(event\.key, keyboardTargetOwnsArrows\(event\.target\), event\.defaultPrevented\)(?:(?!overlayShortcut)[\s\S])*?setMcpOpen\(false\)/)
   assert.match(app, /\{!KRONIKA_REPORT && mcpOpen && <McpPanel/)
   assert.match(panel, /window\.location\.origin\}\/mcp/)
   for (const label of ["Claude Code", "Codex CLI", "Cursor"]) assert.match(panel, new RegExp(label))

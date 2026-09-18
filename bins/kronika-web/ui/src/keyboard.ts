@@ -34,3 +34,12 @@ export function ownsArrowKeys(tagName: string, contentEditable: boolean): boolea
 export function keyboardTargetOwnsArrows(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && ownsArrowKeys(target.tagName, target.isContentEditable)
 }
+
+// Escape closes an overlay wherever focus is, including the control that
+// opened it; "?" toggles help only outside controls, where it would be typed.
+export function overlayShortcut(key: string, targetOwnsKeys: boolean, defaultPrevented: boolean): "close" | "help" | null {
+  if (defaultPrevented) return null
+  if (key === "Escape") return "close"
+  if (key === "?" && !targetOwnsKeys) return "help"
+  return null
+}

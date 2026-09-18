@@ -56,7 +56,7 @@ import { useHistoryRequest } from "./history-request"
 import { HourSkeleton, type LoadProgress } from "./hour-skeleton"
 import { HourPicker } from "./hour-picker"
 import { Inspector, InspectorPortalProvider, InspectorRelatedPortal } from "./inspector"
-import { keyboardTargetOwnsArrows } from "./keyboard"
+import { keyboardTargetOwnsArrows, overlayShortcut } from "./keyboard"
 import { rowMatchesLocator } from "./locator"
 import { Login } from "./login"
 import { parseSearch, type SearchSurface } from "./search"
@@ -827,18 +827,11 @@ function App({ locale, onLocale, t }: {
 
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
-      if (keyboardTargetOwnsArrows(event.target)) return
-      if (event.key === "?" && !exportActive.current) {
-        setHelpOpen((current) => !current)
-        setMcpOpen(false)
-        closeExport()
-      }
-      if (event.key === "Escape") {
-        setHelpOpen(false)
-        setMcpOpen(false)
-        closeExport()
-      }
+      const action = overlayShortcut(event.key, keyboardTargetOwnsArrows(event.target), event.defaultPrevented)
+      if (action === null || (action === "help" && exportActive.current)) return
+      setHelpOpen((current) => action === "help" && !current)
+      setMcpOpen(false)
+      closeExport()
     }
     window.addEventListener("keydown", shortcuts)
     return () => window.removeEventListener("keydown", shortcuts)

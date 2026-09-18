@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { detailEscapeDismisses } from "../src/detail-dismiss.ts"
-import { moveCursor, nearestRecordedTime, orderedRecordedTimes, ownsArrowKeys } from "../src/keyboard.ts"
+import { moveCursor, nearestRecordedTime, orderedRecordedTimes, overlayShortcut, ownsArrowKeys } from "../src/keyboard.ts"
 
 test("arrows follow exact irregular recorded timestamps", () => {
   const times = [205, 100, 130, 130]
@@ -49,4 +49,13 @@ test("detail Escape yields to higher-priority overlays", () => {
   assert.equal(detailEscapeDismisses("Escape", true, false), false)
   assert.equal(detailEscapeDismisses("Escape", false, true), false)
   assert.equal(detailEscapeDismisses("Enter", false, false), false)
+})
+
+test("Escape closes overlays from any focus while ? only toggles help outside controls", () => {
+  assert.equal(overlayShortcut("Escape", true, false), "close")
+  assert.equal(overlayShortcut("Escape", false, false), "close")
+  assert.equal(overlayShortcut("Escape", false, true), null)
+  assert.equal(overlayShortcut("?", false, false), "help")
+  assert.equal(overlayShortcut("?", true, false), null)
+  assert.equal(overlayShortcut("Enter", false, false), null)
 })
