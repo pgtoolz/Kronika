@@ -15,7 +15,7 @@ Where present, `scope` identifies the machine, pod or container whose resources 
 | `4` | undetermined |
 
 CPU, memory, disks, mount points, and topology describe the node even when the
-collector runs inside a container. Network sections use `pod_net` in the collector's recorded container environment. Process rows use `container` inside a container and `host` otherwise. Cgroup v2 discovery runs only in containers; the selected ancestor rows serve the container resource charts.
+collector runs inside a container. Network sections use `pod_net` in the collector's recorded container environment. Process rows use `container` inside a container and `host` otherwise. Cgroup v2 discovery runs only in containers. The selected ancestor rows serve the container resource charts.
 
 The filesystem roots are overridable with `--proc-root` (default `/proc`)
 and `--sys-root` (default `/sys`), or `KRONIKA_PROC_ROOT` and `KRONIKA_SYS_ROOT`.
@@ -73,8 +73,7 @@ Command-line options take precedence.
 Current cgroup collection requires a local container with an exposed v2 mount.
 Confirmed absence at startup disables cgroup metrics, process mappings and container
 PSI until restart. Probe read errors are reported and collection attempts continue.
-Other enabled sources and machine PSI continue. Older machine cgroup and v1
-recordings remain readable.
+Other enabled sources and machine PSI continue. Older cgroup v1 recordings remain readable.
 
 The primary resource rows describe the highest visible, readable ancestor of the
 collector's unified membership. They use `1_201_003`, `1_202_003` and `1_203_003`;
@@ -97,8 +96,7 @@ counters can include descendants or lower layers and must not be added twice.
 See the [recorded fields and event scopes](../metrics-linux.md#container-cgroups).
 
 The built-in container charts use the selected ancestor rows described above,
-including `1_204_001` for its thread count. Earlier workload layouts and machine cgroup recordings remain
-readable. Each per-device I/O counter is independently optional.
+including `1_204_001` for its thread count. Earlier workload layouts remain readable. Each per-device I/O counter is independently optional.
 Process-to-cgroup mapping also defaults to 30 seconds.
 
 **Historical context `1_205_001`.** The following describes older recordings,

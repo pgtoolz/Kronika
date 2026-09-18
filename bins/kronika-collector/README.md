@@ -348,7 +348,7 @@ ancestor of the collector. That group can include other containers. Its path
 does not establish a pod or PostgreSQL identity. Machine PSI still uses the
 host source. Machines and VMs retain their other OS and process metrics without
 cgroup collection. Containers without v2 skip cgroup metrics, mappings and PSI.
-Existing recordings remain readable. See the
+See the
 [Linux reference](../../docs/metrics-linux.md#container-cgroups).
 
 Filesystem capacity is queried for `ext2`, `ext3`, `ext4`, `xfs`, `btrfs`,

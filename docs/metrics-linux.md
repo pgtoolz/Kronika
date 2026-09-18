@@ -233,8 +233,7 @@ Available cgroup CPU `full` fields are recorded; system CPU `full` remains undef
 At startup, local containers check for an exposed cgroup v2 mount. Confirmed
 absence disables cgroup metrics, process mappings and container PSI until restart.
 A read error is reported and collection attempts continue. Machines and PostgreSQL-only
-mode do not run this check. Machine PSI still uses `/proc/pressure`. Other enabled
-sources and all existing cgroup recordings remain available.
+mode do not run this check. Machine PSI still uses `/proc/pressure`. Other enabled sources continue.
 
 `os_cgroup_context` records the selected paths, mount roots, controller identities
 and available limits. Collector ascends from its own membership to the highest
