@@ -94,7 +94,7 @@ import {
   recordedEnvironment,
 } from "./system-view"
 import { beginSnapshotRequest, READY_SNAPSHOT_REQUEST, settleSnapshotRequest, snapshotRowsVisible, tableRequestPhase, visibleSnapshotRequest, type SnapshotRequestState } from "./table-request"
-import { Timeline } from "./timeline"
+import { Timeline, TimelineRequestContext, type TimelineRequestPhase } from "./timeline"
 import { TimezoneSelect } from "./timezone-select"
 
 type Theme = "dark" | "light"
@@ -255,6 +255,7 @@ function App({ locale, onLocale, t }: {
   const followsLatest = useRef(initialAt === null)
   const [timelineData, setTimelineData] = useState<HourData>(EMPTY_DATA)
   const [backgroundTimeline, setBackgroundTimeline] = useState<TimelineData | null>(null)
+  const [settledLanes, setSettledLanes] = useState<{ timeline: TimelineData; phase: "ready" | "error" } | null>(null)
   const [serverVersion, setServerVersion] = useState<string | null>(null)
   const [serverBuild, setServerBuild] = useState<string | null>(null)
   const backgroundTimelineRef = useRef(backgroundTimeline)
@@ -800,12 +801,18 @@ function App({ locale, onLocale, t }: {
     void loadTimelineLanes(backgroundTimeline, controller.signal, reportRange).then((lanes) => {
       if (controller.signal.aborted || backgroundTimelineRef.current !== backgroundTimeline) return
       setTimelineData((current) => withTimelineLanes(current, lanes))
+      setSettledLanes({ timeline: backgroundTimeline, phase: "ready" })
     }).catch((reason: unknown) => {
-      if (!controller.signal.aborted) console.error("kronika: timeline lanes failed", reason)
+      if (controller.signal.aborted || backgroundTimelineRef.current !== backgroundTimeline) return
+      setSettledLanes({ timeline: backgroundTimeline, phase: "error" })
+      console.error("kronika: timeline lanes failed", reason)
     })
     return () => controller.abort()
   }, [backgroundReadyHour, backgroundTimeline, hour, reportRange])
-  const refreshReady = !loading && !neighborPending && cursorState === "ready" && densePageState !== "loading"
+  const refreshReady = !loading && !neighborPending && cursorState !== "loading" && densePageState !== "loading"
+  const timelinePhase: TimelineRequestPhase = backgroundTimeline?.segments.length === 0 ? "ready"
+    : settledLanes?.timeline === backgroundTimeline ? settledLanes.phase
+      : currentTableRequest === "error" ? "error" : "pending"
   useEffect(() => {
     if (KRONIKA_REPORT || instanceLabelRequest.current !== null || hour === null || !refreshReady
       || backgroundReadyHour !== hour || foregroundReadyKey.current !== foregroundKey) return
@@ -1164,7 +1171,7 @@ function App({ locale, onLocale, t }: {
     : visibleSource === "postgresql" ? pgSection === "statements" || pgSection === "plans" ? "pg_running" : pgSection === "activity" || pgSection === "locks" || pgSection === "vacuum" ? "pg_waiting" : "health"
       : "health"
   const exportSelection = !KRONIKA_REPORT && exportOpen && hour !== null && exportRange !== null ? rangeOnHour(exportRange, hour) : null
-  return <DisplayTimeScope hour={hour}><CursorNavigationContext value={cursorNavigation}><main className={`app-shell flex h-dvh min-h-0 flex-col overflow-hidden${stretchPostgres ? " pg-table-shell" : ""}${inspectorOpen ? " inspector-open" : ""}${inspectorOpen && inspectorPanel === "chart" && !(entityChartAvailable && detailAvailable) ? " inspector-chart-open" : ""}${mobileSearch ? " mobile-search-open" : ""}`}>
+  return <DisplayTimeScope hour={hour}><CursorNavigationContext value={cursorNavigation}><TimelineRequestContext value={timelinePhase}><main className={`app-shell flex h-dvh min-h-0 flex-col overflow-hidden${stretchPostgres ? " pg-table-shell" : ""}${inspectorOpen ? " inspector-open" : ""}${inspectorOpen && inspectorPanel === "chart" && !(entityChartAvailable && detailAvailable) ? " inspector-chart-open" : ""}${mobileSearch ? " mobile-search-open" : ""}`}>
     {data.syntheticDemo === true && <p className="pointer-events-none fixed bottom-2 left-2 z-[70] m-0 rounded border border-line3 bg-s1/95 px-2 py-1 font-sans text-[11px] font-medium tracking-[0.04em] text-fg3 shadow-sm" data-testid="demo-notice">{t("demo.synthetic")}</p>}
     <header className="topbar [.pg-table-shell>&]:flex-none">
       <span className="flex flex-none items-center text-accent2"><Activity aria-hidden="true" size={15} strokeWidth={2} /></span>
@@ -1181,7 +1188,7 @@ function App({ locale, onLocale, t }: {
       <div className="cursor-time max-[760px]:order-9">
         <span data-testid="cursor-time" ref={cursorClock}>{cursor === 0 ? "—" : time.clock(cursor)}</span>
         {cursorState === "loading" && <span className="ml-2.5 flex flex-none items-center gap-1.5 font-sans text-xs text-fg3" data-testid="cursor-behind" role="status"><span aria-hidden="true" className="loading-ring animate-loading-spin motion-reduce:animate-none" />{t("status.updating")}</span>}
-        {cursorState === "missing" && <span className="cursor-missing ml-2 font-sans text-xs text-warn" data-testid="cursor-behind">{t("status.no_sample")}</span>}
+        {!loading && cursorState === "missing" && <span className="cursor-missing ml-2 font-sans text-xs text-warn" data-testid="cursor-behind">{t("status.error")}</span>}
         {refreshFailed && <span>{t("refresh.error")}</span>}
       </div>
 
@@ -1257,7 +1264,7 @@ function App({ locale, onLocale, t }: {
 
     {helpOpen && <HelpPanel build={serverBuild} items={helpItems} onClose={() => setHelpOpen(false)} t={t} version={serverVersion} />}
     {!KRONIKA_REPORT && mcpOpen && <McpPanel database={database} onClose={() => setMcpOpen(false)} t={t} />}
-  </main></CursorNavigationContext></DisplayTimeScope>
+  </main></TimelineRequestContext></CursorNavigationContext></DisplayTimeScope>
 }
 
 const LOAD_SECONDS_KEY = "kronika.hourload-seconds"

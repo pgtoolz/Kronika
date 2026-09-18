@@ -319,6 +319,47 @@ fn exact_row_snapshot_keeps_its_source_when_an_earlier_segment_has_the_same_samp
 }
 
 #[test]
+fn snapshot_skips_resolved_layouts_while_searching_older_revisions() {
+    let data = fixture(&[
+        (
+            BASE,
+            &[
+                Sample::LegacyActivity(BASE + 10),
+                Sample::LegacyActivity(BASE + 11),
+            ],
+        ),
+        (
+            BASE + 1,
+            &[Sample::Activity(BASE + 20), Sample::Activity(BASE + 21)],
+        ),
+        (BASE + 2, &[Sample::Activity(BASE + 90)]),
+        (BASE + 3, &[Sample::Activity(BASE + 100)]),
+        (
+            BASE + 4,
+            &[Sample::Activity(BASE + 90), Sample::Activity(BASE + 100)],
+        ),
+    ]);
+    for latest in [false, true] {
+        crate::snapshot::take_contributing_moment_rows();
+        let mut query = snapshot_request(BASE + 4, BASE + 100);
+        query.latest = latest;
+        let records = snapshot(&data.context, query);
+        let rows = records
+            .iter()
+            .filter(|record| record["record"] == "row")
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 2, "equal-time contributors stay visible");
+        let timestamp = (BASE + 100).to_string();
+        assert!(rows.iter().all(|row| row["timestamp"] == timestamp));
+        assert_eq!(
+            crate::snapshot::take_contributing_moment_rows(),
+            if latest { 6 } else { 4 },
+            "the settled layout skips old rows while its older revision is still discovered"
+        );
+    }
+}
+
+#[test]
 fn latest_snapshot_resolves_sections_independently_in_request_order() {
     let at = BASE + 20_000_000;
     let data = fixture(&[

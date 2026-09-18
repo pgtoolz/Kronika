@@ -221,7 +221,7 @@ test("first table settlement gates slow hour products without gating Process row
 
 test("the instance label waits for one settled foreground table", async () => {
   const app = await readFile(new URL("../src/app.tsx", import.meta.url), "utf8")
-  const ready = app.indexOf('const refreshReady = !loading && !neighborPending && cursorState === "ready" && densePageState !== "loading"')
+  const ready = app.indexOf('const refreshReady = !loading && !neighborPending && cursorState !== "loading" && densePageState !== "loading"')
   const requested = app.indexOf("instanceLabelRequest.current = controller")
   const fetch = app.indexOf('apiFetch("/api/instance-label"')
   assert.ok(ready >= 0)

@@ -274,10 +274,21 @@ fn scan_contributing_moments(
     moments: &mut BTreeMap<u32, ContributingMoments>,
 ) -> Result<(), QueryError> {
     for (&type_id, &timestamp) in layouts {
+        // Another layout may still need older sources. This one cannot gain a
+        // newer sample, but equal-time sources must still contribute their rows.
+        if moments
+            .get(&type_id)
+            .and_then(|samples| samples.previous.as_ref())
+            .is_some_and(|previous| segment.max_ts() < previous.at)
+        {
+            continue;
+        }
         if segment.rows_of(type_id).is_none() {
             continue;
         }
         segment.visit_rows(type_id, &[timestamp], 0, usize::MAX, |_ordinal, row| {
+            #[cfg(test)]
+            super::CONTRIBUTING_MOMENT_ROWS.set(super::CONTRIBUTING_MOMENT_ROWS.get() + 1);
             if let Some(stored) = row_timestamp(&row, timestamp)
                 && stored <= at
             {

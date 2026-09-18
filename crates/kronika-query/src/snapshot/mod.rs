@@ -413,8 +413,14 @@ thread_local! {
     static CONTEXT_STAGED_ROWS: Counter<usize> = const { Counter::new(0) };
     static CONTEXT_SELECTION_DICTIONARIES: Counter<usize> = const { Counter::new(0) };
     static RELATION_MOMENT_VISITS: Counter<usize> = const { Counter::new(0) };
+    static CONTRIBUTING_MOMENT_ROWS: Counter<usize> = const { Counter::new(0) };
     static PARTITION_PREDECESSOR_VISITS: Counter<usize> = const { Counter::new(0) };
     static RELATION_PROJECTED_METRICS: Counter<usize> = const { Counter::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_contributing_moment_rows() -> usize {
+    CONTRIBUTING_MOMENT_ROWS.replace(0)
 }
 
 #[cfg(test)]

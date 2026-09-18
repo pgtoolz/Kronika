@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 
 import { fieldNameForLocator, type DataRow, type Finding, type LanePoint } from "./api"
 import { buildMetricSamples } from "./chart"
@@ -42,6 +42,8 @@ interface TimelineLane {
 
 export type FindingShape = "circle" | "diamond" | "triangle"
 export type TimelinePresentation = "preview" | "inspector"
+export type TimelineRequestPhase = "pending" | "ready" | "error"
+export const TimelineRequestContext = createContext<TimelineRequestPhase>("ready")
 
 export function Timeline({
   cursor,
@@ -81,6 +83,7 @@ export function Timeline({
   readonly t: Translate
 }) {
   const time = useDisplayTime()
+  const requestPhase = useContext(TimelineRequestContext)
   const navigation = useCursorNavigation()
   const [previewCursor, setPreviewCursor] = useState<number | null>(null)
   const displayCursor = previewCursor ?? cursor
@@ -197,8 +200,8 @@ export function Timeline({
     />
   })}</>
   if (selected === undefined) {
-    return <section className="flex h-[124px] min-h-[124px] flex-col items-center justify-center border-y border-line2 bg-s1 text-sm text-fg4" data-presentation={presentation} data-testid="timeline-empty">
-      <span>{t(findings.length === 0 ? emptyHourStatusKey(hour) : "status.no_data")}</span>
+    return <section aria-busy={requestPhase === "pending"} className="flex h-[124px] min-h-[124px] flex-col items-center justify-center border-y border-line2 bg-s1 text-sm text-fg4" data-presentation={presentation} data-testid={`timeline-${requestPhase === "ready" ? "empty" : requestPhase}`}>
+      <span role={requestPhase === "error" ? "alert" : requestPhase === "pending" ? "status" : undefined}>{t(requestPhase === "pending" ? "status.loading" : requestPhase === "error" ? "status.error" : findings.length === 0 ? emptyHourStatusKey(hour) : "status.no_data")}</span>
       {navigation !== null && <CursorRow cursor={cursor} cursorTimes={[]} onCursor={onCursor} navigation={navigation} reading="" t={t} />}
     </section>
   }
