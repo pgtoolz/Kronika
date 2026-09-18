@@ -78,6 +78,111 @@ async function pasteClipboard(cdp) {
   })()`)
 }
 
+test("tab return catches up the selected hour once after loading, even across its end", { timeout: 60_000 }, async () => {
+  const html = gunzipSync(await readFile(ARTIFACT))
+  for (const scenario of ["same-hour", "hour-ended", "initial-busy", "refresh-busy", "navigate-pending", "historical"]) {
+    const catalogs = []
+    const held = []
+    const answerHour = (response, hour) => {
+      if (response.destroyed) return
+      ndjson(response, [
+        { record: "hour", from: String(hour), to: String(hour + HOUR_US - 1), available_hours: [String(HOUR - HOUR_US), String(HOUR)] },
+        { record: "catalog", from: String(hour), to: String(hour + HOUR_US - 1), source_families: [] },
+      ])
+    }
+    const server = createServer((request, response) => {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1")
+      if (url.pathname === "/") {
+        response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+        response.end(html)
+        return
+      }
+      if (url.pathname === "/auth/session") { response.writeHead(204); response.end(); return }
+      if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
+      if (url.pathname === "/api/hour") {
+        const hour = Number(url.searchParams.get("from"))
+        catalogs.push(hour)
+        if ((["initial-busy", "navigate-pending"].includes(scenario) && catalogs.length === 1)
+          || (scenario === "refresh-busy" && catalogs.length === 2)) held.push(() => answerHour(response, hour))
+        else answerHour(response, hour)
+        return
+      }
+      ndjson(response, [])
+    })
+    await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve) })
+    const origin = `http://127.0.0.1:${server.address().port}`
+    const profile = await mkdtemp(join(tmpdir(), "b-"))
+    const browser = launchBrowser(profile)
+    const page = { errors: [], external: [], responses: [] }
+    let socket
+    try {
+      socket = await pageSocket(await browserDebugPort(profile, browser))
+      const cdp = cdpSession(socket)
+      trackPage(socket, origin, page)
+      await enablePage(cdp)
+      await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
+        window.__refreshNow = ${AT / 1000}
+        Date.now = () => window.__refreshNow
+        window.__hidden = false
+        Object.defineProperty(document, 'hidden', { get: () => window.__hidden })
+        window.__visibility = (hidden) => { window.__hidden = hidden; document.dispatchEvent(new Event('visibilitychange')) }
+        window.__refreshTimers = new Map()
+        let next = -1
+        const set = window.setTimeout.bind(window), clear = window.clearTimeout.bind(window)
+        window.setTimeout = (callback, milliseconds, ...args) => {
+          if (milliseconds !== 15000) return set(callback, milliseconds, ...args)
+          const id = next--
+          window.__refreshTimers.set(id, () => callback(...args))
+          return id
+        }
+        window.clearTimeout = (id) => window.__refreshTimers.delete(id) || clear(id)
+      })()` })
+      const at = scenario === "historical" ? AT - HOUR_US : AT
+      await cdp.send("Page.navigate", { url: `${origin}/?at=${at}` })
+      await waitForRequests(() => catalogs.length === 1)
+      const ready = () => cdp.waitFor(`document.querySelector('[data-testid="refresh-action"]')?.disabled === false`, "the settled selected hour")
+      if (!["initial-busy", "navigate-pending"].includes(scenario)) await ready()
+      if (scenario === "refresh-busy") {
+        await cdp.evaluate(`document.querySelector('[data-testid="refresh-action"]').click()`)
+        await waitForRequests(() => catalogs.length === 2)
+      }
+      await cdp.evaluate(`window.__visibility(true)`)
+      if (scenario !== "same-hour") await cdp.evaluate(`window.__refreshNow = ${(HOUR + HOUR_US + 1000) / 1000}`)
+      await cdp.evaluate(`window.__visibility(false)`)
+      if (scenario === "navigate-pending") {
+        await cdp.evaluate(`history.pushState({}, '', '/?at=${AT - HOUR_US}'); dispatchEvent(new PopStateEvent('popstate'))`)
+        await waitForRequests(() => catalogs.length === 2)
+        await ready()
+        held.shift()?.()
+      } else if (scenario === "initial-busy" || scenario === "refresh-busy") {
+        assert.equal(catalogs.length, scenario === "initial-busy" ? 1 : 2, "busy return cannot overlap")
+        held.shift()?.()
+      }
+      const expected = scenario === "historical" ? 1 : scenario === "refresh-busy" ? 3 : 2
+      await waitForRequests(() => catalogs.length === expected)
+      await ready()
+      await settleLayout(cdp)
+      assert.equal(catalogs.length, expected, `${scenario}: exactly one accepted catch-up`)
+      assert.equal(await cdp.evaluate(`new URL(location.href).searchParams.get('at')`), String(scenario === "navigate-pending" ? AT - HOUR_US : at))
+      assert.ok(catalogs.every((hour) => hour === HOUR || hour === HOUR - HOUR_US), "refresh never selects the next hour")
+      if (scenario !== "same-hour") {
+        await cdp.evaluate(`window.__visibility(true); window.__visibility(false)`)
+        await settleLayout(cdp)
+        assert.equal(catalogs.length, expected, "a finished historical hour does not refresh on every return")
+        assert.equal(await cdp.evaluate(`window.__refreshTimers.size`), 0)
+      }
+      assert.deepEqual(page.errors, [])
+      assert.deepEqual(page.external, [])
+    } finally {
+      socket?.close()
+      await stopBrowser(browser)
+      server.closeAllConnections()
+      await new Promise((resolve) => server.close(resolve))
+      await removeBrowserProfile(profile)
+    }
+  }
+})
+
 test("refresh preserves streaming progress and retries inactive catalogs without stale commits", { timeout: 60_000 }, async () => {
   const html = gunzipSync(await readFile(ARTIFACT))
   const authState = { valid: true }

@@ -470,14 +470,15 @@ function App({ locale, onLocale, t }: {
   const refreshProgressAt = useRef(0)
   const beginRefresh = useCallback(() => {
     // Recover a silent request without interrupting a long, progressing stream.
-    if (refreshRequested.current && !refreshIsInactive(refreshProgressAt.current)) return
-    if (neighborRequest.current !== null || drawn.current === null || drawn.current !== selectedHour.current) return
+    if (refreshRequested.current && !refreshIsInactive(refreshProgressAt.current)) return false
+    if (neighborRequest.current !== null || drawn.current === null || drawn.current !== selectedHour.current) return false
     pendingRefresh.current = null
     refreshAwaitingSnapshot.current = false
     refreshRequested.current = true
     refreshProgressAt.current = Date.now()
     setRefreshing(true)
     setRefreshVersion((current) => current + 1)
+    return true
   }, [])
   const requestRefresh = beginRefresh
   const chooseCursor = useCallback((next: number) => {
@@ -832,8 +833,20 @@ function App({ locale, onLocale, t }: {
       })
       .catch(() => {})
   }, [backgroundReadyHour, foregroundKey, hour, refreshReady])
-  useEffect(() => KRONIKA_REPORT || hour === null || !refreshReady
-    ? undefined : scheduleRefresh(hour, requestRefresh), [hour, refreshReady, requestRefresh])
+  const automaticRefreshReady = useRef(refreshReady)
+  automaticRefreshReady.current = refreshReady
+  const refreshSchedule = useRef<ReturnType<typeof scheduleRefresh> | null>(null)
+  useEffect(() => {
+    if (KRONIKA_REPORT || hour === null) return
+    const schedule = scheduleRefresh(hour, () => selectedHour.current === hour
+      && automaticRefreshReady.current && requestRefresh())
+    refreshSchedule.current = schedule
+    return () => {
+      schedule.dispose()
+      refreshSchedule.current = null
+    }
+  }, [hour, requestRefresh])
+  useEffect(() => { refreshSchedule.current?.resume() }, [hour, refreshReady, refreshing])
   const denseMetadata = currentData.snapshotRows[0]
   const loadMoreDense = useCallback(() => {
     const next = denseMetadata?.hasMore === true ? denseMetadata.nextCursor : null

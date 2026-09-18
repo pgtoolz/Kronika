@@ -31,7 +31,7 @@ test("only the current calendar hour schedules the shared fifteen-second refresh
   const timers = fakeTimers()
   let now = HOUR + 1
   let refreshes = 0
-  const dispose = scheduleRefresh(HOUR, async () => { refreshes += 1 }, visibility, timers, () => now)
+  const { dispose } = scheduleRefresh(HOUR, async () => { refreshes += 1 }, visibility, timers, () => now)
 
   assert.deepEqual(timers.pendingDelays(), [REFRESH_INTERVAL_MS])
   timers.advance(REFRESH_INTERVAL_MS)
@@ -58,7 +58,7 @@ test("a hidden page stops polling and refreshes once when it becomes visible", a
   const visibility = fakeVisibility(true)
   const timers = fakeTimers()
   let refreshes = 0
-  const dispose = scheduleRefresh(HOUR, async () => { refreshes += 1 }, visibility, timers, () => HOUR + 1)
+  const { dispose } = scheduleRefresh(HOUR, async () => { refreshes += 1 }, visibility, timers, () => HOUR + 1)
   assert.equal(timers.pending(), 0)
 
   visibility.setHidden(false)
@@ -68,6 +68,108 @@ test("a hidden page stops polling and refreshes once when it becomes visible", a
   visibility.setHidden(true)
   assert.equal(timers.pending(), 0)
   dispose()
+  assert.equal(visibility.listeners.size, 0)
+})
+
+test("a return after the hour boundary catches up once, then stays historical", () => {
+  const visibility = fakeVisibility(false)
+  const timers = fakeTimers()
+  let now = HOUR + 1
+  let refreshes = 0
+  const schedule = scheduleRefresh(HOUR, () => { refreshes += 1 }, visibility, timers, () => now)
+  visibility.setHidden(true)
+  now += 3_600_000_000
+  timers.advance(REFRESH_INTERVAL_MS)
+  assert.equal(refreshes, 0)
+  visibility.setHidden(false)
+  assert.equal(refreshes, 1)
+  assert.equal(timers.pending(), 0)
+  schedule.resume()
+  visibility.setHidden(true)
+  visibility.setHidden(false)
+  assert.equal(refreshes, 1)
+  schedule.dispose()
+})
+
+test("busy returns survive readiness changes and are consumed only after acceptance", () => {
+  for (const crossHour of [false, true]) {
+    const visibility = fakeVisibility(false)
+    const timers = fakeTimers()
+    let now = HOUR + 1
+    let ready = false
+    let busy = false
+    let refreshes = 0
+    const schedule = scheduleRefresh(HOUR, () => {
+      if (!ready || busy) return false
+      busy = true
+      refreshes += 1
+      return true
+    }, visibility, timers, () => now)
+    visibility.setHidden(true)
+    if (crossHour) now += 3_600_000_000
+    visibility.setHidden(false)
+    assert.equal(visibility.listeners.size, 1)
+    assert.equal(refreshes, 0)
+    schedule.resume()
+    assert.equal(refreshes, 0)
+    ready = true
+    schedule.resume()
+    assert.equal(refreshes, 1)
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      ready = false
+      schedule.resume()
+      ready = true
+      busy = false
+      schedule.resume()
+    }
+    assert.equal(refreshes, 1)
+    assert.equal(timers.pending(), crossHour ? 0 : 1)
+    schedule.dispose()
+  }
+})
+
+test("a return rejected by an active refresh waits, including while hidden again", () => {
+  const visibility = fakeVisibility(false)
+  const timers = fakeTimers()
+  let now = HOUR + 1
+  let busy = true
+  let refreshes = 0
+  const schedule = scheduleRefresh(HOUR, () => {
+    if (busy) return false
+    refreshes += 1
+    return true
+  }, visibility, timers, () => now)
+  visibility.setHidden(true)
+  now += 3_600_000_000
+  visibility.setHidden(false)
+  assert.equal(refreshes, 0)
+  visibility.setHidden(true)
+  busy = false
+  schedule.resume()
+  assert.equal(refreshes, 0)
+  visibility.setHidden(false)
+  assert.equal(refreshes, 1)
+  schedule.resume()
+  assert.equal(refreshes, 1)
+  schedule.dispose()
+})
+
+test("hour navigation discards a pending return and historical hours never poll", () => {
+  const visibility = fakeVisibility(false)
+  const timers = fakeTimers()
+  let refreshes = 0
+  const old = scheduleRefresh(HOUR, () => false, visibility, timers, () => HOUR + 1)
+  visibility.setHidden(true)
+  visibility.setHidden(false)
+  old.dispose()
+  const history = scheduleRefresh(HOUR - 3_600_000_000, () => { refreshes += 1 }, visibility, timers, () => HOUR + 1)
+  old.resume()
+  history.resume()
+  visibility.setHidden(true)
+  visibility.setHidden(false)
+  assert.equal(refreshes, 0)
+  assert.equal(timers.pending(), 0)
+  history.dispose()
   assert.equal(visibility.listeners.size, 0)
 })
 
@@ -114,7 +216,7 @@ test("a tick that does nothing, or throws, still arms the next one", async () =>
   const visibility = fakeVisibility(false)
   const timers = fakeTimers()
   let calls = 0
-  const dispose = scheduleRefresh(HOUR, () => {
+  const { dispose } = scheduleRefresh(HOUR, () => {
     calls += 1
     if (calls === 2) throw new Error("refresh exploded")
   }, visibility, timers, () => HOUR + 1)
@@ -299,7 +401,7 @@ function refreshHarness(action: () => Promise<void>, visibility: ReturnType<type
   let dispose = () => {}
   const render = () => {
     dispose()
-    dispose = scheduleRefresh(HOUR, request, visibility, timers, now)
+    dispose = scheduleRefresh(HOUR, request, visibility, timers, now).dispose
   }
   const request = () => {
     if (busy) return
