@@ -60,10 +60,7 @@ Processes are sampled every 5 seconds and core Linux metrics every 10 seconds.
 
 `Ctrl+C` stops collection. Run the same command to resume.
 
-`--retention` defaults to `2GiB`. For a fixed 10 GiB target, add
-`--retention 10GiB`.
-[Storage](bins/kronika-collector/README.md#storage) defines the counted files
-and deletion order.
+The default [storage limit](bins/kronika-collector/README.md#storage) is **2 GiB** (`--retention`).
 
 <a id="5-postgresql"></a>
 #### PostgreSQL connection

@@ -61,10 +61,7 @@ sudo /usr/local/bin/kronika-collector \
 
 `Ctrl+C` останавливает сбор. Для продолжения запустите ту же команду.
 
-Целевой объём хранения `--retention` по умолчанию равен `2GiB`.
-Для цели 10 GiB добавьте `--retention 10GiB`.
-Раздел [«Хранение»](bins/kronika-collector/README.ru.md#storage) описывает,
-какие файлы учитываются и в каком порядке удаляются старые записи.
+[Лимит хранения](bins/kronika-collector/README.ru.md#storage) по умолчанию — **2 GiB** (`--retention`).
 
 <a id="5-postgresql"></a>
 #### Подключение PostgreSQL
