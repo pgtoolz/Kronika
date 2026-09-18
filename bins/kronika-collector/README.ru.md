@@ -215,7 +215,7 @@ sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 сертификации задайте `--pg-ssl-root-cert /path/to/ca.pem`.
 Значение `verify-full` не поддерживается.
 
-Откройте эту запись веб-сервером с `--sources postgresql` (или `KRONIKA_WEB_SOURCES=2`).
+Откройте запись через [kronika-web](../kronika-web/README.ru.md#запуск).
 Overall равен PostgreSQL Health. Если его нельзя вычислить, общая оценка также неизвестна.
 
 В локальных записях общей машины Activity, Vacuum и Processes связывают

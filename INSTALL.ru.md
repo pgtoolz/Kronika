@@ -130,19 +130,16 @@ sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 
 ### Для режима `local`
 
-Для Linux укажите `--sources os`, как ниже. Если также собирается
-PostgreSQL, используйте `--sources all`:
-
 ```sh
 sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources os
+  --listen 0.0.0.0:8080
 ```
 
 ### Для режима `postgresql`
 
 ```sh
 /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources postgresql
+  --listen 0.0.0.0:8080
 ```
 
 Откройте `http://<server-ip>:8080`.
@@ -155,9 +152,7 @@ sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
 Веб-серверу нужен доступ на запись в тот же каталог для создания поисковых
 индексов `.idx`.
 
-`--sources` (или `KRONIKA_WEB_SOURCES`) сообщает, какие источники настроены.
-Параметр не включает сбор и не скрывает записанные данные. Настройки входа описаны в
-[справочнике веб-сервера](bins/kronika-web/README.ru.md).
+Все параметры описаны в [справочнике веб-сервера](bins/kronika-web/README.ru.md).
 
 В примерах `--listen 0.0.0.0:8080` задаёт прослушивание всех IPv4-интерфейсов.
 Значение `--listen` по умолчанию — `127.0.0.1:8080`.

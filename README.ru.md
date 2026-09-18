@@ -76,19 +76,16 @@ sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 
 #### Для режима `local`
 
-Для Linux укажите `--sources os`, как ниже. Если также собирается
-PostgreSQL, используйте `--sources all`:
-
 ```sh
 sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources os
+  --listen 0.0.0.0:8080
 ```
 
 #### Для режима `postgresql`
 
 ```sh
 /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources postgresql
+  --listen 0.0.0.0:8080
 ```
 
 Откройте `http://<server-ip>:8080`.

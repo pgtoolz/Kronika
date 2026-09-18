@@ -125,19 +125,16 @@ Run `kronika-web` with the collector’s data directory.
 
 ### For `local` mode
 
-Use `--sources os` for Linux only, as below. Use `--sources all`
-when also collecting PostgreSQL:
-
 ```sh
 sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources os
+  --listen 0.0.0.0:8080
 ```
 
 ### For `postgresql` mode
 
 ```sh
 /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources postgresql
+  --listen 0.0.0.0:8080
 ```
 
 Open `http://<server-ip>:8080`.
@@ -149,9 +146,7 @@ settings continue to work. See `kronika-web --help` for the full option list.
 Web requires write access to the recording directory to create search indexes
 (`.idx`).
 
-`--sources` (or `KRONIKA_WEB_SOURCES`) reports which sources are configured.
-It does not enable collection or hide recorded data. See the [web configuration reference](bins/kronika-web/README.md)
-for authentication settings.
+See the [web configuration reference](bins/kronika-web/README.md) for all options.
 
 The examples use `--listen 0.0.0.0:8080` to listen on all IPv4 interfaces.
 The default listen address is `127.0.0.1:8080`.

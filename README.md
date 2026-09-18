@@ -76,19 +76,16 @@ Run `kronika-web` with the collector’s data directory.
 
 #### For `local` mode
 
-Use `--sources os` for Linux only, as below. Use `--sources all`
-when also collecting PostgreSQL:
-
 ```sh
 sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources os
+  --listen 0.0.0.0:8080
 ```
 
 #### For `postgresql` mode
 
 ```sh
 /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources postgresql
+  --listen 0.0.0.0:8080
 ```
 
 Open `http://<server-ip>:8080`.

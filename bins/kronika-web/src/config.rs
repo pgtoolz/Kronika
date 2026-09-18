@@ -68,7 +68,7 @@ struct Args {
     )]
     listen: SocketAddr,
     /// Configured sources: none, os, postgresql, all (legacy bitsets 0..3 also work).
-    #[arg(long, env = "KRONIKA_WEB_SOURCES", value_name = "SOURCES", value_parser = source_set, hide_env_values = true)]
+    #[arg(long, env = "KRONIKA_WEB_SOURCES", default_value = "all", value_name = "SOURCES", value_parser = source_set, hide_env_values = true)]
     sources: u32,
     /// Authentication user; set together with --password, or leave both unset.
     #[arg(long, env = "KRONIKA_WEB_USER", hide_env_values = true)]
