@@ -50,7 +50,7 @@ sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
 Open `http://<server-ip>:8080`.
 
 To require sign-in, add `--user kronika --password 'replace-with-a-random-password'`.
-The equivalent environment configuration remains supported:
+Environment variables:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \

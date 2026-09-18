@@ -52,7 +52,7 @@ sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
 Откройте `http://<server-ip>:8080`.
 
 Для входа по паролю добавьте `--user kronika --password 'replace-with-a-random-password'`.
-Эквивалентная настройка через переменные окружения также поддерживается:
+Переменные окружения:
 
 ```sh
 sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \

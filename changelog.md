@@ -2,6 +2,14 @@
 
 [Русская версия](changelog.ru.md)
 
+## [1.2.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.1)
+
+- Fixed refresh when returning to a tab after the selected hour ends.
+- Fixed manual and automatic refresh of Activity heatmaps.
+- Cgroup collection runs only in containers with cgroup v2.
+- When the kernel reports PSI as unsupported, the collector warns once and stops PSI reads until restart.
+- The web server shows all sources by default.
+
 ## [1.2.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.0)
 
 ### Collection and configuration

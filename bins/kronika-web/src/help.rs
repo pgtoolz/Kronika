@@ -9,7 +9,7 @@ pub(crate) const EXAMPLES: &str = r"Examples:
     kronika-web --storage-dir ./recording \
       --user kronika --password 'replace-with-a-random-password'
 
-  Existing environment configuration also works:
+  Environment variables:
     KRONIKA_STORAGE_DIR=./recording kronika-web
 
   Open http://SERVER_IP:8080/. The default listener accepts local connections only.
