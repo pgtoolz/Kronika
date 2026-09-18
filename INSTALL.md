@@ -8,14 +8,14 @@ inspect or extract part of a recording and `kronika-report` to create an HTML re
 
 ## 1. Download and extract
 
-Download the [1.2.0 release archive](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.0)
+Download the [1.2.1 release archive](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.1)
 for your architecture. The commands below use x86-64. For ARM64, set
 `target=aarch64-unknown-linux-musl`.
 
 ```sh
 target=x86_64-unknown-linux-musl
-archive="kronika-1.2.0-$target.tar.gz"
-curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.2.0/$archive"
+archive="kronika-1.2.1-$target.tar.gz"
+curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.2.1/$archive"
 tar -xzf "$archive"
 cd "${archive%.tar.gz}"
 ```
@@ -60,10 +60,7 @@ Processes are sampled every 5 seconds and core Linux metrics every 10 seconds.
 
 `Ctrl+C` stops collection. Run the same command to resume.
 
-`--retention` defaults to `2GiB`. For a fixed 10 GiB target, add
-`--retention 10GiB`.
-[Storage](bins/kronika-collector/README.md#storage) defines the counted files
-and deletion order.
+The default [storage limit](bins/kronika-collector/README.md#storage) is **2 GiB** (`--retention`).
 
 <a id="5-postgresql"></a>
 #### PostgreSQL connection
@@ -124,23 +121,20 @@ defines intervals, supported extension layouts and log formats.
 
 ## 4. Start web
 
-In a second terminal, start web with the same recording directory.
+Run `kronika-web` with the collector’s data directory.
 
 ### For `local` mode
 
-Use `--sources os` for Linux only, as below. Use `--sources all`
-when also collecting PostgreSQL:
-
 ```sh
 sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources os
+  --listen 0.0.0.0:8080
 ```
 
 ### For `postgresql` mode
 
 ```sh
 /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources postgresql
+  --listen 0.0.0.0:8080
 ```
 
 Open `http://<server-ip>:8080`.
@@ -152,9 +146,7 @@ settings continue to work. See `kronika-web --help` for the full option list.
 Web requires write access to the recording directory to create search indexes
 (`.idx`).
 
-`--sources` (or `KRONIKA_WEB_SOURCES`) reports which sources are configured.
-It does not enable collection or hide recorded data. See the [web configuration reference](bins/kronika-web/README.md)
-for authentication settings.
+See the [web configuration reference](bins/kronika-web/README.md) for all options.
 
 The examples use `--listen 0.0.0.0:8080` to listen on all IPv4 interfaces.
 The default listen address is `127.0.0.1:8080`.

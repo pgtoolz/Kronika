@@ -39,6 +39,7 @@ function useHeatmapView(
   cut: ActivityCut,
   top: number,
   revision: number,
+  refreshRevision: number,
   enabled: boolean,
   scope: StatementScope,
 ): HeatmapState {
@@ -58,7 +59,7 @@ function useHeatmapView(
         }
       })
     return () => controller.abort()
-  }, [columns, cutId, enabled, fieldsKey, group, hour, revision, scope, section, top])
+  }, [columns, cutId, enabled, fieldsKey, group, hour, revision, refreshRevision, scope, section, top])
   return state
 }
 
@@ -84,7 +85,7 @@ interface RowLabel {
   readonly prefix: string | null
 }
 
-function ActivityLedger({ columns, cursor, cuts, defaultCut, drill, group, headingContext, hour, keys, label, locale, onCursor, scales, scope = "all", section, storageKey, t }: {
+function ActivityLedger({ columns, cursor, cuts, defaultCut, drill, group, headingContext, hour, refreshRevision, keys, label, locale, onCursor, scales, scope = "all", section, storageKey, t }: {
   readonly columns: number
   readonly cursor: number
   readonly cuts: readonly ActivityCut[]
@@ -93,6 +94,7 @@ function ActivityLedger({ columns, cursor, cuts, defaultCut, drill, group, headi
   readonly group?: readonly string[] | undefined
   readonly headingContext?: ((view: HeatmapView) => string | null) | undefined
   readonly hour: number
+  readonly refreshRevision: number
   readonly keys: LedgerKeys
   readonly label: (row: HeatmapViewRow) => RowLabel
   readonly locale: Locale
@@ -113,7 +115,7 @@ function ActivityLedger({ columns, cursor, cuts, defaultCut, drill, group, headi
   const cut = cuts.find((candidate) => candidate.id === cutId) ?? cuts[0] as ActivityCut
   // Persist the fallback so later hours do not restore the previous selection.
   useEffect(() => { if (cut.id !== cutId) setCutId(cut.id) }, [cut.id, cutId])
-  const state = useHeatmapView(section, columns, group, hour, cut, top, revision, open, scope)
+  const state = useHeatmapView(section, columns, group, hour, cut, top, revision, refreshRevision, open, scope)
   const view = useMemo(() => {
     if (state.view === null) return null
     return maximized ? state.view : collapseHeatmapView(state.view, TOP_BLOCK)
@@ -247,10 +249,11 @@ const PLAN_KEYS: LedgerKeys = { title: "activity.plans", bands: "activity.plans"
 const TABLE_KEYS: LedgerKeys = { title: "activity.tables", bands: "activity.tables" }
 const INDEX_KEYS: LedgerKeys = { title: "activity.indexes", bands: "activity.indexes" }
 
-export function StatementsActivity({ blockSize, cursor, hour, layouts, locale, onCursor, onRelated, rows, scope, t }: {
+export function StatementsActivity({ blockSize, cursor, hour, refreshRevision, layouts, locale, onCursor, onRelated, rows, scope, t }: {
   readonly blockSize: number | null
   readonly cursor: number
   readonly hour: number
+  readonly refreshRevision: number
   readonly layouts: readonly string[]
   readonly locale: Locale
   readonly onCursor: (timestamp: number) => void
@@ -284,13 +287,14 @@ export function StatementsActivity({ blockSize, cursor, hour, layouts, locale, o
     }
   }
 
-  return <ActivityLedger columns={12} cursor={cursor} cuts={cutsForLayouts(STATEMENT_CUTS, layouts)} defaultCut="exec_time" drill={drill} hour={hour} keys={STATEMENT_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} scope={scope} section="pg_stat_statements" storageKey="kronika.activity-open" t={t} />
+  return <ActivityLedger refreshRevision={refreshRevision} columns={12} cursor={cursor} cuts={cutsForLayouts(STATEMENT_CUTS, layouts)} defaultCut="exec_time" drill={drill} hour={hour} keys={STATEMENT_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} scope={scope} section="pg_stat_statements" storageKey="kronika.activity-open" t={t} />
 }
 
-export function PlansActivity({ blockSize, cursor, hour, layouts, locale, onCursor, onRelated, rows, t }: {
+export function PlansActivity({ blockSize, cursor, hour, refreshRevision, layouts, locale, onCursor, onRelated, rows, t }: {
   readonly blockSize: number | null
   readonly cursor: number
   readonly hour: number
+  readonly refreshRevision: number
   readonly layouts: readonly string[]
   readonly locale: Locale
   readonly onCursor: (timestamp: number) => void
@@ -313,7 +317,7 @@ export function PlansActivity({ blockSize, cursor, hour, layouts, locale, onCurs
       prefix: identityPrefix(row, null),
     }
   }
-  return <ActivityLedger columns={12} cursor={cursor} cuts={cutsForLayouts(PLAN_CUTS, layouts)} defaultCut="exec_time" drill={drill} hour={hour} keys={PLAN_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} section="pg_store_plans" storageKey="kronika.activity-open.plans" t={t} />
+  return <ActivityLedger refreshRevision={refreshRevision} columns={12} cursor={cursor} cuts={cutsForLayouts(PLAN_CUTS, layouts)} defaultCut="exec_time" drill={drill} hour={hour} keys={PLAN_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} section="pg_store_plans" storageKey="kronika.activity-open.plans" t={t} />
 }
 
 export type RelationActivityLevel = "object" | "schema" | "database" | "tablespace"
@@ -324,10 +328,11 @@ const RELATION_GROUPS: Readonly<Record<Exclude<RelationActivityLevel, "object">,
   tablespace: ["tablespace"],
 }
 
-export function RelationsActivity({ blockSize, cursor, hour, layouts, level, locale, onCursor, onPattern, section, t }: {
+export function RelationsActivity({ blockSize, cursor, hour, refreshRevision, layouts, level, locale, onCursor, onPattern, section, t }: {
   readonly blockSize: number | null
   readonly cursor: number
   readonly hour: number
+  readonly refreshRevision: number
   readonly layouts: readonly string[]
   readonly level: RelationActivityLevel
   readonly locale: Locale
@@ -364,12 +369,13 @@ export function RelationsActivity({ blockSize, cursor, hour, layouts, level, loc
       prefix: datname ?? null,
     }
   }
-  return <ActivityLedger columns={12} cursor={cursor} cuts={cutsForLayouts(indexes ? INDEX_CUTS : TABLE_CUTS, layouts)} defaultCut={indexes ? "idx_scan" : "writes"} drill={drill} group={group} hour={hour} keys={indexes ? INDEX_KEYS : TABLE_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} section={section} storageKey={`kronika.activity-open.${indexes ? "indexes" : "tables"}`} t={t} />
+  return <ActivityLedger refreshRevision={refreshRevision} columns={12} cursor={cursor} cuts={cutsForLayouts(indexes ? INDEX_CUTS : TABLE_CUTS, layouts)} defaultCut={indexes ? "idx_scan" : "writes"} drill={drill} group={group} hour={hour} keys={indexes ? INDEX_KEYS : TABLE_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} section={section} storageKey={`kronika.activity-open.${indexes ? "indexes" : "tables"}`} t={t} />
 }
 
-export function ProcessesActivity({ cursor, hour, locale, onCursor, onPattern, t, ticksPerSecond }: {
+export function ProcessesActivity({ cursor, hour, refreshRevision, locale, onCursor, onPattern, t, ticksPerSecond }: {
   readonly cursor: number
   readonly hour: number
+  readonly refreshRevision: number
   readonly locale: Locale
   readonly onCursor: (timestamp: number) => void
   readonly onPattern: (pattern: string) => void
@@ -384,13 +390,14 @@ export function ProcessesActivity({ cursor, hour, locale, onCursor, onPattern, t
     text: row.identity[0] ?? "—",
     prefix: row.members === null || row.members < 2 ? null : t("activity.members", { count: row.members }),
   })
-  return <ActivityLedger columns={60} cursor={cursor} cuts={PROCESS_CUTS} defaultCut="cpu" drill={drill} group={PROCESS_GROUP} hour={hour} keys={PROCESS_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize: null, clockTicks: ticksPerSecond }} section="os_process" storageKey="kronika.activity-open.processes" t={t} />
+  return <ActivityLedger refreshRevision={refreshRevision} columns={60} cursor={cursor} cuts={PROCESS_CUTS} defaultCut="cpu" drill={drill} group={PROCESS_GROUP} hour={hour} keys={PROCESS_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize: null, clockTicks: ticksPerSecond }} section="os_process" storageKey="kronika.activity-open.processes" t={t} />
 }
 
-export function DatabasesActivity({ blockSize, cursor, hour, layouts, locale, onCursor, onPattern, t }: {
+export function DatabasesActivity({ blockSize, cursor, hour, refreshRevision, layouts, locale, onCursor, onPattern, t }: {
   readonly blockSize: number | null
   readonly cursor: number
   readonly hour: number
+  readonly refreshRevision: number
   readonly layouts: readonly string[]
   readonly locale: Locale
   readonly onCursor: (timestamp: number) => void
@@ -405,7 +412,7 @@ export function DatabasesActivity({ blockSize, cursor, hour, layouts, locale, on
     text: labelText(row, "datname") ?? row.identity[0] ?? "—",
     prefix: null,
   })
-  return <ActivityLedger columns={60} cursor={cursor} cuts={cutsForLayouts(DATABASE_CUTS, layouts)} defaultCut="commits" drill={drill} hour={hour} keys={DATABASE_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} section="pg_stat_database" storageKey="kronika.activity-open.databases" t={t} />
+  return <ActivityLedger refreshRevision={refreshRevision} columns={60} cursor={cursor} cuts={cutsForLayouts(DATABASE_CUTS, layouts)} defaultCut="commits" drill={drill} hour={hour} keys={DATABASE_KEYS} label={label} locale={locale} onCursor={onCursor} scales={{ blockSize, clockTicks: null }} section="pg_stat_database" storageKey="kronika.activity-open.databases" t={t} />
 }
 
 const EMPTY_CGROUP_DEVICES: ReadonlyMap<string, CgroupDevicePresentation> = new Map()

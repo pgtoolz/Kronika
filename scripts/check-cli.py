@@ -33,10 +33,10 @@ HELP_CONTENT = {
         "KRONIKA_STORAGE_DIR", "KRONIKA_WEB_SOURCES", "127.0.0.1:8080",
         "KRONIKA_WEB_USER", "KRONIKA_WEB_PASSWORD", "KRONIKA_WEB_DEMO", "0.0.0.0:8080",
         "http://SERVER_IP:8080/", "Both credentials unset", "Both nonempty", "startup error",
-        "catalog", "health", "/mcp", "TMPDIR", "kronika-collector", "KRONIKA_PG_DSN",
+        "catalog", "/mcp", "TMPDIR", "[default: all]",
         "required", "none", "os", "postgresql", "all", "0..3", "synthetic",
-        "CLI arguments override environment variables", "Health uses instance information saved by the collector",
-        "all recorded data remains available for every value",
+        "CLI arguments override environment variables",
+        "All recorded data remains available", "This setting does not change collection",
     ),
     "kronika-dump": (
         "--json", "--index", "--section", "--limit", "--from", "--to",
@@ -302,7 +302,8 @@ def check_collector_arguments(binary, cwd, storage, root, strace):
 def check_web_arguments(binary, cwd, storage, root, strace):
     base = ["--storage-dir", str(storage), "--sources", "os"]
     cases = [
-        ("sources required", ["--storage-dir", str(storage)], {}, b"--sources"),
+        ("default sources reach credential validation", ["--storage-dir", str(storage), "--user", SECRET],
+         {}, b"KRONIKA_WEB_PASSWORD is not set"),
         ("invalid sources", ["--storage-dir", str(storage), "--sources", "4"], {}, b"--sources"),
         ("invalid listen", base + ["--listen", "localhost:8080"], {}, b"--listen"),
         ("invalid demo", base + ["--demo", "true"], {}, b"--demo"),

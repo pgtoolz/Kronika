@@ -18,15 +18,7 @@ use super::io::{log_degraded, read_optional_os_file};
 use crate::logging::log_collection_finish;
 
 /// Collect the core metrics scheduled by an `OsCore` tick.
-pub(super) fn collect_core_metrics(
-    fs: &ProcFs,
-    sys: &SysFs,
-    scope: u8,
-    ts: i64,
-    in_container: bool,
-    selected: Option<&cgroup::AncestorContext>,
-    os: &mut OsSources,
-) {
+pub(super) fn collect_core_metrics(fs: &ProcFs, scope: u8, ts: i64, os: &mut OsSources) {
     collect_cpu_and_stat(fs, scope, ts, os);
     collect_procfs_row(fs, "meminfo", &mut os.meminfo, |content| {
         parse_meminfo(content, ts).map(|row| row.to_section(scope))
@@ -37,7 +29,6 @@ pub(super) fn collect_core_metrics(
     collect_procfs_row(fs, "vmstat", &mut os.vmstat, |content| {
         parse_vmstat(content, ts).map(|row| row.to_section(scope))
     });
-    collect_pressure_rows(fs, sys, scope, ts, in_container, selected, os);
 }
 
 /// Read `/proc/stat` once for CPU rows and system counters.

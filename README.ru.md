@@ -17,7 +17,7 @@ Linux либо записывает только данные PostgreSQL с ло
 
 ## Установка и запуск
 
-[Установите Kronika 1.2.0](INSTALL.ru.md) из [архива для Linux](docs/releases.ru.md#download)
+[Установите Kronika 1.2.1](INSTALL.ru.md) из [архива для Linux](docs/releases.ru.md#download)
 или [соберите из исходников](docs/build.ru.md).
 
 Выберите `local` для метрик Linux и, при необходимости, PostgreSQL в той же VM
@@ -70,25 +70,22 @@ sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 из них процесс `kronika-collector` со своим DSN и отдельным каталогом хранения. См.
 [пример двух серверов](bins/kronika-collector/README.ru.md#several-postgresql-servers).
 
-### Открыть веб-интерфейс
+### Просмотр данных
 
-Запустите `kronika-web` во втором терминале с каталогом данных сборщика.
+Запустите `kronika-web`, указав каталог данных сборщика.
 
 #### Для режима `local`
 
-Для Linux укажите `--sources os`, как ниже. Если также собирается
-PostgreSQL, используйте `--sources all`:
-
 ```sh
 sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources os
+  --listen 0.0.0.0:8080
 ```
 
 #### Для режима `postgresql`
 
 ```sh
 /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources postgresql
+  --listen 0.0.0.0:8080
 ```
 
 Откройте `http://<server-ip>:8080`.
@@ -107,10 +104,8 @@ sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
 **около 200 MB сжатых записей в сутки**. Объём зависит от интервалов сбора,
 числа записываемых объектов и уникальных запросов.
 
-`--retention 2GiB` задаёт бюджет хранения **2 GiB** по умолчанию,
-включая журналы и индексы. При превышении целевого объёма сборщик автоматически
-удаляет самые старые завершённые записи вместе с их индексами.
-Для **10 GiB** задайте `--retention 10GiB`.
+По умолчанию лимит хранения — **2 GiB** (`--retention`), включая журналы и индексы.
+При превышении лимита сборщик удаляет самые старые завершённые записи и их индексы.
 
 `auto` и `auto:P` вместо фиксированного объёма задают целевую долю занятого места
 на всей файловой системе хранилища. Правила ротации и автоматический режим —

@@ -2,21 +2,21 @@
 
 pub(crate) const EXAMPLES: &str = r"Examples:
   Linux recording, listening on all IPv4 interfaces:
-    sudo kronika-web --storage-dir /var/lib/kronika --sources os \
+    sudo kronika-web --storage-dir /var/lib/kronika \
       --listen 0.0.0.0:8080
 
   PostgreSQL recording, with authentication:
-    kronika-web --storage-dir ./recording --sources postgresql \
+    kronika-web --storage-dir ./recording \
       --user kronika --password 'replace-with-a-random-password'
 
-  Existing environment configuration also works:
-    KRONIKA_STORAGE_DIR=./recording KRONIKA_WEB_SOURCES=3 kronika-web
+  Environment variables:
+    KRONIKA_STORAGE_DIR=./recording kronika-web
 
   Open http://SERVER_IP:8080/. The default listener accepts local connections only.
 
 Configuration:
   CLI arguments override environment variables, then built-in defaults apply.
-  --storage-dir and --sources are required unless their environment fallback is set.
+  --storage-dir is required unless KRONIKA_STORAGE_DIR is set.
   To clear optional credentials or demo mode, unset the corresponding variables.
   Both credentials unset: browser, API and MCP access is unauthenticated.
   Both nonempty: browser sessions and HTTP Basic authentication are enabled.
@@ -27,13 +27,10 @@ Configured sources:
   none        (0) Neither source family configured.
   os          (1) Linux OS configured.
   postgresql  (2) PostgreSQL configured.
-  all         (3) Linux OS and PostgreSQL configured.
+  all         (3) Linux OS and PostgreSQL configured (default).
   Names and legacy bitsets 0..3 work in both --sources and KRONIKA_WEB_SOURCES.
-  This labels the API catalog; all recorded data remains available for every value.
-  PostgreSQL configured or recorded data suppresses its no-data tooltip. The OS
-  flag is catalog metadata only. Health uses instance information saved by the
-  collector. Enable PostgreSQL collection with kronika-collector --pg-dsn or
-  KRONIKA_PG_DSN.
+  Override these catalog flags with --sources or KRONIKA_WEB_SOURCES.
+  All recorded data remains available. This setting does not change collection.
 
 Storage and exports:
   Use one collector's recording directory containing active.wal and dated

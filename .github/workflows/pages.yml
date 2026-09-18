@@ -62,6 +62,10 @@ jobs:
       - name: Keep the published example available
         shell: bash
         run: |
+          curl --fail --location --silent --show-error \
+            https://github.com/pgtoolz/Kronika/releases/download/v1.2.0/kronika-v1.2.0.html \
+            --output "$RUNNER_TEMP/site/index.html"
+          echo "fac12e541c57d3b4ce00aa116f64af822ca210036abfa10bb87a0d7d57f915ac  $RUNNER_TEMP/site/index.html" | sha256sum --check --strict
           install -d "$RUNNER_TEMP/site/reports"
           curl --fail --location --silent --show-error \
             https://raw.githubusercontent.com/pgtoolz/Kronika/52f995b4ea8fea241c4bdd8ad832f3635a23c25e/reports/kronika-demo-hour-5bbe2dd.html \

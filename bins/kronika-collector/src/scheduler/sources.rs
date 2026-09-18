@@ -68,10 +68,10 @@ pub(crate) struct Intervals {
     /// Process status details.
     #[arg(long = "os-process-status-interval-s", env = "KRONIKA_OS_PROCESS_STATUS_INTERVAL_S", default_value_t = Self::default().os_process_status, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub os_process_status: u64,
-    /// Accessible cgroup v2 groups.
+    /// Accessible cgroup v2 groups in containers.
     #[arg(long = "os-cgroup-interval-s", env = "KRONIKA_OS_CGROUP_INTERVAL_S", default_value_t = Self::default().os_cgroup, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub os_cgroup: u64,
-    /// Process-to-cgroup mappings.
+    /// Process-to-cgroup v2 mappings in containers.
     #[arg(long = "os-cgroup-mapping-interval-s", env = "KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S", default_value_t = Self::default().os_cgroup_mapping, value_parser = crate::config::values::number::<u64>, help_heading = "Collection intervals (seconds)", hide_env_values = true)]
     pub os_cgroup_mapping: u64,
     /// Configured `PostgreSQL` and `PgBouncer` logs.

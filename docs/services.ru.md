@@ -38,7 +38,6 @@ KRONIKA_RETENTION=2GiB
 ```ini
 KRONIKA_STORAGE_DIR=/var/lib/kronika
 KRONIKA_WEB_LISTEN=0.0.0.0:8080
-KRONIKA_WEB_SOURCES=1
 ```
 
 Для входа по паролю добавьте учётные данные в `web.env`:
@@ -60,13 +59,8 @@ PostgreSQL, [подготовьте роль мониторинга](../INSTALL.
 KRONIKA_PG_DSN="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
 ```
 
-Для PostgreSQL на машине сборщика используйте строку подключения выше и
-задайте `KRONIKA_WEB_SOURCES=3` в `web.env`, чтобы объявить Linux и PostgreSQL.
-
 Для сбора только PostgreSQL задайте `KRONIKA_COLLECTOR_MODE=postgresql` в
-`collector.env` и `KRONIKA_WEB_SOURCES=2` в `web.env`. Сервер PostgreSQL может
-быть локальным или удалённым. Режим сборщика определяет, какие данные записывать.
-Настройка веб-сервера объявляет источники в каталоге.
+`collector.env`. Сервер PostgreSQL может быть локальным или удалённым.
 [Параметры подключения](../bins/kronika-collector/README.ru.md#remote-postgresql).
 Полный список параметров:
 [сборщик](../bins/kronika-collector/README.ru.md) и
@@ -144,11 +138,11 @@ sudo journalctl -u kronika-collector -u kronika-web --since '5 minutes ago'
 ## Операции
 
 После изменения файла настроек перезапустите соответствующий сервис.
-Например, чтобы добавить сбор PostgreSQL и изменить список источников веб-сервера:
+Например, чтобы добавить сбор PostgreSQL:
 
 ```sh
-sudoedit /etc/kronika/collector.env /etc/kronika/web.env
-sudo systemctl restart kronika-collector kronika-web
+sudoedit /etc/kronika/collector.env
+sudo systemctl restart kronika-collector
 ```
 
 | Операция | Команда |

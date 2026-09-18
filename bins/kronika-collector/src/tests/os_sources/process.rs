@@ -2,8 +2,12 @@ use super::{
     DueSet, Interner, OsSources, ProcFs, ProcessIoCredentials, ProcessTick, SegmentUserNames,
     SourceKind, collect_process_sections,
 };
+use crate::config::CollectorMode;
+use crate::os_sources::{OsTick, collect_os_sources};
+use crate::scheduler::{Intervals, Scheduler};
 use kronika_format::DictLimits;
-use kronika_source_os::PasswdSnapshot;
+use kronika_source_os::{OsScope, PasswdSnapshot, SysFs};
+use rustix::fs::inotify;
 use std::path::Path;
 
 fn proc_root() -> tempfile::TempDir {
@@ -233,6 +237,130 @@ fn optional_string_failures_affect_only_the_command_line_or_mapping() {
                 .map(|row| row.pid)
                 .collect::<Vec<_>>(),
             mapping_pids
+        );
+    }
+}
+
+#[test]
+fn disabled_cgroups_preserve_os_and_processes_without_reads_or_warnings() {
+    const CHILD: &str = "KRONIKA_DISABLED_CGROUP_TEST";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", "os_sources::process::tests::disabled_cgroups_preserve_os_and_processes_without_reads_or_warnings", "--nocapture"])
+            .env(CHILD, "1")
+            .output().expect("isolated test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains("cgroup"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    disabled_cgroup_scenario();
+}
+
+fn disabled_cgroup_scenario() {
+    for (in_container, version) in [(false, "cgroup"), (false, "cgroup2"), (true, "cgroup")] {
+        let dir = proc_root();
+        write_process(dir.path(), 10, "worker");
+        std::fs::create_dir_all(dir.path().join("self")).expect("self");
+        std::fs::create_dir_all(dir.path().join("pressure")).expect("pressure");
+        std::fs::write(
+            dir.path().join("stat"),
+            "cpu 10 0 10 80 0 0 0 0 0 0\nbtime 100\n",
+        )
+        .expect("CPU");
+        std::fs::write(
+            dir.path().join("meminfo"),
+            "MemTotal: 1024 kB\nMemFree: 512 kB\n",
+        )
+        .expect("memory");
+        std::fs::write(
+            dir.path().join("pressure/cpu"),
+            "some avg10=0.10 avg60=0.05 avg300=0.02 total=10000\n",
+        )
+        .expect("PSI");
+        std::fs::write(dir.path().join("self/cgroup"), "0::/worker\n").expect("self membership");
+        std::fs::write(
+            dir.path().join("self/mountinfo"),
+            format!("40 1 0:30 / /sys/fs/cgroup rw - {version} cgroup rw\n"),
+        )
+        .expect("mountinfo");
+        let fs = ProcFs::new(dir.path().to_path_buf());
+        let admitted = crate::cgroup_discovery::enabled(&fs, CollectorMode::Local, in_container);
+        assert!(!admitted);
+        let notify = inotify::init(inotify::CreateFlags::NONBLOCK).expect("inotify");
+        for name in ["10/cgroup", "self/cgroup"] {
+            inotify::add_watch(&notify, dir.path().join(name), inotify::WatchFlags::OPEN)
+                .expect("watch membership");
+        }
+        let mut scheduler = Scheduler::new(Intervals::default(), CollectorMode::Local, admitted);
+        let mut interner = Interner::new(DictLimits::default());
+        let mut users = SegmentUserNames::default();
+        let mut process_io = ProcessIoCredentials::new();
+        let start = std::time::Instant::now();
+        for (seconds, forced) in [(0, false), (1, true), (60, false)] {
+            let now = start + std::time::Duration::from_secs(seconds);
+            let due = scheduler.plan(now, forced);
+            scheduler.mark_segment_opened();
+            let recollection = scheduler.recollection_due(&due, now);
+            for due in [&due, &recollection] {
+                assert!(!due.has(SourceKind::OsCgroup));
+                assert!(!due.has(SourceKind::OsCgroupMapping));
+                let os = collect_os_sources(
+                    &fs,
+                    &SysFs::new(dir.path().join("sys")),
+                    &mut process_io,
+                    &mut interner,
+                    &mut users,
+                    &OsTick {
+                        scope: 0,
+                        ts: 7,
+                        in_container,
+                        collect_cgroups: admitted,
+                        collect_psi: true,
+                        due,
+                        cgroup_pass: None,
+                    },
+                );
+                assert!(os.cgroup_context.is_none());
+                assert!(os.cgroup_mapping.is_empty());
+                assert_eq!(os.processes.len(), 1);
+                assert_eq!(os.process_status.len(), 1);
+                assert_eq!(
+                    (os.processes[0].read_bytes, os.processes[0].write_bytes),
+                    (Some(100), Some(1000))
+                );
+                assert!(os.processes[0].starttime.0 > 0);
+                assert_eq!((os.processes[0].uid, os.processes[0].euid), (1000, 1001));
+                assert_eq!(
+                    os.processes[0].scope,
+                    if in_container {
+                        OsScope::Container
+                    } else {
+                        OsScope::Host
+                    }
+                    .as_u8()
+                );
+                assert!(!os.cpu.is_empty());
+                assert!(os.meminfo.is_some());
+                assert_eq!(os.psi.len(), usize::from(!in_container));
+                if !in_container {
+                    assert_eq!(os.psi[0].some_total, 10000);
+                }
+            }
+        }
+        let mut buf = [std::mem::MaybeUninit::uninit(); 512];
+        let mut events = inotify::Reader::new(&notify, &mut buf);
+        assert!(
+            matches!(events.next(), Err(rustix::io::Errno::AGAIN)),
+            "membership file was opened"
         );
     }
 }

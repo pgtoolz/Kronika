@@ -35,6 +35,8 @@ pub(crate) struct OsTick<'a> {
     pub(crate) scope: u8,
     pub(crate) ts: i64,
     pub(crate) in_container: bool,
+    pub(crate) collect_cgroups: bool,
+    pub(crate) collect_psi: bool,
     pub(crate) due: &'a DueSet,
     /// Reuse the cgroup selection and charged devices from this tick's discovery.
     pub(crate) cgroup_pass: Option<&'a CgroupPass>,
@@ -57,6 +59,7 @@ pub(crate) fn collect_os_sources(
         in_container,
         due,
         cgroup_pass,
+        ..
     } = *tick;
     let mut os = OsSources::default();
     if ![
@@ -83,7 +86,18 @@ pub(crate) fn collect_os_sources(
         }
     }
     if due.has(SourceKind::OsCore) {
-        core::collect_core_metrics(fs, sys, scope, ts, in_container, selected.as_ref(), &mut os);
+        core::collect_core_metrics(fs, scope, ts, &mut os);
+        if tick.collect_psi && (!in_container || selected.is_some()) {
+            core::collect_pressure_rows(
+                fs,
+                sys,
+                scope,
+                ts,
+                in_container,
+                selected.as_ref(),
+                &mut os,
+            );
+        }
     }
     // OsCore needs mountinfo for the container device filter in diskstats;
     // OsMountTopo needs it to build the attribution section rows.
@@ -154,7 +168,7 @@ pub(crate) fn collect_os_sources(
 }
 
 fn selected_cgroup(fs: &ProcFs, sys: &SysFs, tick: &OsTick<'_>) -> Option<cgroup::AncestorContext> {
-    if !tick.in_container {
+    if !tick.in_container || !tick.collect_cgroups {
         return None;
     }
     if let Some(pass) = tick.cgroup_pass {

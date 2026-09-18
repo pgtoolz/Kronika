@@ -98,8 +98,8 @@ CPU, memory or I/O resources.
 | `--os-mount-topo-interval-s` | `KRONIKA_OS_MOUNTTOPO_INTERVAL_S` | 60 | Mounts, filesystem capacity and device topology. |
 | `--os-process-interval-s` | `KRONIKA_OS_PROCESS_INTERVAL_S` | 5 | Process counters. |
 | `--os-process-status-interval-s` | `KRONIKA_OS_PROCESS_STATUS_INTERVAL_S` | 30 | Process status details. |
-| `--os-cgroup-interval-s` | `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 | Discover all accessible cgroup v2 groups and read their resource counters and limits. |
-| `--os-cgroup-mapping-interval-s` | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 | Process-to-cgroup v2 mappings. |
+| `--os-cgroup-interval-s` | `KRONIKA_OS_CGROUP_INTERVAL_S` | 30 | Discover all accessible cgroup v2 groups in containers and read their resource counters and limits. |
+| `--os-cgroup-mapping-interval-s` | `KRONIKA_OS_CGROUP_MAPPING_INTERVAL_S` | 30 | Process-to-cgroup v2 mappings in containers. |
 | `--log-interval-s` | `KRONIKA_LOG_INTERVAL_S` | 10 | Configured PostgreSQL/PgBouncer logs. |
 | `--pg-instance-interval-s` | `KRONIKA_PG_INTERVAL_S` | 30 | Server counters and settings. |
 | `--pg-activity-interval-s` | `KRONIKA_PG_ACTIVITY_INTERVAL_S` | 10 | Activity, lock waits and VACUUM progress; temporarily shortened when lock waits are detected. |
@@ -208,7 +208,7 @@ the server supports it. `require` accepts only TLS. `disable` turns TLS off.
 TLS connections validate the server certificate and hostname. For a private CA,
 set `--pg-ssl-root-cert /path/to/ca.pem`. The value `verify-full` is not supported.
 
-Start web over the same recording with `--sources postgresql` (or `KRONIKA_WEB_SOURCES=2`).
+Open the recording with [kronika-web](../kronika-web/README.md#run).
 Overall equals PostgreSQL Health, or is unknown when PostgreSQL Health cannot be calculated.
 
 In local recordings of a shared machine, Activity, Vacuum and Processes link
@@ -336,8 +336,8 @@ Discovery requires the [function privileges](#postgresql-role) listed above.
 
 ## Linux collection
 
-Linux collection runs only in `local` mode. On machines, VMs and containers,
-one pass discovers all visible, accessible cgroup v2 directories at startup
+Linux collection runs only in `local` mode. Cgroups are collected only in containers
+with an exposed cgroup v2 mount. One pass discovers all visible, accessible directories at startup
 and then every `--os-cgroup-interval-s` seconds (default 30 s). Empty and intermediate
 groups are included without requiring visible processes. Each group keeps its
 own path, identity and available CPU, memory, PIDs and per-device I/O values.
@@ -346,8 +346,9 @@ Missing fields stay unknown. Parent and child counters are not added together.
 Container resource context and PSI use the highest accessible
 ancestor of the collector. That group can include other containers. Its path
 does not establish a pod or PostgreSQL identity. Machine PSI still uses the
-host source. On v1-only systems cgroup metrics and process mappings are
-unavailable. Other enabled sources continue. See the
+host source. Machines and VMs retain their other OS and process metrics without
+cgroup collection. Containers without v2 skip cgroup metrics, mappings and PSI.
+See the
 [Linux reference](../../docs/metrics-linux.md#container-cgroups).
 
 Filesystem capacity is queried for `ext2`, `ext3`, `ext4`, `xfs`, `btrfs`,
@@ -373,7 +374,7 @@ storage access. Readiness and segment paths go to stdout.
 Structured logs go to stderr. In local mode, each `segment_write_finish` records `rss_kib`,
 the peak physical memory occupied by the process in KiB.
 
-In local mode, `cgroup_discovery_finish` reports group/device counts, `elapsed_us`,
+During container cgroup collection, `cgroup_discovery_finish` reports group/device counts, `elapsed_us`,
 process CPU `cpu_ticks` during acquisition and writing, and lifetime peak `rss_kib`.
 CPU ticks use the recorded `clock_ticks_per_sec`. Unavailable readings stay absent.
 

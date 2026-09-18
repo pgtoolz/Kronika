@@ -470,14 +470,15 @@ function App({ locale, onLocale, t }: {
   const refreshProgressAt = useRef(0)
   const beginRefresh = useCallback(() => {
     // Recover a silent request without interrupting a long, progressing stream.
-    if (refreshRequested.current && !refreshIsInactive(refreshProgressAt.current)) return
-    if (neighborRequest.current !== null || drawn.current === null || drawn.current !== selectedHour.current) return
+    if (refreshRequested.current && !refreshIsInactive(refreshProgressAt.current)) return false
+    if (neighborRequest.current !== null || drawn.current === null || drawn.current !== selectedHour.current) return false
     pendingRefresh.current = null
     refreshAwaitingSnapshot.current = false
     refreshRequested.current = true
     refreshProgressAt.current = Date.now()
     setRefreshing(true)
     setRefreshVersion((current) => current + 1)
+    return true
   }, [])
   const requestRefresh = beginRefresh
   const chooseCursor = useCallback((next: number) => {
@@ -832,8 +833,20 @@ function App({ locale, onLocale, t }: {
       })
       .catch(() => {})
   }, [backgroundReadyHour, foregroundKey, hour, refreshReady])
-  useEffect(() => KRONIKA_REPORT || hour === null || !refreshReady
-    ? undefined : scheduleRefresh(hour, requestRefresh), [hour, refreshReady, requestRefresh])
+  const automaticRefreshReady = useRef(refreshReady)
+  automaticRefreshReady.current = refreshReady
+  const refreshSchedule = useRef<ReturnType<typeof scheduleRefresh> | null>(null)
+  useEffect(() => {
+    if (KRONIKA_REPORT || hour === null) return
+    const schedule = scheduleRefresh(hour, () => selectedHour.current === hour
+      && automaticRefreshReady.current && requestRefresh())
+    refreshSchedule.current = schedule
+    return () => {
+      schedule.dispose()
+      refreshSchedule.current = null
+    }
+  }, [hour, requestRefresh])
+  useEffect(() => { refreshSchedule.current?.resume() }, [hour, refreshReady, refreshing])
   const denseMetadata = currentData.snapshotRows[0]
   const loadMoreDense = useCallback(() => {
     const next = denseMetadata?.hasMore === true ? denseMetadata.nextCursor : null
@@ -1235,7 +1248,7 @@ function App({ locale, onLocale, t }: {
           </div>
           <ProcessSummary cursor={cursor} dispatch={dispatchProcessSummary} enabled={processReadyHour === hour && foregroundReadyKey.current === foregroundKey} hour={hour} lens={lens} locale={locale} state={processSummary} t={t} />
         </div>
-        <ProcessesActivity cursor={cursor} hour={hour} locale={locale} onCursor={chooseCursor} onPattern={applyFind} t={t} ticksPerSecond={ticksPerSecond} />
+        <ProcessesActivity refreshRevision={refreshVersion} cursor={cursor} hour={hour} locale={locale} onCursor={chooseCursor} onPattern={applyFind} t={t} ticksPerSecond={ticksPerSecond} />
         <div className="process-main grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] overflow-hidden">
           <ProcessTable contextLabel={lens !== "tree" && context?.logicalName === "os_process" ? context.label : undefined} densePageState={lens === "tree" ? "idle" : densePageState} finding={selectedFinding?.logicalName === "os_process" ? selectedFinding : null} findingField={selectedFinding?.logicalName === "os_process" ? fieldNameForLocator(selectedFinding) : null} lens={lens} linkedPids={linkedPids} locale={locale} metadata={lens === "tree" ? undefined : denseMetadata} onContextClear={clearEntityContext} onLoadMore={loadMoreDense} onOrder={setOrder} onPattern={applyFind} onRetry={retryDense} onSelect={selectProcess} order={requestOrder} pattern={find} requestPhase={currentTableRequest} rows={processTableRows} searchRequest={visibleSearchRequest} selectedKey={selectedKey} t={t} ticksPerSecond={ticksPerSecond} />
         </div>

@@ -84,15 +84,9 @@ fn isolated(test: &str, env: &[(&str, OsString)], check: impl FnOnce()) {
 
 fn parse(args: &[&str]) -> Result<Config, clap::Error> {
     parse_from(
-        [
-            "kronika-web",
-            "--storage-dir",
-            "/recording",
-            "--sources",
-            "os",
-        ]
-        .into_iter()
-        .chain(args.iter().copied()),
+        ["kronika-web", "--storage-dir", "/recording"]
+            .into_iter()
+            .chain(args.iter().copied()),
     )
 }
 
@@ -108,15 +102,23 @@ fn required_options_and_optional_defaults_are_preserved() {
                 config.listen,
                 "127.0.0.1:8080".parse().expect("default address")
             );
-            assert_eq!(config.sources, 1);
+            assert_eq!(config.sources, 3);
             assert_eq!(config.account, None);
             assert!(!config.synthetic_demo);
             assert_eq!(config.export_gate.available_permits(), 1);
-            for args in [
-                vec!["kronika-web"],
-                vec!["kronika-web", "--sources", "os"],
-                vec!["kronika-web", "--storage-dir", "/recording"],
+            for (value, expected) in [
+                ("none", 0),
+                ("os", 1),
+                ("postgresql", 2),
+                ("all", 3),
+                ("0", 0),
+                ("1", 1),
+                ("2", 2),
+                ("3", 3),
             ] {
+                assert_eq!(parse(&["--sources", value]).expect(value).sources, expected);
+            }
+            for args in [vec!["kronika-web"], vec!["kronika-web", "--sources", "os"]] {
                 assert_eq!(
                     parse_from(args)
                         .expect_err("missing required option")
@@ -135,7 +137,7 @@ fn environment_fallbacks_preserve_existing_service_configuration() {
         &[
             ("KRONIKA_STORAGE_DIR", "/service-recording".into()),
             ("KRONIKA_WEB_LISTEN", "[::1]:9090".into()),
-            ("KRONIKA_WEB_SOURCES", "3".into()),
+            ("KRONIKA_WEB_SOURCES", "2".into()),
             ("KRONIKA_WEB_USER", "service-user".into()),
             ("KRONIKA_WEB_PASSWORD", "service-password".into()),
             ("KRONIKA_WEB_DEMO", "synthetic".into()),
@@ -144,7 +146,7 @@ fn environment_fallbacks_preserve_existing_service_configuration() {
             let config = parse_from(["kronika-web"]).expect("environment-only service");
             assert_eq!(config.data_root, std::path::Path::new("/service-recording"));
             assert_eq!(config.listen, "[::1]:9090".parse().expect("IPv6 address"));
-            assert_eq!(config.sources, 3);
+            assert_eq!(config.sources, 2);
             assert!(config.synthetic_demo);
             let account = config.account.expect("configured account");
             assert_eq!(account.user, "service-user");
@@ -167,6 +169,8 @@ fn cli_overrides_even_invalid_environment_values() {
         ],
         || {
             let config = parse(&[
+                "--sources",
+                "os",
                 "--listen",
                 "0.0.0.0:8081",
                 "--user",
@@ -259,6 +263,8 @@ fn invalid_cli_configuration_reports_options_without_credentials() {
                 ),
                 (vec!["--user", "PRIVATE_USER", "--password", ""], "is empty"),
                 (vec!["--listen", "localhost:8080"], "--listen"),
+                (vec!["--sources", "4"], "--sources"),
+                (vec!["--sources", "invalid"], "--sources"),
                 (vec!["--demo", "true"], "--demo"),
                 (vec!["--demo", ""], "--demo"),
                 (

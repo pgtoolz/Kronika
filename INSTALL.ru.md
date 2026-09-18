@@ -9,14 +9,14 @@
 
 ## 1. Скачивание и распаковка
 
-Скачайте [архив 1.2.0](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.0)
+Скачайте [архив 1.2.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.1)
 для своей архитектуры. Команды ниже — для x86-64. Для ARM64 задайте
 `target=aarch64-unknown-linux-musl`.
 
 ```sh
 target=x86_64-unknown-linux-musl
-archive="kronika-1.2.0-$target.tar.gz"
-curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.2.0/$archive"
+archive="kronika-1.2.1-$target.tar.gz"
+curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.2.1/$archive"
 tar -xzf "$archive"
 cd "${archive%.tar.gz}"
 ```
@@ -61,10 +61,7 @@ sudo /usr/local/bin/kronika-collector \
 
 `Ctrl+C` останавливает сбор. Для продолжения запустите ту же команду.
 
-Целевой объём хранения `--retention` по умолчанию равен `2GiB`.
-Для цели 10 GiB добавьте `--retention 10GiB`.
-Раздел [«Хранение»](bins/kronika-collector/README.ru.md#storage) описывает,
-какие файлы учитываются и в каком порядке удаляются старые записи.
+[Лимит хранения](bins/kronika-collector/README.ru.md#storage) по умолчанию — **2 GiB** (`--retention`).
 
 <a id="5-postgresql"></a>
 #### Подключение PostgreSQL
@@ -129,23 +126,20 @@ sudo install -d -m 0700 -o "$(id -u)" /var/lib/kronika
 <a id="4-запуск-web"></a>
 ## 4. Запуск веб-сервера
 
-Во втором терминале запустите веб-сервер с тем же каталогом записи.
+Запустите `kronika-web`, указав каталог данных сборщика.
 
 ### Для режима `local`
 
-Для Linux укажите `--sources os`, как ниже. Если также собирается
-PostgreSQL, используйте `--sources all`:
-
 ```sh
 sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources os
+  --listen 0.0.0.0:8080
 ```
 
 ### Для режима `postgresql`
 
 ```sh
 /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources postgresql
+  --listen 0.0.0.0:8080
 ```
 
 Откройте `http://<server-ip>:8080`.
@@ -158,9 +152,7 @@ sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
 Веб-серверу нужен доступ на запись в тот же каталог для создания поисковых
 индексов `.idx`.
 
-`--sources` (или `KRONIKA_WEB_SOURCES`) сообщает, какие источники настроены.
-Параметр не включает сбор и не скрывает записанные данные. Настройки входа описаны в
-[справочнике веб-сервера](bins/kronika-web/README.ru.md).
+Все параметры описаны в [справочнике веб-сервера](bins/kronika-web/README.ru.md).
 
 В примерах `--listen 0.0.0.0:8080` задаёт прослушивание всех IPv4-интерфейсов.
 Значение `--listen` по умолчанию — `127.0.0.1:8080`.

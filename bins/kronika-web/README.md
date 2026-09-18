@@ -22,7 +22,7 @@ Run `kronika-web --help` for all options and examples. Source: [config.rs](src/c
 | --- | --- | --- | --- |
 | `--storage-dir DIR` | `KRONIKA_STORAGE_DIR` | Required | Existing collector storage root containing `active.wal` and dated `YYYY/MM/DD/*.zms` files. Requires read/write access for `.idx` files and `.kronika-index.owner.lock`. |
 | `--listen IP:PORT` | `KRONIKA_WEB_LISTEN` | `127.0.0.1:8080` | IP address and port, including IPv6 as `[::1]:8080`. Hostnames are not accepted. Plain HTTP. |
-| `--sources SOURCES` | `KRONIKA_WEB_SOURCES` | Required | `none`, `os`, `postgresql`, or `all`. Legacy bitsets also work: `0` neither, `1` OS, `2` PostgreSQL, `3` both. |
+| `--sources SOURCES` | `KRONIKA_WEB_SOURCES` | `all` | `none`, `os`, `postgresql`, or `all`. Legacy bitsets also work: `0` neither, `1` OS, `2` PostgreSQL, `3` both. |
 | `--user USER` | `KRONIKA_WEB_USER` | Unset | Nonempty user name. |
 | `--password PASSWORD` | `KRONIKA_WEB_PASSWORD` | Unset | Nonempty password. |
 | `--demo synthetic` | `KRONIKA_WEB_DEMO` | Unset | Marks the catalog and interface as a synthetic recording. Only `synthetic` is accepted. |
@@ -35,30 +35,25 @@ Credentials can come from options, environment variables, or a combination of bo
 To clear inherited credentials or demo mode, unset the corresponding environment
 variables before starting the process.
 
-`--sources` sets catalog `configured` fields. Source names and numeric values work
-in both the option and its environment fallback. In the browser, configured
-PostgreSQL suppresses its no-data tooltip. Recorded PostgreSQL data also
-suppresses it. The OS flag remains catalog metadata. All tabs and recorded
-sections remain available. Recorded health uses collector metadata.
+Use `--sources` or `KRONIKA_WEB_SOURCES` to override the catalog's `configured`
+flags. This does not filter recorded data or change collection.
 
 ## Run
 
-Use the collector's recording directory. The example marks Linux as configured.
-Use `--sources all` for Linux and PostgreSQL, or `--sources postgresql` for a
-PostgreSQL-only recording.
+Use the collector's recording directory.
 
 ```sh
 sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources os
+  --listen 0.0.0.0:8080
 ```
 
 Open `http://<server-ip>:8080`.
 
 To require sign-in, add `--user kronika --password 'replace-with-a-random-password'`.
-The equivalent environment configuration remains supported:
+Environment variables:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika KRONIKA_WEB_SOURCES=1 \
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_LISTEN=0.0.0.0:8080 KRONIKA_WEB_USER=kronika \
   KRONIKA_WEB_PASSWORD='replace-with-a-random-password' /usr/local/bin/kronika-web
 ```

@@ -1,4 +1,4 @@
-use super::{OsSources, ProcFs, SysFs, collect_core_metrics};
+use super::{OsSources, ProcFs, collect_core_metrics};
 use std::path::Path;
 
 const CPU: &str = "cpu 30 0 6 90\ncpu0 10 0 2 40\ncpu1 20 0 4 50\n";
@@ -20,10 +20,10 @@ fn core_metrics_collect_all_cpus_and_system_rows_with_tick_identity() {
     let dir = tempfile::tempdir().expect("proc root");
     write_core_files(dir.path(), &format!("{CPU}{STAT}"));
     let fs = ProcFs::new(dir.path().to_path_buf());
-    let sys = SysFs::new(dir.path().join("sys"));
+
     let mut os = OsSources::default();
 
-    collect_core_metrics(&fs, &sys, 4, 7, false, None, &mut os);
+    collect_core_metrics(&fs, 4, 7, &mut os);
 
     assert_eq!(
         os.cpu
@@ -66,10 +66,10 @@ fn cpu_and_stat_parse_failures_do_not_block_each_other_or_later_files() {
         let dir = tempfile::tempdir().expect("proc root");
         write_core_files(dir.path(), &stat);
         let fs = ProcFs::new(dir.path().to_path_buf());
-        let sys = SysFs::new(dir.path().join("sys"));
+
         let mut os = OsSources::default();
 
-        collect_core_metrics(&fs, &sys, 0, 9, false, None, &mut os);
+        collect_core_metrics(&fs, 0, 9, &mut os);
 
         assert_eq!(os.cpu.len(), cpu_rows);
         assert_eq!(os.stat.is_some(), has_stat);
@@ -91,9 +91,9 @@ fn failed_required_files_preserve_prior_rows_while_other_files_advance() {
             let dir = tempfile::tempdir().expect("proc root");
             write_core_files(dir.path(), &format!("{CPU}{STAT}"));
             let fs = ProcFs::new(dir.path().to_path_buf());
-            let sys = SysFs::new(dir.path().join("sys"));
+
             let mut os = OsSources::default();
-            collect_core_metrics(&fs, &sys, 4, 7, false, None, &mut os);
+            collect_core_metrics(&fs, 4, 7, &mut os);
             let prior = (os.cpu.clone(), os.stat, os.meminfo, os.loadavg, os.vmstat);
             if let Some(content) = replacement {
                 std::fs::write(dir.path().join(name), content).expect("replace proc file");
@@ -101,7 +101,7 @@ fn failed_required_files_preserve_prior_rows_while_other_files_advance() {
                 std::fs::remove_file(dir.path().join(name)).expect("remove proc file");
             }
 
-            collect_core_metrics(&fs, &sys, 0, 9, false, None, &mut os);
+            collect_core_metrics(&fs, 0, 9, &mut os);
 
             match name {
                 "stat" => assert_eq!((&os.cpu, os.stat), (&prior.0, prior.1)),

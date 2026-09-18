@@ -17,7 +17,7 @@ A recorded hour, 5 September 2026, 19:00–20:00 UTC:
 
 ## Install and run
 
-[Install Kronika 1.2.0](INSTALL.md) from a [Linux release archive](docs/releases.md#download),
+[Install Kronika 1.2.1](INSTALL.md) from a [Linux release archive](docs/releases.md#download),
 or [build from source](docs/build.md).
 
 Choose `local` to record Linux and, optionally, PostgreSQL in the same VM or pod.
@@ -70,25 +70,22 @@ To collect from several PostgreSQL servers, run a `kronika-collector` process
 for each server with its DSN and a separate storage directory. See the
 [two-server example](bins/kronika-collector/README.md#several-postgresql-servers).
 
-### Open the web interface
+### View recorded data
 
-Start `kronika-web` in a second terminal with the collector’s data directory.
+Run `kronika-web` with the collector’s data directory.
 
 #### For `local` mode
 
-Use `--sources os` for Linux only, as below. Use `--sources all`
-when also collecting PostgreSQL:
-
 ```sh
 sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources os
+  --listen 0.0.0.0:8080
 ```
 
 #### For `postgresql` mode
 
 ```sh
 /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources postgresql
+  --listen 0.0.0.0:8080
 ```
 
 Open `http://<server-ip>:8080`.
@@ -106,10 +103,9 @@ For a PostgreSQL workload with roughly 500 tables and 3,000 indexes, estimate
 **about 200 MB of compressed recordings per day**. Volume depends on collection
 intervals and the number of recorded objects and distinct queries.
 
-`--retention 2GiB` sets the default **2 GiB** storage budget,
-including journals and indexes. When the target is exceeded, the collector
-automatically removes the oldest finished recordings and their indexes.
-For **10 GiB**, set `--retention 10GiB`.
+The default storage limit is **2 GiB** (`--retention`), including journals and
+indexes. When the limit is exceeded, the collector removes the oldest finished
+recordings and their indexes.
 
 `auto` and `auto:P` instead set a used-space percentage target for the whole
 backing filesystem. See [storage configuration](bins/kronika-collector/README.md#storage)

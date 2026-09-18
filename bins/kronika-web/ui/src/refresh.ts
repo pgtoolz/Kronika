@@ -36,11 +36,12 @@ export function refreshedCursor(current: number, followsLatest: boolean, timelin
 
 export function scheduleRefresh(
   hour: number,
-  refresh: () => void,
+  refresh: () => boolean | void,
   visibility: VisibilityTarget = document,
   timers: TimerTarget = window,
   now: () => number = () => Date.now() * 1_000,
-): () => void {
+): { dispose: () => void; resume: () => void } {
+  let pending = visibility.hidden && isCurrentHour(hour, now())
   let timer: number | null = null
   const stop = () => {
     if (timer !== null) timers.clearTimeout(timer)
@@ -53,19 +54,34 @@ export function scheduleRefresh(
     if (visibility.hidden || !isCurrentHour(hour, now())) return
     timer = timers.setTimeout(tick, REFRESH_INTERVAL_MS)
   }
+  const resume = () => {
+    if (!pending || visibility.hidden) return
+    pending = false
+    if (refresh() === false) pending = true
+  }
   const tick = () => {
     timer = null
     try {
-      if (!visibility.hidden && isCurrentHour(hour, now())) refresh()
+      if (pending) resume()
+      else if (!visibility.hidden && isCurrentHour(hour, now())) refresh()
     } finally {
       arm()
     }
   }
-  const changed = () => { if (visibility.hidden) stop(); else tick() }
+  const changed = () => {
+    // A return can finish the hour that was still open when the tab hid.
+    pending ||= isCurrentHour(hour, now())
+    if (visibility.hidden) stop()
+    else tick()
+  }
   arm()
   visibility.addEventListener("visibilitychange", changed)
-  return () => {
-    stop()
-    visibility.removeEventListener("visibilitychange", changed)
+  return {
+    resume,
+    dispose: () => {
+      pending = false
+      stop()
+      visibility.removeEventListener("visibilitychange", changed)
+    },
   }
 }

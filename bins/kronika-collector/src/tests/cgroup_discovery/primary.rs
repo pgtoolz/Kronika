@@ -79,6 +79,9 @@ fn prepare(root: &Path, denied: bool) {
 }
 
 fn sample(root: &Path, denied: bool, observation: i64, devices: u32) {
+    if !denied && observation == 2 {
+        std::fs::create_dir(root.join("sys/fs/cgroup/new-group")).expect("new group");
+    }
     let group = if denied {
         "sys/fs/cgroup/work"
     } else {
@@ -179,9 +182,11 @@ fn scenario(root: &Path, denied: bool) {
     config.sys_root = root.join("sys");
     let (owner, mut journal) = open_journal(&storage, 2);
     let mut state = SegmentState::default();
-    let mut sched = Scheduler::new(Intervals::default(), true);
     let fs = config.proc_fs();
     let sys = config.sys_fs();
+    let admitted = enabled(&fs, config.mode, true);
+    let mut sched = Scheduler::new(Intervals::default(), config.mode, admitted);
+    assert!(sched.collects_cgroups());
     let first = crate::clock::collection_timestamp().expect("clock");
     let devices = if denied { 2 } else { 1100 };
     let mut selected_identity = None;
@@ -220,7 +225,11 @@ fn scenario(root: &Path, denied: bool) {
             Some(150_000)
         );
         assert_eq!(pass.selected.context.effective_memory_max, Some(1_000_000));
-        assert_eq!(pass.stats.groups, if denied { 3 } else { 1 });
+        let groups = if denied { 3 } else { observation };
+        assert_eq!(
+            pass.stats.groups,
+            usize::try_from(groups).expect("group count")
+        );
         assert_eq!(
             pass.stats.io_rows,
             devices as usize * if denied { 3 } else { 1 }

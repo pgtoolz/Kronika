@@ -24,7 +24,7 @@
 | --- | --- | --- | --- |
 | `--storage-dir DIR` | `KRONIKA_STORAGE_DIR` | Обязателен | Существующий каталог записи сборщика с `active.wal` и файлами `YYYY/MM/DD/*.zms`. Нужны права чтения и записи для индексов `.idx` и файла блокировки `.kronika-index.owner.lock`. |
 | `--listen IP:PORT` | `KRONIKA_WEB_LISTEN` | `127.0.0.1:8080` | IP-адрес и порт, в том числе IPv6 вида `[::1]:8080`. Имена узлов не принимаются. Соединение использует HTTP без TLS. |
-| `--sources SOURCES` | `KRONIKA_WEB_SOURCES` | Обязателен | `none`, `os`, `postgresql` или `all`. Прежние числа тоже принимаются: `0` — ни одного источника, `1` — Linux, `2` — PostgreSQL, `3` — оба. |
+| `--sources SOURCES` | `KRONIKA_WEB_SOURCES` | `all` | `none`, `os`, `postgresql` или `all`. Прежние числа тоже принимаются: `0` — ни одного источника, `1` — Linux, `2` — PostgreSQL, `3` — оба. |
 | `--user USER` | `KRONIKA_WEB_USER` | Не задан | Непустое имя пользователя. |
 | `--password PASSWORD` | `KRONIKA_WEB_PASSWORD` | Не задан | Непустой пароль. |
 | `--demo synthetic` | `KRONIKA_WEB_DEMO` | Не задан | Помечает запись в каталоге и интерфейсе как синтетическую. Принимается только `synthetic`. |
@@ -37,30 +37,25 @@
 или сочетанием обоих способов. Чтобы отключить унаследованные учётные данные
 или режим демозаписи, удалите соответствующие переменные из окружения перед запуском.
 
-`--sources` заполняет поля `configured` в каталоге данных. Имена и числа принимаются
-как в параметре, так и в переменной окружения. Признак PostgreSQL убирает подсказку
-об отсутствии данных. Она также исчезает, если запись уже содержит данные PostgreSQL.
-Признак Linux только сохраняется в каталоге. При любом значении доступны все вкладки
-и записанные разделы. Показатель Health рассчитывается по сведениям сборщика.
+Параметр `--sources` или `KRONIKA_WEB_SOURCES` позволяет изменить признаки
+`configured` в каталоге. Он не фильтрует записанные данные и не меняет сбор.
 
 ## Запуск
 
-Укажите каталог записи сборщика. В примере настроен источник Linux.
-Для Linux вместе с PostgreSQL задайте `--sources all`, а для записи только
-PostgreSQL — `--sources postgresql`.
+Укажите каталог записи сборщика.
 
 ```sh
 sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
-  --listen 0.0.0.0:8080 --sources os
+  --listen 0.0.0.0:8080
 ```
 
 Откройте `http://<server-ip>:8080`.
 
 Для входа по паролю добавьте `--user kronika --password 'replace-with-a-random-password'`.
-Эквивалентная настройка через переменные окружения также поддерживается:
+Переменные окружения:
 
 ```sh
-sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika KRONIKA_WEB_SOURCES=1 \
+sudo env KRONIKA_STORAGE_DIR=/var/lib/kronika \
   KRONIKA_WEB_LISTEN=0.0.0.0:8080 KRONIKA_WEB_USER=kronika \
   KRONIKA_WEB_PASSWORD='replace-with-a-random-password' /usr/local/bin/kronika-web
 ```

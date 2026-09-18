@@ -35,7 +35,6 @@ KRONIKA_RETENTION=2GiB
 ```ini
 KRONIKA_STORAGE_DIR=/var/lib/kronika
 KRONIKA_WEB_LISTEN=0.0.0.0:8080
-KRONIKA_WEB_SOURCES=1
 ```
 
 To require sign-in, add these credentials to `web.env`:
@@ -56,13 +55,9 @@ connection string to `collector.env`:
 KRONIKA_PG_DSN="host=127.0.0.1 port=5432 user=kronika_monitor password=replace-with-password dbname=postgres"
 ```
 
-For PostgreSQL on the collector machine, use the connection above and set
-`KRONIKA_WEB_SOURCES=3` in `web.env` to declare Linux and PostgreSQL.
-
 For PostgreSQL-only collection, set `KRONIKA_COLLECTOR_MODE=postgresql` in
-`collector.env` and `KRONIKA_WEB_SOURCES=2` in `web.env`. PostgreSQL may be local
-or remote. Collector mode controls recording. The web setting declares sources
-in the catalog. See [connection settings](../bins/kronika-collector/README.md#remote-postgresql).
+`collector.env`. PostgreSQL may be local or remote.
+See [connection settings](../bins/kronika-collector/README.md#remote-postgresql).
 All parameters:
 [collector](../bins/kronika-collector/README.md) and
 [web](../bins/kronika-web/README.md).
@@ -136,11 +131,11 @@ address. The same listener serves `/mcp`.
 ## Operations
 
 After editing an environment file, restart the affected service. For example,
-to add PostgreSQL collection and change the web source setting:
+to add PostgreSQL collection:
 
 ```sh
-sudoedit /etc/kronika/collector.env /etc/kronika/web.env
-sudo systemctl restart kronika-collector kronika-web
+sudoedit /etc/kronika/collector.env
+sudo systemctl restart kronika-collector
 ```
 
 | Operation | Command |
