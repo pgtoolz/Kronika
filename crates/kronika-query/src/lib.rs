@@ -92,6 +92,7 @@ pub struct QueryContext {
     indexes: Option<std::sync::Arc<dyn IndexProvider>>,
     configured_sources: u32,
     synthetic_demo: bool,
+    build: Option<&'static str>,
 }
 
 impl std::fmt::Debug for QueryContext {
@@ -101,6 +102,7 @@ impl std::fmt::Debug for QueryContext {
             .field("indexes", &self.indexes)
             .field("configured_sources", &self.configured_sources)
             .field("synthetic_demo", &self.synthetic_demo)
+            .field("build", &self.build)
             .finish()
     }
 }
@@ -118,7 +120,16 @@ impl QueryContext {
             indexes: None,
             configured_sources,
             synthetic_demo,
+            build: None,
         }
+    }
+
+    /// Name the build serving this context; catalog records carry it beside
+    /// the version so an interface can tell one deployment from the next.
+    #[must_use]
+    pub const fn with_build(mut self, build: &'static str) -> Self {
+        self.build = Some(build);
+        self
     }
 
     /// Add the derived-index source used by indexed queries.
@@ -316,6 +327,7 @@ pub fn execute(
             request,
             context.configured_sources,
             context.synthetic_demo,
+            context.build,
         )?),
         QueryRequest::Heatmap(request) => Prepared::Heatmap(heatmap::prepare(
             std::sync::Arc::clone(&context.dataset),
@@ -335,6 +347,7 @@ pub fn execute(
             request,
             context.configured_sources,
             context.synthetic_demo,
+            context.build,
         )?),
         QueryRequest::Snapshot(request) => {
             return snapshot::prepare_snapshot(context, request)?.finish();

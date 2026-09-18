@@ -142,7 +142,7 @@ fn empty_base_hour_records_are_exact() {
             b"{\"available_hours\":[\"0\"],\"from\":\"10\",\"record\":\"hour\",\"to\":\"20\"}\n"
                 .to_vec(),
             concat!(
-                "{\"demo\":null,\"from\":\"10\",\"kronika_version\":\"",
+                "{\"demo\":null,\"from\":\"10\",\"kronika_build\":null,\"kronika_version\":\"",
                 env!("CARGO_PKG_VERSION"),
                 "\",\"record\":\"catalog\",",
                 "\"source_families\":[{\"configured\":true,\"metrics_present\":false,",
@@ -271,6 +271,7 @@ fn pinned_prefix_restores_time_order_after_validating_listed_ids() {
         request(vec![1, 2, 3]),
         1,
         false,
+        None,
     )
     .expect("valid pinned prefix");
     assert_eq!(
@@ -287,7 +288,8 @@ fn pinned_prefix_restores_time_order_after_validating_listed_ids() {
             None,
             request(vec![1, 3, 2]),
             1,
-            false
+            false,
+            None,
         ),
         Err(QueryError::BadCursor)
     ));

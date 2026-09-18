@@ -246,8 +246,9 @@ export interface TimelineData {
   readonly syntheticDemo?: boolean
   readonly postgresqlConfigured?: boolean
   readonly postgresqlPresent?: boolean
-  // Server version; absent from older servers.
+  // Server version and build; absent from older servers and standalone reports.
   readonly kronikaVersion?: string
+  readonly kronikaBuild?: string
 }
 
 export interface TimelineRange {
@@ -433,6 +434,7 @@ export async function loadTimeline(
     postgresqlConfigured: sourceConfigured(catalog, "postgresql"),
     postgresqlPresent: sourceMetricsPresent(catalog, "postgresql"),
     ...(typeof catalog?.["kronika_version"] === "string" ? { kronikaVersion: catalog["kronika_version"] } : {}),
+    ...(typeof catalog?.["kronika_build"] === "string" ? { kronikaBuild: catalog["kronika_build"] } : {}),
   }
 }
 

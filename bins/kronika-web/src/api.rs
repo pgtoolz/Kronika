@@ -74,6 +74,10 @@ pub(crate) fn prepare(
     if matches!(request, QueryRequest::Index(_) | QueryRequest::Hour(_)) {
         context = context.with_index_provider(dataset);
     }
+    let build = env!("KRONIKA_BUILD_COMMIT");
+    if !build.is_empty() {
+        context = context.with_build(build);
+    }
     let execution = match request {
         QueryRequest::Snapshot(request) => {
             let preparation = kronika_query::snapshot::prepare_snapshot(&context, request)?;

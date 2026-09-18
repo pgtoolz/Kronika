@@ -46,7 +46,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rustc-env=KRONIKA_UI_CSP={csp}");
     println!("cargo:rustc-env=KRONIKA_UI_GZIP_LEN={}", compressed.len());
     println!("cargo:rustc-env=KRONIKA_UI_IDENTITY_LEN={}", identity.len());
+    println!("cargo:rerun-if-env-changed=KRONIKA_BUILD_COMMIT");
+    println!("cargo:rustc-env=KRONIKA_BUILD_COMMIT={}", build_commit());
     Ok(())
+}
+
+/// The short commit of the checkout, the `KRONIKA_BUILD_COMMIT` override for
+/// builds without Git, or nothing when neither is known.
+fn build_commit() -> String {
+    if let Ok(commit) = std::env::var("KRONIKA_BUILD_COMMIT") {
+        return commit.trim().to_owned();
+    }
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    };
+    if let Some(dir) = git(&["rev-parse", "--absolute-git-dir"]) {
+        println!("cargo:rerun-if-changed={dir}/HEAD");
+        println!("cargo:rerun-if-changed={dir}/logs/HEAD");
+    }
+    git(&["rev-parse", "--short=7", "HEAD"]).unwrap_or_default()
 }
 
 fn decode_all(compressed: &[u8]) -> io::Result<Vec<u8>> {

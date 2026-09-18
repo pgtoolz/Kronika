@@ -49,7 +49,7 @@ import { ExportProvider } from "./export-context"
 import { hourRange, rangeOnHour, type ExportRange } from "./export-range"
 import { ExportDialog } from "./export-dialog"
 import { findingProjection } from "./finding-presentation"
-import { HelpPanel, type Translate } from "./help"
+import { HelpPanel, type Translate, versionLabel } from "./help"
 import { McpPanel } from "./mcp-connect"
 import { MobileControls } from "./mobile-controls"
 import { useHistoryRequest } from "./history-request"
@@ -256,6 +256,7 @@ function App({ locale, onLocale, t }: {
   const [timelineData, setTimelineData] = useState<HourData>(EMPTY_DATA)
   const [backgroundTimeline, setBackgroundTimeline] = useState<TimelineData | null>(null)
   const [serverVersion, setServerVersion] = useState<string | null>(null)
+  const [serverBuild, setServerBuild] = useState<string | null>(null)
   const backgroundTimelineRef = useRef(backgroundTimeline)
   backgroundTimelineRef.current = backgroundTimeline
   const [backgroundReadyHour, setBackgroundReadyHour] = useState<number | null>(null)
@@ -448,6 +449,7 @@ function App({ locale, onLocale, t }: {
       setAvailableHours(pending.timeline.availableHours)
       setSegments(pending.timeline.segments)
       setServerVersion(pending.timeline.kronikaVersion ?? null)
+      setServerBuild(pending.timeline.kronikaBuild ?? null)
       setTimelineData((current) => withTimelineLanes(hourOf(pending.timeline), {
         contexts: current.laneContexts,
         points: current.lanePoints,
@@ -530,6 +532,7 @@ function App({ locale, onLocale, t }: {
         setHour(timeline.hour)
         setSegments(timeline.segments)
         setServerVersion(timeline.kronikaVersion ?? null)
+        setServerBuild(timeline.kronikaBuild ?? null)
         setTimelineData(hourOf(timeline))
         setBackgroundTimeline(timeline)
         setSnapshotReloadVersion((version) => version + 1)
@@ -604,6 +607,7 @@ function App({ locale, onLocale, t }: {
         setAvailableHours(timeline.availableHours)
         setSegments(timeline.segments)
         setServerVersion(timeline.kronikaVersion ?? null)
+        setServerBuild(timeline.kronikaBuild ?? null)
         setTimelineData((current) => neighborHour === hour
           ? withTimelineLanes(hourOf(timeline), { contexts: current.laneContexts, points: current.lanePoints })
           : hourOf(timeline))
@@ -1165,7 +1169,7 @@ function App({ locale, onLocale, t }: {
     {data.syntheticDemo === true && <p className="pointer-events-none fixed bottom-2 left-2 z-[70] m-0 rounded border border-line3 bg-s1/95 px-2 py-1 font-sans text-[11px] font-medium tracking-[0.04em] text-fg3 shadow-sm" data-testid="demo-notice">{t("demo.synthetic")}</p>}
     <header className="topbar [.pg-table-shell>&]:flex-none">
       <span className="flex flex-none items-center text-accent2"><Activity aria-hidden="true" size={15} strokeWidth={2} /></span>
-      <h1 title={serverVersion === null ? undefined : `${t("app.title")} ${serverVersion}`}>{database === null ? t("app.title") : `${t("app.title")} — ${database}`}</h1>
+      <h1 title={serverVersion === null ? undefined : versionLabel(t("app.title"), serverVersion, serverBuild)}>{database === null ? t("app.title") : `${t("app.title")} — ${database}`}</h1>
 
       <nav aria-label={t("nav.sources")} className="source-tabs max-[760px]:overflow-x-auto">
         {osEnabled && <button aria-current={visibleSource === "host" ? "page" : undefined} className={visibleSource === "host" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(null); setSystemFocus(null); setSelectedKey(null); setInspectorPanel(null); setSource("host") }} type="button">{t("nav.host")}</button>}
@@ -1252,7 +1256,7 @@ function App({ locale, onLocale, t }: {
     </ExportProvider>
     {!KRONIKA_REPORT && exportOpen && hour !== null && exportRange !== null && <ExportDialog availableHours={availableHours} cursor={cursor} hour={hour} locale={locale} onActiveChange={setExportActive} onClose={dismissExport} onRange={setExportRange} range={exportRange} t={t} />}
 
-    {helpOpen && <HelpPanel items={helpItems} onClose={() => setHelpOpen(false)} t={t} />}
+    {helpOpen && <HelpPanel build={serverBuild} items={helpItems} onClose={() => setHelpOpen(false)} t={t} version={serverVersion} />}
     {!KRONIKA_REPORT && mcpOpen && <McpPanel database={database} onClose={() => setMcpOpen(false)} t={t} />}
   </main></CursorNavigationContext></DisplayTimeScope>
 }

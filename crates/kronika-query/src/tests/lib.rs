@@ -99,7 +99,7 @@ fn catalog_records_are_exact_and_storage_neutral() {
         )],
         warnings: Vec::new(),
     });
-    let context = QueryContext::new(dataset, 0b11, false);
+    let context = QueryContext::new(dataset, 0b11, false).with_build("abc1234");
     let execution = execute(
         &context,
         QueryRequest::Catalog(CatalogRequest {
@@ -117,7 +117,7 @@ fn catalog_records_are_exact_and_storage_neutral() {
         records.0,
         [
             concat!(
-                "{\"demo\":null,\"from\":\"10\",\"kronika_version\":\"",
+                "{\"demo\":null,\"from\":\"10\",\"kronika_build\":\"abc1234\",\"kronika_version\":\"",
                 env!("CARGO_PKG_VERSION"),
                 "\",\"record\":\"catalog\",",
                 "\"source_families\":[{\"configured\":true,\"metrics_present\":true,",

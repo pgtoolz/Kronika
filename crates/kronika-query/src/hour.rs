@@ -60,6 +60,7 @@ pub(crate) fn prepare(
     request: HourRequest,
     configured_sources: u32,
     synthetic_demo: bool,
+    build: Option<&'static str>,
 ) -> Result<PreparedHour, QueryError> {
     let requested = request.window;
     let discovery = dataset.catalog()?;
@@ -94,9 +95,15 @@ pub(crate) fn prepare(
         pin_segments(dataset.as_ref(), &mut segments, expected, request.active)?;
         segments.sort_by_key(DatasetSegment::min_ts);
     }
+    // The catalog record names the serving build, so a new deployment must
+    // not validate against a body cached from the previous one.
     let shape = format!(
-        "window={window:?};hours={hours:?};series={:?};part={:?};segments={:?};active={:?};sources={configured_sources};demo={synthetic_demo}",
-        request.series, request.part, request.segments, request.active,
+        "window={window:?};hours={hours:?};series={:?};part={:?};segments={:?};active={:?};sources={configured_sources};demo={synthetic_demo};version={};build={build:?}",
+        request.series,
+        request.part,
+        request.segments,
+        request.active,
+        env!("CARGO_PKG_VERSION"),
     );
     let validator_segments = if request.part == HourPart::Base || segments.is_empty() || !clean {
         None
@@ -125,6 +132,7 @@ pub(crate) fn prepare(
             window,
             configured_sources,
             synthetic_demo,
+            build,
         )
     });
     Ok(PreparedHour {

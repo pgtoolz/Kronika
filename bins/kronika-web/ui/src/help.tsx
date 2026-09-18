@@ -192,17 +192,27 @@ export function placeTooltip(
   return { left, placement, top }
 }
 
+// «Kronika 1.1.2 · 94cb118»: the served version and, when the server knows
+// it, the commit it was built from.
+export function versionLabel(title: string, version: string, build: string | null): string {
+  return build === null ? `${title} ${version}` : `${title} ${version} · ${build}`
+}
+
 export function HelpPanel({
+  build = null,
   items,
   onClose,
   t,
+  version = null,
 }: {
+  readonly build?: string | null
   readonly items: readonly { readonly label: string; readonly help: string }[]
   readonly onClose: () => void
   readonly t: Translate
+  readonly version?: string | null
 }) {
   return (
-    <aside aria-label={t("help.title")} className="fixed bottom-0 right-0 top-0 z-[100] w-[min(92vw,430px)] max-w-[430px] overflow-auto border-l border-line4 bg-s1 p-[18px] shadow-[-20px_0_50px_var(--color-shadow-a)]" data-testid="help-panel">
+    <aside aria-label={t("help.title")} className="fixed bottom-0 right-0 top-0 z-[100] flex w-[min(92vw,430px)] max-w-[430px] flex-col overflow-auto border-l border-line4 bg-s1 p-[18px] shadow-[-20px_0_50px_var(--color-shadow-a)]" data-testid="help-panel">
       <div className="flex items-center justify-between">
         <div>
           <p className="m-0 text-xs text-fg4">?</p>
@@ -214,6 +224,7 @@ export function HelpPanel({
       <dl className="my-[18px]">
         {items.map((item) => <div className="border-t border-line2 py-3" key={item.label}><dt className="text-sm text-fg">{t(item.label)}</dt><dd className="mt-[5px] text-sm leading-[1.6] text-fg3">{t(item.help)}</dd></div>)}
       </dl>
+      {version !== null && <p className="sticky bottom-0 m-0 mt-auto border-t border-line2 bg-s1 pt-2 font-mono text-xs text-fg4" data-testid="help-version">{versionLabel(t("app.title"), version, build)}</p>}
     </aside>
   )
 }

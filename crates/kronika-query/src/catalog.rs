@@ -65,6 +65,7 @@ pub fn catalog_facts(
         request,
         context.configured_sources,
         context.synthetic_demo,
+        context.build,
     )?;
     Ok(prepared.facts())
 }
@@ -74,6 +75,7 @@ pub(crate) struct PreparedCatalog {
     window: Window,
     configured_sources: u32,
     synthetic_demo: bool,
+    build: Option<&'static str>,
     present_sources: Option<u32>,
     metric_sources: Option<u32>,
 }
@@ -84,6 +86,7 @@ impl PreparedCatalog {
         request: CatalogRequest,
         configured_sources: u32,
         synthetic_demo: bool,
+        build: Option<&'static str>,
     ) -> Result<Self, QueryError> {
         let catalog = dataset.catalog()?;
         let listing = catalog.segments(SegmentSelection::new(SegmentBounds::inclusive(
@@ -95,6 +98,7 @@ impl PreparedCatalog {
             window: request.window,
             configured_sources,
             synthetic_demo,
+            build,
             present_sources: None,
             metric_sources: None,
         })
@@ -105,12 +109,14 @@ impl PreparedCatalog {
         window: Window,
         configured_sources: u32,
         synthetic_demo: bool,
+        build: Option<&'static str>,
     ) -> Self {
         Self {
             listing,
             window,
             configured_sources,
             synthetic_demo,
+            build,
             present_sources: None,
             metric_sources: None,
         }
@@ -150,6 +156,7 @@ impl PreparedCatalog {
                 "to": self.window.to.map(|value| value.to_string()),
                 "demo": self.synthetic_demo.then_some("synthetic"),
                 "kronika_version": env!("CARGO_PKG_VERSION"),
+                "kronika_build": self.build,
                 "source_families": source_family_values(
                     self.configured_sources,
                     present_sources,
