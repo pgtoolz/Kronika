@@ -120,22 +120,22 @@ fn prepare_batch(
         unique,
         original_to_unique,
     } = validated;
+    let (scan_from, scan_to_exclusive) = scan_bounds(&query);
     let listing = {
         let catalog = dataset
             .catalog()
             .map_err(|error| HeatmapError::storage(0, error))?;
         catalog
             .segments(SegmentSelection::new(SegmentBounds::half_open(
-                query.range.from,
-                query.range.to_exclusive,
+                scan_from,
+                scan_to_exclusive,
             )))
             .map_err(|error| HeatmapError::storage(0, error))?
     };
     let validator_available = listing.warnings.is_empty();
     let mut segments = listing.segments;
-    segments.retain(|segment| {
-        segment.max_ts() >= query.range.from && segment.min_ts() < query.range.to_exclusive
-    });
+    segments
+        .retain(|segment| segment.max_ts() >= scan_from && segment.min_ts() < scan_to_exclusive);
     segments.sort_by_key(DatasetSegment::min_ts);
     let validator_shape = format!("summary-v1:{query:?}");
     Ok(PreparedHeatmapBatch {
@@ -147,6 +147,29 @@ fn prepare_batch(
         validator_shape,
         validator_available,
     })
+}
+
+/// Segments are scanned one grid column past each edge of the range: the last
+/// sample before the range and the first sample after it close the edge
+/// columns, which the sampling phase would otherwise leave empty.
+fn scan_bounds(query: &HeatmapBatchQuery) -> (i64, i64) {
+    let range = query.range;
+    let margin = query
+        .items
+        .iter()
+        .filter_map(|item| match item.view {
+            HeatmapView::Grid { columns, .. } => {
+                i64::try_from(columns).ok().filter(|columns| *columns > 0)
+            }
+            HeatmapView::RankingOnly => None,
+        })
+        .map(|columns| range.to_exclusive.saturating_sub(range.from) / columns)
+        .max()
+        .unwrap_or(0);
+    (
+        range.from.saturating_sub(margin),
+        range.to_exclusive.saturating_add(margin),
+    )
 }
 
 pub(crate) fn validate_request(
@@ -395,48 +418,64 @@ fn scan_plan(
             let collector_row = collector
                 .as_ref()
                 .is_some_and(|statements| statements.excludes(&row));
+            let edge = Edge::of(timestamp, range);
             let mut admitted = false;
             for binding in &plan.bindings {
                 if collector_row && binding.workload {
                     continue;
                 }
                 admitted = true;
-                let accumulator = &mut accumulators[binding.accumulator];
-                if timestamp < range.from {
-                    continue;
+                if edge.is_none() {
+                    let accumulator = &mut accumulators[binding.accumulator];
+                    accumulator.scan.window_rows = accumulator.scan.window_rows.saturating_add(1);
                 }
-                if timestamp >= range.to_exclusive {
-                    continue;
-                }
-                accumulator.scan.window_rows = accumulator.scan.window_rows.saturating_add(1);
             }
-            if !admitted || timestamp < range.from || timestamp >= range.to_exclusive {
+            if !admitted {
                 return true;
             }
-            let entity = match sections[plan.section].observe(
-                segment_slot,
-                segment_id,
-                plan.type_id,
-                plan.contract,
-                &row,
-                ordinal,
-                timestamp,
-                &plan.labels,
-            ) {
-                Ok(entity) => entity,
-                Err(error) => {
+            let section = &mut sections[plan.section];
+            let registered = match edge {
+                // A row after the range closes an entity seen inside it; it
+                // never introduces one or moves its detail locator.
+                Some(Edge::After) => section.lookup(plan.type_id, plan.contract, &row).map(Ok),
+                Some(Edge::Before) => Some(section.register(
+                    segment_slot,
+                    segment_id,
+                    plan.type_id,
+                    plan.contract,
+                    &row,
+                    ordinal,
+                    timestamp,
+                )),
+                None => Some(section.observe(
+                    segment_slot,
+                    segment_id,
+                    plan.type_id,
+                    plan.contract,
+                    &row,
+                    ordinal,
+                    timestamp,
+                    &plan.labels,
+                )),
+            };
+            let entity = match registered {
+                Some(Ok(entity)) => entity,
+                Some(Err(error)) => {
                     failure = Some(error);
                     return false;
                 }
+                None => return true,
             };
             for binding in &plan.bindings {
                 if collector_row && binding.workload {
                     continue;
                 }
                 let accumulator = &mut accumulators[binding.accumulator];
-                if let Err(error) =
-                    accumulator.observe(segment_slot, &row, timestamp, entity, binding)
-                {
+                let observed = match edge {
+                    Some(edge) => accumulator.observe_edge(&row, timestamp, entity, binding, edge),
+                    None => accumulator.observe(segment_slot, &row, timestamp, entity, binding),
+                };
+                if let Err(error) = observed {
                     failure = Some(error);
                     return false;
                 }
@@ -459,6 +498,25 @@ fn redundant_cpu_aggregate(plan: &PhysicalPlan, row: &Row) -> bool {
 #[derive(Default)]
 struct ScanStats {
     window_rows: u64,
+}
+
+/// Which side of the requested range a scanned row falls on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Edge {
+    Before,
+    After,
+}
+
+impl Edge {
+    const fn of(timestamp: i64, range: crate::TimeRange) -> Option<Self> {
+        if timestamp < range.from {
+            Some(Self::Before)
+        } else if timestamp >= range.to_exclusive {
+            Some(Self::After)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -558,6 +616,102 @@ impl SharedSection {
         }
     }
 
+    /// Find the row's identity; the raw key stays in the scratch.
+    fn lookup(
+        &mut self,
+        type_id: u32,
+        contract: &'static kronika_registry::TypeContract,
+        row: &Row,
+    ) -> Option<EntityId> {
+        self.identity_scratch.clear();
+        self.identity_scratch.extend(
+            contract
+                .identity
+                .iter()
+                .map(|name| row.get(name).cloned().unwrap_or(Cell::Null)),
+        );
+        raw_key_into(&mut self.key_scratch, type_id, &self.identity_scratch);
+        self.by_raw_key.get(self.key_scratch.as_str()).copied()
+    }
+
+    /// Register an identity without recording its labels or detail locator.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the shared row identity without its label observation"
+    )]
+    fn register(
+        &mut self,
+        segment_slot: usize,
+        segment_id: i64,
+        type_id: u32,
+        contract: &'static kronika_registry::TypeContract,
+        row: &Row,
+        ordinal: u64,
+        timestamp: i64,
+    ) -> Result<EntityId, HeatmapError> {
+        self.lookup(type_id, contract, row).map_or_else(
+            || {
+                self.insert(
+                    segment_slot,
+                    segment_id,
+                    type_id,
+                    contract,
+                    row,
+                    ordinal,
+                    timestamp,
+                )
+            },
+            Ok,
+        )
+    }
+
+    /// Insert the identity left in the scratch by [`Self::lookup`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the shared row identity and its first detail locator"
+    )]
+    fn insert(
+        &mut self,
+        segment_slot: usize,
+        segment_id: i64,
+        type_id: u32,
+        contract: &'static kronika_registry::TypeContract,
+        row: &Row,
+        ordinal: u64,
+        timestamp: i64,
+    ) -> Result<EntityId, HeatmapError> {
+        let raw_key: Box<str> = self.key_scratch.clone().into_boxed_str();
+        u32::try_from(self.entities.len()).map_err(|_error| {
+            HeatmapError::invalid(
+                self.first_index,
+                format!(
+                    "retained {} {} identities before ranking; the entity cardinality cannot be represented",
+                    self.entities.len(),
+                    self.name
+                ),
+            )
+        })?;
+        let entity = EntityId(self.entities.len());
+        self.by_raw_key.insert(raw_key, entity);
+        let locator_identity = row_key::identity(row.contract().type_id.get(), row)
+            .map_err(|error| HeatmapError::bad_locator(self.first_index, error))?;
+        self.entities.push(SharedEntity {
+            type_id,
+            identity_segment: segment_slot,
+            identity: self.identity_scratch.clone().into_boxed_slice(),
+            labels: vec![None; self.label_count].into_boxed_slice(),
+            locator: StoredLocator {
+                segment_slot,
+                segment_id,
+                timestamp,
+                ordinal,
+                identity: locator_identity,
+                event_stream: contract.semantics == kronika_registry::Semantics::EventStream,
+            },
+        });
+        Ok(entity)
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "the shared row identity and latest-label observation"
@@ -573,50 +727,22 @@ impl SharedSection {
         timestamp: i64,
         labels: &[Option<&'static str>],
     ) -> Result<EntityId, HeatmapError> {
-        self.identity_scratch.clear();
-        self.identity_scratch.extend(
-            contract
-                .identity
-                .iter()
-                .map(|name| row.get(name).cloned().unwrap_or(Cell::Null)),
-        );
-        raw_key_into(&mut self.key_scratch, type_id, &self.identity_scratch);
-        let entity = if let Some(entity) = self.by_raw_key.get(self.key_scratch.as_str()).copied() {
+        let entity = if let Some(entity) = self.lookup(type_id, contract, row) {
             self.entities[entity.index()]
                 .locator
                 .observe(segment_slot, segment_id, timestamp, ordinal, row)
                 .map_err(|error| HeatmapError::bad_locator(self.first_index, error))?;
             entity
         } else {
-            let raw_key: Box<str> = self.key_scratch.clone().into_boxed_str();
-            u32::try_from(self.entities.len()).map_err(|_error| {
-                HeatmapError::invalid(
-                    self.first_index,
-                    format!(
-                        "retained {} {} identities before ranking; the entity cardinality cannot be represented",
-                        self.entities.len(), self.name
-                    ),
-                )
-            })?;
-            let entity = EntityId(self.entities.len());
-            self.by_raw_key.insert(raw_key, entity);
-            let locator_identity = row_key::identity(row.contract().type_id.get(), row)
-                .map_err(|error| HeatmapError::bad_locator(self.first_index, error))?;
-            self.entities.push(SharedEntity {
+            self.insert(
+                segment_slot,
+                segment_id,
                 type_id,
-                identity_segment: segment_slot,
-                identity: self.identity_scratch.clone().into_boxed_slice(),
-                labels: vec![None; self.label_count].into_boxed_slice(),
-                locator: StoredLocator {
-                    segment_slot,
-                    segment_id,
-                    timestamp,
-                    ordinal,
-                    identity: locator_identity,
-                    event_stream: contract.semantics == kronika_registry::Semantics::EventStream,
-                },
-            });
-            entity
+                contract,
+                row,
+                ordinal,
+                timestamp,
+            )?
         };
         let shared = &mut self.entities[entity.index()];
         for (slot, column) in shared.labels.iter_mut().zip(labels) {
@@ -793,6 +919,10 @@ struct Accumulator {
     group_index: HashMap<String, usize>,
     out_of_order: u64,
     scan: ScanStats,
+    /// Latest sample before the range per entity; it opens the first span.
+    before: Vec<Option<(i64, f64)>>,
+    /// Earliest sample after the range per entity; it closes the last span.
+    after: Vec<Option<(i64, f64)>>,
 }
 
 #[derive(Default)]

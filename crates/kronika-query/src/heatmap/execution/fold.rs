@@ -6,7 +6,7 @@ use kronika_reader::{Cell, Row};
 use kronika_registry::ColumnClass;
 
 use super::{
-    Accumulator, Binding, CellSum, EntityId, FoldArena, GridFold, GroupState, HeatmapError,
+    Accumulator, Binding, CellSum, Edge, EntityId, FoldArena, GridFold, GroupState, HeatmapError,
     IndexedSection, ItemSpec, LabelCutoff, Obs, RankFold, RankedState, RenderedIds, RssMean,
     ScanStats, SharedSectionSpec, entity_key_into, raw_key_into, reserve_id, reserve_ids, summed,
 };
@@ -103,6 +103,8 @@ impl Accumulator {
             group_index: HashMap::new(),
             out_of_order: 0,
             scan: ScanStats::default(),
+            before: Vec::new(),
+            after: Vec::new(),
         }
     }
 
@@ -163,11 +165,46 @@ impl Accumulator {
         let state = &mut folds[fold];
         if inserted {
             state.group = group;
+            // Only a counter span crosses the edge; a decreasing one is a reset
+            // and would blank the column instead of opening it.
+            if self.cumulative
+                && let Some((carry_ts, carry_value)) =
+                    self.before.get(entity.index()).copied().flatten()
+                && carry_ts < timestamp
+                && carry_value <= value
+            {
+                state.column = column_of_span(Some(carry_ts), timestamp, self.range, self.columns);
+                state.carry = Some((carry_ts, carry_value));
+                state.grid_carry = Some((carry_ts, carry_value));
+                state.current.observe(carry_ts, carry_value);
+            }
         }
+        self.advance(fold, timestamp, value, true)
+    }
 
-        let previous_ts = (state.window.count > 0).then_some(state.window.last_ts);
+    /// Fold one sample into the grid; samples inside the range also extend
+    /// the ranking window.
+    fn advance(
+        &mut self,
+        fold: usize,
+        timestamp: i64,
+        value: f64,
+        inside: bool,
+    ) -> Result<(), HeatmapError> {
+        let FoldArena::Grid { folds, .. } = &mut self.folds else {
+            return Err(HeatmapError::invalid(
+                self.first_index,
+                "grid observation reached a non-grid accumulator",
+            ));
+        };
+        let state = &mut folds[fold];
+        let previous_ts = (state.window.count > 0)
+            .then_some(state.window.last_ts)
+            .or_else(|| state.carry.map(|(carry_ts, _value)| carry_ts));
         let column = column_of_span(previous_ts, timestamp, self.range, self.columns);
-        state.window.observe(timestamp, value);
+        if inside {
+            state.window.observe(timestamp, value);
+        }
         if self.grid && (!self.grouped || column >= state.column) {
             let grid_column = column_of_span(
                 state.grid_carry.map(|(carry_ts, _value)| carry_ts),
@@ -212,6 +249,79 @@ impl Accumulator {
             }
         }
         state.current.observe(timestamp, value);
+        Ok(())
+    }
+
+    pub(super) fn observe_edge(
+        &mut self,
+        row: &Row,
+        timestamp: i64,
+        entity: EntityId,
+        binding: &Binding,
+        edge: Edge,
+    ) -> Result<(), HeatmapError> {
+        if !self.grid {
+            return Ok(());
+        }
+        let Some(value) = summed(row, &binding.metrics) else {
+            return Ok(());
+        };
+        let index = entity.index();
+        let stored = match edge {
+            Edge::Before => {
+                if self.has_grid_fold(entity)? {
+                    return Ok(());
+                }
+                edge_slot(&mut self.before, index)
+            }
+            Edge::After => edge_slot(&mut self.after, index),
+        };
+        let replace = match (edge, *stored) {
+            (_, None) => true,
+            (Edge::Before, Some((stored_ts, _value))) => stored_ts <= timestamp,
+            (Edge::After, Some((stored_ts, _value))) => timestamp < stored_ts,
+        };
+        if replace {
+            *stored = Some((timestamp, value));
+        }
+        Ok(())
+    }
+
+    fn has_grid_fold(&self, entity: EntityId) -> Result<bool, HeatmapError> {
+        let FoldArena::Grid { slot_by_entity, .. } = &self.folds else {
+            return Err(HeatmapError::invalid(
+                self.first_index,
+                "grid observation reached a non-grid accumulator",
+            ));
+        };
+        Ok(slot_by_entity
+            .get(entity.index())
+            .is_some_and(|slot| *slot != NO_FOLD))
+    }
+
+    /// Close the last span of every ranked entity with its first sample
+    /// after the range.
+    fn close_edges(&mut self) -> Result<(), HeatmapError> {
+        if !self.cumulative {
+            return Ok(());
+        }
+        let FoldArena::Grid { folds, .. } = &self.folds else {
+            return Ok(());
+        };
+        let closing: Vec<(usize, i64, f64)> = folds
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, fold)| {
+                let (timestamp, value) = self.after.get(fold.entity.index()).copied().flatten()?;
+                (fold.window.count > 0
+                    && timestamp > fold.window.last_ts
+                    && value >= fold.window.last_value)
+                    .then_some((slot, timestamp, value))
+            })
+            .collect();
+        for (slot, timestamp, value) in closing {
+            self.advance(slot, timestamp, value, false)?;
+        }
         Ok(())
     }
 
@@ -445,6 +555,7 @@ impl Accumulator {
         dictionary: &RenderedIds,
         section: &IndexedSection<'_>,
     ) -> Result<HeatmapItemResult, HeatmapError> {
+        self.close_edges()?;
         let has_data = self.fold_count() > 0;
         let coverage = HeatmapCoverage {
             state: if has_data {
@@ -729,4 +840,11 @@ impl Accumulator {
             grid,
         })
     }
+}
+
+fn edge_slot(samples: &mut Vec<Option<(i64, f64)>>, index: usize) -> &mut Option<(i64, f64)> {
+    if samples.len() <= index {
+        samples.resize(index + 1, None);
+    }
+    &mut samples[index]
 }

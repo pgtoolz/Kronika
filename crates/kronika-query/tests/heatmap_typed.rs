@@ -15,11 +15,12 @@ use kronika_index as _;
 use kronika_layout::{DataRoot, LayoutLimits, SegmentAddress, SegmentId};
 use kronika_reader::{Segment, SegmentKind};
 use kronika_registry::os_cpu::OsCpu;
+use kronika_registry::os_loadavg::OsLoadavg;
 use kronika_registry::pg_stat_statements::PgStatStatementsV2;
 use kronika_registry::{StrId, Ts};
 use kronika_store::{
-    EmbeddedResource, EmbeddedSource, ImmutableSegmentSource, ResourceCatalog, ResourceError,
-    ResourceListing, SegmentResource, SharedSegmentBytes,
+    EmbeddedResource, EmbeddedSource, ImmutableSegmentSource, PosixSource, ResourceCatalog,
+    ResourceError, ResourceListing, SegmentResource, SharedSegmentBytes,
 };
 use kronika_writer::{Interner, Journal, JournalConfig, SectionBuffers, dict, write_segment};
 use serde as _;
@@ -671,4 +672,296 @@ fn a_workload_scope_is_refused_outside_statements() {
         error.to_string(),
         "rankings[0]: scope=workload applies only to pg_stat_statements"
     );
+}
+
+// Edge columns: a grid reads one column past each edge of its range so the
+// spans crossing the edges close the first and last columns.
+
+const EDGE_COLUMN: i64 = 100_000_000;
+const EDGE_COLUMNS: i64 = 12;
+const EDGE_FROM: i64 = SEGMENT_ID + 3_600_000_000;
+const EDGE_TO: i64 = EDGE_FROM + EDGE_COLUMNS * EDGE_COLUMN;
+
+/// CPU 0 sampled `phase` past the start of every column from `first` to
+/// `last` (column offsets from the range start, possibly outside it); the
+/// `user` counter grows by 100 per column, one tick per second.
+fn phased_cpu_rows(phase: i64, first: i64, last: i64) -> Vec<(i32, i64, i64)> {
+    (first..=last)
+        .map(|column| {
+            (
+                0,
+                EDGE_FROM + column * EDGE_COLUMN + phase,
+                (column + 10) * 100,
+            )
+        })
+        .collect()
+}
+
+const fn cpu_row(cpu_id: i32, timestamp: i64, user: i64) -> OsCpu {
+    OsCpu {
+        ts: Ts(timestamp),
+        cpu_id,
+        user,
+        nice: 0,
+        system: 0,
+        idle: 0,
+        iowait: 0,
+        irq: 0,
+        softirq: 0,
+        steal: 0,
+        guest: 0,
+        guest_nice: 0,
+        scope: 0,
+    }
+}
+
+fn write_cpu_segment(root: &std::path::Path, segment_id: i64, rows: &[(i32, i64, i64)]) -> Vec<u8> {
+    write_rows(root, segment_id, |buffers| {
+        for (cpu_id, timestamp, user) in rows {
+            buffers
+                .push(cpu_row(*cpu_id, *timestamp, *user))
+                .expect("CPU row fits");
+        }
+    })
+}
+
+fn write_rows(
+    root: &std::path::Path,
+    segment_id: i64,
+    fill: impl FnOnce(&mut SectionBuffers),
+) -> Vec<u8> {
+    let data_root = DataRoot::open(root).expect("data root");
+    let owner = data_root
+        .acquire_writer(LayoutLimits::default())
+        .expect("writer");
+    let mut journal = Journal::open(&owner, JournalConfig::default()).expect("journal");
+    let mut buffers = SectionBuffers::new();
+    fill(&mut buffers);
+    let part = buffers
+        .flush(&[])
+        .expect("encode rows")
+        .expect("nonempty rows");
+    let segment_id = SegmentId::new(segment_id).expect("segment id");
+    journal.append(segment_id, &part).expect("append rows");
+    let address = SegmentAddress::new(segment_id).expect("segment address");
+    write_segment(&journal, &owner, address).expect("finish segment");
+    journal.reset().expect("reset fixture journal");
+    drop(journal);
+    drop(owner);
+    let path = root
+        .join(address.day.year_component())
+        .join(address.day.month_component())
+        .join(address.day.day_component())
+        .join(address.zms_name());
+    std::fs::read(path).expect("read segment")
+}
+
+fn edge_payload(rows: &[(i32, i64, i64)]) -> Arc<[u8]> {
+    let root = tempfile::tempdir().expect("fixture directory");
+    write_cpu_segment(root.path(), SEGMENT_ID, rows).into()
+}
+
+fn cpu_grid() -> HeatmapItemQuery {
+    HeatmapItemQuery {
+        ranking: NormalizedRanking {
+            section: "os_cpu".to_owned(),
+            fields: vec!["user".to_owned()],
+            top: 1,
+        },
+        view: HeatmapView::Grid {
+            columns: usize::try_from(EDGE_COLUMNS).expect("column count"),
+            group: Vec::new(),
+            type_id: None,
+        },
+        scope: StatementScope::All,
+    }
+}
+
+fn edge_batch() -> HeatmapBatchQuery {
+    HeatmapBatchQuery {
+        range: TimeRange::new(EDGE_FROM, EDGE_TO).expect("valid heatmap range"),
+        items: vec![cpu_grid()],
+    }
+}
+
+fn edge_grid(context: &QueryContext) -> kronika_query::HeatmapItemResult {
+    let mut result =
+        execute_heatmap_batch(context, edge_batch(), &NeverCancelled).expect("edge grid");
+    result.results.remove(0)
+}
+
+fn cells_of(result: &kronika_query::HeatmapItemResult) -> (Vec<Option<f64>>, Vec<Option<f64>>) {
+    let grid = result.grid.as_ref().expect("grid view");
+    let entity = result.entities.first().expect("ranked entity");
+    (
+        entity.cells.clone().expect("entity cells"),
+        grid.totals.cells.clone(),
+    )
+}
+
+#[test]
+fn the_samples_beside_the_range_close_both_edge_columns() {
+    let payload = edge_payload(&phased_cpu_rows(30_000_000, -1, 12));
+    let (context, _dataset, _resources) = context(&payload);
+    let result = edge_grid(&context);
+
+    let (cells, totals) = cells_of(&result);
+    assert_eq!(cells, vec![Some(1.0); 12]);
+    assert_eq!(totals, vec![Some(1.0); 12]);
+    // The ranking window still covers only the samples inside the range.
+    assert_eq!(result.entities[0].total, Some(1_100.0));
+    assert_eq!(result.entity_count, 1);
+    assert_eq!(result.coverage.window_rows, 12);
+}
+
+#[test]
+fn a_late_sampling_phase_opens_the_first_column_from_the_sample_before() {
+    let with_neighbour = edge_payload(&phased_cpu_rows(70_000_000, -1, 12));
+    let (closed, _dataset, _resources) = context(&with_neighbour);
+    let (cells, totals) = cells_of(&edge_grid(&closed));
+    assert_eq!(cells, vec![Some(1.0); 12]);
+    assert_eq!(totals, vec![Some(1.0); 12]);
+
+    let without_neighbour = edge_payload(&phased_cpu_rows(70_000_000, 0, 12));
+    let (open, _dataset, _resources) = context(&without_neighbour);
+    let (cells, _totals) = cells_of(&edge_grid(&open));
+    assert_eq!(cells[0], None);
+    assert_eq!(cells[1..], vec![Some(1.0); 11]);
+}
+
+#[test]
+fn a_range_without_a_later_sample_leaves_its_last_column_open() {
+    let payload = edge_payload(&phased_cpu_rows(30_000_000, -1, 11));
+    let (context, _dataset, _resources) = context(&payload);
+    let (cells, totals) = cells_of(&edge_grid(&context));
+    assert_eq!(cells[..11], vec![Some(1.0); 11]);
+    assert_eq!(cells[11], None);
+    assert_eq!(totals[11], None);
+}
+
+#[test]
+fn a_counter_reset_after_the_range_leaves_the_last_column_open() {
+    let mut rows = phased_cpu_rows(30_000_000, -1, 12);
+    rows.last_mut().expect("later sample").2 = 0;
+    let payload = edge_payload(&rows);
+    let (context, _dataset, _resources) = context(&payload);
+    let (cells, totals) = cells_of(&edge_grid(&context));
+    assert_eq!(cells[..11], vec![Some(1.0); 11]);
+    assert_eq!(cells[11], None);
+    assert_eq!(totals[11], None);
+}
+
+#[test]
+fn an_entity_seen_only_beside_the_range_is_not_ranked() {
+    let mut rows = phased_cpu_rows(30_000_000, -1, 12);
+    rows.push((1, EDGE_FROM - 70_000_000, 5));
+    rows.push((1, EDGE_TO + 30_000_000, 6));
+    let payload = edge_payload(&rows);
+    let (context, _dataset, _resources) = context(&payload);
+    let result = edge_grid(&context);
+    assert_eq!(result.entity_count, 1);
+    assert_eq!(result.entities.len(), 1);
+    assert_eq!(result.entities[0].identity["cpu_id"], 0);
+    assert_eq!(result.coverage.window_rows, 12);
+}
+
+#[test]
+fn the_neighbouring_segments_supply_the_edge_samples() {
+    let root = tempfile::tempdir().expect("fixture directory");
+    let rows = phased_cpu_rows(30_000_000, -2, 13);
+    write_cpu_segment(root.path(), EDGE_FROM - 600_000_000, &rows[..2]);
+    write_cpu_segment(root.path(), EDGE_FROM, &rows[2..14]);
+    write_cpu_segment(root.path(), EDGE_TO, &rows[14..]);
+    let source = PosixSource::open(root.path()).expect("posix source");
+    let dataset: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(source));
+    let context = QueryContext::new(dataset, 0, false);
+
+    let result = edge_grid(&context);
+    let (cells, totals) = cells_of(&result);
+    assert_eq!(cells, vec![Some(1.0); 12]);
+    assert_eq!(totals, vec![Some(1.0); 12]);
+    assert_eq!(result.entities[0].total, Some(1_100.0));
+}
+
+#[test]
+fn a_counter_reset_beside_the_range_does_not_blank_the_edge_column() {
+    let rows = [
+        (0, EDGE_FROM - 30_000_000, 10_000),
+        (0, EDGE_FROM + 20_000_000, 100),
+        (0, EDGE_FROM + 80_000_000, 400),
+        (0, EDGE_TO - 80_000_000, 1_000),
+        (0, EDGE_TO - 20_000_000, 1_300),
+        (0, EDGE_TO + 30_000_000, 5),
+    ];
+    let payload = edge_payload(&rows);
+    let (context, _dataset, _resources) = context(&payload);
+    let result = edge_grid(&context);
+    let (cells, totals) = cells_of(&result);
+    assert_eq!(cells[0], Some(5.0));
+    assert_eq!(cells[11], Some(5.0));
+    assert_eq!(totals[0], Some(5.0));
+    assert_eq!(totals[11], Some(5.0));
+    // The span across the gap lands on its midpoint column as before.
+    assert!(cells[6].is_some());
+    assert_eq!(result.entities[0].total, Some(1_200.0));
+}
+
+fn loadavg_grid_payload(phase: i64, first: i64, last: i64) -> Arc<[u8]> {
+    let root = tempfile::tempdir().expect("fixture directory");
+    write_rows(root.path(), SEGMENT_ID, |buffers| {
+        for column in first..=last {
+            buffers
+                .push(OsLoadavg {
+                    ts: Ts(EDGE_FROM + column * EDGE_COLUMN + phase),
+                    load1: 0.0,
+                    load5: 0.0,
+                    load15: 0.0,
+                    running: i32::try_from(column + 20).expect("small count"),
+                    total: 100,
+                    scope: 0,
+                })
+                .expect("loadavg row fits");
+        }
+    })
+    .into()
+}
+
+fn loadavg_grid(context: &QueryContext) -> kronika_query::HeatmapItemResult {
+    let query = HeatmapBatchQuery {
+        range: TimeRange::new(EDGE_FROM, EDGE_TO).expect("valid heatmap range"),
+        items: vec![HeatmapItemQuery {
+            ranking: NormalizedRanking {
+                section: "os_loadavg".to_owned(),
+                fields: vec!["running".to_owned()],
+                top: 1,
+            },
+            view: HeatmapView::Grid {
+                columns: usize::try_from(EDGE_COLUMNS).expect("column count"),
+                group: Vec::new(),
+                type_id: None,
+            },
+            scope: StatementScope::All,
+        }],
+    };
+    let mut result = execute_heatmap_batch(context, query, &NeverCancelled).expect("gauge grid");
+    result.results.remove(0)
+}
+
+#[test]
+fn gauges_keep_their_last_sample_inside_the_range() {
+    let late = loadavg_grid_payload(70_000_000, -1, 12);
+    let (late_context, _dataset, _resources) = context(&late);
+    let (cells, totals) = cells_of(&loadavg_grid(&late_context));
+    let expected: Vec<Option<f64>> = (0..12).map(|column| Some(f64::from(column + 20))).collect();
+    assert_eq!(cells, expected);
+    assert_eq!(totals, expected);
+
+    let early = loadavg_grid_payload(30_000_000, -1, 12);
+    let (early_context, _dataset, _resources) = context(&early);
+    let (cells, _totals) = cells_of(&loadavg_grid(&early_context));
+    // Unchanged midpoint placement: the first column keeps its last sample,
+    // the last column stays open even though a later sample exists.
+    assert_eq!(cells[0], Some(21.0));
+    assert_eq!(cells[10], Some(31.0));
+    assert_eq!(cells[11], None);
 }

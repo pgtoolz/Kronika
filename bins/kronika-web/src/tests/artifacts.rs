@@ -4313,8 +4313,9 @@ fn empty_finished_heatmap_has_no_validator() {
     fixture.append_diskstats(&[(100, 0, 1), (200, 0, 2)]);
     fixture.finish();
 
+    // The grid also reads one column past each edge; the segment stays beyond it.
     let prepared = fixture.prepare(
-        "/api/heatmap?from=300&to=400&section=os_diskstats&field=reads&columns=1&top=1",
+        "/api/heatmap?from=500&to=600&section=os_diskstats&field=reads&columns=1&top=1",
         None,
     );
     assert_eq!(prepared.meta().cache, CachePolicy::Revalidate);
