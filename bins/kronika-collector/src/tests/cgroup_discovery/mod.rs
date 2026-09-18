@@ -1,4 +1,5 @@
 use super::*;
+use rustix::fs::inotify;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -95,7 +96,7 @@ fn collect(
     owner: &WriterOwner,
     segment: &mut SegmentState,
 ) -> CgroupPass {
-    let mut sched = Scheduler::new(Intervals::default(), true);
+    let mut sched = Scheduler::new(Intervals::default(), true, true);
     let mut pass = CgroupPass::default();
     let mut appender = Appender {
         config,
@@ -245,7 +246,7 @@ fn postgresql_mode_never_opens_discovery_roots_or_appends_os_rows() {
     let config = config(&storage);
     let (owner, mut journal) = open_journal(&storage, JournalConfig::default().max_parts);
     let mut segment = SegmentState::default();
-    let mut sched = Scheduler::new(Intervals::default(), false);
+    let mut sched = Scheduler::new(Intervals::default(), false, false);
     let pass = run(
         &ProcFs::new(temp.path().join("missing-proc")),
         &SysFs::new(temp.path().join("missing-sys")),
@@ -267,3 +268,79 @@ fn postgresql_mode_never_opens_discovery_roots_or_appends_os_rows() {
 
 mod cost;
 mod primary;
+
+#[test]
+fn startup_admission_distinguishes_absence_from_read_failure() {
+    let temp = tempfile::tempdir().expect("probe fixture");
+    let fs = ProcFs::new(temp.path().to_path_buf());
+    assert!(
+        !enabled(&fs, false, true),
+        "PG-only skips the unreadable probe"
+    );
+    assert!(
+        !enabled(&fs, true, false),
+        "machine skips the unreadable probe"
+    );
+    assert!(cgroup::has_v2_mount(&fs).is_err());
+    assert!(
+        enabled(&fs, true, true),
+        "unknown support retains diagnostics"
+    );
+    std::fs::create_dir(temp.path().join("self")).expect("self directory");
+    for (mount, expected) in [
+        (
+            "40 1 0:30 / /sys/fs/cgroup rw - cgroup cgroup rw,cpu\n",
+            false,
+        ),
+        ("40 1 0:30 / /sys/fs/cgroup rw - cgroup2 cgroup rw\n", true),
+    ] {
+        std::fs::write(temp.path().join("self/mountinfo"), mount).expect("mountinfo");
+        let notify = inotify::init(inotify::CreateFlags::NONBLOCK).expect("inotify");
+        inotify::add_watch(
+            &notify,
+            temp.path().join("self/mountinfo"),
+            inotify::WatchFlags::OPEN,
+        )
+        .expect("watch startup probe");
+        assert!(!enabled(&fs, true, false));
+        assert!(!enabled(&fs, false, true));
+        let mut buf = [std::mem::MaybeUninit::uninit(); 512];
+        let mut events = inotify::Reader::new(&notify, &mut buf);
+        assert!(matches!(events.next(), Err(rustix::io::Errno::AGAIN)));
+        assert_eq!(enabled(&fs, true, true), expected);
+        assert!(events.next().is_ok(), "container probes mountinfo");
+    }
+}
+
+#[test]
+fn disabled_discovery_never_opens_roots_or_appends_rows() {
+    for (in_container, collect_cgroups) in [(false, true), (true, false)] {
+        let temp = tempfile::tempdir().expect("fixture");
+        let storage = temp.path().join("storage");
+        let mut config = config(&storage);
+        config.mode = CollectorMode::Local;
+        let (owner, mut journal) = open_journal(&storage, JournalConfig::default().max_parts);
+        let mut segment = SegmentState::default();
+        let mut sched = Scheduler::new(Intervals::default(), true, collect_cgroups);
+        let pass = run(
+            &ProcFs::new(temp.path().join("missing-proc")),
+            &SysFs::new(temp.path().join("missing-sys")),
+            &config,
+            in_container,
+            &mut journal,
+            &owner,
+            &mut segment,
+            &mut sched,
+            SCAN_TS,
+            &[],
+        )
+        .expect("disabled discovery");
+        assert!(!pass.appended);
+        assert!(pass.written.is_empty());
+        assert!(journal.parts().is_empty());
+        assert_eq!(pass.stats.groups, 0);
+        assert_eq!(pass.stats.skipped_directories, 0);
+        assert_eq!(pass.stats.metric_errors, 0);
+        assert!(pass.stats.first_error.is_none());
+    }
+}

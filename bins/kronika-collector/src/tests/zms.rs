@@ -518,7 +518,7 @@ fn statement_sql_timestamp_survives_source_batches_in_one_active_segment() {
         Journal::open(&writer, JournalConfig::default()).expect("open statement timestamp journal");
     let config = config(directory.path(), u64::MAX);
     let mut segment = SegmentState::default();
-    let mut scheduler = Scheduler::new(Intervals::default(), true);
+    let mut scheduler = Scheduler::new(Intervals::default(), true, true);
     let mut process_io = Some(ProcessIoCredentials::new());
     let mut rows = (0..=BATCH_ROWS)
         .map(|query_index| {

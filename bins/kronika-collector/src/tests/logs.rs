@@ -158,7 +158,7 @@ fn assert_retained_batch_moves_to_fresh_segment() {
     .expect("append old segment row");
     fill_journal_to_pressure(&mut journal, &first, max);
 
-    let mut scheduler = Scheduler::new(Intervals::default(), true);
+    let mut scheduler = Scheduler::new(Intervals::default(), true, true);
     let mut process_io = Some(ProcessIoCredentials::new());
     let outcome = (WindowWriter {
         journal: &mut journal,
@@ -237,7 +237,7 @@ fn a_fresh_log_window_append_failure_is_fatal() {
     .expect("open header-only journal");
     let config = config(dir.path(), JOURNAL_HEADER_LEN as u64);
     let mut segment = SegmentState::default();
-    let mut scheduler = Scheduler::new(Intervals::default(), true);
+    let mut scheduler = Scheduler::new(Intervals::default(), true, true);
     let mut process_io = Some(ProcessIoCredentials::new());
 
     let error = match (WindowWriter {
@@ -291,7 +291,7 @@ fn assert_pg_batch_moves_to_fresh_segment() {
     .expect("append old segment row");
     fill_journal_to_pressure(&mut journal, &first, max);
 
-    let mut scheduler = Scheduler::new(Intervals::default(), true);
+    let mut scheduler = Scheduler::new(Intervals::default(), true, true);
     let mut process_io = Some(ProcessIoCredentials::new());
     let outcome = (WindowWriter {
         journal: &mut journal,
@@ -345,7 +345,7 @@ fn postgres_batch_is_not_repeated_in_incremental_log_windows() {
     let mut journal = Journal::open(&owner, JournalConfig::default()).expect("open journal");
     let config = config(dir.path(), JournalConfig::default().max_journal_len as u64);
     let mut segment = SegmentState::default();
-    let mut scheduler = Scheduler::new(Intervals::default(), true);
+    let mut scheduler = Scheduler::new(Intervals::default(), true, true);
     let mut process_io = Some(ProcessIoCredentials::new());
 
     (WindowWriter {
@@ -414,7 +414,7 @@ fn cached_settings_are_added_once_when_logs_open_a_segment() {
     let mut journal = Journal::open(&owner, JournalConfig::default()).expect("open journal");
     let config = config(dir.path(), JournalConfig::default().max_journal_len as u64);
     let mut segment = SegmentState::default();
-    let mut scheduler = Scheduler::new(Intervals::default(), true);
+    let mut scheduler = Scheduler::new(Intervals::default(), true, true);
     let mut process_io = Some(ProcessIoCredentials::new());
     let settings = [settings_row()];
 
@@ -462,7 +462,7 @@ fn postgresql_mode_normal_and_deferred_windows_encode_no_linux_identity_or_rows(
         config.intervals.pg_tables_and_indexes = 401;
         config.intervals.pg_statements_and_plans = 601;
         let mut segment = SegmentState::default();
-        let mut scheduler = Scheduler::new(Intervals::default(), false);
+        let mut scheduler = Scheduler::new(Intervals::default(), false, false);
         let mut process_io = None;
         let mut window = WindowWriter {
             journal: &mut journal,

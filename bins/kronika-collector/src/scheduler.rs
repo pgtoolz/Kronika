@@ -29,7 +29,7 @@ pub(crate) struct Scheduler {
 }
 
 impl Scheduler {
-    pub(crate) fn new(intervals: Intervals, collect_os: bool) -> Self {
+    pub(crate) fn new(intervals: Intervals, collect_os: bool, collect_cgroups: bool) -> Self {
         let sources = ALL_SOURCES
             .into_iter()
             .filter(|kind| {
@@ -42,6 +42,10 @@ impl Scheduler {
                             | SourceKind::PgTablesAndIndexes
                             | SourceKind::PgStatementsAndPlans
                     )
+            })
+            .filter(|kind| {
+                collect_cgroups
+                    || !matches!(kind, SourceKind::OsCgroup | SourceKind::OsCgroupMapping)
             })
             .map(|kind| {
                 let seconds = intervals.of(kind);
@@ -62,6 +66,12 @@ impl Scheduler {
             pg_activity_interval: Duration::from_secs(intervals.pg_activity),
             pg_activity_blocked_interval: Duration::from_secs(intervals.pg_activity_blocked),
         }
+    }
+
+    pub(crate) fn collects_cgroups(&self) -> bool {
+        self.sources
+            .iter()
+            .any(|source| source.kind == SourceKind::OsCgroup)
     }
 
     /// Start the statement cooldown after the whole `PostgreSQL` pass, including

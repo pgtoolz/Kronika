@@ -10,6 +10,14 @@ mod parse;
 mod sections;
 mod selected;
 
+/// Whether mountinfo exposes a cgroup v2 hierarchy, regardless of its controllers.
+///
+/// # Errors
+/// Returns mountinfo read errors.
+pub fn has_v2_mount(procfs: &ProcFs) -> std::io::Result<bool> {
+    selected::exposed_mounts(procfs).map(|mounts| !mounts.is_empty())
+}
+
 pub use selected::{
     AncestorContext, SelectedCgroup, charged_ancestor_devices, collect_ancestor_context,
     collect_ancestor_pressure, collect_ancestor_rows, select_ancestor_context,

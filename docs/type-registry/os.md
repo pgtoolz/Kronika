@@ -15,7 +15,7 @@ Where present, `scope` identifies the machine, pod or container whose resources 
 | `4` | undetermined |
 
 CPU, memory, disks, mount points, and topology describe the node even when the
-collector runs inside a container. Network sections use `pod_net` in the collector's recorded container environment. Process rows use `container` inside a container and `host` otherwise. Cgroup v2 discovery runs on machines and in containers; the selected ancestor rows serve the container resource charts.
+collector runs inside a container. Network sections use `pod_net` in the collector's recorded container environment. Process rows use `container` inside a container and `host` otherwise. Cgroup v2 discovery runs only in containers; the selected ancestor rows serve the container resource charts.
 
 The filesystem roots are overridable with `--proc-root` (default `/proc`)
 and `--sys-root` (default `/sys`), or `KRONIKA_PROC_ROOT` and `KRONIKA_SYS_ROOT`.
@@ -70,9 +70,11 @@ Command-line options take precedence.
 | `1_209_001` | discovered cgroup v2 threads, limits and event source | `snapshot_full` | `(cgroup_path, cgroup_identity, events_source, ts)` |
 | `1_210_001` | discovered cgroup v2 per-device I/O | `snapshot_full` | `(cgroup_path, cgroup_identity, major, minor, ts)` |
 
-Current collection requires cgroup v2. Without a visible v2 hierarchy, cgroup
-metrics and process mappings are unavailable; other enabled local sources continue.
-Older cgroup v1 recordings remain readable.
+Current cgroup collection requires a local container with an exposed v2 mount.
+Confirmed absence at startup disables cgroup metrics, process mappings and container
+PSI until restart. Probe read errors are reported and collection attempts continue.
+Other enabled sources and machine PSI continue. Older machine cgroup and v1
+recordings remain readable.
 
 The primary resource rows describe the highest visible, readable ancestor of the
 collector's unified membership. They use `1_201_003`, `1_202_003` and `1_203_003`;
@@ -88,14 +90,14 @@ unlimited value from a missing value. See the [Linux reference](../metrics-linux
 All visible, readable cgroup v2 directories are recorded in `1_206_001`
 (`os_cgroup_v2_group`), with CPU, memory, threads and per-device I/O in
 `1_207_001`–`1_210_001`. Discovery includes empty and intermediate groups and
-visible cgroup2 mounts outside `/sys/fs/cgroup`, on machines and in containers.
+visible cgroup2 mounts outside `/sys/fs/cgroup`, only in containers.
 It runs at startup and every 30 seconds by default. Missing or invalid values
 remain null; an unlimited limit is recorded separately. Group and device
 counters can include descendants or lower layers and must not be added twice.
 See the [recorded fields and event scopes](../metrics-linux.md#container-cgroups).
 
 The built-in container charts use the selected ancestor rows described above,
-including `1_204_001` for its thread count. Earlier workload layouts remain
+including `1_204_001` for its thread count. Earlier workload layouts and machine cgroup recordings remain
 readable. Each per-device I/O counter is independently optional.
 Process-to-cgroup mapping also defaults to 30 seconds.
 

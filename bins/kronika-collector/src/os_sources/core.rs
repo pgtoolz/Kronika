@@ -37,7 +37,9 @@ pub(super) fn collect_core_metrics(
     collect_procfs_row(fs, "vmstat", &mut os.vmstat, |content| {
         parse_vmstat(content, ts).map(|row| row.to_section(scope))
     });
-    collect_pressure_rows(fs, sys, scope, ts, in_container, selected, os);
+    if !in_container || selected.is_some() {
+        collect_pressure_rows(fs, sys, scope, ts, in_container, selected, os);
+    }
 }
 
 /// Read `/proc/stat` once for CPU rows and system counters.

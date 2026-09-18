@@ -35,6 +35,7 @@ pub(crate) struct OsTick<'a> {
     pub(crate) scope: u8,
     pub(crate) ts: i64,
     pub(crate) in_container: bool,
+    pub(crate) collect_cgroups: bool,
     pub(crate) due: &'a DueSet,
     /// Reuse the cgroup selection and charged devices from this tick's discovery.
     pub(crate) cgroup_pass: Option<&'a CgroupPass>,
@@ -57,6 +58,7 @@ pub(crate) fn collect_os_sources(
         in_container,
         due,
         cgroup_pass,
+        ..
     } = *tick;
     let mut os = OsSources::default();
     if ![
@@ -154,7 +156,7 @@ pub(crate) fn collect_os_sources(
 }
 
 fn selected_cgroup(fs: &ProcFs, sys: &SysFs, tick: &OsTick<'_>) -> Option<cgroup::AncestorContext> {
-    if !tick.in_container {
+    if !tick.in_container || !tick.collect_cgroups {
         return None;
     }
     if let Some(pass) = tick.cgroup_pass {

@@ -848,7 +848,7 @@ fn one_age_deadline_survives_later_appends_and_wall_clock_changes() {
         )
         .expect("first append deadline");
     assert_eq!(segment.first_id.map(SegmentId::get), Some(777));
-    let sched = crate::scheduler::Scheduler::new(Intervals::default(), true);
+    let sched = crate::scheduler::Scheduler::new(Intervals::default(), true, true);
     assert_eq!(
         crate::collector::timer_sleep_delay(now, 5, &sched, &segment, None),
         Some(Duration::from_millis(500))

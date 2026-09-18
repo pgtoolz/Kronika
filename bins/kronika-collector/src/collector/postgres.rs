@@ -244,6 +244,7 @@ impl WindowWriter<'_> {
                     scope: OsScope::Host.as_u8(),
                     ts,
                     in_container: self.in_container,
+                    collect_cgroups: self.sched.collects_cgroups(),
                     due,
                     cgroup_pass,
                 },

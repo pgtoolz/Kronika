@@ -10,7 +10,7 @@ Scope identifies whether a row describes the machine, a container or its surroun
 
 | Recorded fact | Meaning and use |
 |---|---|
-| `instance_metadata.environment` | Collector's recorded machine/container environment. It selects the existing primary resource and PSI source; directory discovery also runs on machines. A VM belongs to machine. |
+| `instance_metadata.environment` | Collector's recorded machine/container environment. It selects the primary resource and PSI source. Cgroup discovery runs only in containers. A VM belongs to machine. |
 | OS `scope` | `0`: host; `1`: legacy pod; `2`: pod network namespace; `3`: legacy container; `4`: group without an inferred host/pod label. The selected path identifies new cgroup recordings. |
 | Host CPU, memory, pressure, block devices | Kernel values visible through configured procfs/sysfs roots. Container recordings retain host resource context where those files expose it. |
 | Process table | Live PIDs visible through the configured procfs root; PID is numeric identity within the selected hour. |
@@ -18,7 +18,7 @@ Scope identifies whether a row describes the machine, a container or its surroun
 | Cgroup resource lanes | Highest accessible cgroup v2 ancestor. Counters and capacity use that recorded group and identity. |
 | Filesystems | Data mounts visible in the collector's mount namespace, with capacity from `statvfs` on the visible mount path. |
 
-Linux collection is disabled in `--mode postgresql`. In `local` mode, machines, VMs and containers record all visible, accessible cgroup v2 directories. The existing container resource lanes use the highest accessible ancestor of collector membership. See [cgroup collection](#container-cgroups).
+Linux collection is disabled in `--mode postgresql`. In `local` mode, only containers with an exposed cgroup v2 mount record cgroups. Machines and VMs retain their other OS and process metrics. The existing container resource lanes use the highest accessible ancestor of collector membership. See [cgroup collection](#container-cgroups).
 
 ## Processes
 
@@ -190,7 +190,7 @@ The aggregate sums each timestamp's recorded counters before differentiation. Li
 
 ### Recorded groups
 
-The cgroup pass discovers directories and reads their metrics at startup and
+In supported containers, the cgroup pass discovers directories and reads their metrics at startup and
 every 30 s by default. It starts at exposed cgroup2 mounts, including mounts
 outside `/sys/fs/cgroup`, and includes empty, intermediate and threaded groups.
 Mount aliases are read once; symlinks are not followed. Hidden namespaces stay
@@ -230,8 +230,11 @@ Available cgroup CPU `full` fields are recorded; system CPU `full` remains undef
 
 ### Capacity and membership
 
-Collection requires cgroup v2. On v1-only systems, cgroup metrics and process
-mappings are unavailable; other enabled Linux and PostgreSQL sources continue.
+At startup, local containers check for an exposed cgroup v2 mount. Confirmed
+absence disables cgroup metrics, process mappings and container PSI until restart.
+A read error is reported and collection attempts continue. Machines and PostgreSQL-only
+mode do not run this check. Machine PSI still uses `/proc/pressure`. Other enabled
+sources and all existing cgroup recordings remain available.
 
 `os_cgroup_context` records the selected paths, mount roots, controller identities
 and available limits. Collector ascends from its own membership to the highest

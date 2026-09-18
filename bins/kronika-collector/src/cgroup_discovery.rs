@@ -84,6 +84,21 @@ struct Appender<'a> {
     portion: Portion,
 }
 
+/// Decide cgroup admission once; unknown support retains collection diagnostics.
+pub(crate) fn enabled(fs: &ProcFs, collect_os: bool, in_container: bool) -> bool {
+    if !collect_os || !in_container {
+        return false;
+    }
+    cgroup::has_v2_mount(fs).unwrap_or_else(|error| {
+        log_event(
+            LogLevel::Warn,
+            "cgroup_probe_failure",
+            &[field("error", error.to_string())],
+        );
+        true
+    })
+}
+
 /// Discover once, retaining only the current bounded write portion.
 #[allow(
     clippy::too_many_arguments,
@@ -101,7 +116,7 @@ pub(crate) fn run(
     ts: i64,
     opening_settings: &[SettingsRow],
 ) -> Result<CgroupPass> {
-    if !config.mode.collect_os() {
+    if !config.mode.collect_os() || !in_container || !sched.collects_cgroups() {
         return Ok(CgroupPass::default());
     }
     let started = Instant::now();
