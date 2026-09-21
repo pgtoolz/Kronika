@@ -227,6 +227,10 @@ struct PgbouncerState {
     username: SharedText,
     host: SharedText,
     source_file: SharedText,
+    pid: Option<f64>,
+    side: SharedText,
+    port: Option<f64>,
+    age_s: Option<f64>,
 }
 
 pub(super) struct EventGroups {
@@ -483,7 +487,7 @@ impl EventGroups {
         let key = format!(
             "{}\u{1f}{}",
             text(&row, "level").unwrap_or_default(),
-            text(&row, "text").unwrap_or_default()
+            pgbouncer_group_text(text(&row, "text").as_deref().unwrap_or_default())
         );
         match self.pgbouncer.entry(key) {
             std::collections::hash_map::Entry::Vacant(entry) => {
@@ -492,11 +496,15 @@ impl EventGroups {
                 let host = SharedText::new(text(&row, "host"));
                 let source_file = SharedText::new(text(&row, "source_file"));
                 entry.insert(PgbouncerState {
-                    summary: Summary::new(row, order, self.from, 1.0, 0.0),
                     database,
                     username,
                     host,
                     source_file,
+                    pid: number(&row, "pid"),
+                    side: SharedText::new(text(&row, "side")),
+                    port: number(&row, "port"),
+                    age_s: number(&row, "age_s"),
+                    summary: Summary::new(row, order, self.from, 1.0, 0.0),
                 });
             }
             std::collections::hash_map::Entry::Occupied(mut entry) => {
@@ -509,6 +517,16 @@ impl EventGroups {
                 state.username.observe(username.as_deref());
                 state.host.observe(host.as_deref());
                 state.source_file.observe(source_file.as_deref());
+                state.side.observe(text(&row, "side").as_deref());
+                if state.pid != number(&row, "pid") {
+                    state.pid = None;
+                }
+                if state.port != number(&row, "port") {
+                    state.port = None;
+                }
+                if state.age_s != number(&row, "age_s") {
+                    state.age_s = None;
+                }
                 state.summary.observe_earliest(row, order, self.from, 1.0);
             }
         }
@@ -706,6 +724,10 @@ fn finish_other_groups(
                 username: state.username.finish(),
                 host: state.host.finish(),
                 source_file: state.source_file.finish(),
+                pid: state.pid,
+                side: state.side.finish(),
+                port: state.port,
+                age_s: state.age_s,
             },
         ));
     }
@@ -971,4 +993,18 @@ fn pgbouncer_tier(code: f64) -> EventTier {
         1.0 | 2.0 => EventTier::Notable,
         _ => EventTier::Routine,
     }
+}
+
+fn pgbouncer_group_text(message: &str) -> &str {
+    let Some(reason) = message.strip_prefix("closing because: ") else {
+        return message;
+    };
+    reason
+        .rsplit_once(" (age=")
+        .filter(|(_, age)| {
+            age.strip_suffix("s)").is_some_and(|value| {
+                value.bytes().all(|byte| byte.is_ascii_digit()) && value.parse::<u64>().is_ok()
+            })
+        })
+        .map_or(reason, |(reason, _)| reason)
 }

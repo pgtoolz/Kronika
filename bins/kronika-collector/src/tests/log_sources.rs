@@ -515,11 +515,7 @@ fn earlier_offsets_are_saved_when_a_later_file_is_rejected_or_fails() {
         let paths = ["a.log", "b.log", "c.log"].map(|name| dir.path().join(name));
         let first = pgbouncer_line("kernel file descriptor limit: 1024");
         for path in &paths {
-            std::fs::write(
-                path,
-                format!("{first}{}", pgbouncer_line("unrecognized sentinel")),
-            )
-            .expect("write log");
+            std::fs::write(path, format!("{first}DEBUG ignored sentinel\n")).expect("write log");
         }
         let mut logs = sources(dir.path(), paths[0].clone());
         logs.pgbouncer.extend(
@@ -581,11 +577,7 @@ fn wal_append_precedes_offset_ack_and_a_retry_replays_the_batch() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("pgbouncer.log");
     let first = pgbouncer_line("kernel file descriptor limit: 1024");
-    std::fs::write(
-        &path,
-        format!("{first}{}", pgbouncer_line("unrecognized sentinel")),
-    )
-    .expect("write log");
+    std::fs::write(&path, format!("{first}DEBUG ignored sentinel\n")).expect("write log");
     let due = DueSet::for_test(vec![SourceKind::Logs]);
     let mut sources = sources(dir.path(), path.clone());
 
@@ -994,4 +986,80 @@ fn crash_logs(dir: &std::path::Path, path: &std::path::Path, position: Position)
         system_identifier: Some(123),
     });
     logs
+}
+
+#[test]
+fn pgbouncer_read_context_survives_real_wal_and_seal() {
+    use kronika_reader::Cell;
+    use kronika_writer::Interner;
+    const INPUT: &str = "garbage\nbad-time [123] WARNING S-0x1: shop/alice@[::1]:6432 closing because: unknown reason (age=42s)\nLOG got SIGTERM\nDEBUG sentinel\n";
+    let dir = tempfile::tempdir().expect("fixture");
+    let path = dir.path().join("pooler.log");
+    std::fs::write(&path, INPUT).expect("input");
+    let mut logs = sources(dir.path(), path.clone());
+    let owner = DataRoot::open(dir.path())
+        .expect("root")
+        .acquire_writer(LayoutLimits::default())
+        .expect("writer");
+    let mut journal = Journal::open(&owner, JournalConfig::default()).expect("journal");
+    let mut interner = Interner::new(kronika_format::DictLimits::default());
+    let before = crate::clock::unix_now_us().expect("clock");
+    let id = SegmentId::new(before).expect("id");
+    assert!(
+        logs.collect(&DueSet::logs(), |rows| {
+            let mut buffers = SectionBuffers::new();
+            super::push_log_sources(&mut buffers, &mut interner, rows)?;
+            let part = crate::segments::encode_window(buffers, &interner)?;
+            journal.append(id, &part.body)?;
+            Ok(true)
+        })
+        .expect("admitted")
+    );
+    let after = crate::clock::unix_now_us().expect("clock");
+    let committed = logs.pgbouncer[0].position();
+    assert!(committed.offset > 0);
+    assert_eq!(
+        Offsets::load(dir.path())
+            .expect("offsets")
+            .get(&path.display().to_string()),
+        committed
+    );
+    for sealed in [false, true] {
+        if sealed {
+            let address = kronika_layout::SegmentAddress::new(id).expect("address");
+            kronika_writer::write_segment(&journal, &owner, address).expect("seal");
+            journal.reset().expect("reset");
+        }
+        let reader = kronika_reader::Reader::open(dir.path()).expect("reader");
+        let listing = reader.segments(..).expect("listing");
+        assert_eq!(listing.segments.len(), 1);
+        let segment = reader.open_segment(&listing.segments[0]).expect("segment");
+        let rows = segment.rows(2_100_002).expect("PgBouncer rows");
+        assert_eq!(rows.len(), 2);
+        let row = rows
+            .iter()
+            .find(|row| row.get("level") == Some(&Cell::U32(2)))
+            .expect("warning");
+        assert_eq!(row.get("port"), Some(&Cell::U32(6432)));
+        assert_eq!(row.get("pid"), Some(&Cell::I32(123)));
+        assert_eq!(row.get("age_s"), Some(&Cell::U64(42)));
+        let Some(Cell::Ts(ts)) = row.get("ts") else {
+            panic!("timestamp")
+        };
+        assert!((before..=after).contains(ts));
+        let dictionary = segment.dictionary().expect("dictionary");
+        for (field, expected) in [
+            ("side", "S"),
+            ("host", "[::1]"),
+            ("text", "closing because: unknown reason (age=42s)"),
+        ] {
+            let Some(Cell::StrId(id)) = row.get(field) else {
+                panic!("{field}")
+            };
+            assert_eq!(
+                dictionary.resolve(*id).expect("text").stored_bytes(),
+                expected.as_bytes()
+            );
+        }
+    }
 }

@@ -229,6 +229,7 @@ test("PgBouncer groups lead with the exact message and explain unresolved connec
       username: "(nouser)",
       host: "10.0.0.7",
       sourceFile: "/var/log/pgbouncer.log",
+      pid: 42, side: "S", port: 6432, ageS: 8,
     },
     detailRef: "opaque-pgbouncer",
     representativeTs: hour,
@@ -238,8 +239,8 @@ test("PgBouncer groups lead with the exact message and explain unresolved connec
     `${locale}.yaml`,
   )))
   const expectedSubtitles = [
-    "(nodb) · database not selected · (nouser) · user not resolved · Client 10.0.0.7",
-    "(nodb) · база ещё не выбрана · (nouser) · пользователь ещё не определён · Client 10.0.0.7",
+    "(nodb) · database not selected · (nouser) · user not resolved · Address 10.0.0.7",
+    "(nodb) · база ещё не выбрана · (nouser) · пользователь ещё не определён · Адрес 10.0.0.7",
   ]
 
   for (const [index, locale] of ["en", "ru"].entries()) {

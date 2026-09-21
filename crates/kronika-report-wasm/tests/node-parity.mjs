@@ -8,7 +8,7 @@ import { runInThisContext } from "node:vm";
 const SEGMENT_ID = "1709164800000000";
 const SAMPLE_TO = "1709164801000000";
 const SOURCES = 3;
-const [glueArgument, wasmArgument, nativeArgument, collectionArgument] = process.argv.slice(2);
+const [glueArgument, wasmArgument, nativeArgument, collectionArgument, pgbouncerArgument] = process.argv.slice(2);
 assert.ok(glueArgument, "generated WebAssembly glue path is required");
 assert.ok(wasmArgument, "compressed WebAssembly path is required");
 assert.ok(nativeArgument, "native oracle path is required");
@@ -38,11 +38,12 @@ let session = new bindings.ReportSession(
   BigInt(zms.length),
 );
 let nativeFixtureDirectory = null;
+let nativeSegmentId = SEGMENT_ID;
 let cases = 0;
 let outputBytes = 0;
 
 function nativeBody(path, query) {
-  const result = spawnSync(nativePath, [path, query, ...(nativeFixtureDirectory === null ? [] : [nativeFixtureDirectory])], {
+  const result = spawnSync(nativePath, [path, query, ...(nativeFixtureDirectory === null ? [] : [nativeFixtureDirectory, nativeSegmentId])], {
     encoding: null,
     maxBuffer: 16 * 1024 * 1024,
   });
@@ -317,6 +318,35 @@ if (collectionArgument) {
       assert.deepEqual(reset.identity, after.identity, "subsequent sample retains the new identity");
     }
   }
+}
+
+if (pgbouncerArgument) {
+  session.free();
+  nativeFixtureDirectory = resolve(pgbouncerArgument);
+  nativeSegmentId = (await readFile(resolve(nativeFixtureDirectory, "segment-id"), "utf8")).trim();
+  const [data, index] = await Promise.all(["recording.zms", "recording.idx"].map(name => readFile(resolve(nativeFixtureDirectory, name))));
+  session = new bindings.ReportSession(nativeSegmentId, data, index, SOURCES, BigInt(data.length));
+  const window = `from=${nativeSegmentId}&to=${BigInt(nativeSegmentId) + 100n}&source=pgbouncer_events&limit=10`;
+  const occurrences = records(compare("pgbouncer-old-new", "/api/events", `${window}&representation=occurrences`))
+    .filter(row => row.record === "event_occurrence");
+  assert.equal(occurrences.length, 5);
+  for (const row of occurrences) {
+    const detail = records(compare("pgbouncer-full-detail", "/api/row-detail", `detail_ref=${encodeURIComponent(row.detail_ref)}`));
+    const payload = detail.find(row => row.record === "row_detail");
+    assert.ok(payload, "exact stored detail");
+    assert.equal(typeof payload.fields.text.stored_text, "string");
+    if (row.side === "C") {
+      assert.equal(row.pid, 73);
+      assert.equal(row.port, 0);
+      assert.equal(payload.fields.age_s, "0");
+    }
+  }
+  const groups = records(compare("pgbouncer-mixed-group", "/api/events", `${window}&representation=groups`))
+    .filter(row => row.record === "event_group");
+  assert.equal(groups.length, 4);
+  const mixed = groups.find(row => row.label === "closing because: new failure (age=42s)");
+  assert.equal(mixed.count, 2);
+  assert.equal(mixed.stat.pid, null);
 }
 
 const memoryAfterBytes = wasm.memory.buffer.byteLength;

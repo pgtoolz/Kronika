@@ -21,7 +21,7 @@ use crate::{
 const SEGMENT_ID: i64 = 1_780_000_000_000_000;
 
 struct FinishedFixture {
-    _directory: tempfile::TempDir,
+    directory: tempfile::TempDir,
     context: QueryContext,
 }
 
@@ -34,7 +34,7 @@ fn intern(interner: &mut Interner, value: &str) -> StrId {
     )
 }
 
-fn finished_fixture(errors: &[(i64, &str)], temp_files: &[(i64, i64)]) -> FinishedFixture {
+fn finished_rows(write: impl FnOnce(&mut Interner, &mut SectionBuffers)) -> FinishedFixture {
     let directory = tempfile::tempdir().expect("temporary event root");
     let root = DataRoot::open(directory.path()).expect("open event data root");
     let owner = root
@@ -45,42 +45,8 @@ fn finished_fixture(errors: &[(i64, &str)], temp_files: &[(i64, i64)]) -> Finish
     let address = SegmentAddress::new(segment_id).expect("event segment address");
 
     let mut interner = Interner::new(DictLimits::default());
-    let source_file = intern(&mut interner, "postgresql.log");
     let mut buffers = SectionBuffers::new();
-    for &(at, pattern) in errors {
-        let pattern = intern(&mut interner, pattern);
-        buffers
-            .push(PgLogErrors {
-                ts: Ts(at),
-                system_identifier: Some(42),
-                source_file,
-                severity: 0,
-                category: 8,
-                sqlstate: None,
-                pattern,
-                count: 1,
-                sample: pattern,
-                detail: None,
-                hint: None,
-                context: None,
-                statement: None,
-                database: None,
-                username: None,
-            })
-            .expect("event error row fits");
-    }
-    for &(at, size_bytes) in temp_files {
-        buffers
-            .push(PgLogTempFiles {
-                ts: Ts(at),
-                system_identifier: Some(42),
-                source_file,
-                path: None,
-                size_bytes,
-                statement: None,
-            })
-            .expect("temporary-file row fits");
-    }
+    write(&mut interner, &mut buffers);
     let dictionary = dict::encode(interner.window()).expect("encode event dictionary");
     let part = buffers
         .flush(&dictionary)
@@ -95,9 +61,49 @@ fn finished_fixture(errors: &[(i64, &str)], temp_files: &[(i64, i64)]) -> Finish
 
     let source = PosixSource::open(directory.path()).expect("open finished event source");
     FinishedFixture {
-        _directory: directory,
+        directory,
         context: QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false),
     }
+}
+
+fn finished_fixture(errors: &[(i64, &str)], temp_files: &[(i64, i64)]) -> FinishedFixture {
+    finished_rows(|interner, buffers| {
+        let source_file = intern(interner, "postgresql.log");
+        for &(at, pattern) in errors {
+            let pattern = intern(interner, pattern);
+            buffers
+                .push(PgLogErrors {
+                    ts: Ts(at),
+                    system_identifier: Some(42),
+                    source_file,
+                    severity: 0,
+                    category: 8,
+                    sqlstate: None,
+                    pattern,
+                    count: 1,
+                    sample: pattern,
+                    detail: None,
+                    hint: None,
+                    context: None,
+                    statement: None,
+                    database: None,
+                    username: None,
+                })
+                .expect("event error row fits");
+        }
+        for &(at, size_bytes) in temp_files {
+            buffers
+                .push(PgLogTempFiles {
+                    ts: Ts(at),
+                    system_identifier: Some(42),
+                    source_file,
+                    path: None,
+                    size_bytes,
+                    statement: None,
+                })
+                .expect("temporary-file row fits");
+        }
+    })
 }
 
 fn object(value: Value) -> Map<String, Value> {
@@ -243,6 +249,10 @@ fn pgbouncer_group_uses_the_message_title_and_shared_connection_context() {
             username: Some("(nouser)".to_owned()),
             host: Some("10.0.0.7".to_owned()),
             source_file: Some("/var/log/pgbouncer.log".to_owned()),
+            pid: None,
+            side: None,
+            port: None,
+            age_s: None,
         }
     );
 
@@ -410,4 +420,178 @@ fn typed_execution_keeps_content_equivalent_event_occurrences() {
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0].count.to_bits(), 2.0_f64.to_bits());
     assert_eq!(groups[0].representative_ts, SEGMENT_ID + 10);
+}
+
+#[path = "../../tests/support/pgbouncer_fixture_output.rs"]
+mod pgbouncer_fixture_output;
+
+fn pgbouncer_fixture() -> FinishedFixture {
+    use kronika_registry::{PgBouncerEvents, PgBouncerEventsV2};
+    let fixture = finished_rows(|interner, buffers| {
+        let source_file = intern(
+            interner,
+            &format!(
+                "/var/log/pgbouncer/{}.log",
+                "long-tenant-pooler-file-name-".repeat(7)
+            ),
+        );
+        let old_text = intern(interner, "new failure");
+        let text = intern(interner, "closing because: new failure (age=42s)");
+        let side = intern(interner, "S");
+        let database = intern(interner, "shop");
+        let username = intern(interner, "alice");
+        let host = intern(interner, "[::1]");
+        let legacy = PgBouncerEvents {
+            ts: Ts(SEGMENT_ID + 2),
+            source_file,
+            level: 2,
+            database: None,
+            username: None,
+            host: None,
+            text: old_text,
+        };
+        buffers.push(legacy).expect("legacy mixed row");
+        buffers
+            .push(PgBouncerEvents {
+                ts: Ts(SEGMENT_ID + 3),
+                text: intern(interner, "legacy-only warning"),
+                ..legacy
+            })
+            .expect("legacy representative");
+        let server = PgBouncerEventsV2 {
+            ts: Ts(SEGMENT_ID + 1),
+            source_file,
+            level: 2,
+            database: Some(database),
+            username: Some(username),
+            host: Some(host),
+            text,
+            pid: Some(71),
+            side: Some(side),
+            port: Some(6432),
+            age_s: Some(42),
+        };
+        buffers.push(server).expect("server representative");
+        buffers
+            .push(PgBouncerEventsV2 {
+                ts: Ts(SEGMENT_ID + 4),
+                pid: Some(73),
+                side: Some(intern(interner, "C")),
+                host: Some(intern(interner, "unix(9990)")),
+                port: Some(0),
+                age_s: Some(0),
+                text: intern(interner, "closing because: authentication failed (age=0s)"),
+                ..server
+            })
+            .expect("client representative");
+        buffers
+            .push(PgBouncerEventsV2 {
+                ts: Ts(SEGMENT_ID + 5),
+                level: 3,
+                pid: Some(74),
+                database: None,
+                username: None,
+                host: None,
+                side: None,
+                port: None,
+                age_s: None,
+                text: intern(interner, "got SIGTERM, shutting down"),
+                ..server
+            })
+            .expect("no connection representative");
+    });
+    pgbouncer_fixture_output::write(&fixture.directory, SEGMENT_ID);
+    fixture
+}
+
+#[test]
+fn encoded_pgbouncer_layouts_keep_context_and_full_detail_text() {
+    let fixture = pgbouncer_fixture();
+    let query = |representation| {
+        EventsQuery::normalize(
+            TimeRange::new(SEGMENT_ID, SEGMENT_ID + 100).expect("range"),
+            Some(vec!["pgbouncer_events".to_owned()]),
+            representation,
+            10,
+        )
+        .expect("query")
+    };
+    let EventsResult::Occurrences {
+        occurrences,
+        truncated,
+    } = execute_events(
+        &fixture.context,
+        query(EventsRepresentation::Occurrences),
+        &Control(false),
+    )
+    .expect("encoded occurrences")
+    else {
+        panic!("occurrences")
+    };
+    assert!(!truncated);
+    assert_eq!(occurrences.len(), 5);
+    for row in &occurrences {
+        let (pid, side, port, age, text) = match row.detail_locator.at - SEGMENT_ID {
+            1 => (
+                Some(71),
+                Some("S"),
+                Some(6432),
+                Some("42"),
+                "closing because: new failure (age=42s)",
+            ),
+            2 => (None, None, None, None, "new failure"),
+            3 => (None, None, None, None, "legacy-only warning"),
+            4 => (
+                Some(73),
+                Some("C"),
+                Some(0),
+                Some("0"),
+                "closing because: authentication failed (age=0s)",
+            ),
+            5 => (Some(74), None, None, None, "got SIGTERM, shutting down"),
+            _ => panic!("unexpected timestamp"),
+        };
+        assert_eq!(row.fields["pid"], json!(pid));
+        assert_eq!(row.fields["side"], json!(side));
+        assert_eq!(row.fields["port"], json!(port));
+        assert_eq!(row.fields["age_s"], json!(age));
+        assert!(!row.fields.contains_key("text"));
+        let reference = row.detail_locator.detail_ref().expect("reference");
+        let detail = crate::execute_row_detail(
+            &fixture.context,
+            crate::validate_row_detail_ref(&reference).expect("locator"),
+            &Control(false),
+        )
+        .expect("stored detail");
+        assert_eq!(detail.fields["text"]["stored_text"], text);
+        if row.detail_locator.type_id == 2_100_002 {
+            assert_eq!(detail.fields["pid"], json!(pid));
+            assert_eq!(detail.fields["port"], json!(port));
+            assert_eq!(detail.fields["age_s"], json!(age));
+        } else {
+            assert!(!detail.fields.contains_key("pid"));
+        }
+    }
+    let EventsResult::Groups { groups, truncated } = execute_events(
+        &fixture.context,
+        query(EventsRepresentation::Groups),
+        &Control(false),
+    )
+    .expect("encoded groups") else {
+        panic!("groups")
+    };
+    assert!(!truncated);
+    assert_eq!(groups.len(), 4);
+    let mixed = groups
+        .iter()
+        .find(|group| group.label.as_deref() == Some("closing because: new failure (age=42s)"))
+        .expect("mixed group");
+    assert_eq!(mixed.count.to_bits(), 2.0_f64.to_bits());
+    let EventStat::Pgbouncer {
+        pid, side, age_s, ..
+    } = &mixed.stat
+    else {
+        panic!("stat")
+    };
+    assert_eq!((*pid, side.as_deref(), *age_s), (None, None, None));
 }

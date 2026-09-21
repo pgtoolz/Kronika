@@ -186,10 +186,10 @@ fn a_jsonlog_yields_the_same_events_as_the_csvlog_of_the_same_records() {
 }
 
 #[test]
-fn a_pgbouncer_log_yields_one_row_per_event_and_no_duplicates() {
+fn a_pgbouncer_log_retains_full_messages_and_connection_context() {
     let mut log = PgBouncerLog::new(fixture("pgbouncer.log"), Position::default());
 
-    let batch = log.read_batch(1024).expect("read the fixture");
+    let batch = log.read_batch(|| Ok(NOW), 1024).expect("read the fixture");
     if batch.needs_ack {
         log.acknowledge().expect("acknowledge the fixture");
     }
@@ -199,12 +199,13 @@ fn a_pgbouncer_log_yields_one_row_per_event_and_no_duplicates() {
     assert_eq!(
         texts,
         [
-            "query_wait_timeout",
-            "server conn crashed?",
-            "no such database: nope",
+            "closing because: query_wait_timeout (age=42s)",
+            "pooler error: query_wait_timeout",
+            "closing because: server conn crashed? (age=10s)",
+            "closing because: no such database: nope (age=0s)",
             "server login failed: FATAL password authentication failed for user \"alice\"",
             "kernel file descriptor limit: 1024 (hard: 4096); max_client_conn: 100, max expected fd use: 172",
-            "bad packet",
+            "closing because: bad packet (age=1s)",
         ]
     );
 
@@ -213,13 +214,13 @@ fn a_pgbouncer_log_yields_one_row_per_event_and_no_duplicates() {
     assert_eq!(events[0].username.as_deref(), Some("alice"));
     assert_eq!(events[0].host.as_deref(), Some("10.0.0.1"));
 
-    assert_eq!(events[2].database.as_deref(), Some("(nodb)"));
-    assert_eq!(events[2].username.as_deref(), Some("(nouser)"));
-    assert_eq!(events[2].host.as_deref(), Some("unix(9990)"));
+    assert_eq!(events[3].database.as_deref(), Some("(nodb)"));
+    assert_eq!(events[3].username.as_deref(), Some("(nouser)"));
+    assert_eq!(events[3].host.as_deref(), Some("unix(9990)"));
 
-    assert_eq!(events[3].level, Level::Warning);
-    assert_eq!(events[4].host, None, "a janitor line carries no socket");
-    assert_eq!(events[5].host.as_deref(), Some("[2001:db8::1]"));
+    assert_eq!(events[4].level, Level::Warning);
+    assert_eq!(events[5].host, None, "a janitor line carries no socket");
+    assert_eq!(events[6].host.as_deref(), Some("[2001:db8::1]"));
 }
 
 #[test]
@@ -571,5 +572,92 @@ fn a_new_severity_quoting_a_detail_marker_starts_its_own_record() {
     assert_eq!(
         log.position().offset,
         (input.len() - "INFO:  sentinel\n".len()) as u64
+    );
+}
+
+#[test]
+fn pgbouncer_mixed_batch_preserves_messages_and_retries_unacknowledged_input() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("pooler.log");
+    std::fs::write(&path, concat!(
+        "garbage\n",
+        "WARNING message contains [12] DEBUG nested text\n",
+        "bad-time [21] FATAL previously unseen fatal\n",
+        "2026-09-21 06:00:00.000 [22] ERROR C-0x1: db/alice@[::1]:6432 closing because: new failure (age=42s)\n",
+        "WARNING S-0x2: db/bob@::1 pooler error: independent warning\n",
+        "LOG S-0x3: db/bob@unix(9990):6432 closing because: client unexpected eof (age=0s)\n",
+        "LOG got SIGTERM, shutting down\n",
+        "LOG reloading config file\n",
+        "LOG new connection to server failed\n",
+        "LOG closing because: server idle timeout (age=bad)\n",
+        "WARNING closing because: client close request (age=1s)\n",
+        "WARNING C-broken context remains visible\n",
+        "LOG login attempt: db=db user=alice tls=no\n",
+        "LOG new connection to server\n",
+        "LOG new connection to server (from [::1]:4000)\n",
+        "LOG closing because: client close request (age=10s)\n",
+        "LOG closing because: server idle timeout (age=10s)\n",
+        "LOG closing because: server lifetime over (age=10s)\n",
+        "LOG stats: 1 xacts/s, 2 queries/s, in 3 B/s, out 4 B/s, xact 5 us, query 6 us, wait 7 us\n",
+        "LOG closing because: client close request (age=+10s)\n",
+        "DEBUG hidden\nNOISE hidden\ngarbage sentinel\n",
+    )).expect("write log");
+    let mut log = PgBouncerLog::new(path.clone(), Position::default());
+    assert!(
+        log.read_batch(|| Err(std::io::Error::other("clock unavailable")), 100)
+            .is_err()
+    );
+    assert_eq!(log.position().offset, 0);
+    let calls = std::cell::Cell::new(0);
+    let batch = log
+        .read_batch(
+            || {
+                calls.set(calls.get() + 1);
+                Ok(NOW)
+            },
+            100,
+        )
+        .expect("read");
+    assert_eq!(calls.get(), 1);
+    let events = &batch.events;
+    assert_eq!(events.len(), 12);
+    assert_eq!(events[0].text, "message contains [12] DEBUG nested text");
+    assert_eq!(events[0].level, Level::Warning);
+    assert_eq!(events[0].pid, None);
+    assert_eq!(events[1].pid, Some(21));
+    assert_eq!(events[2].pid, Some(22));
+    assert_eq!(events[2].side.as_deref(), Some("C"));
+    assert_eq!(events[2].host.as_deref(), Some("[::1]"));
+    assert_eq!(events[2].port, Some(6432));
+    assert_eq!(events[2].age_s, Some(42));
+    assert_eq!(events[2].text, "closing because: new failure (age=42s)");
+    assert_ne!(events[2].ts, NOW);
+    assert!(
+        events
+            .iter()
+            .enumerate()
+            .all(|(index, event)| index == 2 || event.ts == NOW)
+    );
+    assert_eq!(events[3].side.as_deref(), Some("S"));
+    assert_eq!(events[3].host.as_deref(), Some("::1"));
+    assert_eq!(events[3].port, None);
+    assert_eq!(events[4].host.as_deref(), Some("unix(9990)"));
+    assert_eq!(events[4].port, Some(6432));
+    assert_eq!(events[4].age_s, Some(0));
+    assert_eq!(events[8].age_s, None);
+    assert_eq!(events[10].text, "C-broken context remains visible");
+    log.retry();
+    assert_eq!(
+        log.read_batch(|| Ok(NOW), 100).expect("retry").events,
+        *events
+    );
+    let position = log.acknowledge().expect("ack");
+    let mut restarted = PgBouncerLog::new(path, position);
+    assert!(
+        restarted
+            .read_batch(|| Ok(NOW), 100)
+            .expect("restart")
+            .events
+            .is_empty()
     );
 }

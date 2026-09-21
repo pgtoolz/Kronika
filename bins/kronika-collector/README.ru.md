@@ -163,6 +163,8 @@ sudo /usr/local/bin/kronika-collector \
 | `--pgbouncer-dsn` | `KRONIKA_PGBOUNCER_DSNS` | Не задана | Строки подключения к административной консоли (`dbname=pgbouncer`) для чтения `SHOW CONFIG`/`logfile`. Учётная запись должна входить в `stats_users`. |
 | `--pgbouncer-log` | `KRONIKA_PGBOUNCER_LOGS` | Не задана | Локальные пути к журналам PgBouncer. В имени файла допустимы `*` и `?`. |
 
+Сборщик сохраняет из логов PgBouncer предупреждения, ошибки и неизвестные LOG с контекстом соединения. При отсутствующем или неверном времени используется время чтения. Штатные сообщения о соединениях, периодическая статистика и DEBUG/NOISE пропускаются. См. [записанные поля](../../docs/type-registry/pgbouncer.ru.md).
+
 Без `--pg-dsn` устаревшая переменная `KRONIKA_PG_DSNS` по-прежнему задаёт
 только первое подключение. Её нельзя использовать вместе с `KRONIKA_PG_DSN`.
 Перейдите на `--pg-dsn` или `KRONIKA_PG_DSN`: поддержка `KRONIKA_PG_DSNS`

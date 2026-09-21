@@ -159,6 +159,8 @@ Command-line values are not split at semicolons. Environment lists keep the
 | `--pgbouncer-dsn` | `KRONIKA_PGBOUNCER_DSNS` | Unset | Connections to the administrative console (`dbname=pgbouncer`) to read `SHOW CONFIG`/`logfile`. The account must belong to `stats_users`. |
 | `--pgbouncer-log` | `KRONIKA_PGBOUNCER_LOGS` | Unset | Local PgBouncer log paths. Filenames can use `*` and `?` wildcards. |
 
+The collector retains PgBouncer warnings, errors and unknown LOG messages with connection context. Missing or invalid timestamps use the read time. Routine connection chatter, periodic statistics and DEBUG/NOISE are skipped. See [recorded fields](../../docs/type-registry/pgbouncer.md).
+
 Without `--pg-dsn`, the legacy `KRONIKA_PG_DSNS` still uses only its first
 connection string and cannot be set together with `KRONIKA_PG_DSN`.
 Migrate to `--pg-dsn` or `KRONIKA_PG_DSN`; support for `KRONIKA_PG_DSNS`

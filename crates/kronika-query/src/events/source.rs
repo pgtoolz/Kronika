@@ -71,6 +71,10 @@ impl EventSource {
                 "username",
                 "host",
                 "text",
+                "pid",
+                "side",
+                "port",
+                "age_s",
             ],
             Self::TempFiles => &[],
         }
@@ -165,6 +169,10 @@ impl EventSource {
                 "username",
                 "host",
                 "text",
+                "pid",
+                "side",
+                "port",
+                "age_s",
             ],
         }
     }

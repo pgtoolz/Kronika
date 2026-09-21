@@ -1639,6 +1639,42 @@ impl Fixture {
             .expect("append pgbouncer row");
     }
 
+    pub(crate) fn append_pgbouncer_connection(&mut self, at: i64) {
+        let mut interner = Interner::new(DictLimits::default());
+        let label = StrId(interner.intern(b"fixture").expect("intern label").get());
+        let text = StrId(
+            interner
+                .intern(b"closing because: unknown failure (age=42s)")
+                .expect("message")
+                .get(),
+        );
+        let side = StrId(interner.intern(b"S").expect("side").get());
+        let dictionary = dict::encode(interner.window()).expect("pgbouncer dictionary");
+        let mut buffers = SectionBuffers::new();
+        buffers
+            .push(kronika_registry::PgBouncerEventsV2 {
+                ts: Ts(at),
+                source_file: label,
+                level: 2,
+                database: None,
+                username: None,
+                host: None,
+                text,
+                pid: Some(71),
+                side: Some(side),
+                port: Some(6432),
+                age_s: Some(42),
+            })
+            .expect("pgbouncer row fits");
+        let part = buffers
+            .flush(&dictionary)
+            .expect("encode pgbouncer row")
+            .expect("nonempty pgbouncer row");
+        self.journal
+            .append(self.address.id, &part)
+            .expect("append pgbouncer row");
+    }
+
     /// Appends one 22-row mount snapshot whose active and finalized ordinals
     /// deliberately differ for `/pgdata` and `/victim`.
     pub(crate) fn append_reordering_mount_snapshot(&mut self, at: i64) {

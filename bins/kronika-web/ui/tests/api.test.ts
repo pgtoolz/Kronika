@@ -755,6 +755,7 @@ test("event groups use one half-open request and validate the server-owned shape
       username: "(nouser)",
       host: "10.0.0.7",
       sourceFile: "/var/log/pgbouncer.log",
+      pid: null, side: null, port: null, ageS: null,
     })
 
     const pgbouncerWithoutOptionalContext = {
@@ -780,6 +781,7 @@ test("event groups use one half-open request and validate the server-owned shape
       username: null,
       host: null,
       sourceFile: null,
+      pid: null, side: null, port: null, ageS: null,
     })
 
     for (const [field, label] of [

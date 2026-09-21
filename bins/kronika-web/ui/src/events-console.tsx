@@ -113,7 +113,7 @@ export function entrySubtitle(entry: EventEntry, t: Translate, locale: Locale): 
     return [
       pgbouncerDatabase(stat.database, t),
       pgbouncerUsername(stat.username, t),
-      stat.host === null ? null : t("events.pgbouncer.context.client", { value: stat.host }),
+      stat.host === null ? null : t("events.pgbouncer.context.address", { value: stat.host }),
     ].filter((value): value is string => value !== null).join(" · ") || null
   }
   return null
@@ -336,7 +336,7 @@ function EventEntryDetail({ detail, detailStatus, entry, locale, onCursor, onDet
       type="button"
     ><span aria-live="polite" data-testid={detailStatus === "loading" ? "event-detail-loading" : undefined}>{actionLabel}</span> · <time className="font-mono tabular-nums">{time.timestamp(detail?.at ?? entry.representativeTs)}</time></button>
     {detailStatus === "failed" && <p className="m-0 text-[12px] text-bad" data-testid="event-detail-error" role="alert">{t("events.detail.error")}</p>}
-    {detail !== null && <RepresentativeDetail detail={detail} t={t} />}
+    {detail !== null && <RepresentativeDetail detail={detail} locale={locale} t={t} />}
     {note !== undefined && <p className="text-right text-[12px] text-fg3">{t(note)}</p>}
   </div>
 }
@@ -357,12 +357,16 @@ export function eventDetailTexts(fields: Readonly<Record<string, Cell>>): readon
   })
 }
 
-function RepresentativeDetail({ detail, t }: {
+function RepresentativeDetail({ detail, locale, t }: {
+  readonly locale: Locale
   readonly detail: EventRowDetail
   readonly t: Translate
 }) {
   const texts = eventDetailTexts(detail.fields)
   return <section className="grid gap-2 rounded-[var(--radius-sm)] border border-line2 bg-s1 p-2" data-testid="event-representative-occurrence">
+    {detail.section === "pgbouncer_events" && pgbouncerConnectionFacts(detail.fields, locale, t).map(([label, value]) => <div className="flex items-baseline gap-2 text-[12px]" key={label}>
+      <span className="text-fg3">{label}</span><span className="min-w-0 font-mono tabular-nums text-fg2 [overflow-wrap:anywhere]">{value}</span>
+    </div>)}
     {texts.length === 0 && <p className="m-0 text-[12px] text-fg3">{t("events.detail.no_text")}</p>}
     {texts.map((text) => <div className="grid gap-1" key={text.field}>
       <small className="text-[12px] text-fg3">{t(`events.field.${text.field}`)}</small>
@@ -370,6 +374,16 @@ function RepresentativeDetail({ detail, t }: {
       {text.truncated && <small className="text-[12px] text-warn">{t("events.detail.text_truncated", { length: text.fullLen })}</small>}
     </div>)}
   </section>
+}
+
+function pgbouncerConnectionFacts(fields: Readonly<Record<string, Cell>>, locale: Locale, t: Translate): readonly (readonly [string, string])[] {
+  return ["database", "username", "host", "source_file", "pid", "side", "port", "age_s"].flatMap((field) => {
+    const value = fields[field]
+    if (value === null || value === undefined) return []
+    const shown = field === "age_s" ? humanDuration(Number(value) * 1_000, locale)
+      : field === "side" && (value === "C" || value === "S") ? t(value === "C" ? "events.pgbouncer.side.client" : "events.pgbouncer.side.server") : String(value)
+    return [[t(`events.field.${field === "host" ? "address" : field}`), shown] as const]
+  })
 }
 
 function entryFacts(entry: EventEntry, locale: Locale, t: Translate): readonly (readonly [string, string])[] {
@@ -420,8 +434,9 @@ function entryFacts(entry: EventEntry, locale: Locale, t: Translate): readonly (
   return [
     ...(stat.database === null ? [] : [[field("database"), stat.database] as const]),
     ...(stat.username === null ? [] : [[field("username"), stat.username] as const]),
-    ...(stat.host === null ? [] : [[field("client"), stat.host] as const]),
+    ...(stat.host === null ? [] : [[field("address"), stat.host] as const]),
     ...(stat.sourceFile === null ? [] : [[field("source_file"), stat.sourceFile] as const]),
+    ...pgbouncerConnectionFacts({ pid: stat.pid, side: stat.side, port: stat.port, age_s: stat.ageS }, locale, t),
   ]
 }
 
