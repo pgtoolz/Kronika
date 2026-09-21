@@ -362,6 +362,7 @@ fn event_text(message: &str, continuations: &[String]) -> Option<(Kind, String)>
     if !RECOGNIZED
         .iter()
         .any(|recognized| reason.starts_with(recognized))
+        && !is_hba_auth_failure(reason)
     {
         return None;
     }
@@ -370,6 +371,19 @@ fn event_text(message: &str, continuations: &[String]) -> Option<(Kind, String)>
         crate::text::append_str(&mut text, line);
     }
     (!text.is_empty()).then_some((kind, text))
+}
+
+/// `"trust" authentication failed` (`src/client.c:260`, written under
+/// `auth_type = hba`) quotes the method in front of the text, so no fixed
+/// prefix in [`RECOGNIZED`] can match it; the shape `"<method>" authentication
+/// failed` is matched instead, leaving room for other quoted methods.
+fn is_hba_auth_failure(reason: &str) -> bool {
+    reason.starts_with('"')
+        && reason
+            .strip_suffix("\" authentication failed")
+            .is_some_and(|method| {
+                method.len() > 1 && !method.get(1..).unwrap_or_default().contains('"')
+            })
 }
 
 /// Drop the ` (age=42s)` a disconnection reason ends with.

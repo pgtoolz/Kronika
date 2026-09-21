@@ -258,13 +258,14 @@ fn a_journalctl_prefix_in_front_of_pgbouncer_lines_is_skipped() {
     );
 }
 
-const POOLER_ERROR_TEXTS: [&str; 6] = [
+const POOLER_ERROR_TEXTS: [&str; 7] = [
     "query_wait_timeout",
     "no such user",
     "server login failed: FATAL database \"nope\" does not exist",
     "query_wait_timeout",
     "query_wait_timeout",
     "password authentication failed",
+    "\"trust\" authentication failed",
 ];
 
 #[test]
@@ -298,6 +299,11 @@ fn a_pooler_error_is_an_event_unless_its_closing_line_came_first() {
         events[4].username.as_deref(),
         Some("erin"),
         "the same reason on another socket is not a twin"
+    );
+    assert_eq!(
+        events[6].username.as_deref(),
+        Some("grace"),
+        "an hba method failure names the method, so it is matched by its shape"
     );
 }
 
