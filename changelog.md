@@ -2,6 +2,10 @@
 
 [Русская версия](changelog.ru.md)
 
+## [1.2.3](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.3)
+
+- Fixed native PgBouncer journal messages being dropped. Exported wrapper timestamps and PIDs are retained. Messages without a severity use LOG.
+
 ## [1.2.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.2)
 
 - Fixed PostgreSQL log collection stopping on messages without a prefix or a usable timestamp. Recognized messages without a usable timestamp are saved with the read time.

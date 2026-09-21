@@ -2,6 +2,10 @@
 
 [English version](changelog.md)
 
+## [1.2.3](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.3)
+
+- Исправлена потеря сообщений PgBouncer из journald. Сохраняются время и PID из текстовой обёртки. Для сообщений без уровня используется LOG.
+
 ## [1.2.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.2)
 
 - Исправлена остановка сбора логов PostgreSQL на сообщениях без префикса или корректного времени. Распознанные сообщения без корректного времени сохраняются со временем чтения.
