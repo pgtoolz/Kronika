@@ -31,21 +31,18 @@ pub(super) const fn continues(_open: &[String], _line: &str, raw_quotes_odd: boo
 pub(super) fn parse(
     record: &str,
     zone: Option<&timestamp::LogTimezone>,
-) -> Result<Option<PgRecord>, &'static str> {
+    now: i64,
+) -> Option<PgRecord> {
     let fields = split(record);
     if fields.len() < MIN_FIELDS {
-        return Ok(None);
+        return None;
     }
-    let Some(severity) = field(&fields, ERROR_SEVERITY).and_then(Severity::parse) else {
-        return Ok(None);
-    };
-    let Some(message) = field(&fields, MESSAGE) else {
-        return Ok(None);
-    };
-    let (ts, rest) = timestamp::parse(field(&fields, LOG_TIME).ok_or(timestamp::INVALID)?, zone)?;
-    if !rest.is_empty() {
-        return Err(timestamp::INVALID);
-    }
+    let severity = field(&fields, ERROR_SEVERITY).and_then(Severity::parse)?;
+    let message = field(&fields, MESSAGE)?;
+    let ts = field(&fields, LOG_TIME)
+        .and_then(|text| timestamp::parse(text, zone).ok())
+        .filter(|(_, rest)| rest.is_empty())
+        .map_or(now, |(ts, _)| ts);
     let mut parsed = PgRecord::new(ts, severity, message);
     parsed.sqlstate = field(&fields, SQL_STATE_CODE).and_then(bounded);
     parsed.detail = field(&fields, DETAIL).and_then(bounded);
@@ -54,7 +51,7 @@ pub(super) fn parse(
     parsed.statement = field(&fields, QUERY).and_then(bounded);
     parsed.database = field(&fields, DATABASE_NAME).and_then(bounded);
     parsed.username = field(&fields, USER_NAME).and_then(bounded);
-    Ok(Some(parsed))
+    Some(parsed)
 }
 
 fn field<'a>(fields: &'a [Cow<'_, str>], index: usize) -> Option<&'a str> {

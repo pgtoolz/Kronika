@@ -12,12 +12,12 @@ and how they changed over time.
 
 [Open the interactive preview](https://pgtoolz.github.io/Kronika/).
 
-A recorded hour, 5 September 2026, 19:00–20:00 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=host).
+A recorded hour, 21 September 2026, 08:59:46–09:59:46 UTC:
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=host) · [Events](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=events).
 
 ## Install and run
 
-[Install Kronika 1.2.1](INSTALL.md) from a [Linux release archive](docs/releases.md#download),
+[Install Kronika 1.2.2](INSTALL.md) from a [Linux release archive](docs/releases.md#download),
 or [build from source](docs/build.md).
 
 Choose `local` to record Linux and, optionally, PostgreSQL in the same VM or pod.
@@ -126,7 +126,7 @@ for the rotation rules and automatic mode.
 [Views and controls](docs/features.md) explains how to select measurements, group,
 search and sort rows, inspect details in Inspector, view charts and export. The
 [operator guide](docs/operator-guide.md) contains four worked examples from
-the preview recording.
+the 5 September recording.
 
 ![Recorded statement, SQL text and interval activity](docs/images/statements.png)
 

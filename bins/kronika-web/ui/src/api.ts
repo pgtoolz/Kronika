@@ -694,6 +694,10 @@ function eventStat(value: unknown): EventStat {
     username: optionalNullableText(stat["username"], "PgBouncer username"),
     host: optionalNullableText(stat["host"], "PgBouncer host"),
     sourceFile: optionalNullableText(stat["sourceFile"], "PgBouncer source file"),
+    pid: nullableNumber(stat["pid"] ?? null, "PgBouncer pid"),
+    side: optionalNullableText(stat["side"], "PgBouncer side"),
+    port: nullableNumber(stat["port"] ?? null, "PgBouncer port"),
+    ageS: nullableNumber(stat["ageS"] ?? null, "PgBouncer age"),
   }
   throw new Error("event stat kind is invalid")
 }

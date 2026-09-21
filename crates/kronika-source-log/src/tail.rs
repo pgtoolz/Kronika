@@ -242,21 +242,6 @@ impl Tail {
         let mut candidate_end = None;
         let mut raw_bytes = 0_usize;
 
-        // A newline-complete record gets one read interval in which a later
-        // physical line may prove to be its continuation. On the following
-        // idle read it is complete only when no unfinished physical line or
-        // format-specific framing (an open CSV quote) is still pending.
-        let idle_complete_record = self.scan_offset >= size
-            && self.staged.is_none()
-            && self.partial.is_empty()
-            && self
-                .open
-                .as_ref()
-                .is_some_and(|open| !continues(&open.lines, "", open.quotes_odd));
-        if idle_complete_record {
-            self.flush_open(&mut records, &mut candidate_end);
-        }
-
         if let Some(line) = self.staged.take() {
             self.accept_line(
                 line,
@@ -309,6 +294,18 @@ impl Tail {
                     break;
                 }
             }
+        }
+
+        if self.scan_offset >= size
+            && records.len() < max_records
+            && self.staged.is_none()
+            && self.partial.is_empty()
+            && self
+                .open
+                .as_ref()
+                .is_some_and(|open| !continues(&open.lines, "", open.quotes_odd))
+        {
+            self.flush_open(&mut records, &mut candidate_end);
         }
 
         if let Some(offset) = candidate_end {

@@ -337,6 +337,10 @@ pub(crate) enum EventStat {
         username: Option<String>,
         host: Option<String>,
         source_file: Option<String>,
+        pid: Option<f64>,
+        side: Option<String>,
+        port: Option<f64>,
+        age_s: Option<f64>,
     },
 }
 

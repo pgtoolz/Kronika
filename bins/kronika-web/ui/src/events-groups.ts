@@ -18,6 +18,10 @@ export type EventStat =
     readonly username: string | null
     readonly host: string | null
     readonly sourceFile: string | null
+    readonly pid: number | null
+    readonly side: string | null
+    readonly port: number | null
+    readonly ageS: number | null
   }
 
 export interface EventEntry {

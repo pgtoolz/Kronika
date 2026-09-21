@@ -1,11 +1,11 @@
 //! Registered physical layouts, logical section names, and extension provenance.
 
 use crate::{
-    PgBouncerEvents, PgLocksV1, PgLocksV2, PgLogAutovacuum, PgLogCheckpoints, PgLogErrors,
-    PgLogLifecycle, PgLogLockWaits, PgLogSlowQueries, PgLogTempFiles, PgPreparedXacts, PgSettings,
-    PgStatActivityV1, PgStatActivityV2, PgStatActivityV3, PgStatArchiver, PgStatBgwriterV1,
-    PgStatBgwriterV2, PgStatCheckpointerV1, PgStatCheckpointerV2, PgStatDatabaseV1,
-    PgStatDatabaseV2, PgStatDatabaseV3, PgStatDatabaseV4, PgStatIoV1, PgStatIoV2,
+    PgBouncerEvents, PgBouncerEventsV2, PgLocksV1, PgLocksV2, PgLogAutovacuum, PgLogCheckpoints,
+    PgLogErrors, PgLogLifecycle, PgLogLockWaits, PgLogSlowQueries, PgLogTempFiles, PgPreparedXacts,
+    PgSettings, PgStatActivityV1, PgStatActivityV2, PgStatActivityV3, PgStatArchiver,
+    PgStatBgwriterV1, PgStatBgwriterV2, PgStatCheckpointerV1, PgStatCheckpointerV2,
+    PgStatDatabaseV1, PgStatDatabaseV2, PgStatDatabaseV3, PgStatDatabaseV4, PgStatIoV1, PgStatIoV2,
     PgStatProgressVacuumV1, PgStatProgressVacuumV2, PgStatProgressVacuumV3, PgStatStatementsInfo,
     PgStatStatementsV1, PgStatStatementsV2, PgStatStatementsV3, PgStatStatementsV4,
     PgStatStatementsV5, PgStatStatementsV6, PgStatUserIndexesV1, PgStatUserIndexesV2,
@@ -170,5 +170,6 @@ pub const fn registry() -> &'static [TypeContract] {
         PgLogLifecycle::CONTRACT,
         PgLogTempFiles::CONTRACT,
         PgBouncerEvents::CONTRACT,
+        PgBouncerEventsV2::CONTRACT,
     ]
 }

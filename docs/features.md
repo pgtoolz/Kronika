@@ -83,7 +83,7 @@ Sources: [web config](../bins/kronika-web/src/config.rs), [source availability](
 
 ## Events
 
-Events reads a selected range of at most one hour. For a group, `firstTs=min(t)`, `lastTs=max(t)`. Its 60 minute cells sum occurrence weights with `bucket=floor((t−from)/60,000,000)` for Unix-microsecond timestamps. Group counts can use a different reduction, specified below. Numeric durations are recorded in milliseconds and use the shared adaptive duration formatter.
+Events reads a selected range of at most one hour. For a group, `firstTs=min(t)`, `lastTs=max(t)`. Its 60 minute cells sum occurrence weights with `bucket=floor((t−from)/60,000,000)` for Unix-microsecond timestamps. Group counts can use a different reduction, specified below. Durations use the shared adaptive formatter. They are recorded in milliseconds, except connection age in seconds.
 
 | Group / recorded section | Group key | Count, metrics and representative |
 | --- | --- | --- |
@@ -94,7 +94,7 @@ Events reads a selected range of at most one hour. For a group, `firstTs=min(t)`
 | Checkpoint warnings | `phase=2` | Warning count, minimum available `seconds_apart` (seconds), first encountered representative. |
 | Lock waits / `pg_log_lock_waits` | Exact `holding_pids` text | Waiting `kind=0` rows establish groups. Acquired rows join the latest earlier waiting row with the same `(pid,lock_target)`. Count = waiting records (minimum 1). Waiters = distinct recorded PID strings. Max duration = maximum available `duration_ms`. Targets = distinct target texts. Unmatched acquired records form a separate group counted by occurrences. |
 | Lifecycle / `pg_log_lifecycle` | One group per stored row | Kind, PID, signal and shutdown mode from that row. Count 1. |
-| PgBouncer / `pgbouncer_events` | `(level, exact text)` | Row count. Earliest representative. Database/user/host/source file shown only if all members share the same nonempty value. |
+| PgBouncer / `pgbouncer_events` | `(level, message without closing wrapper/valid age)` | Row count. Earliest representative. Database/user/address/source file/PID/side/port/age shown only if all members share the same nonempty value. |
 
 Optional sums/maxima retain null if no member supplies a value. Earliest representatives use physical encounter order to break equal timestamps. Groups sort by tier, descending count, descending last time, then key.
 
@@ -104,7 +104,7 @@ Optional sums/maxima retain null if no member supplies a value. Earliest represe
 | Notable | Other PostgreSQL errors (except WARNING/LOG), slow queries, checkpoint warnings, lock waits, other lifecycle, PgBouncer `level=1/2`. |
 | Routine | PostgreSQL WARNING/LOG (`severity=3/4`), autovacuum/analyze, checkpoints, other PgBouncer levels. |
 
-`(nodb)` and `(nouser)` are literal PgBouncer connection-context values for an unset database/user. The collector preserves them. A missing context field is null. Host strips the connection port. PgBouncer contributes console groups without shared-timeline marks.
+`(nodb)` and `(nouser)` are literal PgBouncer connection-context values for an unset database/user. The collector preserves them. A missing context field is null. Address and port are separate fields. Representative detail retains the full closing message and age. PgBouncer contributes console groups without shared-timeline marks.
 
 The source/type summary filters groups. Search matches displayed title/chips with `text`, `kind`, `source`, `category`. Expand shows group metrics. Representative selection fetches its complete recorded row. A timeline cluster selects its interval and sources. Show all restores the hour. Threshold marks occupy a separate list. The current index builder emits no sharp-rise marks. See [timeline marks](metrics-time.md#timeline-marks). `pg_log_temp_files` is available through MCP `occurrences`, outside the grouped console.
 

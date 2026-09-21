@@ -3762,3 +3762,64 @@ fn find_events_does_not_truncate_for_matches_past_the_exclusive_window() {
     );
     assert_eq!(structured["truncated"], false);
 }
+
+#[test]
+fn pgbouncer_context_and_full_text_reach_mcp_from_wal_and_zms() {
+    for sealed in [false, true] {
+        let mut fixture = Fixture::new();
+        fixture.append_pgbouncer_event(100);
+        fixture.append_pgbouncer_connection(200);
+        if sealed {
+            fixture.finish();
+        }
+        let config = test_config(fixture.root().to_path_buf());
+        for representation in ["occurrences", "groups"] {
+            let arguments = serde_json::json!({
+                "sources": ["pgbouncer_events"], "from": 0, "to": 1000,
+                "representation": representation, "limit": 10,
+            })
+            .as_object()
+            .expect("arguments")
+            .clone();
+            let result = crate::mcp::events::call(&config, arguments, &|| false);
+            assert_eq!(result.is_error, Some(false));
+            let structured = result.structured_content.expect("events");
+            let rows = structured[representation].as_array().expect("rows");
+            assert_eq!(rows.len(), 2);
+            for row in rows {
+                let fields = if representation == "groups" {
+                    &row["stat"]
+                } else {
+                    row
+                };
+                let result =
+                    crate::mcp::row_detail::call(&config, detail_arguments(row), &|| false);
+                assert_eq!(result.is_error, Some(false));
+                let detail = result.structured_content.expect("detail");
+                let current = detail["at"] == "200";
+                if current {
+                    assert_eq!(fields["side"], "S");
+                    assert_eq!(
+                        fields["port"].as_f64().expect("port").to_bits(),
+                        6432.0_f64.to_bits()
+                    );
+                    assert_eq!(
+                        fields["pid"].as_f64().expect("pid").to_bits(),
+                        71.0_f64.to_bits()
+                    );
+                } else {
+                    assert!(fields["pid"].is_null());
+                    assert!(fields["side"].is_null());
+                }
+                assert_eq!(
+                    detail["text"]["stored_text"],
+                    if current {
+                        "closing because: unknown failure (age=42s)"
+                    } else {
+                        "fixture"
+                    }
+                );
+            }
+        }
+    }
+}

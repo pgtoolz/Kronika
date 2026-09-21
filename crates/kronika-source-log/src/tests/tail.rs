@@ -52,17 +52,16 @@ fn reads_only_what_arrived_since_the_last_acknowledged_batch() {
     write(&path, "first\n");
     let mut tail = Tail::new(path.clone(), Position::default());
 
-    assert!(read(&mut tail, never).records.is_empty());
-    append(&path, "second\n");
     let first = read(&mut tail, never);
     assert_eq!(texts(&first.records), ["first"]);
     acknowledge(&mut tail, &first);
 
-    append(&path, "third\n");
+    append(&path, "second\n");
     let second = read(&mut tail, never);
     assert_eq!(texts(&second.records), ["second"]);
     acknowledge(&mut tail, &second);
 
+    append(&path, "third\n");
     let third = read(&mut tail, never);
     assert_eq!(texts(&third.records), ["third"]);
     acknowledge(&mut tail, &third);
@@ -80,7 +79,7 @@ fn a_line_without_its_newline_waits_for_the_rest() {
     assert_eq!(tail.position().offset, 0);
     append(&path, " and half\nnext\n");
     let completed = read(&mut tail, never);
-    assert_eq!(texts(&completed.records), ["half and half"]);
+    assert_eq!(texts(&completed.records), ["half and half", "next"]);
     acknowledge(&mut tail, &completed);
 }
 
@@ -96,7 +95,7 @@ fn a_truncated_file_resets_volatile_state_and_is_read_from_its_start() {
     write(&path, "after\nsentinel\n");
 
     let after = read(&mut tail, never);
-    assert_eq!(texts(&after.records), ["after"]);
+    assert_eq!(texts(&after.records), ["after", "sentinel"]);
 }
 
 #[test]
@@ -112,7 +111,7 @@ fn a_rotated_file_resets_volatile_state_and_is_read_from_its_start() {
     write(&path, "after rotation\nsentinel\n");
 
     let after = read(&mut tail, never);
-    assert_eq!(texts(&after.records), ["after rotation"]);
+    assert_eq!(texts(&after.records), ["after rotation", "sentinel"]);
 }
 
 #[test]
@@ -125,7 +124,7 @@ fn an_over_long_line_keeps_its_prefix_and_the_next_one_survives() {
 
     let batch = read(&mut tail, never);
 
-    assert_eq!(batch.records.len(), 2);
+    assert_eq!(batch.records.len(), 3);
     assert_eq!(batch.records[0].first().len(), MAX_LINE_BYTES);
     assert!(batch.records[0].truncated());
     assert_eq!(batch.records[1].first(), "short");
@@ -187,7 +186,7 @@ fn a_line_that_is_not_utf8_does_not_hide_the_next_one() {
     let mut tail = Tail::new(path, Position::default());
 
     let batch = read(&mut tail, never);
-    assert_eq!(texts(&batch.records), ["bad ", "good line"]);
+    assert_eq!(texts(&batch.records), ["bad ", "good line", "sentinel"]);
     assert!(batch.records[0].truncated());
 }
 
@@ -199,39 +198,75 @@ fn continuations_join_the_line_they_belong_to() {
     let mut tail = Tail::new(path, Position::default());
 
     let first = read(&mut tail, tabbed);
-    assert_eq!(texts(&first.records), ["opening\n\tcontinued\n\tagain"]);
+    assert_eq!(
+        texts(&first.records),
+        ["opening\n\tcontinued\n\tagain", "next"]
+    );
     acknowledge(&mut tail, &first);
+}
+
+#[test]
+fn a_raw_byte_limit_after_a_newline_does_not_flush_before_eof() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("pgbouncer.log");
+    let input = "opening\n\tcontinued\nnext\n";
+    write(&path, input);
+    let mut tail = Tail::new(path, Position::default());
+
+    let first = tail
+        .read_batch_configured(tabbed, 2, 8, true)
+        .expect("read through the opening newline");
+    assert_eq!(first.raw_bytes, 8);
+    assert!(first.records.is_empty());
+    assert!(!first.needs_ack);
+    assert!(!first.at_eof);
+    assert_eq!(tail.position().offset, 0);
+
+    let completed = tail
+        .read_batch_configured(tabbed, 2, input.len() - 8, true)
+        .expect("read the continuation and successor");
+    assert_eq!(completed.raw_bytes, input.len() - 8);
+    assert_eq!(texts(&completed.records), ["opening\n\tcontinued", "next"]);
+    assert!(completed.needs_ack);
+    assert!(completed.at_eof);
+    assert_eq!(tail.position().offset, 0);
+    acknowledge(&mut tail, &completed);
+    assert_eq!(tail.position().offset, input.len() as u64);
+
+    let idle = read(&mut tail, tabbed);
+    assert!(idle.records.is_empty());
+    assert_eq!(idle.raw_bytes, 0);
+    assert!(!idle.needs_ack);
+    assert!(idle.at_eof);
 }
 
 #[test]
 fn an_unfinished_continuation_does_not_flush_the_preceding_record() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("pgbouncer.log");
-    write(&path, "opening\n");
+    write(&path, "opening\n\tpart");
     let mut tail = Tail::new(path.clone(), Position::default());
 
     assert!(read(&mut tail, tabbed).records.is_empty());
-    append(&path, "\tpart");
     assert!(read(&mut tail, tabbed).records.is_empty());
     assert_eq!(tail.position().offset, 0);
 
     append(&path, "ial\nnext\n");
     let completed = read(&mut tail, tabbed);
-    assert_eq!(texts(&completed.records), ["opening\n\tpartial"]);
+    assert_eq!(texts(&completed.records), ["opening\n\tpartial", "next"]);
 }
 
 #[test]
-fn a_newline_complete_record_is_emitted_on_the_next_idle_read() {
+fn a_newline_complete_record_is_emitted_in_the_same_read() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("pgbouncer.log");
     write(&path, "alone\n");
     let mut tail = Tail::new(path, Position::default());
 
-    assert!(read(&mut tail, tabbed).records.is_empty());
-    let idle = read(&mut tail, tabbed);
-    assert_eq!(texts(&idle.records), ["alone"]);
-    assert!(idle.needs_ack);
-    acknowledge(&mut tail, &idle);
+    let complete = read(&mut tail, tabbed);
+    assert_eq!(texts(&complete.records), ["alone"]);
+    assert!(complete.needs_ack);
+    acknowledge(&mut tail, &complete);
     assert_eq!(tail.position().offset, "alone\n".len() as u64);
 }
 
@@ -246,7 +281,7 @@ fn text_records_can_skip_csv_quote_tracking() {
         .read_batch_without_quote_tracking(never, 8)
         .expect("read text records");
 
-    assert_eq!(texts(&batch.records), ["a \"quote", "b plain"]);
+    assert_eq!(texts(&batch.records), ["a \"quote", "b plain", "sentinel"]);
 }
 
 #[test]
@@ -262,7 +297,7 @@ fn an_open_csv_quote_is_not_flushed_by_an_idle_read() {
 
     append(&path, "close\"\nnext\n");
     let completed = read(&mut tail, quoted);
-    assert_eq!(texts(&completed.records), ["\"open\nclose\""]);
+    assert_eq!(texts(&completed.records), ["\"open\nclose\"", "next"]);
 }
 
 #[test]
@@ -273,13 +308,13 @@ fn committed_position_changes_only_after_acknowledgement() {
     let mut tail = Tail::new(path, Position::default());
 
     let batch = read(&mut tail, never);
-    assert_eq!(texts(&batch.records), ["first"]);
+    assert_eq!(texts(&batch.records), ["first", "second"]);
     assert!(batch.needs_ack);
     assert_eq!(tail.position().offset, 0);
     assert!(tail.read_batch(never, 8).is_err());
 
     let committed = tail.acknowledge().expect("acknowledge");
-    assert_eq!(committed.offset, "first\n".len() as u64);
+    assert_eq!(committed.offset, "first\nsecond\n".len() as u64);
     assert_eq!(tail.position(), committed);
 }
 
@@ -291,12 +326,12 @@ fn retry_rescans_the_same_unacknowledged_batch() {
     let mut tail = Tail::new(path, Position::default());
 
     let first_attempt = read(&mut tail, never);
-    assert_eq!(texts(&first_attempt.records), ["first"]);
+    assert_eq!(texts(&first_attempt.records), ["first", "second"]);
     assert_eq!(tail.position().offset, 0);
 
     tail.retry();
     let second_attempt = read(&mut tail, never);
-    assert_eq!(texts(&second_attempt.records), ["first"]);
+    assert_eq!(texts(&second_attempt.records), ["first", "second"]);
     assert_eq!(tail.position().offset, 0);
 }
 
@@ -315,15 +350,11 @@ fn record_cap_stages_the_next_line_without_advancing_the_candidate_past_it() {
     assert_eq!(texts(&two.records), ["two"]);
     assert_eq!(tail.acknowledge().expect("ack two").offset, 8);
 
-    assert!(
-        tail.read_batch(never, 1)
-            .expect("stage last line")
-            .records
-            .is_empty()
-    );
-    append(tail.path(), "four\n");
     let three = tail.read_batch(never, 1).expect("flush last line");
     assert_eq!(texts(&three.records), ["three"]);
+    assert!(three.at_eof);
+    assert_eq!(tail.acknowledge().expect("ack three").offset, 14);
+    assert!(tail.read_batch(never, 1).expect("idle").records.is_empty());
 }
 
 #[test]
@@ -363,4 +394,26 @@ fn valid_csv(message: &str) -> String {
     format!(
         "2026-08-07 12:34:56.789 UTC,alice,shop,12345,10.0.0.1:53124,session,1,SELECT,2026-08-07 12:34:00.000 UTC,3/15,0,ERROR,42P01,\"{message}\",,,,,,select 1,0,,psql"
     )
+}
+
+#[test]
+fn a_continuation_written_after_acknowledged_eof_does_not_change_the_record() {
+    let dir = tempfile::tempdir().expect("fixture");
+    let path = dir.path().join("pooler.log");
+    write(&path, "opening\n");
+    let mut tail = Tail::new(path.clone(), Position::default());
+    let first = read(&mut tail, tabbed);
+    assert_eq!(texts(&first.records), ["opening"]);
+    acknowledge(&mut tail, &first);
+    let committed = tail.position();
+    append(&path, "\tlate continuation\nnext\n");
+    let later = read(&mut tail, tabbed);
+    assert_eq!(texts(&later.records), ["\tlate continuation", "next"]);
+    assert_eq!(texts(&first.records), ["opening"]);
+    assert_eq!(tail.position(), committed);
+    acknowledge(&mut tail, &later);
+    assert_eq!(
+        tail.position().offset,
+        std::fs::metadata(path).expect("size").len()
+    );
 }

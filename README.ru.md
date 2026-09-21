@@ -12,12 +12,12 @@ Linux либо записывает только данные PostgreSQL с ло
 
 [Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/).
 
-Запись за 5 сентября 2026 года, 19:00–20:00 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.0.html?at=1788634833931637&view=host).
+Запись за 21 сентября 2026 года, 08:59:46–09:59:46 UTC:
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=host) · [Events](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=events).
 
 ## Установка и запуск
 
-[Установите Kronika 1.2.1](INSTALL.ru.md) из [архива для Linux](docs/releases.ru.md#download)
+[Установите Kronika 1.2.2](INSTALL.ru.md) из [архива для Linux](docs/releases.ru.md#download)
 или [соберите из исходников](docs/build.ru.md).
 
 Выберите `local` для метрик Linux и, при необходимости, PostgreSQL в той же VM
@@ -126,7 +126,7 @@ sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
 [Руководство по интерфейсу](docs/features.ru.md) описывает выбор показателей,
 группировку, поиск, сортировку, просмотр подробностей (Inspector), графики
 и экспорт. В [руководстве оператора](docs/operator-guide.ru.md) — четыре
-примера с расчётами по записи выше.
+примера с расчётами по записи за 5 сентября.
 
 ![Записанный запрос, текст SQL и активность за интервал](docs/images/statements.png)
 

@@ -1,0 +1,11 @@
+2026-08-07 12:40:00.000 MSK [12345] LOG C-0x55f1a2b3c4d1: shop/alice@10.0.0.1:41537 closing because: query_wait_timeout (age=42s)
+2026-08-07 12:40:00.001 MSK [12345] WARNING C-0x55f1a2b3c4d1: shop/alice@10.0.0.1:41537 pooler error: query_wait_timeout
+2026-08-07 12:40:01.000 MSK [12345] WARNING C-0x55f1a2b3c4d2: shop/bob@10.0.0.3:41538 pooler error: no such user
+2026-08-07 12:40:02.000 MSK [12345] WARNING C-0x55f1a2b3c4d3: (nodb)/(nouser)@127.0.0.1:54834 pooler error: SSL required
+2026-08-07 12:40:03.000 MSK [12345] WARNING server login failed: FATAL database "nope" does not exist
+2026-08-07 12:40:03.001 MSK [12345] WARNING C-0x55f1a2b3c4d4: nope/carol@10.0.0.4:41539 pooler error: database "nope" does not exist
+2026-08-07 12:40:04.000 MSK [12345] LOG C-0x55f1a2b3c4d5: shop/dave@10.0.0.5:41540 closing because: query_wait_timeout (age=1s)
+2026-08-07 12:40:04.001 MSK [12345] WARNING C-0x55f1a2b3c4d6: shop/erin@10.0.0.6:41541 pooler error: query_wait_timeout
+2026-08-07 12:40:05.000 MSK [12345] WARNING C-0x55f1a2b3c4d7: shop/frank@10.0.0.7:41542 pooler error: password authentication failed
+2026-08-07 12:40:05.500 MSK [12345] WARNING C-0x55f1a2b3c4d8: (nodb)/grace@10.0.0.8:41543 pooler error: "trust" authentication failed
+2026-08-07 12:40:06.000 MSK [12345] LOG stats: 1 xacts/s, 2 queries/s, in 128 B/s, out 256 B/s, xact 900 us, query 800 us, wait 700 us

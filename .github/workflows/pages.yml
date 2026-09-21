@@ -62,11 +62,13 @@ jobs:
       - name: Keep the published example available
         shell: bash
         run: |
+          install -d "$RUNNER_TEMP/site/reports"
+          cp "$RUNNER_TEMP/site/index.html" \
+            "$RUNNER_TEMP/site/reports/kronika-v1.2.2.html"
           curl --fail --location --silent --show-error \
             https://github.com/pgtoolz/Kronika/releases/download/v1.2.0/kronika-v1.2.0.html \
-            --output "$RUNNER_TEMP/site/index.html"
-          echo "fac12e541c57d3b4ce00aa116f64af822ca210036abfa10bb87a0d7d57f915ac  $RUNNER_TEMP/site/index.html" | sha256sum --check --strict
-          install -d "$RUNNER_TEMP/site/reports"
+            --output "$RUNNER_TEMP/site/reports/kronika-v1.2.0.html"
+          echo "fac12e541c57d3b4ce00aa116f64af822ca210036abfa10bb87a0d7d57f915ac  $RUNNER_TEMP/site/reports/kronika-v1.2.0.html" | sha256sum --check --strict
           curl --fail --location --silent --show-error \
             https://raw.githubusercontent.com/pgtoolz/Kronika/52f995b4ea8fea241c4bdd8ad832f3635a23c25e/reports/kronika-demo-hour-5bbe2dd.html \
             --output "$RUNNER_TEMP/site/reports/kronika-demo-hour-5bbe2dd.html"
@@ -75,12 +77,10 @@ jobs:
             "$RUNNER_TEMP/site/reports/kronika-v1.0.0.html"
           cp "$RUNNER_TEMP/site/reports/kronika-demo-hour-5bbe2dd.html" \
             "$RUNNER_TEMP/site/reports/kronika-v1.0.1.html"
-          cp "$RUNNER_TEMP/site/index.html" \
+          cp "$RUNNER_TEMP/site/reports/kronika-v1.2.0.html" \
             "$RUNNER_TEMP/site/reports/kronika-v1.0.2.html"
-          cp "$RUNNER_TEMP/site/index.html" \
+          cp "$RUNNER_TEMP/site/reports/kronika-v1.2.0.html" \
             "$RUNNER_TEMP/site/reports/kronika-v1.1.0.html"
-          cp "$RUNNER_TEMP/site/index.html" \
-            "$RUNNER_TEMP/site/reports/kronika-v1.2.0.html"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

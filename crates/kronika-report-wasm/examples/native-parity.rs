@@ -52,7 +52,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let max_zms_bytes = u64::try_from(zms.len())?;
     let engine = ReportEngine::new(ReportInput {
-        segment_id: SegmentId::new(SEGMENT_ID.parse()?)?,
+        segment_id: SegmentId::new(
+            std::env::args()
+                .nth(4)
+                .as_deref()
+                .unwrap_or(SEGMENT_ID)
+                .parse()?,
+        )?,
         zms,
         idx,
         configured_sources,

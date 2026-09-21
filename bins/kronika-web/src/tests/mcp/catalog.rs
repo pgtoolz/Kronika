@@ -90,7 +90,7 @@ fn complete_tool_catalog_matches_stable_golden() {
     let catalog = serde_json::to_value(tools()).expect("encode complete tool catalog");
     assert_eq!(
         schema_digest(&catalog),
-        "fb6f9eb3d934fa6a5d0b8d931c9dd82d6504043dfe5184343ca94047693810f5"
+        "cfa266c9467fe30f4a08b367108cfd88fe31e80d5160ea806ce203713a314d35"
     );
 }
 
@@ -105,7 +105,7 @@ fn mass_tool_schemas_match_stable_goldens() {
         (
             FIND_EVENTS_TOOL,
             "6c4cb6472bfdff67bd2b7c2c5897ddc99ab683572e23618ef50eaf076e72a408",
-            "8e3405f4913912608f6717dd307c295041e760fe4756ea5764099b5b02e59030",
+            "b415050c33d094b3e73a4bc5a77a028c71c1bdc1c80bb029aec78b1bc9abea10",
         ),
     ] {
         let tool = tools()

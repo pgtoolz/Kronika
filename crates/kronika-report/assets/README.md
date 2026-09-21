@@ -38,8 +38,8 @@ disables incremental compilation regardless of the local Cargo setting.
 Compression uses the lockfile-pinned `pako` encoder from the UI dependencies
 because Apple and GNU gzip produce different bytes.
 
-The raw generated WebAssembly is 10,326,553 bytes. Its committed gzip form is
-2,481,078 bytes with SHA-256
-`43163a7e1f2a2acd85b902707d8d6b637d6eb58da6975d9d7b4d67d1568a502d`.
+The raw generated WebAssembly is 10,329,625 bytes. Its committed gzip form is
+2,477,497 bytes with SHA-256
+`d35a65b0762bbe39ded6a16cd0978de2f463c3941f3c462f4028574837aa1639`.
 The 3,885-byte JavaScript binding has SHA-256
 `4635ae734e8c1e1aeb463ae1096f4fdc2a65d98e715b55cee9fe46956f29cba8`.

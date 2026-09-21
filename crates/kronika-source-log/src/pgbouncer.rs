@@ -4,10 +4,6 @@
 //! writes `<time> [<pid>] <LEVEL> <message>`, and `src/util.c:40` puts a socket
 //! context in front of the message when the line belongs to a connection.
 
-mod events;
-
-pub use events::RECOGNIZED;
-
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -73,8 +69,15 @@ pub struct Event {
     pub username: Option<String>,
     /// The client or server address, without the port.
     pub host: Option<String>,
-    /// What happened, with the `closing because:` wrapper and the connection's
-    /// age removed so repeated events share one dictionary entry.
+    /// Pooler process ID, when present.
+    pub pid: Option<i32>,
+    /// `C` for a client connection, `S` for a server connection.
+    pub side: Option<String>,
+    /// Connection port, including zero for a Unix socket.
+    pub port: Option<u16>,
+    /// Connection age in whole seconds, when printed.
+    pub age_s: Option<u64>,
+    /// Complete bounded message, including closing reason and age.
     pub text: String,
 }
 
@@ -122,13 +125,22 @@ impl PgBouncerLog {
     ///
     /// # Errors
     ///
-    /// Returns the operating system's error for reading the file.
-    pub fn read_batch(&mut self, max_records: usize) -> io::Result<ReadBatch> {
+    /// Returns a file or clock error.
+    pub fn read_batch(
+        &mut self,
+        now: impl FnOnce() -> io::Result<i64>,
+        max_records: usize,
+    ) -> io::Result<ReadBatch> {
         let batch = self
             .tail
             .read_batch_without_quote_tracking(continues, max_records)?;
+        let now = now().inspect_err(|_error| self.tail.retry())?;
         Ok(ReadBatch {
-            events: batch.records.iter().filter_map(parse).collect(),
+            events: batch
+                .records
+                .iter()
+                .filter_map(|record| parse(record, now))
+                .collect(),
             raw_bytes: batch.raw_bytes,
             at_eof: batch.at_eof,
             needs_ack: batch.needs_ack,
@@ -153,27 +165,84 @@ impl PgBouncerLog {
 /// (`lib/usual/logging.c:177`), so a line starting with a tab continues the
 /// line before it.
 fn continues(_open: &[String], line: &str, _raw_quotes_odd: bool) -> bool {
-    line.starts_with('\t')
+    payload(line).starts_with('\t')
+}
+
+fn payload(line: &str) -> &str {
+    if line.starts_with('\t') {
+        return line;
+    }
+    let Some((prefix, payload)) = line.split_once("]: ") else {
+        return line;
+    };
+    let native = timestamp::calendar(prefix).map_or(prefix, |(_, _, _, rest)| rest);
+    if header(native.trim_start()).is_some() {
+        return line;
+    }
+    let Some((before_pid, pid)) = prefix.rsplit_once('[') else {
+        return line;
+    };
+    let identifier = before_pid.split_whitespace().last().unwrap_or("");
+    if pid.is_empty()
+        || !pid.bytes().all(|byte| byte.is_ascii_digit())
+        || identifier.is_empty()
+        || before_pid.ends_with(char::is_whitespace)
+        || !identifier
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-./@".contains(&byte))
+    {
+        return line;
+    }
+    payload
+}
+
+fn header(rest: &str) -> Option<(Option<i32>, Level, &str)> {
+    let (pid, rest) = if rest
+        .split_once(' ')
+        .is_some_and(|(level, _)| Level::parse(level).is_some())
+    {
+        (None, rest)
+    } else if let Some((prefix, rest)) = rest.split_once("] ") {
+        let (_, pid) = prefix.rsplit_once('[')?;
+        (pid.parse().ok(), rest)
+    } else {
+        (None, rest)
+    };
+    let (level, message) = rest.split_once(' ')?;
+    Some((pid, Level::parse(level)?, message))
 }
 
 /// Read one line, or `None` when it is not an event this collector records.
 #[must_use]
-pub fn parse(record: &Record) -> Option<Event> {
-    let (ts, rest) = timestamp::parse_local(record.first())?;
-    let rest = rest.strip_prefix(" [")?;
-    let level_at = rest.find("] ")?;
-    let rest = rest.get(level_at + "] ".len()..)?;
-    let message_at = rest.find(' ')?;
-    let level = Level::parse(rest.get(..message_at)?)?;
-    let (context, message) = split_socket_context(rest.get(message_at + 1..)?);
-
-    let text = event_text(message, record.rest())?;
+pub fn parse(record: &Record, now: i64) -> Option<Event> {
+    let first = payload(record.first());
+    let timestamp = timestamp::parse_local(first);
+    let rest = timestamp.map_or(first, |(_, rest)| rest).trim_start();
+    let (pid, level, message) = header(rest)?;
+    if matches!(level, Level::Debug | Level::Noise) {
+        return None;
+    }
+    let (context, message) = split_socket_context(message);
+    if level == Level::Log && routine(message) {
+        return None;
+    }
+    let mut text = truncate(message.trim(), MAX_TEXT_BYTES).to_owned();
+    for line in record.rest() {
+        crate::text::append_str(&mut text, payload(line));
+    }
+    if text.is_empty() {
+        return None;
+    }
     Some(Event {
-        ts,
+        ts: timestamp.map_or(now, |(ts, _)| ts),
         level,
         database: context.database,
         username: context.username,
         host: context.host,
+        pid,
+        side: context.side,
+        port: context.port,
+        age_s: closing(message).and_then(|(_, age)| age),
         text,
     })
 }
@@ -184,14 +253,14 @@ struct SocketContext {
     database: Option<String>,
     username: Option<String>,
     host: Option<String>,
+    side: Option<String>,
+    port: Option<u16>,
 }
 
 /// Split `C-0x55f1: db/user@10.0.0.1:41537 ` off the front of a message.
 ///
 /// Lines from `janitor.c`, `main.c` and `pooler.c` carry no socket, so the
-/// whole message is returned untouched. The port is dropped: it is the client's
-/// ephemeral port, different for every connection, and keeping it would cost
-/// one dictionary entry per connection.
+/// whole message is returned untouched.
 fn split_socket_context(message: &str) -> (SocketContext, &str) {
     let none = (SocketContext::default(), message);
     let Some(rest) = message
@@ -224,56 +293,100 @@ fn split_socket_context(message: &str) -> (SocketContext, &str) {
         Some((database, username)) => (bounded(database), bounded(username)),
         None => (None, bounded(who)),
     };
+    let (host, port) = address
+        .rsplit_once(':')
+        .filter(|(host, _)| !host.contains(':') || (host.starts_with('[') && host.ends_with(']')))
+        .and_then(|(host, port)| port.parse::<u16>().ok().map(|port| (host, Some(port))))
+        .unwrap_or((address, None));
     (
         SocketContext {
             database,
             username,
-            host: bounded(strip_port(address)),
+            host: bounded(host),
+            side: message.get(..1).map(str::to_owned),
+            port,
         },
         tail,
     )
 }
 
-/// Drop the `:41537` an address ends with, leaving `[::1]` brackets in place.
-fn strip_port(address: &str) -> &str {
-    address
-        .rfind(':')
-        .and_then(|at| address.get(..at))
-        .unwrap_or(address)
-}
-
-/// The event text, or `None` when the line is not one of the recognized events.
-fn event_text(message: &str, continuations: &[String]) -> Option<String> {
-    // `disconnect_client(notify=true)` logs the reason twice: once as `closing
-    // because:` and once as this, through `send_pooler_error`
-    // (`src/proto.c:266`). Keeping both would count every such event twice.
-    if message.starts_with("pooler error: ") {
-        return None;
-    }
-    let reason = message
-        .strip_prefix("closing because: ")
-        .map_or(message, strip_age);
-    if !RECOGNIZED
-        .iter()
-        .any(|recognized| reason.starts_with(recognized))
-    {
-        return None;
-    }
-    let mut text = truncate(reason.trim(), MAX_TEXT_BYTES).to_owned();
-    for line in continuations {
-        crate::text::append_str(&mut text, line);
-    }
-    (!text.is_empty()).then_some(text)
-}
-
-/// Drop the ` (age=42s)` a disconnection reason ends with.
-fn strip_age(reason: &str) -> &str {
-    let Some(at) = reason.rfind(" (age=") else {
-        return reason;
+fn closing(message: &str) -> Option<(&str, Option<u64>)> {
+    let reason = message.strip_prefix("closing because: ")?;
+    let Some((reason, age)) = reason.rsplit_once(" (age=") else {
+        return Some((reason, None));
     };
-    if reason.ends_with("s)") {
-        reason.get(..at).unwrap_or(reason)
-    } else {
-        reason
+    let age = age.strip_suffix("s)")?;
+    if !age.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
     }
+    let age = age.parse().ok()?;
+    Some((reason, Some(age)))
+}
+
+fn routine(message: &str) -> bool {
+    if closing(message).is_some_and(|(reason, _)| {
+        matches!(
+            reason,
+            "client close request" | "server idle timeout" | "server lifetime over"
+        )
+    }) {
+        return true;
+    }
+    if message == "new connection to server"
+        || message
+            .strip_prefix("new connection to server (from ")
+            .and_then(|address| address.strip_suffix(')'))
+            .is_some_and(|address| !address.is_empty() && !address.contains(['(', ')']))
+    {
+        return true;
+    }
+    if let Some(login) = message.strip_prefix("login attempt: db=") {
+        return login.split_once(" user=").is_some_and(|(db, rest)| {
+            !db.is_empty()
+                && rest
+                    .split_once(" tls=")
+                    .is_some_and(|(user, tls)| !user.is_empty() && !tls.is_empty())
+        });
+    }
+    let Some(stats) = message.strip_prefix("stats: ") else {
+        return false;
+    };
+    if !stats.split_once(" xacts/s, ").is_some_and(|(count, rest)| {
+        count.parse::<u64>().is_ok()
+            && rest
+                .split_once(" queries/s,")
+                .is_some_and(|(count, _)| count.parse::<u64>().is_ok())
+    }) {
+        return false;
+    }
+    stats.split(", ").all(|field| {
+        let Some((value, unit)) = field.split_once(' ') else {
+            return false;
+        };
+        if matches!(value, "in" | "out" | "xact" | "query" | "wait") {
+            let suffix = if matches!(value, "in" | "out") {
+                " B/s"
+            } else {
+                " us"
+            };
+            return unit
+                .strip_suffix(suffix)
+                .is_some_and(|count| count.parse::<u64>().is_ok());
+        }
+        value.parse::<u64>().is_ok()
+            && matches!(
+                unit,
+                "xacts/s"
+                    | "queries/s"
+                    | "client parses/s"
+                    | "server parses/s"
+                    | "binds/s"
+                    | "client logins/s"
+                    | "in B/s"
+                    | "out B/s"
+                    | "xact us"
+                    | "query us"
+                    | "wait us"
+            )
+    })
 }

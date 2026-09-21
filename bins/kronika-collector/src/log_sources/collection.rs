@@ -12,7 +12,7 @@ use crate::logging::{log_collection_failure, log_collection_finish, log_collecti
 // one read can also produce checkpoints, vacuum events and other sections.
 const PG_LOG_TYPE_ID: u32 = 2_001_001;
 // PgBouncer collection diagnostics use its single event section's type ID.
-const PGBOUNCER_TYPE_ID: u32 = 2_100_001;
+const PGBOUNCER_TYPE_ID: u32 = 2_100_002;
 
 // Limit each file's raw I/O per scheduled cycle so one busy log cannot consume
 // an unbounded amount of work. Each new batch must fit its worst-case 4 MiB read.
@@ -46,7 +46,9 @@ impl LogSources {
                     let $batch = match $read {
                         Ok(batch) => batch,
                         Err(error) => {
-                            log_collection_failure(type_id, format, &error, started.elapsed());
+                            let path = $log.path().display();
+                            let context = format_args!("{path}: {error}");
+                            log_collection_failure(type_id, format, &context, started.elapsed());
                             read_failed = true;
                             break;
                         }
@@ -110,7 +112,10 @@ impl LogSources {
                 log,
                 PGBOUNCER_TYPE_ID,
                 "pgbouncer",
-                batch = log.read_batch(SECTION_WRITE_BATCH_ROWS),
+                batch = log.read_batch(
+                    || crate::clock::unix_now_us().map_err(std::io::Error::other),
+                    SECTION_WRITE_BATCH_ROWS
+                ),
                 count = batch.events.len(),
                 rows = LogRows {
                     postgres: Vec::new(),

@@ -98,7 +98,7 @@ pub use codec::pg_store_plans::{
 };
 pub use codec::pg_store_plans_info::PgStorePlansInfo;
 pub use codec::pg_wal_storage::PgWalStorage;
-pub use codec::pgbouncer_events::PgBouncerEvents;
+pub use codec::pgbouncer_events::{PgBouncerEvents, PgBouncerEventsV2};
 pub(crate) use codec::{check_row_cap, decode_batches, decode_section, encode_section};
 pub use codec::{
     instance_metadata, os_block_topology, os_cgroup_context, os_cgroup_cpu, os_cgroup_io,

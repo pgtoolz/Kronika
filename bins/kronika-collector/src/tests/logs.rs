@@ -19,7 +19,7 @@ use crate::scheduler::{DueSet, Intervals};
 use crate::segments::{SegmentState, append_window_and_maybe_close, encode_window};
 
 const INSTANCE_METADATA_TYPE_ID: u32 = 1_021_004;
-const PGBOUNCER_TYPE_ID: u32 = 2_100_001;
+const PGBOUNCER_TYPE_ID: u32 = 2_100_002;
 const PG_ARCHIVER_TYPE_ID: u32 = 1_008_001;
 const PG_SETTINGS_TYPE_ID: u32 = 1_019_001;
 const TEST_JOURNAL_MAX: usize = 64 * 1024;
@@ -91,6 +91,10 @@ fn log_rows() -> LogRows {
                 database: Some("shop".to_owned()),
                 username: Some("monitor".to_owned()),
                 host: Some("127.0.0.1".to_owned()),
+                pid: Some(42),
+                side: Some("C".to_owned()),
+                port: Some(6432),
+                age_s: Some(1),
                 text: "kernel file descriptor limit: 1024".to_owned(),
             }],
         }],

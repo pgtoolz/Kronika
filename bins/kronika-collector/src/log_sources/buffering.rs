@@ -5,7 +5,7 @@ use kronika_registry::pg_log::{
     PgLogAutovacuum, PgLogCheckpoints, PgLogErrors, PgLogLifecycle, PgLogLockWaits,
     PgLogSlowQueries, PgLogTempFiles,
 };
-use kronika_registry::pgbouncer_events::PgBouncerEvents;
+use kronika_registry::pgbouncer_events::PgBouncerEventsV2;
 use kronika_registry::{StrId, Ts};
 use kronika_writer::{Interner, SectionBuffers};
 
@@ -160,7 +160,7 @@ fn push_pgbouncer(
     for batch in &rows.pgbouncer {
         let source_file = intern(interner, &batch.source_file)?;
         for event in &batch.events {
-            let row = PgBouncerEvents {
+            let row = PgBouncerEventsV2 {
                 ts: Ts(event.ts),
                 source_file,
                 level: event.level.code(),
@@ -168,6 +168,10 @@ fn push_pgbouncer(
                 username: option(interner, event.username.as_deref())?,
                 host: option(interner, event.host.as_deref())?,
                 text: intern(interner, &event.text)?,
+                pid: event.pid,
+                side: option(interner, event.side.as_deref())?,
+                port: event.port,
+                age_s: event.age_s,
             };
             buffer_row(buffers, row)?;
         }
