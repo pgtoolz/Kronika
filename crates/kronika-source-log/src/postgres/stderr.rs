@@ -42,7 +42,13 @@ const PARTS: &[(&str, Part)] = &[
 /// A wrapped line starts with a tab; a `DETAIL:` and its kin carry the prefix
 /// again and are found by their marker.
 pub(super) fn continues(_open: &[String], line: &str, _raw_quotes_odd: bool) -> bool {
-    line.starts_with('\t') || find_marker(line, PARTS).is_some()
+    if line.starts_with('\t') {
+        return true;
+    }
+    let Some((part_at, _, _)) = find_marker(line, PARTS) else {
+        return false;
+    };
+    find_marker(line, SEVERITIES).is_none_or(|(severity_at, _, _)| part_at < severity_at)
 }
 
 pub(super) fn parse(
@@ -50,30 +56,19 @@ pub(super) fn parse(
     prefix: Option<&LinePrefix>,
     zone: Option<&crate::timestamp::LogTimezone>,
     now: i64,
-) -> Result<Option<PgRecord>, &'static str> {
+) -> Option<PgRecord> {
     let first = record.first();
-    let Some((at, marker, severity)) = find_marker(first, SEVERITIES) else {
-        return Ok(None);
-    };
-    let head = first.get(..at).ok_or(crate::timestamp::INVALID)?;
-    let (sqlstate, message) = strip_sqlstate(
-        first
-            .get(at + marker.len()..)
-            .ok_or(crate::timestamp::INVALID)?
-            .trim(),
-    );
+    let (at, marker, severity) = find_marker(first, SEVERITIES)?;
+    let head = first.get(..at)?;
+    let (sqlstate, message) = strip_sqlstate(first.get(at + marker.len()..)?.trim());
     let fields = prefix
         .map(|prefix| prefix.read(head, zone))
         .unwrap_or_default();
 
     let ts = if prefix.is_some() {
-        if fields.time_expected {
-            fields.ts.ok_or(crate::timestamp::INVALID)?
-        } else {
-            now
-        }
+        fields.ts.unwrap_or(now)
     } else if head.as_bytes().get(4) == Some(&b'-') {
-        crate::timestamp::parse(head, zone)?.0
+        crate::timestamp::parse(head, zone).map_or(now, |(ts, _)| ts)
     } else {
         now
     };
@@ -96,7 +91,7 @@ pub(super) fn parse(
             extend(&mut parsed, open, text);
         }
     }
-    Ok(Some(parsed))
+    Some(parsed)
 }
 
 /// Add a continuation's text to the field it belongs to; a wrapped line with no

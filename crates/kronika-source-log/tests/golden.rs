@@ -251,79 +251,60 @@ fn all_postgres_formats_resolve_gmt_before_classifying_events() {
 }
 
 #[test]
-fn unresolved_timestamp_retries_the_complete_batch_after_context_changes() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("case.log");
-    let contents = concat!(
-        "1789380780.789 2026-09-14 06:13:00.789 EDT ERROR:  first error\n",
-        "1789380781.789 2026-09-14 06:13:01.789 EDT ERROR:  second error\n",
-        "ignored\n",
-    );
-    std::fs::write(&path, contents).expect("fixture");
-    let mut log = PgLog::new(path, Position::default(), Some(LinePrefix::parse("%n %m ")));
-    log.set_timezone(kronika_source_log::postgres::LogTimezone::parse("GMT").expect("zone"));
-    // Epoch remains authoritative even while the cached timezone is stale.
-    let batch = log.read_batch(|| Ok(NOW), 1024, 900).expect("epoch wins");
-    assert_eq!(batch.events.rows(), 2);
-    log.retry();
-    log.set_prefix(LinePrefix::parse("%p %m "));
-    assert!(log.read_batch(|| Ok(NOW), 1024, 900).is_err());
-    assert_eq!(log.position().offset, 0);
-    assert!(log.acknowledge().is_none());
-    log.set_timezone(
-        kronika_source_log::postgres::LogTimezone::parse("America/New_York").expect("zone"),
-    );
-    let batch = log
-        .read_batch(|| Ok(NOW), 1024, 900)
-        .expect("retry with server timezone");
-    assert_eq!(batch.events.rows(), 2);
-    assert_eq!(batch.events.errors[0].ts, 1_789_380_780_789_000);
-    assert!(log.acknowledge().expect("commit").offset > 0);
-    assert_eq!(
-        log.read_batch(|| Ok(NOW), 1024, 900)
-            .expect("next batch")
-            .events
-            .rows(),
-        0
-    );
+fn missing_or_invalid_time_uses_batch_time_and_does_not_block_any_format() {
+    for extension in ["log", "csv", "json"] {
+        let line = |timestamp: Option<&str>, message: &str| match extension {
+            "csv" => {
+                let mut fields = [""; 23];
+                fields[0] = timestamp.unwrap_or_default();
+                fields[11] = "ERROR";
+                fields[13] = message;
+                format!("{}\n", fields.join(","))
+            }
+            "json" => format!(
+                "{}\n",
+                serde_json::json!({"timestamp":timestamp,"error_severity":"ERROR","message":message})
+            ),
+            _ => format!(
+                "{}ERROR:  {message}\n",
+                timestamp.map_or(String::new(), |ts| format!("{ts} "))
+            ),
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(format!("fallback.{extension}"));
+        let input = format!(
+            "{}{}{}garbage\n{}ignored\n",
+            line(None, "missing timestamp"),
+            line(Some("broken"), "invalid timestamp"),
+            line(Some("2026-09-14 10:13:00 XYZ"), "unknown timezone"),
+            line(Some("2026-09-14 10:13:00.789 GMT"), "valid successor")
+        );
+        std::fs::write(&path, &input).expect("write fixture");
+        let mut log = PgLog::new(path, Position::default(), Some(LinePrefix::parse("%m ")));
+        let mut rows = Vec::new();
+        for _ in 0..8 {
+            let batch = log
+                .read_batch(|| Ok(NOW), 1, 900)
+                .expect("bounded content progress");
+            rows.extend(batch.events.errors);
+            if batch.needs_ack {
+                log.acknowledge().expect("ack");
+            }
+        }
+        assert_eq!(rows.len(), 4, "{extension}");
+        assert!(rows[..3].iter().all(|row| row.ts == NOW));
+        assert_eq!(rows[3].ts, 1_789_380_780_789_000);
+        assert_eq!(rows[3].sample, "valid successor");
+        assert_eq!(log.position().offset, input.len() as u64);
+    }
 }
 
 #[test]
-fn timestamp_failure_does_not_admit_the_valid_part_of_a_batch() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("case.log");
-    let first = "2026-09-14 10:13:00 GMT ERROR:  first error\n";
-    let bad = "2026-09-14 10:13:01. GMT ERROR:  second error\n";
-    std::fs::write(&path, format!("{first}{bad}ignored\n")).expect("fixture");
-    let mut log = PgLog::new(
-        path.clone(),
-        Position::default(),
-        Some(LinePrefix::parse("%m ")),
-    );
-    assert!(log.read_batch(|| Ok(NOW), 1024, 900).is_err());
-    assert_eq!(log.position().offset, 0);
-    assert!(log.acknowledge().is_none());
-    let valid = bad.replace("01. GMT", "01.789 GMT");
-    std::fs::write(&path, format!("{first}{valid}ignored\n")).expect("correct fixture");
-    let batch = log
-        .read_batch(|| Ok(NOW), 1024, 900)
-        .expect("retry whole batch");
-    assert_eq!(batch.events.rows(), 2);
-    assert_eq!(
-        batch.events.errors.iter().map(|row| row.count).sum::<u32>(),
-        2
-    );
-}
-
-#[test]
-fn conditional_prefix_time_is_absent_only_when_the_session_suffix_is_omitted() {
+fn conditional_prefix_keeps_valid_time_and_falls_back_when_missing_or_invalid() {
     for (head, expected) in [
-        ("[123]", Some(NOW)),
-        (
-            "[123] 2026-09-14 10:13:00.789 GMT ",
-            Some(1_789_380_780_789_000),
-        ),
-        ("[123] broken ", None),
+        ("[123]", NOW),
+        ("[123] 2026-09-14 10:13:00.789 GMT ", 1_789_380_780_789_000),
+        ("[123] broken ", NOW),
     ] {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("conditional.log");
@@ -337,18 +318,11 @@ fn conditional_prefix_time_is_absent_only_when_the_session_suffix_is_omitted() {
             Position::default(),
             Some(LinePrefix::parse("[%p]%q %m ")),
         );
-        let batch = log.read_batch(|| Ok(NOW), 1024, 900);
-        if let Some(expected) = expected {
-            assert_eq!(
-                batch.expect("usable prefix").events.checkpoints[0].ts,
-                expected
-            );
-            assert!(log.acknowledge().is_some());
-        } else {
-            assert!(batch.is_err());
-            assert_eq!(log.position().offset, 0);
-            assert!(log.acknowledge().is_none());
-        }
+        let batch = log
+            .read_batch(|| Ok(NOW), 1024, 900)
+            .expect("usable record");
+        assert_eq!(batch.events.checkpoints[0].ts, expected);
+        assert!(log.acknowledge().is_some());
     }
 }
 
@@ -447,4 +421,155 @@ fn max_lag_filters_records_before_grouping_in_every_pg_format() {
             );
         }
     }
+}
+
+#[test]
+fn raw_crash_notice_does_not_block_following_records() {
+    const WARNING: &str = "terminating connection because of crash of another server process";
+    const DETAIL: &str = "The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.";
+    const HINT: &str =
+        "In a moment you should be able to reconnect to the database and repeat your command.";
+    for preceding in [
+        "2026-09-21 05:20:22.594 GMT [1608537] postgres [unknown] postgres 127.0.0.1 6a8d266c.188b59 LOG:  duration: 3965.910 ms  statement:\n    SELECT *,\n     extract(epoch from now() - last_archived_time) AS last_archive_age\n    FROM pg_stat_archiver\n    \n",
+        "2026-09-21 05:20:22.594 GMT [1608537] postgres [unknown] postgres 127.0.0.1 6a8d266c.188b59 LOG:  duration: 3965.910 ms  statement: SELECT 1\n",
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("crash.log");
+        let complete = format!(
+            "{preceding}WARNING:  {WARNING}\nDETAIL:  {DETAIL}\nHINT:  {HINT}\n2026-09-21 05:20:23.834 GMT [1608447]     6a8d264c.188aff FATAL:  could not receive data from WAL stream: server closed the connection unexpectedly\n2026-09-21 05:20:24.000 GMT [1]     session LOG:  checkpoint starting: time\n"
+        );
+        std::fs::write(&path, format!("{complete}ignored\n")).expect("write crash fixture");
+        let mut log = PgLog::new(
+            path.clone(),
+            Position::default(),
+            Some(LinePrefix::parse("%m [%p] %u %a %d %h %c ")),
+        );
+        log.set_timezone(kronika_source_log::postgres::LogTimezone::parse("GMT").expect("zone"));
+        let batch = log
+            .read_batch(|| Ok(NOW), 1024, 900)
+            .expect("content must not stop collection");
+        let warning = batch
+            .events
+            .errors
+            .iter()
+            .find(|row| row.severity == Severity::Warning)
+            .expect("raw warning retained");
+        assert_eq!(warning.ts, NOW);
+        assert_eq!(warning.sample, WARNING);
+        assert_eq!(warning.detail.as_deref(), Some(DETAIL));
+        assert_eq!(warning.hint.as_deref(), Some(HINT));
+        assert_eq!(warning.statement, None);
+        assert_eq!(warning.database, None);
+        assert_eq!(warning.username, None);
+        assert_eq!(
+            batch
+                .events
+                .errors
+                .iter()
+                .filter(|row| row.severity == Severity::Fatal)
+                .count(),
+            1
+        );
+        assert_eq!(batch.events.checkpoints.len(), 1);
+        assert!(
+            batch
+                .events
+                .slow_queries
+                .iter()
+                .all(|row| !row.sample.contains(WARNING))
+        );
+        assert_eq!(log.position().offset, 0);
+        let position = log.acknowledge().expect("ack");
+        assert_eq!(position.offset, complete.len() as u64);
+        let mut restarted = PgLog::new(
+            path,
+            position,
+            Some(LinePrefix::parse("%m [%p] %u %a %d %h %c ")),
+        );
+        assert!(
+            restarted
+                .read_batch(|| Ok(NOW), 1024, 900)
+                .expect("restart")
+                .events
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn bare_warning_waits_for_a_complete_line_then_accepts_details_on_the_next_tick() {
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("partial.log");
+    std::fs::write(&path, "WARNING:  raw warning").expect("partial write");
+    let prefix = Some(LinePrefix::parse(
+        "%t [%p] => [%l-1] client=%h,db=%d,user=%u ",
+    ));
+    let mut log = PgLog::new(path.clone(), Position::default(), prefix);
+    for _ in 0..2 {
+        let batch = log.read_batch(|| Ok(NOW), 1, 900).expect("partial read");
+        assert!(batch.events.is_empty());
+        assert!(!batch.needs_ack);
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("append");
+    file.write_all(b"\n").expect("finish line");
+    assert!(
+        log.read_batch(|| Ok(NOW), 1, 900)
+            .expect("newline read")
+            .events
+            .is_empty()
+    );
+    file.write_all(b"DETAIL:  detail body\nHINT:  hint body\n2026-09-14 10:13:00 GMT [1] => [1-1] client=,db=,user= LOG:  database system is ready to accept connections\n").expect("next tick");
+    let batch = log
+        .read_batch(|| Ok(NOW), 1, 900)
+        .expect("complete warning");
+    assert_eq!(batch.events.errors.len(), 1);
+    let warning = &batch.events.errors[0];
+    assert_eq!(warning.ts, NOW);
+    assert_eq!(warning.sample, "raw warning");
+    assert_eq!(warning.detail.as_deref(), Some("detail body"));
+    assert_eq!(warning.hint.as_deref(), Some("hint body"));
+    log.acknowledge().expect("ack warning");
+    log.read_batch(|| Ok(NOW), 1, 900).expect("stage next line");
+    let batch = log.read_batch(|| Ok(NOW), 1, 900).expect("flush lifecycle");
+    assert_eq!(batch.events.lifecycle.len(), 1);
+    log.acknowledge().expect("ack lifecycle");
+    assert_eq!(
+        log.position().offset,
+        std::fs::metadata(path).expect("metadata").len()
+    );
+}
+
+#[test]
+fn a_new_severity_quoting_a_detail_marker_starts_its_own_record() {
+    let dir = tempfile::tempdir().expect("fixture");
+    let path = dir.path().join("postgresql.log");
+    let input = "LOG:  duration: 1 ms  statement: SELECT 1\n\t-- WARNING:  quoted wrapped SQL\nWARNING:  message quoting DETAIL:  text\nDETAIL:  quoted WARNING:  is still detail\nHINT:  reconnect\nFATAL:  following error\nINFO:  sentinel\n";
+    std::fs::write(&path, input).expect("write log");
+    let mut log = PgLog::new(path, Position::default(), Some(LinePrefix::parse("%m ")));
+    let batch = log.read_batch(|| Ok(NOW), 8, 900).expect("read records");
+    assert_eq!(batch.events.slow_queries.len(), 1);
+    assert_eq!(batch.events.errors.len(), 2);
+    let warning = batch
+        .events
+        .errors
+        .iter()
+        .find(|row| row.severity == Severity::Warning)
+        .expect("new warning");
+    assert_eq!(warning.sample, "message quoting DETAIL:  text");
+    assert_eq!(
+        warning.detail.as_deref(),
+        Some("quoted WARNING:  is still detail")
+    );
+    assert_eq!(warning.hint.as_deref(), Some("reconnect"));
+    assert_eq!(warning.statement, None);
+    assert_eq!(warning.ts, NOW);
+    log.acknowledge().expect("commit complete records");
+    assert_eq!(
+        log.position().offset,
+        (input.len() - "INFO:  sentinel\n".len()) as u64
+    );
 }

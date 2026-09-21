@@ -230,11 +230,12 @@ impl PgLog {
     /// Read and classify one bounded batch written since the last call.
     ///
     /// `now` returns Unix microseconds once after the file batch. Records older
-    /// than `max_lag_secs` are skipped before aggregation.
+    /// than `max_lag_secs` are skipped before aggregation. Recognizable records
+    /// without a usable timestamp use this batch read time.
     ///
     /// # Errors
     ///
-    /// Returns a file, clock or timestamp parsing error.
+    /// Returns a file or clock error.
     pub fn read_batch(
         &mut self,
         now: impl FnOnce() -> io::Result<i64>,
@@ -256,16 +257,10 @@ impl PgLog {
             if self.format == Format::Csvlog && record.truncated() {
                 continue;
             }
-            match self.parse(record, now) {
-                Ok(Some(parsed)) if i128::from(parsed.ts) >= oldest => events.add(&parsed),
-                Ok(_) => {}
-                Err(error) => {
-                    self.tail.retry();
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("{}: {error}", self.path().display()),
-                    ));
-                }
+            if let Some(parsed) = self.parse(record, now)
+                && i128::from(parsed.ts) >= oldest
+            {
+                events.add(&parsed);
             }
         }
         events.finish();
@@ -290,10 +285,10 @@ impl PgLog {
         self.tail.retry();
     }
 
-    fn parse(&self, record: &Record, now: i64) -> Result<Option<PgRecord>, &'static str> {
+    fn parse(&self, record: &Record, now: i64) -> Option<PgRecord> {
         match self.format {
-            Format::Csvlog => csvlog::parse(&record.joined(), self.timezone.as_ref()),
-            Format::Jsonlog => jsonlog::parse(record.first(), self.timezone.as_ref()),
+            Format::Csvlog => csvlog::parse(&record.joined(), self.timezone.as_ref(), now),
+            Format::Jsonlog => jsonlog::parse(record.first(), self.timezone.as_ref(), now),
             Format::Stderr => {
                 stderr::parse(record, self.prefix.as_ref(), self.timezone.as_ref(), now)
             }

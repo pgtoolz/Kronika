@@ -4,19 +4,19 @@
 
 ## Релиз
 
-Скачайте [Kronika 1.2.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.1)
+Скачайте [Kronika 1.2.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.2)
 для Linux x86-64 или ARM64. Также можно [собрать программы из исходников](build.ru.md)
 или использовать [сборку для разработки](#development-builds).
 
 <a id="download"></a>
 ## Архивы
 
-Архивы версии 1.2.1:
+Архивы версии 1.2.2:
 
 | Архитектура | Архив |
 | --- | --- |
-| x86-64 | [kronika-1.2.1-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.1/kronika-1.2.1-x86_64-unknown-linux-musl.tar.gz) |
-| ARM64 | [kronika-1.2.1-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.1/kronika-1.2.1-aarch64-unknown-linux-musl.tar.gz) |
+| x86-64 | [kronika-1.2.2-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.2/kronika-1.2.2-x86_64-unknown-linux-musl.tar.gz) |
+| ARM64 | [kronika-1.2.2-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.2/kronika-1.2.2-aarch64-unknown-linux-musl.tar.gz) |
 
 У каждого архива есть файл контрольной суммы `.tar.gz.sha256`.
 [Скачайте и распакуйте архив](../INSTALL.ru.md#1-скачивание-и-распаковка), затем

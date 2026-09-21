@@ -33,7 +33,6 @@ pub struct LinePrefix {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct PrefixFields {
     pub(super) ts: Option<i64>,
-    pub(super) time_expected: bool,
     pub(super) database: Option<String>,
     pub(super) username: Option<String>,
 }
@@ -78,22 +77,13 @@ impl LinePrefix {
         Self { tokens }
     }
 
-    fn has_event_time(&self) -> bool {
-        self.tokens
-            .iter()
-            .any(|token| matches!(token, Token::Time(1..=3)))
-    }
-
     /// Read the prefix out of `head`, the text before the severity marker.
     ///
     /// Matching stops at the first literal the text does not carry, and at the
     /// `%q` a background process wrote nothing after, keeping whatever was read
     /// before it.
     pub(super) fn read(&self, head: &str, zone: Option<&timestamp::LogTimezone>) -> PrefixFields {
-        let mut fields = PrefixFields {
-            time_expected: self.has_event_time(),
-            ..PrefixFields::default()
-        };
+        let mut fields = PrefixFields::default();
         let mut rest = head;
         let mut priority = 0;
         for (index, token) in self.tokens.iter().enumerate() {
@@ -106,7 +96,6 @@ impl LinePrefix {
                 }
                 Token::SessionOnly => {
                     if rest.is_empty() {
-                        fields.time_expected = priority != 0;
                         break;
                     }
                 }

@@ -1,0 +1,12 @@
+2026-09-21 05:20:22.594 GMT [1608537] postgres [unknown] postgres 127.0.0.1 6a8d266c.188b59 LOG:  duration: 3965.910 ms  statement:
+    SELECT *,
+     extract(epoch from now() - last_archived_time) AS last_archive_age
+    FROM pg_stat_archiver
+    
+WARNING:  terminating connection because of crash of another server process
+DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
+HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+2026-09-21 05:20:23.834 GMT [1608447]     6a8d264c.188aff FATAL:  could not receive data from WAL stream: server closed the connection unexpectedly
+2026-09-21 05:20:24.000 GMT [1]     session LOG:  checkpoint starting: time
+2026-09-21 05:20:25.000 GMT [1]     session LOG:  database system is ready to accept connections
+INFO:  sentinel

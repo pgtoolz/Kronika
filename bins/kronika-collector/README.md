@@ -331,7 +331,7 @@ Discovery requires the [function privileges](#postgresql-role) listed above.
 | Read limit | At most 256 MiB per file per collection. |
 | PostgreSQL formats | Filename selects `.csv` → csvlog, `.json` → jsonlog, otherwise stderr. |
 | Time without a DSN | UTC/GMT/Z, numeric offsets and IANA names such as `Europe/Moscow` are accepted. Other abbreviations require the server's `log_timezone`. |
-| Timestamp errors | The error is logged and reading is retried. A stderr prefix without a timestamp uses read time. |
+| Missing or invalid timestamp | Recognized messages use read time. Processing continues with the following records. |
 | Source error | Logged. Collection from other sources continues. |
 
 ## Linux collection

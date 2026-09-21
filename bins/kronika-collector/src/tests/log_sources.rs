@@ -817,3 +817,181 @@ fn old_pg_records_advance_offsets_without_bypassing_mixed_batch_admission() {
         );
     }
 }
+
+#[test]
+fn raw_postgres_crash_progress_is_acknowledged_only_after_real_wal_admission() {
+    use kronika_writer::Interner;
+    const INPUT: &str = include_str!(
+        "../../../../crates/kronika-source-log/tests/fixtures/postgresql-raw-crash.log"
+    );
+    for fail_append in [true, false] {
+        let dir = tempfile::tempdir().expect("fixture");
+        let path = dir.path().join("postgresql.log");
+        std::fs::write(&path, INPUT).expect("write exact crash input");
+        let mut logs = crash_logs(dir.path(), &path, Position::default());
+        let owner = DataRoot::open(dir.path())
+            .expect("data root")
+            .acquire_writer(LayoutLimits::default())
+            .expect("writer");
+        let mut journal = Journal::open(
+            &owner,
+            JournalConfig {
+                max_journal_len: if fail_append {
+                    kronika_format::JOURNAL_HEADER_LEN
+                } else {
+                    JournalConfig::default().max_journal_len
+                },
+                ..JournalConfig::default()
+            },
+        )
+        .expect("journal");
+        let mut interner = Interner::new(kronika_format::DictLimits::default());
+        let before = crate::clock::unix_now_us().expect("clock");
+        let mut admissions = 0;
+        let result = logs.collect(&DueSet::logs(), |rows| {
+            admissions += 1;
+            let mut buffers = SectionBuffers::new();
+            super::push_log_sources(&mut buffers, &mut interner, rows)?;
+            let part = crate::segments::encode_window(buffers, &interner)?;
+            journal.append(SegmentId::new(before).expect("id"), &part.body)?;
+            Ok(true)
+        });
+        let after = crate::clock::unix_now_us().expect("clock");
+        assert_eq!(admissions, 1, "content failure must reach admission");
+        if fail_append {
+            assert!(result.is_err(), "actual WAL failure stays fatal");
+            assert!(journal.parts().is_empty());
+            assert_eq!(logs.postgres[0].log.position().offset, 0);
+            assert_eq!(
+                Offsets::load(dir.path())
+                    .expect("offsets")
+                    .get(&path.display().to_string())
+                    .offset,
+                0
+            );
+            continue;
+        }
+        assert!(result.expect("accepted batch"));
+        let committed = logs.postgres[0].log.position();
+        assert_eq!(
+            committed.offset,
+            (INPUT.len() - "INFO:  sentinel\n".len()) as u64
+        );
+        assert_eq!(
+            Offsets::load(dir.path())
+                .expect("offsets")
+                .get(&path.display().to_string()),
+            committed
+        );
+        let mut restarted = crash_logs(dir.path(), &path, committed);
+        for _ in 0..2 {
+            assert!(
+                restarted
+                    .collect(&DueSet::logs(), |_| panic!("committed events repeated"))
+                    .expect("next collection")
+            );
+        }
+        assert_eq!(
+            restarted.postgres[0].log.position().offset,
+            INPUT.len() as u64
+        );
+        for sealed in [false, true] {
+            if sealed {
+                let address =
+                    kronika_layout::SegmentAddress::new(SegmentId::new(before).expect("id"))
+                        .expect("address");
+                kronika_writer::write_segment(&journal, &owner, address).expect("seal real ZMS");
+                journal.reset().expect("reset sealed WAL");
+            }
+            let reader = kronika_reader::Reader::open(dir.path()).expect("reader");
+            let listing = reader.segments(..).expect("listing");
+            assert_eq!(listing.segments.len(), 1);
+            let segment = reader
+                .open_segment(&listing.segments[0])
+                .expect("WAL or ZMS");
+            assert_crash_segment(&segment, before, after);
+        }
+    }
+}
+
+fn assert_crash_segment(segment: &kronika_reader::Segment, before: i64, after: i64) {
+    use kronika_reader::Cell;
+    let rows = segment.rows(2_001_001).expect("errors");
+    assert_eq!(rows.len(), 2);
+    let warning = rows
+        .iter()
+        .find(|row| row.get("severity") == Some(&Cell::U32(3)))
+        .expect("warning");
+    let Some(Cell::Ts(ts)) = warning.get("ts") else {
+        panic!("timestamp")
+    };
+    assert!((before..=after).contains(ts));
+    let dictionary = segment.dictionary().expect("dictionary");
+    for (field, expected) in [
+        (
+            "sample",
+            "terminating connection because of crash of another server process",
+        ),
+        (
+            "detail",
+            "The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.",
+        ),
+        (
+            "hint",
+            "In a moment you should be able to reconnect to the database and repeat your command.",
+        ),
+    ] {
+        let Some(Cell::StrId(id)) = warning.get(field) else {
+            panic!("missing {field}")
+        };
+        assert_eq!(
+            dictionary.resolve(*id).expect("stored text").stored_bytes(),
+            expected.as_bytes()
+        );
+    }
+    for field in ["statement", "database", "username"] {
+        assert_eq!(
+            warning.get(field),
+            Some(&Cell::Null),
+            "no inherited {field}"
+        );
+    }
+    assert_eq!(
+        segment.rows(2_002_001).expect("following checkpoint").len(),
+        1
+    );
+    let lifecycle = segment.rows(2_006_001).expect("following lifecycle");
+    assert_eq!(lifecycle.len(), 1);
+    assert_eq!(lifecycle[0].get("kind"), Some(&Cell::U32(2)));
+    let fatal = rows
+        .iter()
+        .find(|row| row.get("severity") == Some(&Cell::U32(1)))
+        .expect("following FATAL");
+    assert_eq!(fatal.get("ts"), Some(&Cell::Ts(1_789_968_023_834_000)));
+    let Some(Cell::StrId(id)) = fatal.get("sample") else {
+        panic!("FATAL sample")
+    };
+    assert_eq!(
+        dictionary.resolve(*id).expect("FATAL text").stored_bytes(),
+        b"could not receive data from WAL stream: server closed the connection unexpectedly"
+    );
+}
+
+fn crash_logs(dir: &std::path::Path, path: &std::path::Path, position: Position) -> LogSources {
+    let mut logs = sources(dir, path.to_path_buf());
+    logs.pgbouncer.clear();
+    // The captured input has a fixed historical date; lag filtering has
+    // separate boundary tests with a controlled batch clock.
+    logs.pg_log_max_lag_secs = u64::MAX;
+    let mut log = super::PgLog::new(
+        path.to_path_buf(),
+        position,
+        Some(LinePrefix::parse("%m [%p] %u %a %d %h %c ")),
+    );
+    log.set_timezone(super::LogTimezone::parse("GMT").expect("source zone"));
+    logs.postgres.push(super::PostgresSource {
+        log,
+        system_identifier: Some(123),
+    });
+    logs
+}
