@@ -199,8 +199,8 @@ export function Timeline({
     if (presentation !== "preview" || previewCursor !== null) return
     const labels = laneStrip.current?.querySelectorAll<HTMLElement>(".timeline-lane-name, .timeline-lane-reading") ?? []
     setCompactPicker([...labels].some((label) => label.scrollWidth > label.clientWidth + 1))
-  }, [choices, cursor, locale, plotWidth, presentation, previewCursor, selectedReading])
-  const markerLayer = <>{selected?.key === "pg_lock_waiting" && lockMarkers.map((points) => <LockGraphMarker key={points[0]!.timestamp} points={points} onActivate={actions?.locks ?? onCursor} share={shareOf(points[0]!.timestamp, hour, end)} t={t} time={time.timestamp} />)}{markers.map((marker, index) => {
+  }, [choices, cursor, locale, plotWidth, presentation, previewCursor, selected?.key, selectedReading])
+  const markerLayer = <>{selected?.key === "pg_lock_waiting" && lockMarkers.map((points) => <LockGraphMarker key={points[0]!.timestamp} points={points} onActivate={actions?.locks ?? onCursor} share={shareOf(points[0]!.timestamp, hour, end)} t={t} time={time.timestamp} />)}{selected?.key !== "pg_lock_waiting" && markers.map((marker, index) => {
     const first = marker.findings[0]
     if (first === undefined) return null
     return <FindingMarker

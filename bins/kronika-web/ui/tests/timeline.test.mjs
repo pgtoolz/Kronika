@@ -505,3 +505,19 @@ test("Locks marker clusters retain every exact graph at narrow and wide plot wid
   assert.match(single, /<button[^>]*data-testid="lock-graph-marker"/)
   assert.doesNotMatch(single, /<select/)
 })
+
+
+test("the Locks lane reserves markers for captured graphs while other lanes keep findings", () => {
+  const lanePoints = [
+    { segmentId: "s", lane: "pg_lock_waiting", timestamp: 200, value: 2 },
+    { segmentId: "s", lane: "pg_lock_graph", timestamp: 199, value: null, locks: { waiting: 2, blockers: 1, prepared: false } },
+    { segmentId: "s", lane: "pg_waiting", timestamp: 200, value: 2 },
+  ]
+  const findings = [finding("known_bad", 199, "1")]
+  const locks = requestTimeline.render("ready", [], "preview", { selectedLane: "pg_lock_waiting", lanePoints, findings })
+  assert.match(locks, /data-testid="lock-graph-marker"/)
+  assert.doesNotMatch(locks, /data-marker-count/)
+  const waiting = requestTimeline.render("ready", [], "preview", { selectedLane: "pg_waiting", lanePoints, findings })
+  assert.match(waiting, /data-marker-count="1"/)
+  assert.doesNotMatch(waiting, /data-testid="lock-graph-marker"/)
+})

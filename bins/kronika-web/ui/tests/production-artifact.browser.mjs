@@ -9182,10 +9182,11 @@ test("automatic metric survives delayed lanes and Back while an unavailable choi
 test("clustered Locks graphs remain exactly selectable and dense metric names use the existing picker", { timeout: 90_000 }, async () => {
   const html = gunzipSync(await readFile(ARTIFACT))
   const times = [HOUR + 45_000_000, HOUR + 50_000_000, HOUR + 1_800_000_000]
-  const records = timelineRecords(HOUR, true).filter(record => record.record !== "finding")
+  const records = timelineRecords(HOUR, true)
     .map(record => record.record === "finished_segment" ? { ...record, sections: [...record.sections, {
       logical_name: "pg_locks", physical_name: "pg_locks", type_id: "1011002", implementation: "postgresql", source_family: "postgresql", rows: "3", bytes: "256",
     }] } : record)
+  records.push({ record: "finding", logical_name: "pg_stat_statements", kind: "known_bad", type_id: "1002003", field_ordinal: 11, row_ordinal: "90", ts: String(HOUR + 35_000_000) })
   records.push(...["pg_running", "pg_waiting", "pg_oldest_xact"].map(lane => ({ record: "lane", segment_id: SEGMENT, lane, ts: String(HOUR), value: 128 })))
   records.push(...times.flatMap((at, index) => [
     { record: "lane", segment_id: SEGMENT, lane: "pg_lock_waiting", ts: String(at), value: index + 1 },
@@ -9232,6 +9233,7 @@ test("clustered Locks graphs remain exactly selectable and dense metric names us
       await cdp.send("Page.navigate", { url: `${origin}/?at=${AT}&view=pg.locks&lane=pg_lock_waiting` })
       await cdp.waitFor(`${cluster}?.options.length === 3`, "two exact clustered graphs")
       await cdp.evaluate(`document.querySelector('[data-testid="locale-${locale}"]').click()`)
+      assert.equal(await cdp.evaluate(`document.querySelector('[data-marker-count]') === null`), true, "Locks lane owns its marker track")
       const options = await cdp.evaluate(`[...${cluster}.options].map(option => ({ value: option.value, label: option.textContent, disabled: option.disabled }))`)
       assert.deepEqual(options.map(option => option.value), ["", ...times.slice(0, 2).map(String)])
       assert.equal(options[0].disabled, true)
@@ -9257,6 +9259,10 @@ test("clustered Locks graphs remain exactly selectable and dense metric names us
     }
     await cdp.send("Emulation.setDeviceMetricsOverride", { deviceScaleFactor: 1, height: 800, mobile: false, width: 3000 })
     await cdp.waitFor(`document.querySelector('.timeline-lane-slot')?.dataset.compact !== "true"`, "wide rail restores visible tabs")
+    await cdp.evaluate(`(() => { const picker = document.querySelector('[data-testid="timeline-preview-metric-select"]'); picker.value = "pg_waiting"; picker.dispatchEvent(new Event("change", { bubbles: true })) })()`)
+    await cdp.waitFor(`document.querySelector('[data-marker-count]') !== null && ${cluster} === null`, "other lanes retain generic findings")
+    await clickCenter(cdp, '[data-marker-count]')
+    await cdp.waitFor(`${at} === "${HOUR + 35_000_000}" && new URL(location.href).searchParams.get("view") === "pg.statements"`, "generic finding keeps its recorded Statements action")
     assert.deepEqual(page.errors, [])
     assert.deepEqual(page.external, [])
   } finally {
