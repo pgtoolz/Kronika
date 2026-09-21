@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 
 import { fieldNameForLocator, type DataRow, type Finding, type LanePoint } from "./api"
 import { buildMetricSamples } from "./chart"
@@ -156,6 +156,7 @@ export function Timeline({
   )
   const [plotWidth, setPlotWidth] = useState(920)
   const markers = useMemo(() => groupFindings(findings, hour, end, plotWidth), [end, findings, hour, plotWidth])
+  const lockMarkers = useMemo(() => groupTimedMarkers(lanePoints.filter((point) => point.locks !== undefined).sort((a, b) => a.timestamp - b.timestamp), hour, end, plotWidth), [end, hour, lanePoints, plotWidth])
   useEffect(() => {
     const move = (event: KeyboardEvent) => {
       if (event.defaultPrevented || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
@@ -192,11 +193,14 @@ export function Timeline({
   const queueReading = diskPoint?.device === undefined ? "" : ` · ${t("use.lane.disk_queue")} ${queuePoint?.timestamp === diskPoint.timestamp && queuePoint.value !== null ? compact(queuePoint.value, locale) : "—"}`
   const selectedReading = (selected === undefined ? "—" : laneReading(selected, displayCursor, locale, t)) + queueReading
   const diskTitle = diskPoint?.device === undefined ? "" : `${selectedReading} · ${diskPoint.device.major}:${diskPoint.device.minor}`
-  const markerLayer = <>{selected?.key === "pg_lock_waiting" && lanePoints.filter((point) => point.locks !== undefined).map((point) => {
-    const graph = point.locks!
-    const label = `${time.timestamp(point.timestamp)} · ${t("lane.pg_lock_waiting.graph", { waiting: graph.waiting, blockers: graph.blockers })}${graph.prepared ? ` · ${t("lane.pg_lock_waiting.prepared")}` : ""}`
-    return <button aria-label={label} className="marker-button pointer-events-auto absolute top-1/2 z-[3] h-[18px] w-[18px] -translate-x-1/2 -translate-y-1/2 cursor-pointer border-0 bg-transparent p-0 text-warn" data-testid="lock-graph-marker" key={point.timestamp} onClick={(event) => { event.stopPropagation(); if (actions === null) onCursor(point.timestamp); else actions.locks(point.timestamp) }} onPointerDown={(event) => event.stopPropagation()} style={{ left: `${shareOf(point.timestamp, hour, end) * 100}%` }} title={label} type="button">◆</button>
-  })}{markers.map((marker, index) => {
+  const laneStrip = useRef<HTMLDivElement>(null)
+  const [compactPicker, setCompactPicker] = useState(false)
+  useLayoutEffect(() => {
+    if (presentation !== "preview" || previewCursor !== null) return
+    const labels = laneStrip.current?.querySelectorAll<HTMLElement>(".timeline-lane-name, .timeline-lane-reading") ?? []
+    setCompactPicker([...labels].some((label) => label.scrollWidth > label.clientWidth + 1))
+  }, [choices, cursor, locale, plotWidth, presentation, previewCursor, selectedReading])
+  const markerLayer = <>{selected?.key === "pg_lock_waiting" && lockMarkers.map((points) => <LockGraphMarker key={points[0]!.timestamp} points={points} onActivate={actions?.locks ?? onCursor} share={shareOf(points[0]!.timestamp, hour, end)} t={t} time={time.timestamp} />)}{markers.map((marker, index) => {
     const first = marker.findings[0]
     if (first === undefined) return null
     return <FindingMarker
@@ -221,7 +225,7 @@ export function Timeline({
     <div className="timeline-rail flex h-7 min-w-0 flex-none overflow-hidden border-b border-line2">
       {presentation === "inspector"
         ? <label className="timeline-metric-picker"><span>{t("inspector.timeline")}</span><select aria-label={t("inspector.timeline")} data-testid="timeline-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{choices.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select></label>
-        : <><div className="timeline-lanes flex min-w-0 flex-1 gap-0.5 overflow-hidden px-1">
+        : <div className="timeline-lane-slot relative min-w-0 flex-1" data-compact={compactPicker || undefined}><div aria-hidden={compactPicker || undefined} inert={compactPicker} ref={laneStrip} className="timeline-lanes flex min-w-0 flex-1 gap-0.5 overflow-hidden px-1">
           {choices.map((lane) => <LaneLabel
             help={`lane.${lane.key}.help`}
             key={lane.key}
@@ -235,7 +239,7 @@ export function Timeline({
         </div><div className="timeline-preview-picker min-w-0 flex-1 items-center gap-1 px-1">
           <select aria-label={t("inspector.timeline")} data-testid="timeline-preview-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{choices.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select>
           <span className="timeline-preview-reading min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-right text-sm tabular-nums text-fg" data-testid="timeline-preview-reading" title={selectedReading}>{selectedReading}</span>
-        </div></>}
+        </div></div>}
       {diskPoint?.device !== undefined && actions !== null && <button className="max-w-[120px] flex-none cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap border-0 border-l border-line2 bg-s2 px-2 font-mono text-sm text-accent3" data-testid="timeline-disk-detail" onClick={() => actions.disk(diskPoint)} title={diskTitle} type="button">{diskPoint.device.name ?? `${diskPoint.device.major}:${diskPoint.device.minor}`} ↗</button>}
       {presentation === "preview" && onOpenChart !== undefined && <button aria-label={t("inspector.open_chart")} className="timeline-open-chart" onClick={onOpenChart} title={t("inspector.open_chart")} type="button"><span aria-hidden="true">↗</span><span>{t("inspector.chart")}</span></button>}
     </div>
@@ -387,6 +391,24 @@ export function laneReading(lane: TimelineLane, cursor: number, locale: Locale, 
   }).join(" · ")
 }
 
+export function LockGraphMarker({ points, onActivate, share, t, time }: { readonly points: readonly LanePoint[]; readonly onActivate: (timestamp: number) => void; readonly share: number; readonly t: Translate; readonly time: (timestamp: number) => string }) {
+  const first = points[0]
+  if (first === undefined) return null
+  const label = (point: LanePoint) => `${time(point.timestamp)} · ${t("lane.pg_lock_waiting.graph", { waiting: point.locks!.waiting, blockers: point.locks!.blockers })}${point.locks!.prepared ? ` · ${t("lane.pg_lock_waiting.prepared")}` : ""}`
+  const style = { left: `clamp(${MARKER_CLUSTER_PX / 2}px, ${share * 100}%, calc(100% - ${MARKER_CLUSTER_PX / 2}px))` }
+  const className = "marker-button pointer-events-auto absolute top-1/2 z-[3] h-[18px] -translate-x-1/2 -translate-y-1/2 cursor-pointer text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-cursor"
+  return points.length === 1
+    ? <button aria-label={label(first)} className={`${className} w-[18px] border-0 bg-transparent p-0`} data-testid="lock-graph-marker" onClick={(event) => { event.stopPropagation(); onActivate(first.timestamp) }} onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} style={style} title={label(first)} type="button">◆</button>
+    : <select aria-label={t("lane.pg_lock_waiting.graphs", { count: points.length })} className={`${className} w-16 rounded border border-line3 bg-s2 px-1 text-[10px] tabular-nums`} data-testid="lock-graph-cluster" onChange={(event) => {
+      const timestamp = Number(event.currentTarget.value)
+      event.currentTarget.value = ""
+      onActivate(timestamp)
+    }} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} style={style} value="">
+      <option disabled value="">◆ +{points.length}</option>
+      {points.map((point) => <option key={point.timestamp} value={point.timestamp}>{label(point)}</option>)}
+    </select>
+}
+
 export function FindingMarker({ marker, onActivate, share, t, time = String }: { readonly marker: GroupedFinding; readonly onActivate: () => void; readonly t: Translate; readonly share: number; readonly time?: (timestamp: number) => string }) {
   const activate = (event: { preventDefault(): void; stopPropagation(): void }) => {
     event.preventDefault()
@@ -453,26 +475,30 @@ export function healthTimelineSeries(rows: readonly DataRow[]): { readonly serie
   return { series: shown, ...(shown.some((candidate) => candidate.field === "overall_health") ? { threshold: 50 } : {}) }
 }
 
-export function groupFindings(findings: readonly Finding[], hour: number, end: number, pixelWidth: number, clusterWidth = MARKER_CLUSTER_PX): readonly GroupedFinding[] {
+export function groupTimedMarkers<T extends { readonly timestamp: number }>(ordered: readonly T[], hour: number, end: number, pixelWidth: number, clusterWidth = MARKER_CLUSTER_PX): readonly (readonly T[])[] {
   const duration = Math.max(1, end - hour)
   const width = Math.max(1, pixelWidth)
-  const ordered = findings.slice().sort(findingOrder)
-  const stored: Finding[][] = []
-  let active: Finding[] = []
+  const stored: T[][] = []
+  let active: T[] = []
   let anchor = 0
-  for (const finding of ordered) {
+  for (const point of ordered) {
     const edge = Math.min(width / 2, clusterWidth / 2)
-    const x = Math.max(edge, Math.min(width - edge, (finding.timestamp - hour) / duration * width))
+    const x = Math.max(edge, Math.min(width - edge, (point.timestamp - hour) / duration * width))
     if (active.length === 0 || x - anchor <= clusterWidth) {
       if (active.length === 0) anchor = x
-      active.push(finding)
+      active.push(point)
     } else {
       stored.push(active)
-      active = [finding]
+      active = [point]
       anchor = x
     }
   }
   if (active.length !== 0) stored.push(active)
+  return stored
+}
+
+export function groupFindings(findings: readonly Finding[], hour: number, end: number, pixelWidth: number, clusterWidth = MARKER_CLUSTER_PX): readonly GroupedFinding[] {
+  const stored = groupTimedMarkers(findings.slice().sort(findingOrder), hour, end, pixelWidth, clusterWidth)
   return stored.map((group) => {
     const summary = summarizeFindings(group)
     const counts: Readonly<Record<Finding["kind"], number>> = {

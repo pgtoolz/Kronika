@@ -1821,6 +1821,7 @@ lane.host_disk.help: "Занятость устройств хоста, дост
 lane.pg_lock_waiting.label: "Блокировки"
 lane.pg_lock_waiting.help: "Процессы Activity с wait_event_type=Lock, включая workers. Точки показывают наблюдения, а не точные интервалы эпизодов. Ромбы открывают записанные деревья блокировок."
 lane.pg_lock_waiting.graph: "Дерево: ожидают {waiting} PID, блокируют {blockers} PID"
+lane.pg_lock_waiting.graphs: "Записано деревьев: {count}"
 lane.pg_lock_waiting.prepared: "Есть блокировщик prepared transaction"
 system.disk.missing: "Устройство отсутствует в выбранном снимке."
 pg.locks.not_recorded: "Дерево блокировок не записано"

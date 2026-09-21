@@ -438,7 +438,21 @@
 .timeline-lane-label[data-primary="true"] { flex: 2.4 1 220px; }
 .timeline-lane-name { flex: 0 1 auto; }
 .timeline-lane-reading { flex: 1 1 auto; }
-.timeline-preview-picker { display: none; }
+.timeline-lane-slot[data-compact="true"] .timeline-lanes { visibility: hidden; }
+.timeline-preview-picker { display: none; inset: 0; position: absolute; }
+.timeline-lane-slot[data-compact="true"] .timeline-preview-picker { display: grid; grid-template-columns: max-content minmax(0, 1fr); }
+.timeline-preview-picker > select {
+  background: var(--color-s2);
+  border: 1px solid var(--color-line3);
+  border-radius: var(--radius-sm);
+  color: var(--color-fg2);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  height: 24px;
+  min-width: 0;
+  padding-inline: 5px;
+  width: 100%;
+}
 /* The cursor control is a phone affordance: a pointer has the plot and a
    keyboard has the arrows, so above 520 px it is not rendered at all. */
 .cursor-row { display: none; }
@@ -847,7 +861,7 @@
   }
   .inspector-head { padding-left: max(6px, env(safe-area-inset-left)); padding-right: max(6px, env(safe-area-inset-right)); }
   .inspector-body { padding-bottom: env(safe-area-inset-bottom); }
-  .timeline-lanes { display: none; }
+  .timeline-lanes { visibility: hidden; }
   /* The rail's reading truncates at this width, and a clipped health split
      reads as one number. The cursor row below the plot carries it in full. */
   .timeline-preview-reading { display: none; }
@@ -891,19 +905,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .timeline-preview-picker { display: grid; grid-template-columns: minmax(0, 1fr); }
-  .timeline-preview-picker > select {
-    background: var(--color-s2);
-    border: 1px solid var(--color-line3);
-    border-radius: var(--radius-sm);
-    color: var(--color-fg2);
-    font-family: var(--font-sans);
-    font-size: var(--text-xs);
-    height: 24px;
-    min-width: 0;
-    padding-inline: 5px;
-    width: 100%;
-  }
+  .timeline-preview-picker, .timeline-lane-slot[data-compact="true"] .timeline-preview-picker { display: grid; grid-template-columns: minmax(0, 1fr); }
   .timeline-open-chart span:last-child { display: none; }
   .timeline-open-chart { flex-basis: 36px; padding-inline: 9px; width: 36px; }
 }

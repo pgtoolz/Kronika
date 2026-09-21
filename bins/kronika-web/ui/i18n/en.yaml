@@ -1821,6 +1821,7 @@ lane.host_disk.help: "Host device busy for the devices visible to this container
 lane.pg_lock_waiting.label: "Locks"
 lane.pg_lock_waiting.help: "Recorded Activity processes with wait_event_type=Lock, including workers. Dots are observations, not exact episode intervals. Diamonds open captured blocking graphs."
 lane.pg_lock_waiting.graph: "Graph: {waiting} waiting PIDs, {blockers} blocking PIDs"
+lane.pg_lock_waiting.graphs: "Recorded graphs: {count}"
 lane.pg_lock_waiting.prepared: "Prepared transaction blocker present"
 system.disk.missing: "Device absent from this snapshot."
 pg.locks.not_recorded: "Blocking graph not recorded"

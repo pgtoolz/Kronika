@@ -11,7 +11,7 @@ import { build } from "esbuild"
 import { importModule, registryPlugin } from "./import-module.mjs"
 
 const helpers = await importModule(
-  'export { CursorRow } from "../src/cursor-row.tsx"; export { FindingMarker, MARKER_CLUSTER_PX, exactValue, findingShape, findingTrack, groupFindings, healthEvaluationAtOrBefore, healthThreshold, healthTimelineSeries, laneReading, sampleWindow, timelineDecorations, timelineNavigationTimes, timelineRecordedTimes, timelineSeriesHelpKey } from "../src/timeline.tsx"',
+  'export { CursorRow } from "../src/cursor-row.tsx"; export { FindingMarker, LockGraphMarker, MARKER_CLUSTER_PX, exactValue, findingShape, findingTrack, groupFindings, groupTimedMarkers, healthEvaluationAtOrBefore, healthThreshold, healthTimelineSeries, laneReading, sampleWindow, timelineDecorations, timelineNavigationTimes, timelineRecordedTimes, timelineSeriesHelpKey } from "../src/timeline.tsx"',
   { plugins: [registryPlugin([{ typeId: "1104001", logicalName: "os_meminfo", columns: ["ts", "mem_total", "mem_free", "mem_available"] }])] },
 )
 
@@ -478,4 +478,30 @@ test("Host Disk uses the same scope-filtered point for reading and queue", () =>
   const html = requestTimeline.render("ready", [], "preview", { selectedLane: "host_disk", environment: "container", lanePoints })
   assert.match(html, /60% · host-disk · use.lane.disk_queue 0.8/)
   assert.doesNotMatch(html, /99%|unknown/)
+})
+
+
+test("Locks marker clusters retain every exact graph at narrow and wide plot widths", () => {
+  const points = [0, 45_000_000, 50_000_000, 1_800_000_000, 3_599_000_000].map((timestamp, index) => ({
+    segmentId: "s", lane: "pg_lock_graph", timestamp, value: null,
+    locks: { waiting: index + 1, blockers: 1, prepared: index === 2 },
+  }))
+  for (const width of [280, 720, 1200]) {
+    const groups = helpers.groupTimedMarkers(points, 0, 3_600_000_000, width)
+    assert.deepEqual(groups.flat(), points)
+    assert.deepEqual(groups[0], points.slice(0, 3))
+    assert.equal(groups[1].length, 1)
+    const anchors = groups.map(group => Math.max(44, Math.min(width - 44, group[0].timestamp / 3_600_000_000 * width)))
+    for (let i = 1; i < anchors.length; i++) assert.ok(anchors[i] - anchors[i - 1] > helpers.MARKER_CLUSTER_PX)
+  }
+  const t = (key, values) => key + (values === undefined ? "" : JSON.stringify(values))
+  const grouped = renderToStaticMarkup(createElement(helpers.LockGraphMarker, { points: points.slice(0, 3), share: 0, onActivate() {}, t, time: String }))
+  assert.match(grouped, /<select[^>]*data-testid="lock-graph-cluster"/)
+  assert.match(grouped, /<option[^>]*disabled=""[^>]*value=""[^>]*>◆ \+3<\/option>/)
+  for (const point of points.slice(0, 3)) assert.ok(grouped.includes(`value="${point.timestamp}"`))
+  assert.match(grouped, /lane.pg_lock_waiting.prepared/)
+  assert.match(grouped, /clamp\(44px, 0%, calc\(100% - 44px\)\)/)
+  const single = renderToStaticMarkup(createElement(helpers.LockGraphMarker, { points: [points[3]], share: 0.5, onActivate() {}, t, time: String }))
+  assert.match(single, /<button[^>]*data-testid="lock-graph-marker"/)
+  assert.doesNotMatch(single, /<select/)
 })

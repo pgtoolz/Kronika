@@ -9178,3 +9178,92 @@ test("automatic metric survives delayed lanes and Back while an unavailable choi
     await removeBrowserProfile(profile)
   }
 })
+
+test("clustered Locks graphs remain exactly selectable and dense metric names use the existing picker", { timeout: 90_000 }, async () => {
+  const html = gunzipSync(await readFile(ARTIFACT))
+  const times = [HOUR + 45_000_000, HOUR + 50_000_000, HOUR + 1_800_000_000]
+  const records = timelineRecords(HOUR, true).filter(record => record.record !== "finding")
+    .map(record => record.record === "finished_segment" ? { ...record, sections: [...record.sections, {
+      logical_name: "pg_locks", physical_name: "pg_locks", type_id: "1011002", implementation: "postgresql", source_family: "postgresql", rows: "3", bytes: "256",
+    }] } : record)
+  records.push(...["pg_running", "pg_waiting", "pg_oldest_xact"].map(lane => ({ record: "lane", segment_id: SEGMENT, lane, ts: String(HOUR), value: 128 })))
+  records.push(...times.flatMap((at, index) => [
+    { record: "lane", segment_id: SEGMENT, lane: "pg_lock_waiting", ts: String(at), value: index + 1 },
+    { record: "lane", segment_id: SEGMENT, lane: "pg_lock_graph", ts: String(at), value: null, locks: { waiting: index + 1, blockers: 1, prepared: false } },
+  ]))
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1")
+    if (url.pathname === "/") { response.writeHead(200, { "Content-Type": "text/html" }); response.end(html); return }
+    if (url.pathname === "/auth/session") { response.writeHead(204); response.end(); return }
+    if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
+    if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
+    if (url.pathname === "/api/hour") return ndjson(response, url.searchParams.has("section") ? [] : records)
+    if (url.pathname.endsWith("/snapshot")) {
+      const at = Number(url.searchParams.get("at"))
+      return ndjson(response, [
+        layout("1000001", "instance_metadata", ["environment"]), row("1000001", "0", [1], at),
+        layout("1011002", "pg_locks", ["ts", "pid", "blocked_by", "lock_tree_depth", "lock_tree_parent_pid"]),
+        row("1011002", "0", [String(at), 4241, [], 1, null], at), row("1011002", "1", [String(at), 4242, [4241], 2, 4241], at),
+      ])
+    }
+    return ndjson(response, [])
+  })
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
+  const origin = `http://127.0.0.1:${server.address().port}`
+  const profile = await mkdtemp(join(tmpdir(), "b-"))
+  const browser = launchBrowser(profile)
+  const page = { errors: [], external: [], responses: [] }
+  let socket
+  try {
+    socket = await pageSocket(await browserDebugPort(profile, browser))
+    const cdp = cdpSession(socket)
+    trackPage(socket, origin, page)
+    await enablePage(cdp)
+    const selector = '[data-testid="lock-graph-cluster"]'
+    const cluster = `document.querySelector('${selector}')`
+    const at = 'new URL(location.href).searchParams.get("at")'
+    const key = async (key, windowsVirtualKeyCode) => {
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key, code: key, windowsVirtualKeyCode })
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, windowsVirtualKeyCode })
+    }
+    for (const width of [800, 1280]) for (const locale of ["en", "ru"]) {
+      await cdp.send("Emulation.setDeviceMetricsOverride", { deviceScaleFactor: 1, height: 800, mobile: false, width })
+      await cdp.send("Page.navigate", { url: `${origin}/?at=${AT}&view=pg.locks&lane=pg_lock_waiting` })
+      await cdp.waitFor(`${cluster}?.options.length === 3`, "two exact clustered graphs")
+      await cdp.evaluate(`document.querySelector('[data-testid="locale-${locale}"]').click()`)
+      const options = await cdp.evaluate(`[...${cluster}.options].map(option => ({ value: option.value, label: option.textContent, disabled: option.disabled }))`)
+      assert.deepEqual(options.map(option => option.value), ["", ...times.slice(0, 2).map(String)])
+      assert.equal(options[0].disabled, true)
+      assert.match(options[1].label, locale === "en" ? /00:45.*1 waiting PIDs.*1 blocking PIDs/ : /00:45.*ожидают 1 PID.*блокируют 1 PID/)
+      assert.match(options[2].label, locale === "en" ? /00:50.*2 waiting PIDs.*1 blocking PIDs/ : /00:50.*ожидают 2 PID.*блокируют 1 PID/)
+      for (const index of [0, 1, 0, 0]) {
+        const before = await cdp.evaluate(at)
+        const bounds = await cdp.evaluate(`(() => { const element = ${cluster}, box = element.getBoundingClientRect(), track = element.closest('[data-testid="chart-marker-track"]').getBoundingClientRect(); return { hit: document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === element, left: box.left, right: box.right, trackLeft: track.left, trackRight: track.right } })()`)
+        assert.equal(bounds.hit, true, JSON.stringify(bounds))
+        assert.ok(bounds.left >= bounds.trackLeft && bounds.right <= bounds.trackRight, JSON.stringify(bounds))
+        await clickCenter(cdp, selector)
+        assert.equal(await cdp.evaluate(at), before, "opening native select must not move the chart cursor")
+        await key("Home", 36)
+        for (let step = 0; step < index; step++) await key("ArrowDown", 40)
+        await key("Enter", 13)
+        await cdp.waitFor(`${at} === "${times[index]}" && ${cluster}.value === "" && document.querySelector('.lock-tree-pid')?.textContent === "4241"`, "exact graph cursor and Locks tree").catch(async error => { throw new Error(`${error.message}: ${JSON.stringify(await cdp.evaluate(`({ url: location.href, value: ${cluster}?.value, body: document.body.innerText, errors: ${JSON.stringify(page.errors)} })`))}`) })
+      }
+      await cdp.waitFor(`document.querySelector('.timeline-lane-slot')?.dataset.compact === "true"`, "dense rail uses existing picker")
+      const geometry = await cdp.evaluate(`(() => { const picker = document.querySelector('[data-testid="timeline-preview-metric-select"]'), box = picker.getBoundingClientRect(), style = getComputedStyle(picker), canvas = document.createElement('canvas').getContext('2d'); canvas.font = style.font; return { labelWidth: canvas.measureText(picker.selectedOptions[0].textContent).width, width: box.width, stripVisible: getComputedStyle(document.querySelector('.timeline-lanes')).visibility, height: document.querySelector('.timeline-preview').getBoundingClientRect().height }; })()`)
+      assert.ok(geometry.width > geometry.labelWidth + 20, JSON.stringify(geometry))
+      assert.equal(geometry.stripVisible, "hidden")
+      assert.equal(geometry.height, 124)
+    }
+    await cdp.send("Emulation.setDeviceMetricsOverride", { deviceScaleFactor: 1, height: 800, mobile: false, width: 3000 })
+    await cdp.waitFor(`document.querySelector('.timeline-lane-slot')?.dataset.compact !== "true"`, "wide rail restores visible tabs")
+    assert.deepEqual(page.errors, [])
+    assert.deepEqual(page.external, [])
+  } finally {
+    socket?.close()
+    await stopBrowser(browser)
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+    await removeBrowserProfile(profile)
+  }
+})
