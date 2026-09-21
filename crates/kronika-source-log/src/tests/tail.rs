@@ -206,6 +206,41 @@ fn continuations_join_the_line_they_belong_to() {
 }
 
 #[test]
+fn a_raw_byte_limit_after_a_newline_does_not_flush_before_eof() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("pgbouncer.log");
+    let input = "opening\n\tcontinued\nnext\n";
+    write(&path, input);
+    let mut tail = Tail::new(path, Position::default());
+
+    let first = tail
+        .read_batch_configured(tabbed, 2, 8, true)
+        .expect("read through the opening newline");
+    assert_eq!(first.raw_bytes, 8);
+    assert!(first.records.is_empty());
+    assert!(!first.needs_ack);
+    assert!(!first.at_eof);
+    assert_eq!(tail.position().offset, 0);
+
+    let completed = tail
+        .read_batch_configured(tabbed, 2, input.len() - 8, true)
+        .expect("read the continuation and successor");
+    assert_eq!(completed.raw_bytes, input.len() - 8);
+    assert_eq!(texts(&completed.records), ["opening\n\tcontinued", "next"]);
+    assert!(completed.needs_ack);
+    assert!(completed.at_eof);
+    assert_eq!(tail.position().offset, 0);
+    acknowledge(&mut tail, &completed);
+    assert_eq!(tail.position().offset, input.len() as u64);
+
+    let idle = read(&mut tail, tabbed);
+    assert!(idle.records.is_empty());
+    assert_eq!(idle.raw_bytes, 0);
+    assert!(!idle.needs_ack);
+    assert!(idle.at_eof);
+}
+
+#[test]
 fn an_unfinished_continuation_does_not_flush_the_preceding_record() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("pgbouncer.log");
