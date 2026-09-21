@@ -56,6 +56,9 @@ impl FakePostgres {
                 stream.flush().expect("flush startup response");
                 let mut configured = false;
                 while let Some(query) = read_query(&mut stream) {
+                    if query == "SHOW CONFIG" {
+                        configured = true;
+                    }
                     if !configured {
                         assert!(
                             query.contains("SET statement_timeout = '30s'")
@@ -73,7 +76,18 @@ impl FakePostgres {
                         .lock()
                         .expect("lock recorded queries")
                         .push(query.clone());
-                    if query.contains("pg_control_system") {
+                    if query == "SHOW CONFIG" {
+                        match facts.pop_front().expect("pooler facts reply") {
+                            Reply::Value(facts) => write_row(
+                                &mut stream,
+                                &[
+                                    ("key", Some("logfile".to_owned())),
+                                    ("value", Some(facts.path)),
+                                ],
+                            ),
+                            Reply::Error => write_error(&mut stream),
+                        }
+                    } else if query.contains("pg_control_system") {
                         match identities.pop_front().expect("identity reply") {
                             Reply::Value(identifier) => write_row(
                                 &mut stream,
@@ -483,7 +497,6 @@ async fn failed_first_identity_read_is_retried_on_the_next_rescan() {
 async fn cached_identity_and_followed_source_survive_a_later_refresh_failure() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("postgresql.log");
-    std::fs::write(&path, "").expect("create PostgreSQL log");
     let server = FakePostgres::start(
         vec![facts(&path, "%m "), Reply::Error],
         vec![Reply::Value(44)],
@@ -492,7 +505,26 @@ async fn cached_identity_and_followed_source_survive_a_later_refresh_failure() {
     let mut observe = |_observation| {};
 
     sources.rescan_postgres(&mut observe).await;
+    assert_eq!(
+        sources.postgres.len(),
+        1,
+        "missing discovered path stays followed"
+    );
+    let error = sources.postgres[0]
+        .log
+        .read_batch(|| Ok(1), 16, 900)
+        .expect_err("missing log");
+    assert_eq!(error.raw_os_error(), Some(2));
     sources.rescan_postgres(&mut observe).await;
+    std::fs::write(&path, "WARNING:  recovered PG\n").expect("file appears");
+    let mut rows = 0;
+    sources
+        .collect(&DueSet::logs(), |batch| {
+            rows += batch.postgres[0].events.errors.len();
+            Ok(true)
+        })
+        .expect("recover without metadata refresh");
+    assert_eq!(rows, 1);
 
     assert_eq!(
         sources
@@ -557,7 +589,10 @@ fn earlier_offsets_are_saved_when_a_later_file_is_rejected_or_fails() {
             "collection stops before the third file"
         );
         let committed = logs.pgbouncer[0].position();
-        assert_eq!(committed.offset, first.len() as u64);
+        assert_eq!(
+            committed.offset,
+            (first.len() + "DEBUG ignored sentinel\n".len()) as u64
+        );
         let saved = Offsets::load(dir.path()).expect("offsets saved before returning");
         assert_eq!(saved.get(&paths[0].display().to_string()), committed);
         for log in &logs.pgbouncer[1..] {
@@ -619,7 +654,10 @@ fn wal_append_precedes_offset_ack_and_a_retry_replays_the_batch() {
     );
     assert_eq!(replayed, ["kernel file descriptor limit: 1024"]);
     let committed = sources.pgbouncer[0].position();
-    assert_eq!(committed.offset, first.len() as u64);
+    assert_eq!(
+        committed.offset,
+        (first.len() + "DEBUG ignored sentinel\n".len()) as u64
+    );
     assert_eq!(
         Offsets::load(dir.path())
             .expect("reload committed offsets")
@@ -800,7 +838,10 @@ fn old_pg_records_advance_offsets_without_bypassing_mixed_batch_admission() {
             assert!(logs.collect(&due, |_| Ok(true)).expect("admit retry"));
         }
         let committed = logs.postgres[0].log.position();
-        assert_eq!(committed.offset, records.len() as u64);
+        assert_eq!(
+            committed.offset,
+            std::fs::metadata(&path).expect("input length").len()
+        );
         assert_eq!(
             Offsets::load(dir.path())
                 .expect("saved offsets")
@@ -865,10 +906,7 @@ fn raw_postgres_crash_progress_is_acknowledged_only_after_real_wal_admission() {
         }
         assert!(result.expect("accepted batch"));
         let committed = logs.postgres[0].log.position();
-        assert_eq!(
-            committed.offset,
-            (INPUT.len() - "INFO:  sentinel\n".len()) as u64
-        );
+        assert_eq!(committed.offset, INPUT.len() as u64);
         assert_eq!(
             Offsets::load(dir.path())
                 .expect("offsets")
@@ -1017,7 +1055,7 @@ fn pgbouncer_read_context_survives_real_wal_and_seal() {
     );
     let after = crate::clock::unix_now_us().expect("clock");
     let committed = logs.pgbouncer[0].position();
-    assert!(committed.offset > 0);
+    assert_eq!(committed.offset, INPUT.len() as u64);
     assert_eq!(
         Offsets::load(dir.path())
             .expect("offsets")
@@ -1062,4 +1100,173 @@ fn pgbouncer_read_context_survives_real_wal_and_seal() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn missing_literals_report_each_read_and_recover_without_discovery() {
+    const CHILD: &str = "KRONIKA_TEST_MISSING_LOGS";
+    let Ok(root) = std::env::var(CHILD) else {
+        let dir = tempfile::tempdir().expect("fixture");
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", "log_sources::tests::missing_literals_report_each_read_and_recover_without_discovery", "--nocapture"])
+            .env(CHILD, dir.path())
+            .output().expect("isolated diagnostics");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let failures: Vec<_> = stderr
+            .lines()
+            .filter(|line| line.contains("action=collection_failure"))
+            .collect();
+        assert_eq!(failures.len(), 4, "{stderr}");
+        for name in ["postgresql.log", "pgbouncer.log"] {
+            assert_eq!(
+                failures
+                    .iter()
+                    .filter(
+                        |line| line.contains(&dir.path().join(name).display().to_string())
+                            && line.contains("os error 2")
+                    )
+                    .count(),
+                2,
+                "{stderr}"
+            );
+        }
+        assert!(!stderr.contains("log_source_opened"));
+        return;
+    };
+    let root = std::path::Path::new(&root);
+    let pg = root.join("postgresql.log");
+    let pgb = root.join("pgbouncer.log");
+    let mut logs = sources(root, pgb.clone());
+    logs.pgbouncer.clear();
+    logs.pg_logs.push(pg.display().to_string());
+    logs.pgbouncer_logs.push(pgb.display().to_string());
+    logs.rescan(&mut |_| {}).await;
+    assert_eq!(logs.postgres.len(), 1);
+    assert_eq!(logs.pgbouncer.len(), 1);
+    for _ in 0..2 {
+        assert!(
+            logs.collect(&DueSet::logs(), |_| panic!("missing source has no rows"))
+                .expect("best effort")
+        );
+    }
+    for path in [&pg, &pgb] {
+        std::fs::write(path, "").expect("empty readable file");
+    }
+    assert!(
+        logs.collect(&DueSet::logs(), |_| panic!("empty source has no rows"))
+            .expect("empty success")
+    );
+    std::fs::write(&pg, "WARNING:  recovered PG\nDETAIL:  present detail\n").expect("PG input");
+    std::fs::write(&pgb, "WARNING recovered pooler\n\tpresent continuation\n")
+        .expect("pooler input");
+    let mut counts = (0, 0);
+    assert!(
+        logs.collect(&DueSet::logs(), |rows| {
+            counts.0 += rows
+                .postgres
+                .iter()
+                .map(|batch| batch.events.errors.len())
+                .sum::<usize>();
+            counts.1 += rows
+                .pgbouncer
+                .iter()
+                .map(|batch| batch.events.len())
+                .sum::<usize>();
+            Ok(true)
+        })
+        .expect("same followers recover")
+    );
+    assert_eq!(counts, (1, 1));
+    assert_eq!(
+        logs.postgres[0].log.position().offset,
+        std::fs::metadata(pg).expect("PG metadata").len()
+    );
+    assert_eq!(
+        logs.pgbouncer[0].position().offset,
+        std::fs::metadata(pgb).expect("pooler metadata").len()
+    );
+}
+
+#[tokio::test]
+async fn discovered_missing_pooler_path_survives_failed_metadata_refresh() {
+    let dir = tempfile::tempdir().expect("fixture");
+    let path = dir.path().join("discovered.log");
+    let server = FakePostgres::start(
+        vec![
+            facts(&path, ""),
+            Reply::Error,
+            facts(std::path::Path::new(""), ""),
+        ],
+        vec![],
+    );
+    let mut logs = sources(dir.path(), path.clone());
+    logs.pgbouncer.clear();
+    logs.pgbouncer_dsns =
+        parse_connections("KRONIKA_PGBOUNCER_DSNS", std::slice::from_ref(&server.dsn))
+            .expect("DSN");
+    logs.rescan_pgbouncer(&mut |_| {}).await;
+    assert_eq!(logs.pgbouncer.len(), 1);
+    let error = logs.pgbouncer[0]
+        .read_batch(|| Ok(1), 16)
+        .expect_err("missing discovered file");
+    assert_eq!(error.raw_os_error(), Some(2));
+    logs.rescan_pgbouncer(&mut |_| {}).await;
+    assert_eq!(
+        logs.pgbouncer.len(),
+        1,
+        "failed SHOW CONFIG cannot remove a follower"
+    );
+    std::fs::write(&path, "WARNING recovered\n").expect("appeared");
+    let mut count = 0;
+    logs.collect(&DueSet::logs(), |rows| {
+        count += rows.pgbouncer[0].events.len();
+        Ok(true)
+    })
+    .expect("read recovery");
+    assert_eq!(count, 1);
+    logs.rescan_pgbouncer(&mut |_| {}).await;
+    assert!(
+        logs.pgbouncer.is_empty(),
+        "successful unset logfile is authoritative"
+    );
+    assert_eq!(
+        server.finish(),
+        ["SHOW CONFIG", "SHOW CONFIG", "SHOW CONFIG"]
+    );
+}
+
+#[tokio::test]
+async fn incomplete_glob_refresh_keeps_known_files_and_admits_new_literals() {
+    let dir = tempfile::tempdir().expect("fixture");
+    let old = dir.path().join("old.log");
+    let new = dir.path().join("new.log");
+    let mut logs = sources(dir.path(), old.clone());
+    logs.pg_logs.push(old.display().to_string());
+    logs.rescan_postgres(&mut |_| {}).await;
+    let inputs = vec![
+        new.display().to_string(),
+        dir.path().join("absent/*.log").display().to_string(),
+    ];
+    logs.pg_logs = inputs.clone();
+    logs.pgbouncer_logs = inputs;
+    logs.rescan_postgres(&mut |_| {}).await;
+    logs.rescan_pgbouncer(&mut |_| {}).await;
+    assert_eq!(logs.postgres.len(), 2);
+    assert_eq!(logs.pgbouncer.len(), 2);
+    assert!(logs.postgres.iter().any(|source| source.log.path() == old));
+    assert!(logs.pgbouncer.iter().any(|log| log.path() == old));
+    logs.pg_logs = vec![new.display().to_string()];
+    logs.pgbouncer_logs = logs.pg_logs.clone();
+    logs.rescan_postgres(&mut |_| {}).await;
+    logs.rescan_pgbouncer(&mut |_| {}).await;
+    assert_eq!(logs.postgres.len(), 1);
+    assert_eq!(logs.pgbouncer.len(), 1);
+    assert_eq!(logs.postgres[0].log.path(), new);
+    assert_eq!(logs.pgbouncer[0].path(), new);
 }

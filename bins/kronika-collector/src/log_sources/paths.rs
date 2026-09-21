@@ -1,44 +1,105 @@
-//! Turning what the operator wrote into files that exist right now.
+//! Resolve configured literal paths and filename patterns.
 
+use std::fs::DirEntry;
+use std::io;
 use std::path::{Path, PathBuf};
 
-/// Expand one entry into the files it names.
-///
-/// An entry without `*` or `?` is a path, and it expands to itself when the
-/// file is there. Otherwise the last component is a pattern matched against
-/// the names in the directory before it.
-///
-/// ponytail: only the last component may be a pattern; a pattern in the
-/// directory part would need a walk, and no log layout wants one yet.
-pub(super) fn expand(entry: &str) -> Vec<PathBuf> {
+use crate::logging::{LogLevel, field, log_event};
+
+pub(super) struct Expansion {
+    pub(super) paths: Vec<PathBuf>,
+    pub(super) complete: bool,
+}
+
+/// Patterns apply only to the filename component.
+pub(super) fn expand(entry: &str) -> Expansion {
     let path = PathBuf::from(entry);
     if !is_pattern(entry) {
-        return if path.is_file() {
-            vec![path]
-        } else {
-            Vec::new()
+        return Expansion {
+            paths: vec![path],
+            complete: true,
         };
     }
     let Some(pattern) = path.file_name().and_then(|name| name.to_str()) else {
-        return Vec::new();
+        expansion_failed(
+            &path,
+            &io::Error::new(io::ErrorKind::InvalidInput, "missing filename pattern"),
+        );
+        return Expansion {
+            paths: Vec::new(),
+            complete: false,
+        };
     };
-    let directory = path.parent().unwrap_or_else(|| Path::new("."));
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return Vec::new();
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    match std::fs::read_dir(directory) {
+        Ok(entries) => matching_files(&path, pattern, entries),
+        Err(error) => {
+            expansion_failed(&path, &error);
+            Expansion {
+                paths: Vec::new(),
+                complete: false,
+            }
+        }
+    }
+}
+
+fn matching_files(
+    path: &Path,
+    pattern: &str,
+    entries: impl Iterator<Item = io::Result<DirEntry>>,
+) -> Expansion {
+    let mut expanded = Expansion {
+        paths: Vec::new(),
+        complete: true,
     };
-    let mut found: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_str()
-                .is_some_and(|candidate| matches(pattern, candidate))
-        })
-        .map(|entry| entry.path())
-        .collect();
-    found.sort();
-    found
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                expanded.complete = false;
+                expansion_failed(path, &error);
+                continue;
+            }
+        };
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| matches(pattern, name))
+        {
+            continue;
+        }
+        match entry.file_type() {
+            Ok(kind) if kind.is_file() => expanded.paths.push(entry.path()),
+            Ok(_) => {}
+            Err(error) => {
+                expanded.complete = false;
+                expansion_failed(&entry.path(), &error);
+            }
+        }
+    }
+    expanded.paths.sort();
+    if expanded.complete && expanded.paths.is_empty() {
+        log_event(
+            LogLevel::Warn,
+            "log_source_absent",
+            &[
+                field("pattern", path.display()),
+                field("reason", "no matching files"),
+            ],
+        );
+    }
+    expanded
+}
+
+fn expansion_failed(path: &Path, error: &io::Error) {
+    log_event(
+        LogLevel::Warn,
+        "log_source_expansion_failure",
+        &[field("path", path.display()), field("error", error)],
+    );
 }
 
 /// Whether an entry names one file or a set of them.

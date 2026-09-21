@@ -1,10 +1,5 @@
 //! What the parsers make of a real log file.
 //!
-//! The fixtures under `tests/fixtures` are log files as `PostgreSQL` and
-//! `PgBouncer` write them. Each ends with a line the collector does not record,
-//! which closes the record before it: a record still open when a read reaches
-//! the end of the file waits for whatever might continue it.
-
 // Dependencies of other targets of this crate; anchored for the
 // `unused_crate_dependencies` lint, which checks each target separately.
 use chrono as _;
@@ -481,7 +476,7 @@ fn raw_crash_notice_does_not_block_following_records() {
         );
         assert_eq!(log.position().offset, 0);
         let position = log.acknowledge().expect("ack");
-        assert_eq!(position.offset, complete.len() as u64);
+        assert_eq!(position.offset, (complete.len() + "ignored\n".len()) as u64);
         let mut restarted = PgLog::new(
             path,
             position,
@@ -498,7 +493,7 @@ fn raw_crash_notice_does_not_block_following_records() {
 }
 
 #[test]
-fn bare_warning_waits_for_a_complete_line_then_accepts_details_on_the_next_tick() {
+fn bare_warning_waits_for_complete_input_then_keeps_present_details() {
     use std::io::Write as _;
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("partial.log");
@@ -516,14 +511,7 @@ fn bare_warning_waits_for_a_complete_line_then_accepts_details_on_the_next_tick(
         .append(true)
         .open(&path)
         .expect("append");
-    file.write_all(b"\n").expect("finish line");
-    assert!(
-        log.read_batch(|| Ok(NOW), 1, 900)
-            .expect("newline read")
-            .events
-            .is_empty()
-    );
-    file.write_all(b"DETAIL:  detail body\nHINT:  hint body\n2026-09-14 10:13:00 GMT [1] => [1-1] client=,db=,user= LOG:  database system is ready to accept connections\n").expect("next tick");
+    file.write_all(b"\nDETAIL:  detail body\nHINT:  hint body\n2026-09-14 10:13:00 GMT [1] => [1-1] client=,db=,user= LOG:  database system is ready to accept connections\n").expect("complete input");
     let batch = log
         .read_batch(|| Ok(NOW), 1, 900)
         .expect("complete warning");
@@ -534,7 +522,6 @@ fn bare_warning_waits_for_a_complete_line_then_accepts_details_on_the_next_tick(
     assert_eq!(warning.detail.as_deref(), Some("detail body"));
     assert_eq!(warning.hint.as_deref(), Some("hint body"));
     log.acknowledge().expect("ack warning");
-    log.read_batch(|| Ok(NOW), 1, 900).expect("stage next line");
     let batch = log.read_batch(|| Ok(NOW), 1, 900).expect("flush lifecycle");
     assert_eq!(batch.events.lifecycle.len(), 1);
     log.acknowledge().expect("ack lifecycle");
@@ -569,10 +556,7 @@ fn a_new_severity_quoting_a_detail_marker_starts_its_own_record() {
     assert_eq!(warning.statement, None);
     assert_eq!(warning.ts, NOW);
     log.acknowledge().expect("commit complete records");
-    assert_eq!(
-        log.position().offset,
-        (input.len() - "INFO:  sentinel\n".len()) as u64
-    );
+    assert_eq!(log.position().offset, input.len() as u64);
 }
 
 #[test]

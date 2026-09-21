@@ -24,7 +24,7 @@ use crate::scheduler::{DueSet, SourceKind};
 
 pub(crate) use buffering::push_log_sources;
 
-// Time between metadata/path refreshes, including retries of missing sources.
+// Time between metadata and configured pattern refreshes.
 const RESCAN: Duration = Duration::from_mins(5);
 
 /// What one read of one `PostgreSQL` log produced.

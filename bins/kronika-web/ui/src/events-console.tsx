@@ -56,7 +56,6 @@ const GROUPED_NOTES: Readonly<Record<string, string>> = {
   "pg.checkpoint_warning": "events.grouped.checkpoints",
   "pg.locks": "events.grouped.locks",
   "pg.lifecycle": "events.grouped.lifecycle",
-  "pgbouncer.events": "events.grouped.pgbouncer",
 }
 
 export function sectionLabel(section: string, t: Translate): string {

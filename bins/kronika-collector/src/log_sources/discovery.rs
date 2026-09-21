@@ -17,6 +17,7 @@ impl LogSources {
         observe: &mut (dyn FnMut(PgObservation) + Send),
     ) {
         let mut wanted: BTreeMap<PathBuf, PostgresFacts> = BTreeMap::new();
+        let mut complete = true;
         for target in self
             .pg_dsn
             .iter_mut()
@@ -60,19 +61,11 @@ impl LogSources {
                         continue;
                     };
                     let path = PathBuf::from(path);
-                    if !path.is_file() {
-                        target.last_log = None;
-                        log_source_unreadable(
-                            &path,
-                            target.connection.label(),
-                            target.connection.source_index(),
-                        );
-                        continue;
-                    }
                     target.last_log = Some(path.clone());
                     wanted.insert(path, target.facts.clone());
                 }
                 Err(_error) => {
+                    complete = false;
                     log_source_unreachable(
                         "postgresql",
                         target.connection.label(),
@@ -87,7 +80,9 @@ impl LogSources {
             }
         }
         for entry in &self.pg_logs {
-            for path in paths::expand(entry) {
+            let expanded = paths::expand(entry);
+            complete &= expanded.complete;
+            for path in expanded.paths {
                 wanted.entry(path).or_insert_with(|| {
                     self.pg_dsn
                         .as_ref()
@@ -96,12 +91,14 @@ impl LogSources {
                 });
             }
         }
+        if complete {
+            self.postgres
+                .retain(|source| wanted.contains_key(source.log.path()));
+        }
         self.follow_postgres(wanted);
     }
 
     fn follow_postgres(&mut self, wanted: BTreeMap<PathBuf, PostgresFacts>) {
-        self.postgres
-            .retain(|source| wanted.contains_key(source.log.path()));
         for (path, facts) in wanted {
             let prefix = facts.line_prefix.as_deref().map(LinePrefix::parse);
             if let Some(existing) = self
@@ -123,7 +120,7 @@ impl LogSources {
             if let Some(timezone) = facts.log_timezone {
                 log.set_timezone(timezone);
             }
-            log_source_opened("postgresql", log.path(), log.format().as_str());
+            log_source_followed("postgresql", log.path(), log.format().as_str());
             self.postgres.push(PostgresSource {
                 log,
                 system_identifier: facts.system_identifier,
@@ -136,6 +133,7 @@ impl LogSources {
         observe: &mut (dyn FnMut(PgObservation) + Send),
     ) {
         let mut wanted: Vec<PathBuf> = Vec::new();
+        let mut complete = true;
         for target in &self.pgbouncer_dsns {
             match settings::pgbouncer(target, observe).await {
                 Ok(server) => {
@@ -143,45 +141,46 @@ impl LogSources {
                         log_source_absent(
                             target.label(),
                             target.source_index(),
-                            "logfile is unset, so the pooler writes to stderr",
+                            "logfile is unset",
                         );
                         continue;
                     };
                     let path = PathBuf::from(path);
-                    if path.is_file() {
-                        wanted.push(path);
-                    } else {
-                        log_source_unreadable(&path, target.label(), target.source_index());
-                    }
+                    wanted.push(path);
                 }
                 Err(_error) => {
+                    complete = false;
                     log_source_unreachable("pgbouncer", target.label(), target.source_index());
                 }
             }
         }
         for entry in &self.pgbouncer_logs {
-            wanted.extend(paths::expand(entry));
+            let expanded = paths::expand(entry);
+            complete &= expanded.complete;
+            wanted.extend(expanded.paths);
         }
         wanted.sort();
         wanted.dedup();
-        self.pgbouncer
-            .retain(|log| wanted.contains(&log.path().to_path_buf()));
+        if complete {
+            self.pgbouncer
+                .retain(|log| wanted.contains(&log.path().to_path_buf()));
+        }
         for path in wanted {
             if self.pgbouncer.iter().any(|log| log.path() == path) {
                 continue;
             }
             let position = self.offsets.get(&path.display().to_string());
             let log = PgBouncerLog::new(path, position);
-            log_source_opened("pgbouncer", log.path(), "pgbouncer");
+            log_source_followed("pgbouncer", log.path(), "pgbouncer");
             self.pgbouncer.push(log);
         }
     }
 }
 
-fn log_source_opened(kind: &str, path: &std::path::Path, format: &str) {
+fn log_source_followed(kind: &str, path: &std::path::Path, format: &str) {
     log_event(
         LogLevel::Info,
-        "log_source_opened",
+        "log_source_followed",
         &[
             field("kind", kind),
             field("path", path.display()),
@@ -224,22 +223,6 @@ fn log_source_absent(connection: &str, source_index: usize, reason: &str) {
             field("connection", connection),
             field("source_index", source_index),
             field("reason", reason),
-        ],
-    );
-}
-
-fn log_source_unreadable(path: &std::path::Path, connection: &str, source_index: usize) {
-    log_event(
-        LogLevel::Warn,
-        "log_source_unreadable",
-        &[
-            field("path", path.display()),
-            field("connection", connection),
-            field("source_index", source_index),
-            field(
-                "hint",
-                "mount the directory here and name the file with --pg-log or KRONIKA_PG_LOGS",
-            ),
         ],
     );
 }

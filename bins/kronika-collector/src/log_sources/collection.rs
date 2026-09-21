@@ -46,7 +46,9 @@ impl LogSources {
                     let $batch = match $read {
                         Ok(batch) => batch,
                         Err(error) => {
-                            log_collection_failure(type_id, format, &error, started.elapsed());
+                            let path = $log.path().display();
+                            let context = format_args!("{path}: {error}");
+                            log_collection_failure(type_id, format, &context, started.elapsed());
                             read_failed = true;
                             break;
                         }

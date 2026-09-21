@@ -32,3 +32,33 @@ fn trailing_stars_may_match_nothing() {
     assert!(matches("pgbouncer**", "pgbouncer"));
     assert!(matches("*", ""));
 }
+
+#[test]
+fn missing_literals_and_relative_globs_remain_concrete() {
+    let dir = tempfile::tempdir().expect("fixture");
+    let path = dir.path().join("missing.log");
+    let expanded = super::expand(path.to_str().expect("path"));
+    assert!(expanded.complete);
+    assert_eq!(expanded.paths, [path]);
+    let relative = super::expand("Cargo.t?ml");
+    assert!(relative.complete);
+    assert_eq!(relative.paths, [std::path::PathBuf::from("./Cargo.toml")]);
+}
+
+#[test]
+fn partial_enumeration_retains_matches_and_reports_incompleteness() {
+    let dir = tempfile::tempdir().expect("fixture");
+    let file = dir.path().join("good.log");
+    std::fs::write(&file, "").expect("log");
+    let entries = std::fs::read_dir(dir.path())
+        .expect("entries")
+        .chain([Err(std::io::Error::from_raw_os_error(13))]);
+    let expanded = super::matching_files(&dir.path().join("*.log"), "*.log", entries);
+    assert!(!expanded.complete);
+    assert_eq!(expanded.paths, [file]);
+    for _ in 0..2 {
+        let empty = super::expand(dir.path().join("*.csv").to_str().expect("pattern"));
+        assert!(empty.complete);
+        assert!(empty.paths.is_empty());
+    }
+}

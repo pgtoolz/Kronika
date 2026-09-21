@@ -161,6 +161,8 @@ Command-line values are not split at semicolons. Environment lists keep the
 
 The collector retains PgBouncer warnings, errors and unknown LOG messages with connection context. Missing or invalid timestamps use the read time. Routine connection chatter, periodic statistics and DEBUG/NOISE are skipped. See [recorded fields](../../docs/type-registry/pgbouncer.md).
 
+Complete records at EOF are read in the same pass. Incomplete lines and CSV records wait for more input. Known log paths are retried every log interval even when absent. Server metadata and filename patterns refresh every five minutes. Empty readable files yield no events.
+
 Without `--pg-dsn`, the legacy `KRONIKA_PG_DSNS` still uses only its first
 connection string and cannot be set together with `KRONIKA_PG_DSN`.
 Migrate to `--pg-dsn` or `KRONIKA_PG_DSN`; support for `KRONIKA_PG_DSNS`
