@@ -161,7 +161,7 @@ sudo /usr/local/bin/kronika-collector \
 | `--pg-log` | `KRONIKA_PG_LOGS` | Не задана | Необязательные читаемые локальные пути. В имени файла допустимы `*` и `?`. В режиме `local` дополняют поиск через `pg_current_logfile()`. В режиме `postgresql` открываются только явно заданные пути. |
 | `--pg-log-max-lag-s` | `KRONIKA_PG_LOG_MAX_LAG_S` | `900` | Не записывать события PostgreSQL старше указанного числа секунд на момент чтения. Положительное целое число. |
 | `--pgbouncer-dsn` | `KRONIKA_PGBOUNCER_DSNS` | Не задана | Строки подключения к административной консоли (`dbname=pgbouncer`) для чтения `SHOW CONFIG`/`logfile`. Учётная запись должна входить в `stats_users`. |
-| `--pgbouncer-log` | `KRONIKA_PGBOUNCER_LOGS` | Не задана | Локальные пути к журналам PgBouncer. В имени файла допустимы `*` и `?`. |
+| `--pgbouncer-log` | `KRONIKA_PGBOUNCER_LOGS` | Не задана | Локальные пути к журналам PgBouncer. В имени файла допустимы `*` и `?`. Строки могут начинаться с префикса `journalctl` или syslog (`<идентификатор>[<pid>]: `) перед собственной строкой пулера, как в файле, который пишет `journalctl -u pgbouncer -o short-full`. |
 
 Без `--pg-dsn` устаревшая переменная `KRONIKA_PG_DSNS` по-прежнему задаёт
 только первое подключение. Её нельзя использовать вместе с `KRONIKA_PG_DSN`.

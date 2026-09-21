@@ -223,6 +223,42 @@ fn a_pgbouncer_log_yields_one_row_per_event_and_no_duplicates() {
 }
 
 #[test]
+fn a_journalctl_prefix_in_front_of_pgbouncer_lines_is_skipped() {
+    let mut plain = PgBouncerLog::new(fixture("pgbouncer.log"), Position::default());
+    let plain = plain
+        .read_batch(1024)
+        .expect("read the plain fixture")
+        .events;
+
+    let mut log = PgBouncerLog::new(fixture("pgbouncer-journald.log"), Position::default());
+    let batch = log.read_batch(1024).expect("read the prefixed fixture");
+    if batch.needs_ack {
+        log.acknowledge().expect("acknowledge the fixture");
+    }
+    let events = batch.events;
+
+    assert_eq!(
+        &events[..plain.len()],
+        &plain[..],
+        "short, short-full and short-iso prefixes, with or without a host name, \
+         leave the pooler's own time, level, socket and text untouched"
+    );
+    let texts: Vec<&str> = events
+        .iter()
+        .skip(plain.len())
+        .map(|event| event.text.as_str())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "query_timeout",
+            "process up: PgBouncer 1.16.0, libevent 2.1.11-stable (epoll), adns: c-ares 1.15.0, tls: OpenSSL 1.1.1f  31 Mar 2020",
+        ],
+        "a prefixed line is still dropped when its message is not a recognized event"
+    );
+}
+
+#[test]
 fn all_postgres_formats_resolve_gmt_before_classifying_events() {
     for (name, content, prefix) in [
         (

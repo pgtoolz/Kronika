@@ -3,6 +3,11 @@
 //! The line layout is fixed, unlike `PostgreSQL`'s: `lib/usual/logging.c:231`
 //! writes `<time> [<pid>] <LEVEL> <message>`, and `src/util.c:40` puts a socket
 //! context in front of the message when the line belongs to a connection.
+//!
+//! A pooler running under systemd writes that line to stderr, and the file an
+//! operator keeps with `journalctl -u pgbouncer -o short-full >> pgbouncer.log`
+//! carries a `journalctl` prefix ending in `<identifier>[<pid>]: ` in front of
+//! it. Such a prefix is skipped; the pooler's own time and level are used.
 
 mod events;
 
@@ -156,10 +161,25 @@ fn continues(_open: &[String], line: &str, _raw_quotes_odd: bool) -> bool {
     line.starts_with('\t')
 }
 
+/// The pooler's own line behind a `journalctl` or syslog prefix.
+///
+/// Every `journalctl` output style (`short`, `short-full`, `short-iso`, with
+/// or without the host name) and rsyslog end their prefix with
+/// `<identifier>[<pid>]: `; the pooler's `<time> [<pid>] <LEVEL> <message>`
+/// follows it unchanged. The first such marker closes the prefix: the
+/// pooler's own `[<pid>]` is followed by a space, not a colon. Returns `None`
+/// for a line without the marker.
+fn journal_payload(line: &str) -> Option<&str> {
+    let at = line.find("]: ")?;
+    line.get(at + "]: ".len()..)
+}
+
 /// Read one line, or `None` when it is not an event this collector records.
 #[must_use]
 pub fn parse(record: &Record) -> Option<Event> {
-    let (ts, rest) = timestamp::parse_local(record.first())?;
+    let first = record.first();
+    let (ts, rest) = timestamp::parse_local(first)
+        .or_else(|| timestamp::parse_local(journal_payload(first)?))?;
     let rest = rest.strip_prefix(" [")?;
     let level_at = rest.find("] ")?;
     let rest = rest.get(level_at + "] ".len()..)?;

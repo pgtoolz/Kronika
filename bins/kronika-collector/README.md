@@ -157,7 +157,7 @@ Command-line values are not split at semicolons. Environment lists keep the
 | `--pg-log` | `KRONIKA_PG_LOGS` | Unset | Optional readable local paths. Final filename supports `*` and `?`. In `local` mode, paths add to `pg_current_logfile()` discovery. In `postgresql` mode, only explicit paths are opened. |
 | `--pg-log-max-lag-s` | `KRONIKA_PG_LOG_MAX_LAG_S` | `900` | Skip PostgreSQL log events older than this many seconds at read time. Positive whole number. |
 | `--pgbouncer-dsn` | `KRONIKA_PGBOUNCER_DSNS` | Unset | Connections to the administrative console (`dbname=pgbouncer`) to read `SHOW CONFIG`/`logfile`. The account must belong to `stats_users`. |
-| `--pgbouncer-log` | `KRONIKA_PGBOUNCER_LOGS` | Unset | Local PgBouncer log paths. Filenames can use `*` and `?` wildcards. |
+| `--pgbouncer-log` | `KRONIKA_PGBOUNCER_LOGS` | Unset | Local PgBouncer log paths. Filenames can use `*` and `?` wildcards. Lines may carry a `journalctl` or syslog prefix (`<identifier>[<pid>]: `) in front of the pooler's own line, as in a file written with `journalctl -u pgbouncer -o short-full`. |
 
 Without `--pg-dsn`, the legacy `KRONIKA_PG_DSNS` still uses only its first
 connection string and cannot be set together with `KRONIKA_PG_DSN`.
