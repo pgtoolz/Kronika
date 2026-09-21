@@ -6,6 +6,7 @@
 
 - Исправлена остановка сбора логов PostgreSQL на сообщениях без префикса или корректного времени. Распознанные сообщения без корректного времени сохраняются со временем чтения.
 - Строки журнала PgBouncer с префиксом `journalctl` или syslog (`<идентификатор>[<pid>]: `) распознаются, поэтому файл, который пишет `journalctl -u pgbouncer -o short-full`, можно читать через `--pgbouncer-log`.
+- Строка PgBouncer `pooler error:` записывается как событие, если пулер не записал перед ней парную строку `closing because:`, как при `log_disconnections = 0`.
 
 ## [1.2.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.1)
 

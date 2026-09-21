@@ -2,9 +2,9 @@
 //!
 //! Every entry was read out of the `PgBouncer` sources, with the file it is
 //! written from. A line is recognized when its message, or the reason inside
-//! its `closing because:`, starts with one of these. Everything else is
-//! dropped: on a default install the log also carries a line per connection
-//! opened and closed, which is traffic, not an event.
+//! its `closing because:` or `pooler error:`, starts with one of these.
+//! Everything else is dropped: on a default install the log also carries a
+//! line per connection opened and closed, which is traffic, not an event.
 
 /// The messages a `pgbouncer_events` row is written for.
 pub const RECOGNIZED: &[&str] = &[

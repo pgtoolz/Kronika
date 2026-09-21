@@ -8,6 +8,11 @@
 //! operator keeps with `journalctl -u pgbouncer -o short-full >> pgbouncer.log`
 //! carries a `journalctl` prefix ending in `<identifier>[<pid>]: ` in front of
 //! it. Such a prefix is skipped; the pooler's own time and level are used.
+//!
+//! With `log_disconnections = 0` the pooler writes no `closing because:` line
+//! and a rejected client leaves only the `pooler error:` warning behind, so
+//! that warning is an event unless the matching `closing because:` line came
+//! right before it on the same client socket.
 
 mod events;
 
@@ -87,6 +92,35 @@ pub struct Event {
 #[derive(Debug)]
 pub struct PgBouncerLog {
     tail: Tail,
+    /// The last `closing because:` event, so the `pooler error:` line the
+    /// pooler writes right after it for the same client is not counted twice.
+    last_closing: Option<Closing>,
+}
+
+/// A `closing because:` event waiting for its `pooler error:` twin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Closing {
+    socket: String,
+    text: String,
+}
+
+/// Which line of a disconnection an event came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// `closing because: <reason>`, written when `log_disconnections` is on.
+    Closing,
+    /// `pooler error: <reason>`, written when `log_pooler_errors` is on.
+    PoolerError,
+    /// Any other recognized message.
+    Other,
+}
+
+/// One recognized line with what the deduplication needs to know about it.
+#[derive(Debug)]
+struct Parsed {
+    event: Event,
+    socket: Option<String>,
+    kind: Kind,
 }
 
 /// One bounded read from a followed `PgBouncer` log.
@@ -108,6 +142,7 @@ impl PgBouncerLog {
     pub const fn new(path: PathBuf, position: Position) -> Self {
         Self {
             tail: Tail::new(path, position),
+            last_closing: None,
         }
     }
 
@@ -132,12 +167,47 @@ impl PgBouncerLog {
         let batch = self
             .tail
             .read_batch_without_quote_tracking(continues, max_records)?;
+        let mut events = Vec::new();
+        for parsed in batch.records.iter().filter_map(classify) {
+            if self.admit(&parsed) {
+                events.push(parsed.event);
+            }
+        }
         Ok(ReadBatch {
-            events: batch.records.iter().filter_map(parse).collect(),
+            events,
             raw_bytes: batch.raw_bytes,
             at_eof: batch.at_eof,
             needs_ack: batch.needs_ack,
         })
+    }
+
+    /// Whether `parsed` is a new event rather than the `pooler error:` twin
+    /// of the `closing because:` event just before it.
+    ///
+    /// `disconnect_client(notify=true)` logs the reason as `closing because:`
+    /// (`src/objects.c:900`) and then sends it to the client, which logs it
+    /// again as `pooler error:` (`src/proto.c:129`). The twin follows on the
+    /// same client socket with the same text; it is dropped even across a
+    /// batch boundary. A `pooler error:` with no such predecessor is the only
+    /// trace of the rejection when `log_disconnections` is off, and stays.
+    fn admit(&mut self, parsed: &Parsed) -> bool {
+        match parsed.kind {
+            Kind::Closing => {
+                self.last_closing = parsed.socket.as_ref().map(|socket| Closing {
+                    socket: socket.clone(),
+                    text: parsed.event.text.clone(),
+                });
+                true
+            }
+            Kind::PoolerError => {
+                let twin = self.last_closing.take().is_some_and(|closing| {
+                    parsed.socket.as_deref() == Some(closing.socket.as_str())
+                        && parsed.event.text == closing.text
+                });
+                !twin
+            }
+            Kind::Other => true,
+        }
     }
 
     /// Commit the candidate position from the last completed batch.
@@ -175,8 +245,15 @@ fn journal_payload(line: &str) -> Option<&str> {
 }
 
 /// Read one line, or `None` when it is not an event this collector records.
+///
+/// A lone record is read without the `pooler error:` deduplication a
+/// [`PgBouncerLog`] applies across the lines it follows.
 #[must_use]
 pub fn parse(record: &Record) -> Option<Event> {
+    classify(record).map(|parsed| parsed.event)
+}
+
+fn classify(record: &Record) -> Option<Parsed> {
     let first = record.first();
     let (ts, rest) = timestamp::parse_local(first)
         .or_else(|| timestamp::parse_local(journal_payload(first)?))?;
@@ -187,20 +264,27 @@ pub fn parse(record: &Record) -> Option<Event> {
     let level = Level::parse(rest.get(..message_at)?)?;
     let (context, message) = split_socket_context(rest.get(message_at + 1..)?);
 
-    let text = event_text(message, record.rest())?;
-    Some(Event {
-        ts,
-        level,
-        database: context.database,
-        username: context.username,
-        host: context.host,
-        text,
+    let (kind, text) = event_text(message, record.rest())?;
+    Some(Parsed {
+        event: Event {
+            ts,
+            level,
+            database: context.database,
+            username: context.username,
+            host: context.host,
+            text,
+        },
+        socket: context.socket,
+        kind,
     })
 }
 
 /// What the socket context in front of a message carried.
 #[derive(Debug, Default)]
 struct SocketContext {
+    /// The pointer `PgBouncer` prints for the socket, `C-0x55f1a2b3c4d5`,
+    /// which ties the lines of one disconnection together.
+    socket: Option<String>,
     database: Option<String>,
     username: Option<String>,
     host: Option<String>,
@@ -214,16 +298,14 @@ struct SocketContext {
 /// one dictionary entry per connection.
 fn split_socket_context(message: &str) -> (SocketContext, &str) {
     let none = (SocketContext::default(), message);
-    let Some(rest) = message
-        .strip_prefix("C-")
-        .or_else(|| message.strip_prefix("S-"))
-    else {
+    if !message.starts_with("C-") && !message.starts_with("S-") {
+        return none;
+    }
+    let Some(at) = message.find(": ") else {
         return none;
     };
-    let Some(at) = rest.find(": ") else {
-        return none;
-    };
-    let rest = rest.get(at + ": ".len()..).unwrap_or_default();
+    let socket = message.get(..at).unwrap_or_default();
+    let rest = message.get(at + ": ".len()..).unwrap_or_default();
     let Some(end) = rest.find(' ') else {
         return none;
     };
@@ -246,6 +328,7 @@ fn split_socket_context(message: &str) -> (SocketContext, &str) {
     };
     (
         SocketContext {
+            socket: bounded(socket),
             database,
             username,
             host: bounded(strip_port(address)),
@@ -262,17 +345,20 @@ fn strip_port(address: &str) -> &str {
         .unwrap_or(address)
 }
 
-/// The event text, or `None` when the line is not one of the recognized events.
-fn event_text(message: &str, continuations: &[String]) -> Option<String> {
-    // `disconnect_client(notify=true)` logs the reason twice: once as `closing
-    // because:` and once as this, through `send_pooler_error`
-    // (`src/proto.c:266`). Keeping both would count every such event twice.
-    if message.starts_with("pooler error: ") {
-        return None;
-    }
-    let reason = message
-        .strip_prefix("closing because: ")
-        .map_or(message, strip_age);
+/// The event text and where it came from, or `None` when the line is not one
+/// of the recognized events.
+///
+/// A `closing because:` reason and the `pooler error:` sent for it carry the
+/// same text; [`PgBouncerLog::admit`] keeps only one of the pair.
+fn event_text(message: &str, continuations: &[String]) -> Option<(Kind, String)> {
+    let (kind, reason) = match (
+        message.strip_prefix("pooler error: "),
+        message.strip_prefix("closing because: "),
+    ) {
+        (Some(reason), _) => (Kind::PoolerError, reason),
+        (None, Some(reason)) => (Kind::Closing, strip_age(reason)),
+        (None, None) => (Kind::Other, message),
+    };
     if !RECOGNIZED
         .iter()
         .any(|recognized| reason.starts_with(recognized))
@@ -283,7 +369,7 @@ fn event_text(message: &str, continuations: &[String]) -> Option<String> {
     for line in continuations {
         crate::text::append_str(&mut text, line);
     }
-    (!text.is_empty()).then_some(text)
+    (!text.is_empty()).then_some((kind, text))
 }
 
 /// Drop the ` (age=42s)` a disconnection reason ends with.

@@ -6,6 +6,7 @@
 
 - Fixed PostgreSQL log collection stopping on messages without a prefix or a usable timestamp. Recognized messages without a usable timestamp are saved with the read time.
 - PgBouncer log lines behind a `journalctl` or syslog prefix (`<identifier>[<pid>]: `) are recognized, so a file written with `journalctl -u pgbouncer -o short-full` can be followed with `--pgbouncer-log`.
+- A PgBouncer `pooler error:` line is recorded as an event when the pooler did not log the matching `closing because:` line just before it, as with `log_disconnections = 0`.
 
 ## [1.2.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.1)
 

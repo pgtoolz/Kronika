@@ -258,6 +258,66 @@ fn a_journalctl_prefix_in_front_of_pgbouncer_lines_is_skipped() {
     );
 }
 
+const POOLER_ERROR_TEXTS: [&str; 6] = [
+    "query_wait_timeout",
+    "no such user",
+    "server login failed: FATAL database \"nope\" does not exist",
+    "query_wait_timeout",
+    "query_wait_timeout",
+    "password authentication failed",
+];
+
+#[test]
+fn a_pooler_error_is_an_event_unless_its_closing_line_came_first() {
+    let mut log = PgBouncerLog::new(fixture("pgbouncer-pooler-errors.log"), Position::default());
+
+    let batch = log.read_batch(1024).expect("read the fixture");
+    if batch.needs_ack {
+        log.acknowledge().expect("acknowledge the fixture");
+    }
+    let events = batch.events;
+
+    let texts: Vec<&str> = events.iter().map(|event| event.text.as_str()).collect();
+    assert_eq!(
+        texts, POOLER_ERROR_TEXTS,
+        "the twin of a closing line is dropped, a lone pooler error stays, \
+         an unrecognized pooler error and a relayed server message are not events"
+    );
+
+    assert_eq!(
+        events[0].level,
+        Level::Log,
+        "the closing line is kept, not its twin"
+    );
+    assert_eq!(events[0].username.as_deref(), Some("alice"));
+    assert_eq!(events[1].level, Level::Warning);
+    assert_eq!(events[1].username.as_deref(), Some("bob"));
+    assert_eq!(events[1].host.as_deref(), Some("10.0.0.3"));
+    assert_eq!(events[3].username.as_deref(), Some("dave"));
+    assert_eq!(
+        events[4].username.as_deref(),
+        Some("erin"),
+        "the same reason on another socket is not a twin"
+    );
+}
+
+#[test]
+fn pooler_error_deduplication_survives_a_batch_boundary() {
+    let mut log = PgBouncerLog::new(fixture("pgbouncer-pooler-errors.log"), Position::default());
+    let mut texts = Vec::new();
+    loop {
+        let batch = log.read_batch(1).expect("read one record");
+        texts.extend(batch.events.into_iter().map(|event| event.text));
+        if batch.needs_ack {
+            log.acknowledge().expect("acknowledge one record");
+        }
+        if batch.at_eof {
+            break;
+        }
+    }
+    assert_eq!(texts, POOLER_ERROR_TEXTS);
+}
+
 #[test]
 fn all_postgres_formats_resolve_gmt_before_classifying_events() {
     for (name, content, prefix) in [
