@@ -148,6 +148,7 @@ fn log_events_recorded(world: &mut BddWorld, step: &Step) -> Result<()> {
 }
 
 #[then("some segment records these log events exactly once")]
+#[then("some segment records these log event prefixes exactly once")]
 fn log_events_recorded_once(world: &mut BddWorld, step: &Step) -> Result<()> {
     let wanted = table_rows(step, &["type_id", "column", "value"])?;
     for expected in &wanted {
@@ -159,7 +160,14 @@ fn log_events_recorded_once(world: &mut BddWorld, step: &Step) -> Result<()> {
         let recorded = rows(world, type_id(id)?)?;
         let seen = recorded
             .iter()
-            .filter(|row| row.row_holds(column, value))
+            .filter(|row| {
+                if step.value.ends_with("prefixes exactly once") {
+                    row.row_get(column)
+                        .is_some_and(|recorded| recorded.starts_with(value))
+                } else {
+                    row.row_holds(column, value)
+                }
+            })
             .count();
         anyhow::ensure!(
             seen == 1,
