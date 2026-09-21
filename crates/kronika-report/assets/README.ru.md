@@ -41,7 +41,7 @@ Cargo и Node вместо поиска в `PATH`. Скрипт задаёт о�
 используется `pako` из зависимостей интерфейса с версией, закреплённой в lock-файле:
 Apple gzip и GNU gzip дают разные байты.
 
-Размер WebAssembly — 10 284 761 байт, gzip — 2 470 163 байт, SHA-256 gzip:
-`19f019fd9f34b0f27141d288445688c4f625c42118829b0c8df3a8bc998c1a75`.
+Размер WebAssembly — 10 346 010 байт, gzip — 2 486 953 байт, SHA-256 gzip:
+`2191d8f127e17019b53cdfc913ecb483063ddfe4db66602f5aaf61f66b94e904`.
 Размер связующего JavaScript — 3 885 байт, SHA-256:
 `4635ae734e8c1e1aeb463ae1096f4fdc2a65d98e715b55cee9fe46956f29cba8`.
