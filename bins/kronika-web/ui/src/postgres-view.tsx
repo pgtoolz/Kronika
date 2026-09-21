@@ -323,6 +323,10 @@ const TABS: readonly { readonly id: PostgresSection; readonly sections?: readonl
 ]
 
 
+export function postgresTimelineLane(section: string): string {
+  return section === "statements" || section === "plans" ? "pg_running" : section === "locks" ? "pg_lock_waiting" : section === "activity" || section === "vacuum" ? "pg_waiting" : "health"
+}
+
 export function PostgresView({
   context,
   densePageState,
@@ -404,7 +408,7 @@ export function PostgresView({
   readonly onSelectedKey: (key: string | null) => void
   readonly section: PostgresSection
   readonly selectedKey: string | null
-  readonly selectedLane: string
+  readonly selectedLane: string | null | undefined
   readonly statementLens: StatementLens
   /// The reader's choice to include Kronika's own statements.
   readonly monitorQueries: boolean
@@ -438,7 +442,7 @@ export function PostgresView({
     onSection("overview")
   }, [data.availableSections, onSection, section])
   return <>
-    <Timeline cursor={cursor} environment={environment} findings={data.findings} health={data.health} hour={hour} lanePoints={data.lanePoints} locale={locale} navigationTimestamps={navigationTimestamps} onCursor={onCursor} onFinding={onFinding} onOpenChart={onOpenChart} onPreview={onPreview} onSelectedLane={onSelectedLane} primaryLane={section === "statements" || section === "plans" ? "pg_running" : section === "activity" || section === "locks" ? "pg_waiting" : "health"} selectedLane={selectedLane} t={t} />
+    <Timeline cursor={cursor} environment={environment} findings={data.findings} health={data.health} hour={hour} lanePoints={data.lanePoints} locale={locale} navigationTimestamps={navigationTimestamps} onCursor={onCursor} onFinding={onFinding} onOpenChart={onOpenChart} onPreview={onPreview} onSelectedLane={onSelectedLane} primaryLane={postgresTimelineLane(section)} selectedLane={selectedLane} t={t} />
     <nav aria-label={t("pg.sections")} className="pg-tabs !mt-0 flex min-h-[35px] overflow-x-auto bg-s1">
       {TABS.map((tab) => {
         const enabled = tab.id === "plans" || tab.id === "vacuum" || tab.id === "tables" || tab.id === "indexes" || tab.sections === undefined || tab.sections.some(available)
@@ -1060,9 +1064,9 @@ function PgEntityView({
   const time = useDisplayTime()
   const allRows = data.sections[section] ?? NO_ROWS
   const dense = section === "pg_stat_statements" || section === "pg_store_plans"
-  const activeOrder = useMemo(() => order !== undefined && columns.some((column) => column.field === order.column && column.sortable === true)
+  const activeOrder = useMemo(() => order !== undefined && columns.some((column) => column.field === order.column && (dense ? column.sortable === true : column.sortable !== false))
     ? order
-    : defaultOrder, [columns, defaultOrder, order])
+    : defaultOrder, [columns, defaultOrder, dense, order])
   const ranked = useMemo(() => dense
     ? allRows.map(decoratePostgresIntervalRow)
     : snapshot(allRows, cursor), [allRows, cursor, dense])
@@ -1111,7 +1115,11 @@ function PgEntityView({
       : filterTableRows(rows, visibleColumns, pattern ?? "", dense, section),
     [dense, pattern, rows, section, visibleColumns],
   )
-  const snapshotStatus = dense
+  const lockWait = section === "pg_locks" ? data.lanePoints.filter((point) => point.lane === "pg_lock_waiting" && point.timestamp <= cursor).reduce<import("./api").LanePoint | null>((latest, point) => latest === null || point.timestamp > latest.timestamp ? point : latest, null) : null
+  const recordedGraphAt = section === "pg_locks" && ranked.length > 0 ? Math.max(...ranked.map((row) => row.timestamp)) : null
+  const snapshotStatus = section === "pg_locks"
+    ? recordedGraphAt !== null ? <span>{t("pg.locks.recorded_at", { time: time.timestamp(recordedGraphAt) })}</span> : lockWait?.value !== null && lockWait?.value !== undefined && lockWait.value > 0 ? <span>{t("pg.locks.not_recorded")}</span> : undefined
+    : dense
     ? tableState(metadata, statusRowCount ?? displayedRows.length, pattern, activeOrder, locale, t, time, focusPreview)
     : undefined
   const contentSized = displayedRows.length < 10 && !canLoadMore
@@ -1123,7 +1131,7 @@ function PgEntityView({
   const status = historyField === null ? snapshotStatus : <>{snapshotStatus}<span>{t("system.history")}</span></>
   return <div className={`pg-entity-layout mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)]${contentSized ? "" : " pg-entity-fill"}`} data-content-sized={contentSized || undefined} data-pg-section={sectionName(section)} data-testid="pg-entity-layout">
     <div className={`pg-entity-main min-w-0${contentSized ? "" : " pg-stretch"}`}>
-      <EntityTable accessory={accessory} className={section === "pg_stat_statements" ? "[&_.entity-cell]:text-sm" : undefined} columns={visibleColumns} contentSized={contentSized} contextLabel={activeContext?.label} empty={t("table.no_rows")} filterRows={section === "pg_locks" ? filterLockForest : undefined} requestPhase={requestPhase} finding={finding} findingField={finding === null || finding === undefined ? null : fieldNameForLocator(finding)} label={t(`pg.section.${sectionName(section)}`)} locale={locale} onContextClear={onContextClear} onNearEnd={densePageState === "idle" && canLoadMore ? onLoadMore : undefined} onOrder={onOrder} onPattern={onPattern} onSelect={(row) => { setSelected(row); onSelectedKey?.(rowKey(row)) }} order={activeOrder} pattern={pattern} rowLabel={section === "pg_locks" ? (row) => lockRowLabel(row, t) : undefined} searchRequest={searchRequest} searchSurface={section} serverSorted={dense} rows={rows} selectedKey={selectedRowKey} status={status} t={t} testId={`pg-${sectionName(section)}-table`} />
+      <EntityTable accessory={accessory} className={section === "pg_stat_statements" ? "[&_.entity-cell]:text-sm" : undefined} columns={visibleColumns} contentSized={contentSized} contextLabel={activeContext?.label} empty={t(section === "pg_locks" && recordedGraphAt === null && (lockWait?.value ?? 0) > 0 ? "pg.locks.not_recorded" : "table.no_rows")} filterRows={section === "pg_locks" ? filterLockForest : undefined} requestPhase={requestPhase} finding={finding} findingField={finding === null || finding === undefined ? null : fieldNameForLocator(finding)} label={t(`pg.section.${sectionName(section)}`)} locale={locale} onContextClear={onContextClear} onNearEnd={densePageState === "idle" && canLoadMore ? onLoadMore : undefined} onOrder={onOrder} onPattern={onPattern} onSelect={(row) => { setSelected(row); onSelectedKey?.(rowKey(row)) }} order={activeOrder} pattern={pattern} rowLabel={section === "pg_locks" ? (row) => lockRowLabel(row, t) : undefined} searchRequest={searchRequest} searchSurface={section} serverSorted={dense} rows={rows} selectedKey={selectedRowKey} status={status} t={t} testId={`pg-${sectionName(section)}-table`} />
       {paging !== undefined && <div className="lens-tabs max-[760px]:w-full max-[760px]:[&>button]:min-w-0 max-[760px]:[&>button]:flex-1 max-[760px]:[&>button]:px-1" data-testid="table-paging">{paging}</div>}
     </div>
     {selected !== null && <InspectorPortal identity={`postgres:${section}:${rowKey(selected)}`} onClose={() => { setSelected(null); onSelectedKey?.(null) }} title={detailTitle(selected, section, t)}><PgDetail allRows={allRows} contexts={data.laneContexts} columns={visibleDetailColumns} cursor={cursor} historyField={selectedHistoryField} historyRevision={historyRevision} hour={Math.floor(cursor / 3_600_000_000) * 3_600_000_000} locale={locale} onCursor={onCursor} onRelated={onRelated} row={selected} section={section} segments={segments ?? NO_SEGMENTS} t={t} /></InspectorPortal>}

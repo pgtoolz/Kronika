@@ -23,10 +23,10 @@ const rendered = await build({
   import { createElement } from "react";
   import { renderToStaticMarkup } from "react-dom/server";
   import { Timeline, TimelineRequestContext } from "../src/timeline.tsx";
-  export function render(phase, health = [], presentation = "preview") {
+  export function render(phase, health = [], presentation = "preview", options = {}) {
     return renderToStaticMarkup(createElement(TimelineRequestContext, { value: phase },
       createElement(Timeline, { cursor: 200, hour: 0, environment: null, findings: [], health,
-        lanePoints: [], locale: "en", presentation, onCursor() {}, onFinding() {}, t: (key) => key })));
+        lanePoints: [], locale: "en", presentation, onCursor() {}, onFinding() {}, t: (key) => key, ...options })));
   }
 ` },
 })
@@ -87,8 +87,7 @@ test("the selected lane draws while shared step controls use source navigation",
   assert.doesNotMatch(timeline, /mergeObservationTimestamps/)
   assert.match(timeline, /<UPlotChart/)
   assert.match(timeline, /window\.addEventListener\("keydown", move\)/)
-  assert.match(timeline, /if \(controlledLane !== undefined\) return/)
-  assert.match(timeline, /previousPrimary\.current = primaryLane\s+setSelectedLane\(primaryLane\)/)
+  assert.match(timeline, /previousPrimary\.current = primaryLane\s+if \(controlledLane === undefined\) setLocalLane\(primaryLane\)/)
 })
 
 test("the mobile cursor row keeps navigation and the live reading without a second clock", () => {
@@ -430,4 +429,53 @@ test("timeline controls stay above a full-width plot without a redundant time ti
   // longer exists made this pass on two -1s.
   assert.ok(source.indexOf(railMarkup) < source.indexOf('className="timeline-chart"'))
   assert.doesNotMatch(chart, /Time, browser local|Время, местное в браузере/)
+})
+
+
+test("automatic lanes remain automatic while explicit unavailable lanes keep their picker", () => {
+  const lanePoints = [{ segmentId: "s", lane: "pg_waiting", timestamp: 200, value: 3 }]
+  const automatic = requestTimeline.render("ready", [], "preview", { selectedLane: null, primaryLane: "pg_waiting", lanePoints })
+  assert.match(automatic, /aria-pressed="true"[^>]*>[^]*?lane.pg_waiting.label/)
+  const pending = requestTimeline.render("pending", [], "preview", { selectedLane: null, primaryLane: "pg_waiting" })
+  assert.match(pending, /value="pg_waiting"/)
+  for (const presentation of ["preview", "inspector"]) {
+    const unavailable = requestTimeline.render("ready", [], presentation, { selectedLane: "disk_busy", lanePoints })
+    assert.match(unavailable, /value="disk_busy"[^>]*>lane.disk_busy.label/)
+    assert.match(unavailable, /value="pg_waiting"[^>]*>lane.pg_waiting.label/)
+    assert.match(unavailable, /status.no_data/)
+  }
+})
+
+test("Disk and Locks choices expose recorded point identity, same-device queue and graph markers", () => {
+  const device = { major: 8, minor: 0, name: "sda", scope: 0 }
+  const lanePoints = [
+    { segmentId: "s", lane: "disk_busy", timestamp: 200, value: 60, device },
+    { segmentId: "s", lane: "disk_queue", timestamp: 200, value: 0.8, device },
+    { segmentId: "s", lane: "pg_lock_waiting", timestamp: 200, value: 0 },
+    { segmentId: "s", lane: "pg_lock_graph", timestamp: 199, value: null, locks: { waiting: 2, blockers: 1, prepared: true } },
+  ]
+  const disk = requestTimeline.render("ready", [], "preview", { selectedLane: "disk_busy", environment: "machine", lanePoints })
+  assert.match(disk, /60% · sda · use.lane.disk_queue 0.8/)
+  assert.match(disk, /lane.pg_lock_waiting.label/)
+  const locks = requestTimeline.render("ready", [], "preview", { selectedLane: "pg_lock_waiting", environment: "machine", lanePoints })
+  assert.match(locks, /data-testid="lock-graph-marker"/)
+  assert.match(locks, /lane.pg_lock_waiting.prepared/)
+  assert.match(locks, /aria-label="lane.pg_lock_waiting.label, count"/)
+  assert.match(locks, /data-testid="timeline-preview-reading" title="0">0<\/span>/)
+  const host = requestTimeline.render("ready", [], "preview", { selectedLane: "host_disk", environment: "container", lanePoints })
+  assert.match(host, /lane.host_disk.label/)
+  assert.doesNotMatch(host, /value="disk_busy"/)
+})
+
+
+test("Host Disk uses the same scope-filtered point for reading and queue", () => {
+  const device = { major: 8, minor: 0, name: "host-disk", scope: 0 }
+  const lanePoints = [
+    { segmentId: "s", lane: "disk_busy", timestamp: 100, value: 60, device },
+    { segmentId: "s", lane: "disk_queue", timestamp: 100, value: 0.8, device },
+    { segmentId: "s", lane: "disk_busy", timestamp: 200, value: 99, device: { ...device, name: "unknown", scope: null } },
+  ]
+  const html = requestTimeline.render("ready", [], "preview", { selectedLane: "host_disk", environment: "container", lanePoints })
+  assert.match(html, /60% · host-disk · use.lane.disk_queue 0.8/)
+  assert.doesNotMatch(html, /99%|unknown/)
 })

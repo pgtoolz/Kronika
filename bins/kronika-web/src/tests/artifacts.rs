@@ -8230,3 +8230,199 @@ fn lifetime_cpu_time_rides_the_snapshot_beside_the_rates_it_cannot_be_derived_fr
         ]
     );
 }
+
+fn append_lock_activity(fixture: &mut Fixture, rows: &[(i64, i32, bool)]) {
+    let mut interner = Interner::new(DictLimits::default());
+    let label = StrId(interner.intern(b"worker").expect("worker").get());
+    let lock = StrId(interner.intern(b"Lock").expect("Lock").get());
+    let mut buffers = SectionBuffers::new();
+    for &(ts, pid, waiting) in rows {
+        buffers
+            .push(PgStatActivityV3 {
+                wait_event_type: waiting.then_some(lock),
+                leader_pid: Some(42),
+                ..activity(ts, pid, label, label)
+            })
+            .expect("activity observation");
+    }
+    let dictionary = dict::encode(interner.window()).expect("activity dictionary");
+    let part = buffers
+        .flush(&dictionary)
+        .expect("encode activity")
+        .expect("rows");
+    fixture
+        .journal
+        .append(fixture.address.id, &part)
+        .expect("append activity");
+}
+
+#[test]
+fn locks_current_cache_revalidates_new_activity_only_dependencies() {
+    let mut fixture = Fixture::new();
+    fixture.append_postgres_lock_rows(&[(100, 42, "active", "ExclusiveLock")]);
+    fixture.finish_and_continue(SEGMENT_ID + 1);
+    let target = format!(
+        "/api/segments/{SEGMENT_ID}/snapshot?at=125&section=pg_locks&selection=latest&field=pid"
+    );
+    let initial = fixture.prepare(&target, None);
+    assert_eq!(initial.meta().cache.header(), "private,no-cache");
+    let etag = initial.meta().etag.expect("finished captured validator");
+    assert_eq!(
+        row_records(&stream(initial).expect("initial graph")).len(),
+        1
+    );
+    let captured = fixture.prepare(&target, None);
+    append_lock_activity(&mut fixture, &[(110, 1, false), (120, 2, true)]);
+    assert_eq!(
+        row_records(&stream(captured).expect("captured graph")).len(),
+        1
+    );
+    let active = fixture.prepare(&target, Some(&etag));
+    assert_eq!(active.meta().status, StatusCode::OK);
+    assert_eq!(active.meta().etag, None);
+    assert!(row_records(&stream(active).expect("zero cutoff")).is_empty());
+    fixture.finish();
+    let finished = fixture.prepare(&target, Some(&etag));
+    assert_eq!(finished.meta().status, StatusCode::OK);
+    assert_eq!(finished.meta().cache.header(), "private,no-cache");
+    let updated = finished.meta().etag.expect("new dependency validator");
+    assert_ne!(updated, etag);
+    assert!(row_records(&stream(finished).expect("finished cutoff")).is_empty());
+    assert_eq!(
+        fixture.prepare(&target, Some(&updated)).meta().status,
+        StatusCode::NOT_MODIFIED
+    );
+    let exact = fixture.prepare(&format!("/api/segments/{SEGMENT_ID}/snapshot?at=100&section=pg_locks&type_id=1011002&row_ordinal=0&field=pid"), None);
+    assert_eq!(exact.meta().cache, CachePolicy::Immutable);
+    assert_eq!(
+        row_records(&stream(exact).expect("exact graph"))[0]["timestamp"],
+        "100"
+    );
+}
+
+#[test]
+fn locks_activity_parts_merge_before_zero_and_changed_page_dependencies_reject_cursor() {
+    let mut fixture = Fixture::new();
+    fixture.append_postgres_lock_rows(&[
+        (100, 42, "active", "ExclusiveLock"),
+        (100, 43, "active", "ExclusiveLock"),
+    ]);
+    fixture.finish_and_continue(SEGMENT_ID + 1);
+    append_lock_activity(&mut fixture, &[(110, 1, false)]);
+    fixture.finish_and_continue(SEGMENT_ID + 2);
+    append_lock_activity(&mut fixture, &[(110, 2, true)]);
+    let target = format!(
+        "/api/segments/{SEGMENT_ID}/snapshot?at=125&section=pg_locks&selection=latest&field=pid&page_size=1"
+    );
+    let page =
+        stream(fixture.prepare(&target, None)).expect("worker in another part prevents zero");
+    assert_eq!(row_records(&page).len(), 1);
+    let cursor = page
+        .iter()
+        .find_map(|record| record["next_cursor"].as_str())
+        .expect("next page");
+    let continued = format!("{target}&cursor={cursor}");
+    assert_eq!(
+        row_records(&stream(fixture.prepare(&continued, None)).expect("unchanged page")).len(),
+        1
+    );
+    let captured = fixture.prepare(&target, None);
+    append_lock_activity(&mut fixture, &[(120, 3, false)]);
+    assert_eq!(
+        row_records(&stream(captured).expect("pinned active dependency")).len(),
+        1
+    );
+    assert!(matches!(
+        prepare_result(&fixture, &continued),
+        Err(ApiError::BadCursor)
+    ));
+    assert!(row_records(&stream(fixture.prepare(&target, None)).expect("new zero")).is_empty());
+}
+
+#[test]
+fn locks_active_anchor_continuations_keep_the_pinned_observation_horizon() {
+    let mut fixture = Fixture::new();
+    fixture.append_postgres_lock_rows(&[
+        (100, 42, "active", "ExclusiveLock"),
+        (100, 43, "active", "ExclusiveLock"),
+    ]);
+    append_lock_activity(&mut fixture, &[(110, 1, true)]);
+    let target = format!(
+        "/api/segments/{SEGMENT_ID}/snapshot?at=125&section=pg_locks&selection=latest&field=pid&page_size=1"
+    );
+    let first = stream(fixture.prepare(&target, None)).expect("first page");
+    let cursor = first
+        .iter()
+        .find_map(|record| record["next_cursor"].as_str())
+        .expect("next page");
+    append_lock_activity(&mut fixture, &[(120, 2, false)]);
+    let continued = stream(fixture.prepare(&format!("{target}&cursor={cursor}"), None))
+        .expect("pinned continuation");
+    assert_eq!(row_records(&continued).len(), 1);
+    assert_eq!(row_records(&continued)[0]["timestamp"], "100");
+    assert!(row_records(&stream(fixture.prepare(&target, None)).expect("new request")).is_empty());
+}
+
+#[test]
+fn disk_max_merges_equal_time_parts_and_keeps_the_winners_source_dictionary() {
+    let mut fixture = Fixture::new();
+    let append = |fixture: &mut Fixture, rows: &[(i64, i32, &str, i64, i64)]| {
+        let mut interner = Interner::new(DictLimits::default());
+        let mut buffers = SectionBuffers::new();
+        for &(ts, minor, name, busy, queue) in rows {
+            let device = StrId(interner.intern(name.as_bytes()).expect("device").get());
+            buffers
+                .push(OsDiskstats {
+                    io_time_ms: busy,
+                    io_weighted_time_ms: queue,
+                    ..diskstats_with_device(ts, minor, 0, device)
+                })
+                .expect("disk observation");
+        }
+        let dictionary = dict::encode(interner.window()).expect("disk dictionary");
+        let part = buffers
+            .flush(&dictionary)
+            .expect("encode disk")
+            .expect("rows");
+        fixture
+            .journal
+            .append(fixture.address.id, &part)
+            .expect("append disk");
+    };
+    append(
+        &mut fixture,
+        &[
+            (1_000_000, 0, "sda", 0, 0),
+            (1_000_000, 16, "sdb", 0, 0),
+            (2_000_000, 0, "sda", 600, 800),
+        ],
+    );
+    fixture.finish_and_continue(SEGMENT_ID + 1);
+    append(
+        &mut fixture,
+        &[
+            (2_000_000, 16, "sdb", 100, 200),
+            (3_000_000, 16, "sdb", 900, 1100),
+        ],
+    );
+    fixture.finish();
+    let target = format!(
+        "/api/hour?from=1000000&to=3000000&part=lanes&segments={SEGMENT_ID},{}",
+        SEGMENT_ID + 1
+    );
+    let records = stream(fixture.prepare(&target, None)).expect("cross-segment lanes");
+    let point = |lane: &str, ts: &str| {
+        records
+            .iter()
+            .find(|record| record["lane"] == lane && record["ts"] == ts)
+            .expect("lane point")
+    };
+    assert_eq!(point("disk_busy", "2000000")["value"], 60.0);
+    assert_eq!(point("disk_queue", "2000000")["value"], 0.8);
+    assert_eq!(
+        point("disk_busy", "2000000")["device"],
+        serde_json::json!({"major": 8, "minor": 0, "name": "sda", "scope": 0})
+    );
+    assert_eq!(point("disk_busy", "3000000")["value"], 80.0);
+    assert_eq!(point("disk_busy", "3000000")["device"]["name"], "sdb");
+}

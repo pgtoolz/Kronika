@@ -42,8 +42,6 @@ interface MetricSpec {
     | "mem_file_cache"
     | "mem_other"
     | "filesystem_free_min"
-    | "device_busy"
-    | "device_average_queue"
     | "device_count"
     | "device_active_io"
     | "filesystem_count"
@@ -133,8 +131,8 @@ export const SYSTEM_METRICS: readonly MetricSpec[] = [
   pressureMetric("io_pressure", "storage", "system.metric.io_pressure", 2),
   exactLaneMetric("disk_busy", "storage", "use.lane.disk_busy", "use.lane.disk_busy.help", "%"),
   exactLaneMetric("disk_queue", "storage", "use.lane.disk_queue", "use.lane.disk_queue.help", ""),
-  derivedMetric("device_busy", "storage", "system.metric.device_busy", "os_device_busy", "device_busy", "%"),
-  derivedMetric("device_average_queue", "storage", "system.metric.device_average_queue", "os_device_average_queue", "device_average_queue", ""),
+  { ...exactLaneMetric("device_busy", "storage", "system.metric.device_busy.label", "system.metric.device_busy.help", "%"), useOnly: false },
+  { ...exactLaneMetric("device_average_queue", "storage", "system.metric.device_average_queue.label", "system.metric.device_average_queue.help", ""), useOnly: false },
   derivedMetric("filesystem_free_min", "storage", "system.metric.filesystem_free_min", "os_min_filesystem_free_percent", "filesystem_free_min", "%"),
   derivedMetric("device_count", "storage", "system.metric.device_count", "os_device_count", "device_count", ""),
   derivedMetric("device_active_io", "storage", "system.metric.device_active_io", "os_device_active_io", "device_active_io", ""),
@@ -182,8 +180,6 @@ const DERIVE_INPUTS: Readonly<Record<NonNullable<MetricSpec["derive"]>, readonly
   mem_file_cache: ["os_meminfo", ["cached", "buffers"]],
   mem_other: ["os_meminfo", ["mem_total", "mem_free", "cached", "buffers", "anon_pages", "s_reclaimable", "s_unreclaim"]],
   filesystem_free_min: ["os_mountinfo", ["total_bytes", "free_bytes"]],
-  device_busy: ["os_diskstats", ["io_time_ms", "device"]],
-  device_average_queue: ["os_diskstats", ["io_weighted_time_ms", "device"]],
   device_count: ["os_diskstats", []],
   device_active_io: ["os_diskstats", ["io_in_progress"]],
   filesystem_count: ["os_mountinfo", []],
@@ -228,7 +224,7 @@ const RESOURCE_LANE: Partial<Readonly<Record<UseResourceKey, string>>> = {
   disk: "disk_busy",
   network: "network_rx",
 }
-const EXACT_TIMELINE_METRIC_LANES: ReadonlySet<string> = new Set(["cpu_busy", "cpu_stall", "memory"])
+const EXACT_TIMELINE_METRIC_LANES: ReadonlySet<string> = new Set(["cpu_busy", "cpu_stall", "memory", "disk_busy"])
 
 function resourceSelection(available: readonly { readonly points: readonly ChartPoint[]; readonly spec: MetricSpec }[], resource: UseResourceKey): string | null {
   const lane = RESOURCE_LANE[resource]
@@ -239,6 +235,11 @@ function resourceSelection(available: readonly { readonly points: readonly Chart
 
 function metricResource(spec: MetricSpec): UseResourceKey | null {
   return (Object.keys(RESOURCE_GROUP) as UseResourceKey[]).find((key) => RESOURCE_GROUP[key] === spec.group) ?? null
+}
+
+export function hostTimelineLane(metric: string | null, environment: "container" | "machine" | null): string {
+  const spec = SYSTEM_METRICS.find((candidate) => candidate.id === metric)
+  return environment === "container" || spec === undefined ? "health" : metricLane(spec)
 }
 
 function metricLane(spec: MetricSpec): string {
@@ -260,6 +261,8 @@ export const SYSTEM_ENTITIES: readonly {
       derivedPercent("device_busy", ["io_time_ms"], (rows) => exactCounterRatePoints(rows, "io_time_ms", 0.1)),
       derivedNumber("average_queue", ["io_weighted_time_ms"], (rows) => exactCounterRatePoints(rows, "io_weighted_time_ms", 0.001)),
       number("io_in_progress"),
+      { ...virtualText("disk_mounts", ["major", "minor"]), detailOnly: true },
+      { ...virtualText("disk_links", ["major", "minor"]), detailOnly: true },
     ],
   },
   {
@@ -485,7 +488,7 @@ export function SystemView({
   readonly onMetric: (metric: string | null) => void
   readonly onSelectedLane: (lane: string) => void
   readonly onSelectedKey: (key: string | null) => void
-  readonly selectedLane: string
+  readonly selectedLane: string | null | undefined
   readonly selectedKey: string | null
   readonly requestPhase?: TableRequestPhase | undefined
   readonly t: Translate
@@ -496,17 +499,23 @@ export function SystemView({
         const frequency = storedNumber(row, "actual_frequency_hz")
         return frequency !== undefined && frequency !== null && Number.isFinite(frequency)
       }))), [data])
+  const selectedDisk = selectedKey !== null && cgroupSelectionRequest(selectedKey, "os_diskstats") !== null
   const activeCgroup = cgroupTableSection(metric)
   const cgroupMetric = metric?.split(".")[1] ?? null
   const selectedSpec = metric === null ? undefined : SYSTEM_METRICS.find((spec) => spec.id === metric)
   // The address owns the chosen metric and opens its ledger row.
   const [expanded, setExpanded] = useState<ReadonlySet<LedgerKey>>(() => {
     const key = activeCgroup === null ? (selectedSpec === undefined ? null : metricResource(selectedSpec)) : activeCgroup.replace("os_cgroup_v2_", "cgroup_") as LedgerKey
-    return new Set<LedgerKey>(key === null ? [] : [key])
+    return new Set<LedgerKey>(selectedDisk ? ["disk"] : key === null ? [] : [key])
   })
   const openRow = (key: LedgerKey) => { if (isContainerResource(key)) onMetric(key); setExpanded((current) => current.has(key) ? current : new Set([...current, key])) }
   const [groupMetric, setGroupMetric] = useState<Readonly<Record<string, string>>>({})
   const [groupMode, setGroupMode] = useState<Readonly<Record<string, HostMode | null>>>({})
+  useEffect(() => {
+    if (!selectedDisk) return
+    setExpanded((current) => current.has("disk") ? current : new Set([...current, "disk"]))
+    setGroupMode((current) => current.disk === "io" ? current : { ...current, disk: "io" })
+  }, [selectedDisk, selectedKey])
   const toggleRow = (key: LedgerKey) => {
     if (isContainerResource(key)) onMetric(expanded.has(key) ? null : key)
     setExpanded((current) => {
@@ -594,11 +603,12 @@ export function SystemView({
           const allRows = systemEntityRows(data, entity.section, cursor)
           const activeContext = context?.logicalName === entity.section ? context : null
           const rows = contextualRows(allRows, activeContext, activeContext === null ? null : contextRow)
-          if (rows.length === 0 && activeContext === null && requestPhase === "ready" && !isContainerResource(key)) return null
+          if (rows.length === 0 && activeContext === null && requestPhase === "ready" && !isContainerResource(key) && !(entity.section === "os_diskstats" && selectedKey !== null && entityKeyOwnedBySection(selectedKey, entity.section))) return null
           if (rows.length === 0 && activeContext === null && !data.availableSections.includes(entity.section) && !data.availableSections.includes(entity.section.replace("_v2_", "_"))) return null
           const finding = focus?.logicalName === entity.section ? focus : null
           return <SystemEntityPanel
             columns={entity.columns}
+            diskTimes={entity.section === "os_diskstats" ? data.lanePoints.filter((point) => point.lane === "disk_busy").map((point) => point.timestamp) : []}
             {...(isContainerResource(key) ? { metadata, segmentId, densePageState, onLoadMore, onRetry, onOrder, onPattern, order, pattern, searchRequest } : {})}
             contextLabel={activeContext?.label}
             cursor={cursor}
@@ -623,7 +633,7 @@ export function SystemView({
       </section>}
     </div>
   }
-  const primaryTimelineLane = environment === "container" ? "health" : selectedSpec === undefined ? "health" : metricLane(selectedSpec)
+  const primaryTimelineLane = hostTimelineLane(metric, environment)
   return <>
     <Timeline cursor={cursor} environment={environment} findings={data.findings} health={data.health} hour={hour} lanePoints={data.lanePoints} locale={locale} navigationTimestamps={navigationTimestamps} onCursor={onCursor} onFinding={onFinding} onOpenChart={onOpenChart} onPreview={onPreview} onSelectedLane={onSelectedLane} primaryLane={primaryTimelineLane} selectedLane={selectedLane} t={t} />
     <div className="system-main mt-0 min-w-0">
@@ -742,7 +752,7 @@ function SystemGroupChart({
       {meta.chips.map((spec) => <button aria-pressed={spec.id === meta.chartChip(metricId)} data-testid={`system-metric-${spec.id}`} key={spec.id} onClick={() => onSelect(spec.id)} type="button">{t(metricTabLabel(spec))}</button>)}
     </div>
     {breakdown.length === 0
-      ? <SeriesChart cursor={cursor} empty={t("history.empty")} format={(reading, place) => metricChartValue(reading, place, selectedMetric.spec.unit)} helpKey={selectedMetric.spec.help} hour={hour} labelKey={selectedMetric.spec.label} locale={locale} onCursor={onCursor} points={selectedPoints} scale={selectedMetric.spec.unit === "%" ? "percent" : "nonnegative"} second={secondPoints} secondHelpKey={secondLane === null ? undefined : "system.metric.network_tx.help"} secondLabelKey={secondLane === null ? undefined : "system.metric.network_tx.label"} stats status={needsHistory ? loadedHistory.status : "ready"} t={t} tickFormat={selectedMetric.spec.unit === " B" ? (reading, place) => humanBytes(reading, place, "/s") : undefined} unit={metricChartUnit(selectedMetric.spec, locale)} />
+      ? <SeriesChart cursor={cursor} empty={t("history.empty")} format={(reading, place) => metricChartValue(reading, place, selectedMetric.spec.unit)} helpKey={selectedMetric.spec.help} hour={hour} labelKey={selectedMetric.spec.label} locale={locale} onCursor={onCursor} points={selectedPoints} scale={selectedMetric.spec.unit === "%" && metricLane(selectedMetric.spec) !== "disk_busy" ? "percent" : "nonnegative"} second={secondPoints} secondHelpKey={secondLane === null ? undefined : "system.metric.network_tx.help"} secondLabelKey={secondLane === null ? undefined : "system.metric.network_tx.label"} stats status={needsHistory ? loadedHistory.status : "ready"} t={t} tickFormat={selectedMetric.spec.unit === " B" ? (reading, place) => humanBytes(reading, place, "/s") : undefined} unit={metricChartUnit(selectedMetric.spec, locale)} />
       : <div className="series-chart"><UPlotChart cursor={cursor} hour={hour} isolate={{ anchor: selectedMetric.spec.id }} locale={locale} onCursor={onCursor} reading={currentPointValue(selectedPoints, cursor, locale, selectedMetric.spec.unit)} series={breakdown} stats status={!needsHistory || loadedHistory.status === "ready" ? undefined : <p className={`series-status series-status-${loadedHistory.status}`} role={loadedHistory.status === "error" ? "alert" : "status"}>{t(`history.${loadedHistory.status}`)}</p>} t={t} testId={`system-${selectedMetric.spec.group}-composition`} /></div>}
   </div>
 }
@@ -877,6 +887,7 @@ function SystemEntityPanel({
   pattern,
   searchRequest,
   columns,
+  diskTimes,
   contextLabel,
   cursor,
   requestPhase,
@@ -905,6 +916,7 @@ function SystemEntityPanel({
   readonly order?: TableOrder | undefined
   readonly pattern?: string | undefined
   readonly searchRequest?: SearchRequestState | undefined
+  readonly diskTimes: readonly number[]
   readonly columns: readonly SystemEntityColumn[]
   readonly contextLabel?: string | undefined
   readonly cursor: number
@@ -929,11 +941,19 @@ function SystemEntityPanel({
   const commonPath = !cgroupTable && section.startsWith("os_cgroup_") ? sharedCgroupPath(rows) : null
   const tableColumns = presentedColumns.filter(({ detailOnly, field }) => !detailOnly && (commonPath === null || field !== "cgroup_path")).map((column) => cgroupTable ? { ...column, sortable: Object.hasOwn(cgroupTableRequest(section).order ?? {}, column.field) } : column)
   const metricColumns = useMemo(() => chartableEntityColumns(presentedColumns), [presentedColumns])
-  const pageSelectedRow = selectedKey === null ? null : rows.find((row) => entityRowKey(row) === selectedKey) ?? null
+  const pageSelectedRow = selectedKey === null ? null : rows.find((row) => entitySelectionMatches(row, selectedKey)) ?? null
   const selectedRequest = cgroupTable && selectedKey !== null && pageSelectedRow === null ? cgroupSelectionRequest(selectedKey, section) : null
   const lookupKey = selectedRequest === null || segmentId === undefined ? null : JSON.stringify([segmentId, cursor, selectedKey])
   const selectedLookup = useHistoryRequest(lookupKey, historyRevision, lookupKey === null || selectedRequest === null || segmentId === undefined ? null : (signal) => loadSelectedCgroupRow(segmentId, cursor, section, selectedRequest, signal))
-  const selectedRow = pageSelectedRow ?? selectedLookup.value
+  const currentRow = pageSelectedRow ?? selectedLookup.value
+  const [retainedDisk, setRetainedDisk] = useState<DataRow | null>(null)
+  useEffect(() => {
+    if (section === "os_diskstats" && currentRow !== null) setRetainedDisk(currentRow)
+  }, [currentRow, section])
+  const selectedRow = currentRow ?? (section === "os_diskstats" && retainedDisk !== null && selectedKey !== null && entitySelectionMatches(retainedDisk, selectedKey) ? retainedDisk : null)
+  const diskMissing = section === "os_diskstats" && currentRow === null
+  const diskSelection = section === "os_diskstats" && selectedKey !== null ? cgroupSelectionRequest(selectedKey, section) : null
+  const selectionIdentity = selectedRow === null ? selectedKey ?? "" : entityRowKey(selectedRow)
   const groupIdentity = selectedRow === null ? null : rawText(value(selectedRow, "cgroup_identity"))
   const groupKey = !cgroupTable || selectedRow === null || groupIdentity === null || registry.find((layout) => layout.typeId === selectedRow.typeId)?.logicalName !== section ? null : JSON.stringify([selectedRow.segmentId, selectedRow.timestamp, groupIdentity])
   const groupFacts = useHistoryRequest(groupKey, historyRevision, groupKey === null || selectedRow === null || groupIdentity === null ? null : async (signal) => {
@@ -949,10 +969,10 @@ function SystemEntityPanel({
     return { group, parent, parentResource: systemEntityRows(resource, section, selectedRow.timestamp).find((row) => row.timestamp === selectedRow.timestamp) ?? null }
   })
   const availableColumns = useMemo(() => selectedRow === null
-    ? []
-    : metricColumns.filter((column) => Object.hasOwn(selectedRow.values, physicalField(column, selectedRow.typeId))), [metricColumns, selectedRow])
+    ? diskSelection === null ? [] : metricColumns
+    : metricColumns.filter((column) => Object.hasOwn(selectedRow.values, physicalField(column, selectedRow.typeId))), [diskSelection, metricColumns, selectedRow])
   useEffect(() => {
-    if (selectedKey !== null && selectedRow === null && requestPhase !== "pending" && selectedLookup.status === "ready"
+    if (section !== "os_diskstats" && selectedKey !== null && selectedRow === null && requestPhase !== "pending" && selectedLookup.status === "ready"
       && entityKeyOwnedBySection(selectedKey, section)) onSelectedKey(null)
   }, [onSelectedKey, requestPhase, section, selectedKey, selectedRow, selectedLookup.status])
   useEffect(() => {
@@ -965,7 +985,7 @@ function SystemEntityPanel({
     && Object.hasOwn(selectedRow.values, "free_bytes") && Object.hasOwn(selectedRow.values, "total_bytes")
   const mountPairKind = mountPair && ["available_inodes", "inode_available_percent", "total_inodes"].includes(selectedColumn?.field ?? "") ? "inodes" : "bytes"
   const requestColumn = mountPair ? (mountPairKind === "inodes" ? MOUNT_INODE_PAIR_COLUMN : MOUNT_PAIR_COLUMN) : selectedColumn
-  const historyRequest = selectedRow === null || requestColumn === undefined ? null : entityHistoryRequest(selectedRow, requestColumn)
+  const historyRequest = requestColumn === undefined ? null : selectedRow !== null ? entityHistoryRequest(selectedRow, requestColumn) : selectedKey === null ? null : diskSelectionHistoryRequest(selectedKey, requestColumn)
   const historyKey = historyRequest === null ? null : `${hour}:${historyRequest.key}`
   const requestFields = historyRequest === null ? "[]" : JSON.stringify(historyRequest.fields)
   const requestWhere = historyRequest === null ? "{}" : JSON.stringify(historyRequest.where)
@@ -978,9 +998,11 @@ function SystemEntityPanel({
     const where = JSON.parse(requestWhere) as Readonly<Record<string, string>>
     return loadSeries(hour, requestSection, where, fields, signal, requestTypeId)
   })
+  const namedSelection = selectedRow ?? (section === "os_diskstats" ? history.value?.filter((row) => row.timestamp <= cursor).at(-1) ?? history.value?.[0] ?? null : null)
+  const selectionTitle = namedSelection === null ? `${diskSelection?.where.major ?? "—"}:${diskSelection?.where.minor ?? "—"}` : systemEntityInspectorTitle(section, namedSelection, label)
   const chartRows = history.value?.length ? history.value : selectedRow === null ? [] : [selectedRow]
   const chartPoints = useMemo(() => selectedColumn === undefined ? []
-    : entityMetricPoints(chartRows, selectedColumn), [chartRows, selectedColumn])
+    : section === "os_diskstats" ? diskHistoryPoints(chartRows, selectedColumn, diskTimes) : entityMetricPoints(chartRows, selectedColumn), [chartRows, diskTimes, section, selectedColumn])
   const pairSeries = useMemo(() => mountPair ? mountPairSeries(chartRows, t, mountPairKind) : null, [chartRows, mountPair, mountPairKind, t])
   const chartMetadata = selectedRow === null || selectedColumn === undefined || selectedColumn.historyFields !== undefined
     ? null : registryColumn(selectedRow.typeId, physicalField(selectedColumn, selectedRow.typeId))
@@ -1022,19 +1044,19 @@ function SystemEntityPanel({
     />
     {cgroupTable && (densePageState !== "idle" || metadata?.hasMore === true) && <div className="lens-tabs" data-testid="table-paging"><button disabled={densePageState === "loading"} onClick={densePageState === "error" ? onRetry : onLoadMore} type="button">{t(densePageState === "loading" ? "table.loading" : densePageState === "error" ? "table.retry" : "table.load_more")}</button></div>}
     </div>
-    {selectedRow !== null && (mountPair || selectedColumn !== undefined) && <InspectorPortal identity={`system:${section}:${entityRowKey(selectedRow)}`} onClose={() => { onSelectedKey(null); onMetric(null) }} title={systemEntityInspectorTitle(section, selectedRow, label)}><aside className="p-[11px]" data-testid={`system-${section}-detail`}>
+    {(selectedRow !== null || diskSelection !== null) && (mountPair || selectedColumn !== undefined) && <InspectorPortal identity={`system:${section}:${selectionIdentity}`} onClose={() => { onSelectedKey(null); onMetric(null) }} title={selectionTitle}><aside className="p-[11px]" data-testid={`system-${section}-detail`}>
       {cgroupTable && groupFacts.value?.group !== undefined && groupFacts.value.group !== null && <DetailList>
       <DetailRow term={t("system.field.mount_root.label")} valueRole="machine">{rawText(value(groupFacts.value.group, "mount_root")) ?? "—"}</DetailRow>
       {groupFacts.value.parent !== null && <DetailRow term={t("system.field.parent_path.label")} valueRole="machine"><button className="cursor-pointer border-0 bg-transparent p-0 text-accent" disabled={groupFacts.value.parentResource === null} onClick={() => { const parent = groupFacts.value?.parentResource; if (parent !== null && parent !== undefined) onSelectedKey(entityRowKey(parent)) }} type="button">{rawText(value(groupFacts.value.parent, "cgroup_path"))}</button></DetailRow>}
       {section.endsWith("memory") && <DetailRow term="memory.events">{t(value(groupFacts.value.group, "memory_localevents") === true ? "system.cgroups.events_local" : "system.cgroups.events_recursive")}</DetailRow>}
       {section.endsWith("pids") && <DetailRow term="pids_localevents">{t(value(groupFacts.value.group, "pids_localevents") === true ? "system.cgroups.enabled" : "system.cgroups.disabled")}</DetailRow>}
     </DetailList>}
-    <DetailList>{presentedColumns.filter((column) => (column.available?.(selectedRow) ?? true) && (value(selectedRow, column.field) !== null || column.renderNull !== undefined)).map((column) => {
+    {diskMissing || selectedRow === null ? <p role={requestPhase === "error" ? "alert" : "status"}>{t(requestPhase === "pending" ? "history.loading" : requestPhase === "error" ? "history.error" : "system.disk.missing")}</p> : <DetailList>{presentedColumns.filter((column) => (column.available?.(selectedRow) ?? true) && (value(selectedRow, column.field) !== null || column.renderNull !== undefined)).map((column) => {
         const stored = value(selectedRow, column.field)
         const rendered = stored === null && column.renderNull !== undefined ? column.renderNull(selectedRow) : column.render === undefined ? cellAriaValue(stored, column, locale, t) : column.render(selectedRow)
         return <DetailRow key={column.field} term={column.help === undefined ? t(column.label) : <LabelHelp helpKey={column.help} labelKey={column.label} t={t} />} valueRole={detailValueRoleForColumn(column)}>{rendered}</DetailRow>
-      })}</DetailList>
-      <InspectorChartPortal identity={`system:${section}:${entityRowKey(selectedRow)}:history`}><section className="system-entity-history min-w-0" data-testid={`system-${section}-history`}>
+      })}</DetailList>}
+      <InspectorChartPortal identity={`system:${section}:${selectionIdentity}:history`}><section className="system-entity-history min-w-0" data-testid={`system-${section}-history`}>
       <header className="flex items-start px-[7px] pt-1.5">
         {mountPair
           ? <div className="system-history-selector flex max-w-full overflow-x-auto pb-[3px] [scrollbar-width:thin] [&>button+button]:ml-1 [&>button]:min-h-[27px] [&>button]:flex-none [&>button]:cursor-pointer [&>button]:border [&>button]:border-line3 [&>button]:bg-s2 [&>button]:px-[7px] [&>button]:py-1 [&>button]:text-xs [&>button]:text-fg2 [&>button[aria-pressed=true]]:border-accent [&>button[aria-pressed=true]]:bg-accent-soft [&>button[aria-pressed=true]]:text-fg" role="group">
@@ -1070,7 +1092,7 @@ function SystemEntityPanel({
             locale={locale}
             onCursor={onCursor}
             points={chartPoints}
-            scale={selectedColumn.kind === "percent" ? "percent" : "nonnegative"}
+            scale={selectedColumn.kind === "percent" && selectedColumn.field !== "device_busy" ? "percent" : "nonnegative"}
             status={history.status}
             t={t}
             unit={entityMetricUnit(selectedColumn, locale, chartMetadata, t)}
@@ -1112,6 +1134,19 @@ export function cgroupSelectionRequest(key: string, section: string): { readonly
     if (layout === undefined || layout.identity.length !== parsed[2].length || !parsed[2].every((stored: unknown) => typeof stored === "string")) return null
     return { typeId: parsed[1], where: Object.fromEntries(layout.identity.map((field, index) => [field, parsed[2][index]])) }
   } catch { return null }
+}
+
+export function diskSelectionHistoryRequest(key: string, column: SystemEntityColumn): EntityHistoryRequest | null {
+  const selection = cgroupSelectionRequest(key, "os_diskstats")
+  if (selection === null || !chartableEntityColumns([column]).includes(column)) return null
+  const field = physicalField(column, selection.typeId)
+  return { ...selection, section: "os_diskstats", fields: uniqueStrings([...(column.historyFields ?? [field]), "major", "minor", "device"]), key: JSON.stringify([selection.typeId, Object.entries(selection.where), field]) }
+}
+
+export function entitySelectionMatches(row: DataRow, key: string): boolean {
+  if (row.logicalName !== "os_diskstats") return entityRowKey(row) === key
+  const selection = cgroupSelectionRequest(key, "os_diskstats")
+  return selection !== null && selection.typeId === row.typeId && Object.entries(selection.where).every(([field, stored]) => rawText(value(row, field)) === stored)
 }
 
 export function entityHistoryRequest(row: DataRow, column: SystemEntityColumn): EntityHistoryRequest | null {
@@ -1175,10 +1210,10 @@ export function entityKeyOwnedBySection(key: string, section: string): boolean {
   return registry.some((layout) => layout.typeId === typeId && (layout.logicalName === section || section.replace("_v2_", "_") === layout.logicalName))
 }
 
-function entityRowKey(row: DataRow): string {
+export function entityRowKey(row: DataRow): string {
   const layout = registry.find((candidate) => candidate.typeId === row.typeId)
   if (layout === undefined || layout.identity.length === 0) return rowKey(row)
-  return JSON.stringify([row.logicalName.startsWith("os_cgroup_v2_") ? "cgroup" : row.segmentId, row.typeId, layout.identity.map((field) => rawText(value(row, field)))])
+  return JSON.stringify([row.logicalName === "os_diskstats" ? "disk" : row.logicalName.startsWith("os_cgroup_v2_") ? "cgroup" : row.segmentId, row.typeId, layout.identity.map((field) => rawText(value(row, field)))])
 }
 
 function counterRatioPoints(rows: readonly DataRow[], numerator: string, denominator: string): readonly ChartPoint[] {
@@ -1222,6 +1257,8 @@ function normalizedMetricLanes(spec: MetricSpec): readonly (readonly [string, (v
     cpu_busy: [["cpu_busy", (number) => number]],
     cpu_stall: [["cpu_stall", (number) => number]],
     disk_busy: [["disk_busy", (number) => number]],
+    device_busy: [["disk_busy", (number) => number]],
+    device_average_queue: [["disk_queue", (number) => number]],
     disk_queue: [["disk_queue", (number) => number]],
     memory: [["memory", (number) => number]],
     mem_swap: [["mem_swap", (number) => number]],
@@ -1254,8 +1291,8 @@ function normalizedMetricPoints(data: HourData, spec: MetricSpec): readonly Char
   if (selected.length === 0) return []
   const [lane, transform] = selected[0]!
   return data.lanePoints.filter((point) => point.lane === lane).map((point) => ({
-    segmentId: point.segmentId,
-    timestamp: point.timestamp,
+    segmentId: point.segmentId, timestamp: point.timestamp,
+    ...(point.device === undefined ? {} : { device: point.device }),
     value: point.value === null ? null : transform(point.value),
   }))
 }
@@ -1313,8 +1350,6 @@ export function resourceBreakdownSeries(
 ): readonly RecordedSeries[] {
   if (selectedId === "cpu_actual_frequency") return frequencyBreakdownSeries(rows, "actual_frequency_hz", t)
   if (selectedId === "cpu_scaling_frequency") return frequencyBreakdownSeries(rows, "scaling_cur_freq_hz", t)
-  if (selectedId === "device_busy") return deviceBreakdownSeries(rows, "io_time_ms", 0.1, rates, locale)
-  if (selectedId === "device_average_queue") return deviceBreakdownSeries(rows, "io_weighted_time_ms", 0.001, rates, locale)
   const ids: readonly string[] = selectedId === "cpu_busy"
     ? CPU_SHARE_BREAKDOWN_IDS
     : CPU_BREAKDOWN_IDS.includes(selectedId as typeof CPU_BREAKDOWN_IDS[number])
@@ -1377,7 +1412,7 @@ export function systemNavigationSections(metric: string | null): readonly string
   if (section !== undefined) return [section]
   const laneSections: Readonly<Record<string, string>> = {
     cpu_stall: "os_psi", memory: "os_meminfo", mem_swap: "os_vmstat",
-    disk_busy: "os_diskstats", disk_queue: "os_diskstats", net_drop: "os_netdev",
+    disk_busy: "os_diskstats", disk_queue: "os_diskstats", device_busy: "os_diskstats", device_average_queue: "os_diskstats", net_drop: "os_netdev",
   }
   if (metric !== null && laneSections[metric] !== undefined) return [laneSections[metric]!]
   return SYSTEM_NAVIGATION_SECTIONS
@@ -1425,8 +1460,6 @@ function derivedRowPoints(rows: readonly DataRow[], derive: NonNullable<MetricSp
     if (percentages.some((number) => number === undefined)) return undefined
     return percentages.some((number) => number === null) ? null : Math.min(...percentages as number[])
   })
-  if (derive === "device_busy") return peakDeviceRate(rows, "io_time_ms", rates, 0.1)
-  if (derive === "device_average_queue") return peakDeviceRate(rows, "io_weighted_time_ms", rates, 0.001)
   if (derive === "device_count" || derive === "filesystem_count" || derive === "interface_count") return aggregateRows(rows, (sampleRows) => sampleRows.length)
   if (derive === "device_active_io") return aggregateRows(rows, (sampleRows) => sumFields(sampleRows, ["io_in_progress"]))
   if (derive === "network_rx") return cumulativeRate(aggregateRows(rows, (sampleRows) => sumFields(sampleRows, ["rx_bytes"])))
@@ -1485,75 +1518,6 @@ function frequencyBreakdownSeries(rows: readonly DataRow[], field: string, t: Tr
   }))
 }
 
-// Compute counter rates per device before taking the per-instant maximum.
-function peakDeviceRate(rows: readonly DataRow[], field: string, rates: boolean, scale: number): readonly ChartPoint[] {
-  if (rates) return aggregateRows(rows, (sampleRows) => maxField(sampleRows, field, scale))
-  const devices = new Map<string, DataRow[]>()
-  for (const row of rows) {
-    const key = rawText(value(row, "major")) + ":" + rawText(value(row, "minor"))
-    const stored = devices.get(key) ?? []
-    stored.push(row)
-    devices.set(key, stored)
-  }
-  const instants = new Map<string, { readonly segmentId: string; readonly timestamp: number; peak: number | null }>()
-  for (const deviceRows of devices.values()) {
-    for (const point of exactCounterRatePoints(deviceRows, field, scale)) {
-      const key = `${point.segmentId}:${point.timestamp}`
-      const stored = instants.get(key) ?? { segmentId: point.segmentId, timestamp: point.timestamp, peak: null }
-      if (point.value !== null && (stored.peak === null || point.value > stored.peak)) stored.peak = point.value
-      instants.set(key, stored)
-    }
-  }
-  return [...instants.values()]
-    .sort((left, right) => left.timestamp - right.timestamp || left.segmentId.localeCompare(right.segmentId))
-    .map(({ segmentId, timestamp, peak }) => ({ segmentId, timestamp, value: peak }))
-}
-
-// Hide all-hour-zero devices unless every device was idle.
-function deviceBreakdownSeries(
-  rows: readonly DataRow[],
-  field: string,
-  scale: number,
-  rates: boolean,
-  locale: Locale,
-): readonly RecordedSeries[] {
-  const devices = new Map<string, { readonly name: string; readonly rows: DataRow[] }>()
-  for (const row of rows) {
-    const key = `${rawText(value(row, "major"))}:${rawText(value(row, "minor"))}`
-    const stored = devices.get(key) ?? { name: rawText(value(row, "device")) ?? key, rows: [] }
-    stored.rows.push(row)
-    devices.set(key, stored)
-  }
-  const series = [...devices.entries()].map(([key, device]) => {
-    const points = rates
-      ? buildMetricSamples(device.rows, (row) => {
-          const stored = storedNumber(row, field)
-          return stored === undefined ? undefined : stored === null ? null : stored * scale
-        })
-      : exactCounterRatePoints(device.rows, field, scale)
-    const peak = points.reduce((max, point) => point.value !== null && point.value > max ? point.value : max, 0)
-    return { device, key, peak, points }
-  })
-  const active = series.filter(({ points }) => points.some((point) => point.value !== null && point.value > 0))
-  const shown = (active.length === 0 ? series : active).sort((left, right) => right.peak - left.peak || left.key.localeCompare(right.key))
-  const percent = scale === 0.1
-  const format = percent
-    ? (reading: number, place: Locale) => metricChartValue(reading, place, "%")
-    : (reading: number, place: Locale) => measure(reading, place)
-  return shown.map(({ device, key, points }, index) => ({
-    color: BREAKDOWN_COLORS[index % BREAKDOWN_COLORS.length]!,
-    helpKey: percent ? "system.field.device_busy.help" : "system.field.average_queue.help",
-    id: `device_${key}`,
-    label: device.name,
-    labelKey: device.name,
-    points,
-    scale: percent ? "percent" as const : "nonnegative" as const,
-    tick: format,
-    unit: percent ? "%" : locale === "ru" ? "количество" : "count",
-    value: format,
-  }))
-}
-
 function aggregateRows(rows: readonly DataRow[], aggregate: (rows: readonly DataRow[]) => number | null | undefined): readonly ChartPoint[] {
   const groups = new Map<string, { readonly rows: DataRow[]; readonly segmentId: string; readonly timestamp: number }>()
   for (const row of rows) {
@@ -1569,16 +1533,6 @@ function aggregateRows(rows: readonly DataRow[], aggregate: (rows: readonly Data
 }
 
 // The rollup is the busiest device, not an average.
-function maxField(rows: readonly DataRow[], field: string, scale: number): number | null | undefined {
-  let peak: number | null = null
-  for (const row of rows) {
-    const stored = storedNumber(row, field)
-    if (stored === undefined) return undefined
-    if (stored === null) continue
-    if (peak === null || stored > peak) peak = stored
-  }
-  return peak === null ? null : peak * scale
-}
 
 function sumFields(rows: readonly DataRow[], fields: readonly string[]): number | null | undefined {
   let total = 0
@@ -1809,9 +1763,46 @@ export function systemEntityRows(data: HourData, section: string, cursor: number
       ? context
       : null
     const id = deviceId(row)
-    return decorateSystemRow(row, collectorContext, id === null ? null : devices?.get(cgroupDeviceKey(rawText(value(row, "cgroup_path")), id)) ?? null)
+    const decorated = decorateSystemRow(row, collectorContext, id === null ? null : devices?.get(cgroupDeviceKey(rawText(value(row, "cgroup_path")), id)) ?? null)
+    return section === "os_diskstats" ? hostDiskFacts(decorated, data, cursor) : decorated
   })
   return devices === null ? decorated : foldCgroupIoRows(decorated, devices)
+}
+
+function hostDiskFacts(row: DataRow, data: HourData, cursor: number): DataRow {
+  const edges = snapshot(sectionRows(data, "os_block_topology"), cursor)
+  const devices = snapshot(sectionRows(data, "os_diskstats"), cursor)
+  const mounts = snapshot(sectionRows(data, "os_mountinfo"), cursor)
+  const presentation = cgroupDevicePresentation(row, mounts, devices, blockParents(edges))
+  const named = (id: string) => {
+    const name = rawText(value(devices.find((device) => deviceId(device) === id) ?? null, "device"))
+    return name === null ? id : `${name} ${id}`
+  }
+  const links = edges.flatMap((edge) => {
+    const child = deviceId(edge)
+    const major = rawText(value(edge, "parent_major"))
+    const minor = rawText(value(edge, "parent_minor"))
+    const parent = major === null || minor === null ? null : `${major}:${minor}`
+    return child !== null && parent !== null && (child === deviceId(row) || parent === deviceId(row)) ? [`${named(child)} → ${named(parent)}`] : []
+  })
+  const associations = presentation?.associations.map((mount) => [mount.mountPoint, mount.source, mount.root === null ? null : `root ${mount.root}`, mount.via === null ? null : `via ${named(mount.via)}`].filter((part) => part !== null).join(" · ")) ?? []
+  return { ...row, values: { ...row.values, disk_mounts: associations.length === 0 ? null : associations.join("\n"), disk_links: links.length === 0 ? null : links.join("\n") } }
+}
+
+export function diskHistoryPoints(rows: readonly DataRow[], column: SystemEntityColumn, observedTimes: readonly number[]): readonly ChartPoint[] {
+  const points = entityMetricPoints(rows, column)
+  const times = [...new Set(observedTimes)].sort((left, right) => left - right)
+  if (times.length === 0) return points
+  const byTime = new Map(points.map((point) => [point.timestamp, point]))
+  const predecessors = new Map(points.map((point, index) => [point.timestamp, points[index - 1]?.timestamp]))
+  const needsPredecessor = column.points !== undefined || column.rate === true
+    || rows.some((row) => registryColumn(row.typeId, physicalField(column, row.typeId))?.class === "cumulative")
+  return times.map((timestamp, index) => {
+    const point = byTime.get(timestamp)
+    const previous = times[index - 1]
+    return point === undefined ? { timestamp, segmentId: "", value: null }
+      : needsPredecessor && previous !== undefined && predecessors.get(timestamp) !== previous ? { ...point, value: null } : point
+  })
 }
 
 export function cgroupDevicePresentations(data: HourData, cursor: number): ReadonlyMap<string, CgroupDevicePresentation> {
@@ -1975,6 +1966,7 @@ export function localizedSystemColumns(columns: readonly SystemEntityColumn[], s
 }
 
 function systemEntityInspectorTitle(section: string, row: DataRow, label: string): string {
+  if (section === "os_diskstats") return `${rawText(value(row, "device")) ?? label} · ${deviceId(row) ?? "—"}`
   if (section.startsWith("os_cgroup_v2_")) return [label, rawText(value(row, "cgroup_path")), section.endsWith("io") ? deviceId(row) : null].filter((part) => part !== null).join(" · ")
   if (section !== "os_cgroup_io") return `${label} · ${entityRowLabel(row)}`
   const id = deviceId(row)

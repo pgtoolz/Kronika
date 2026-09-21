@@ -17,6 +17,38 @@ pub(super) struct LanePoint {
     pub(super) key: &'static str,
     pub(super) ts: i64,
     pub(super) value: Option<f64>,
+    pub(super) device: Option<DiskIdentity>,
+    pub(super) locks: Option<LockGraph>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub(super) struct DiskIdentity {
+    major: i64,
+    minor: i64,
+    name: Option<String>,
+    scope: Option<i64>,
+}
+
+type DiskSnapshot = BTreeMap<(i64, i64), DiskCounters>;
+
+struct DiskCounters {
+    identity: DiskIdentity,
+    busy: Option<i64>,
+    weighted: Option<i64>,
+}
+
+#[derive(Default, Clone, serde::Serialize)]
+pub(super) struct LockGraph {
+    waiting: usize,
+    blockers: usize,
+    prepared: bool,
+}
+
+#[derive(Default)]
+struct LockGraphRows {
+    waiting: BTreeSet<i64>,
+    blockers: BTreeSet<i32>,
+    prepared: bool,
 }
 
 #[derive(Default)]
@@ -27,8 +59,8 @@ struct Counters {
     stall_cpu: BTreeMap<i64, i64>,
     stall_io: BTreeMap<i64, i64>,
     memory: BTreeMap<i64, f64>,
-    disk_busy: BTreeMap<i64, i64>,
-    disk_queue: BTreeMap<i64, i64>,
+    disks: BTreeMap<i64, DiskSnapshot>,
+    lock_graphs: BTreeMap<i64, LockGraphRows>,
     net_rx: BTreeMap<i64, i64>,
     net_tx: BTreeMap<i64, i64>,
     net_drop: BTreeMap<i64, i64>,
@@ -66,8 +98,8 @@ impl Counters {
         retain_after(&mut self.stall_cpu, finalized);
         retain_after(&mut self.stall_io, finalized);
         retain_after(&mut self.memory, finalized);
-        retain_after(&mut self.disk_busy, finalized);
-        retain_after(&mut self.disk_queue, finalized);
+        retain_after(&mut self.disks, finalized);
+        retain_after(&mut self.lock_graphs, finalized);
         retain_after(&mut self.net_rx, finalized);
         retain_after(&mut self.net_tx, finalized);
         retain_after(&mut self.net_drop, finalized);
@@ -184,6 +216,7 @@ pub(super) fn collect(
                 read_cgroup_pids(segment, type_id, &facts, &mut state.counters)?;
             }
             "pg_stat_activity" => read_activity(segment, type_id, &mut state.counters)?,
+            "pg_locks" => read_locks(segment, type_id, &mut state.counters)?,
             _other => {}
         }
     }
@@ -369,21 +402,80 @@ fn read_memory(segment: &Segment, type_id: u32, counters: &mut Counters) -> Resu
 fn read_disk(segment: &Segment, type_id: u32, counters: &mut Counters) -> Result<(), QueryError> {
     let names = with_columns(
         type_id,
-        &["ts", "io_time_ms", "io_weighted_time_ms"],
+        &[
+            "ts",
+            "major",
+            "minor",
+            "device",
+            "io_time_ms",
+            "io_weighted_time_ms",
+        ],
         &["scope"],
     );
+    let mut rows = Vec::new();
+    let mut ids = HashSet::new();
     segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
-        let (Some(ts), Some(busy), Some(weighted)) = (
-            timestamp(&row, "ts"),
-            number(&row, "io_time_ms"),
-            number(&row, "io_weighted_time_ms"),
-        ) else {
-            return true;
-        };
-        add(&mut counters.disk_busy, ts, busy);
-        add(&mut counters.disk_queue, ts, weighted);
+        ids.extend(string_id(&row, "device"));
+        rows.push(row);
         true
     })?;
+    let dictionary = segment.dictionary_for(&ids)?;
+    for row in rows {
+        let (Some(ts), Some(major), Some(minor)) = (
+            timestamp(&row, "ts"),
+            integer(&row, "major"),
+            integer(&row, "minor"),
+        ) else {
+            continue;
+        };
+        let identity = DiskIdentity {
+            major,
+            minor,
+            name: text(string_id(&row, "device"), &dictionary)
+                .map(|name| String::from_utf8_lossy(name).into_owned()),
+            scope: integer(&row, "scope"),
+        };
+        counters.disks.entry(ts).or_default().insert(
+            (major, minor),
+            DiskCounters {
+                identity,
+                busy: integer(&row, "io_time_ms"),
+                weighted: integer(&row, "io_weighted_time_ms"),
+            },
+        );
+    }
+    Ok(())
+}
+
+fn read_locks(segment: &Segment, type_id: u32, counters: &mut Counters) -> Result<(), QueryError> {
+    segment.visit_rows(
+        type_id,
+        &["ts", "pid", "blocked_by"],
+        0,
+        usize::MAX,
+        |_ordinal, row| {
+            let (Some(ts), Some(pid), Some(Cell::ListI32(blockers))) = (
+                timestamp(&row, "ts"),
+                integer(&row, "pid"),
+                row.get("blocked_by"),
+            ) else {
+                return true;
+            };
+            let graph = counters.lock_graphs.entry(ts).or_default();
+            if !blockers.is_empty() {
+                graph.waiting.insert(pid);
+            }
+            for blocker in blockers {
+                if *blocker > 0 {
+                    graph.blockers.insert(*blocker);
+                }
+                if *blocker == 0 {
+                    graph.prepared = true;
+                }
+            }
+            true
+        },
+    )?;
     Ok(())
 }
 

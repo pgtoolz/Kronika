@@ -145,6 +145,6 @@ test("a series uses only selected-hour points for emptiness, readout, and plotti
   const source = await readFile(new URL("../src/series-chart.tsx", import.meta.url), "utf8")
   assert.match(source, /points: pointsInHour\(points, hour\)[\s\S]*second: second === undefined \? undefined : pointsInHour\(second, hour\)/)
   assert.match(source, /numericChartPoints\(visible\.points, visible\.second\)/)
-  assert.match(source, /readingAt\(visible\.points, cursor\)/)
+  assert.match(source, /sampleAtOrBefore\(visible\.points, cursor\)/)
   assert.match(source, /points: visible\.points[\s\S]*points: visible\.second/)
 })

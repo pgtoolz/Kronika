@@ -150,7 +150,7 @@ export function EntityTable({
     : [{ id: order.column, desc: order.descending }], [order])
   const parent = useRef<HTMLDivElement>(null)
   const columns = useMemo<ColumnDef<DataRow>[]>(() => fields.map((field) => ({
-    accessorFn: (row) => field.sortValue === undefined ? sortable(value(row, field.field), field.kind) : field.sortValue(row),
+    ...tableSortColumn(field, order, searchSurface),
     cell: ({ row }) => {
       const stored = value(row.original, field.field)
       if (stored === null && field.renderNull !== undefined) return field.renderNull(row.original)
@@ -167,12 +167,16 @@ export function EntityTable({
       label: field.label,
     },
     size: field.width ?? 128,
-    ...(field.sortValue === undefined ? {} : { sortUndefined: "last" as const }),
-  })), [fields, locale, serverSorted, t])
+  })), [fields, locale, order, searchSurface, serverSorted, t])
   const data = useMemo(
-    () => filterRows === undefined
-      ? filterTableRows(rows, fields, pattern, serverSorted === true, searchSurface)
-      : [...filterRows(rows, pattern)],
+    () => {
+      const filtered = filterRows === undefined
+        ? filterTableRows(rows, fields, pattern, serverSorted === true, searchSurface)
+        : [...filterRows(rows, pattern)]
+      return searchSurface === "pg_stat_activity"
+        ? filtered.sort((left, right) => (asNumber(value(left, "pid")) ?? 0) - (asNumber(value(right, "pid")) ?? 0))
+        : filtered
+    },
     [fields, filterRows, pattern, rows, searchSurface, serverSorted],
   )
   const table = useReactTable({
@@ -291,7 +295,7 @@ export function EntityTable({
       <div className="entity-head sticky top-0 z-30 flex h-head min-w-full bg-s2 pr-2 coarse:h-11 [&_[role=columnheader]]:select-none" ref={head} role="row" style={{ width: contentWidth }}>
         {table.getHeaderGroups()[0]?.headers.map((header, index) => {
           const sorted = header.column.getIsSorted()
-          return <div className={sticky(header.column.columnDef.meta, true)} key={header.id} role="columnheader" style={{ left: pinnedLeft.get(header.column.id), width: header.getSize() }}>
+          return <div aria-sort={sorted === false ? undefined : sorted === "asc" ? "ascending" : "descending"} className={sticky(header.column.columnDef.meta, true)} key={header.id} role="columnheader" style={{ left: pinnedLeft.get(header.column.id), width: header.getSize() }}>
             <button className="entity-sort flex h-full min-w-0 flex-auto cursor-pointer items-center justify-between border-0 bg-transparent p-0 text-left text-[inherit] disabled:cursor-default [&>span]:overflow-hidden [&>span]:text-ellipsis [&>span]:whitespace-nowrap" disabled={!header.column.getCanSort()} onClick={serverSorted === true
               ? () => onOrder?.(nextServerOrder(order, header.column.id))
               : header.column.getToggleSortingHandler()} type="button">
@@ -460,6 +464,23 @@ function durationSuffix(field: Pick<EntityColumn, "field" | "rate">, t: Translat
 export function EstimatedRows({ cell, locale, t }: { readonly cell: Cell; readonly locale: Locale; readonly t: Translate }) {
   const rows = estimatedRows(cell, locale, t)
   return rows === null ? "—" : <span aria-label={rows.secondary ?? undefined} className="entity-value block w-full overflow-hidden text-ellipsis whitespace-nowrap" title={rows.secondary ?? undefined}>{rows.primary}</span>
+}
+
+export function tableSortColumn(field: EntityColumn, order: TableOrder | undefined, surface: SearchSurface | undefined): Pick<ColumnDef<DataRow>, "sortUndefined" | "sortingFn"> & { readonly accessorFn: (row: DataRow) => unknown } {
+  const accessor = (row: DataRow) => field.sortValue === undefined ? sortable(value(row, field.field), field.kind) : field.sortValue(row)
+  if (surface !== "pg_stat_activity") return {
+    accessorFn: accessor,
+    ...(field.sortValue === undefined ? {} : { sortUndefined: "last" }),
+  }
+  return {
+    accessorFn: (row) => {
+      const cell = accessor(row)
+      return cell === null || (field.field === "client_addr" && cell === "") ? undefined : cell
+    },
+    // Numeric undefined ordering is reversed with DESC and preserves equal-value PID ties.
+    sortUndefined: order?.descending === true ? -1 : 1,
+    sortingFn: field.kind === "text" ? "textCaseSensitive" : "basic",
+  }
 }
 
 function sortable(cell: Cell, kind: EntityColumn["kind"]): string | number | boolean | null {

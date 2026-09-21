@@ -9100,3 +9100,81 @@ test("phone width keeps narrow rules winning and nothing reserving height", { ti
     await removeBrowserProfile(profile)
   }
 })
+
+
+test("automatic metric survives delayed lanes and Back while an unavailable choice stays escapable", { timeout: 60_000 }, async () => {
+  const html = gunzipSync(await readFile(ARTIFACT))
+  let held = null
+  let hold = true
+  const records = () => [
+    ...timelineRecords().filter(record => record.record !== "lane" || !["disk_busy", "disk_queue", "pg_waiting"].includes(record.lane)),
+    { record: "lane", segment_id: SEGMENT, lane: "pg_waiting", ts: String(AT), value: 1 },
+    { record: "lane", segment_id: SEGMENT, lane: "disk_busy", ts: String(AT), value: 60, device: { major: 8, minor: 0, name: "sda", scope: 0 } },
+    { record: "lane", segment_id: SEGMENT, lane: "disk_queue", ts: String(AT), value: 0.8, device: { major: 8, minor: 0, name: "sda", scope: 0 } },
+  ]
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://127.0.0.1")
+    if (url.pathname === "/") { response.writeHead(200, { "Content-Type": "text/html" }); response.end(html); return }
+    if (url.pathname === "/auth/session") { response.writeHead(204); response.end(); return }
+    if (url.pathname === "/api/instance-label") return answerInstanceLabel(response)
+    if (url.pathname === "/api/snapshot/neighbor") return answerSnapshotNeighbor(url, response)
+    if (url.pathname === "/api/heatmap") return answerHeatmap(url, response)
+    if (url.pathname === "/api/hour") {
+      if (url.searchParams.has("section")) return ndjson(response, [])
+      if (url.searchParams.get("part") === "lanes" && hold) { held = response; return }
+      return ndjson(response, records())
+    }
+    if (url.pathname.endsWith("/snapshot")) return ndjson(response, snapshotRecords())
+    return ndjson(response, [])
+  })
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
+  const origin = `http://127.0.0.1:${server.address().port}`
+  const profile = await mkdtemp(join(tmpdir(), "b-"))
+  const browser = launchBrowser(profile)
+  let socket
+  const page = { errors: [], external: [], responses: [] }
+  try {
+    socket = await pageSocket(await browserDebugPort(profile, browser))
+    const cdp = cdpSession(socket)
+    trackPage(socket, origin, page)
+    await enablePage(cdp)
+    await cdp.send("Page.navigate", { url: `${origin}/?at=${AT}&view=pg.activity` })
+    await waitForRequests(() => held !== null)
+    const picker = `document.querySelector('[data-testid="timeline-preview-metric-select"]')`
+    const lane = `new URL(location.href).searchParams.get("lane")`
+    await cdp.waitFor(`${picker}?.value === "pg_waiting"`, "automatic pending primary")
+    assert.equal(await cdp.evaluate(lane), null)
+    hold = false
+    ndjson(held, records()); held = null
+    await cdp.waitFor(`${picker}?.querySelector('option[value="disk_busy"]') !== null`, "loaded Disk choice")
+    assert.equal(await cdp.evaluate(lane), null)
+    await cdp.evaluate(`[...document.querySelectorAll('.lane-select')].find(button => button.textContent.includes("Disk")).click()`)
+    await cdp.waitFor(`${lane} === "disk_busy" && ${picker}.value === "disk_busy"`, "explicit Disk").catch(async error => { throw new Error(`${error.message}: ${JSON.stringify(await cdp.evaluate(`({ url: location.href, errors: ${JSON.stringify(page.errors)}, body: document.body.innerText, picker: ${picker}?.value, selected: document.querySelector('.lane-select[aria-pressed="true"]')?.textContent })`))}`) })
+    assert.equal(await cdp.evaluate('new URL(location.href).searchParams.get("at")'), String(AT))
+    await cdp.evaluate('history.back()')
+    await cdp.waitFor(`${lane} === null && ${picker}.value === "pg_waiting"`, "Back restores automatic primary")
+    const pidHeader = `[...document.querySelectorAll('[data-testid="pg-activity-table"] [role="columnheader"]')].find(header => header.textContent.includes("PID"))`
+    await cdp.waitFor(`${pidHeader} !== undefined`, "Activity PID header")
+    await cdp.evaluate(`${pidHeader}.querySelector('button').click()`)
+    await cdp.waitFor(`new URL(location.href).searchParams.get("sort")?.replace("-", "") === "pid"`, "PID order in URL")
+    const sortedAddress = await cdp.evaluate('location.search')
+    const sortedDirection = await cdp.evaluate(`${pidHeader}.getAttribute("aria-sort")`)
+    await cdp.evaluate(`[...document.querySelectorAll('.source-tabs button')].find(button => button.textContent === "Host").click()`)
+    await cdp.waitFor('new URL(location.href).searchParams.get("view") === "host"', "Host navigation")
+    await cdp.evaluate('history.back()')
+    await cdp.waitFor(`location.search === ${JSON.stringify(sortedAddress)} && ${pidHeader}?.getAttribute("aria-sort") === ${JSON.stringify(sortedDirection)}`, "cross-view Back restores Activity sort")
+    await cdp.send("Page.navigate", { url: `${origin}/?at=${AT}&view=pg.activity&lane=host_disk` })
+    await cdp.waitFor(`${picker}?.value === "host_disk" && ${picker}.querySelector('option[value="disk_busy"]') !== null`, "unavailable explicit lane keeps controls")
+    assert.equal(await cdp.evaluate(lane), "host_disk")
+    await cdp.send("Emulation.setDeviceMetricsOverride", { deviceScaleFactor: 1, height: 800, mobile: false, width: 360 })
+    await cdp.evaluate(`(() => { const select = ${picker}; select.value = "disk_busy"; select.dispatchEvent(new Event("change", { bubbles: true })) })()`)
+    await cdp.waitFor(`${lane} === "disk_busy" && ${picker}.value === "disk_busy"`, "narrow picker escapes unavailable lane")
+  } finally {
+    held?.end()
+    socket?.close()
+    await stopBrowser(browser)
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+    await removeBrowserProfile(profile)
+  }
+})

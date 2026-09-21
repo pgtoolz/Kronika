@@ -21,6 +21,7 @@ interface SeriesPoint {
   readonly segmentId: string
   readonly timestamp: number
   readonly value: number | null
+  readonly device?: NonNullable<LanePoint["device"]>
 }
 
 export interface GroupedFinding {
@@ -44,6 +45,7 @@ export type FindingShape = "circle" | "diamond" | "triangle"
 export type TimelinePresentation = "preview" | "inspector"
 export type TimelineRequestPhase = "pending" | "ready" | "error"
 export const TimelineRequestContext = createContext<TimelineRequestPhase>("ready")
+export const TimelineActionsContext = createContext<{ readonly disk: (point: LanePoint) => void; readonly locks: (timestamp: number) => void } | null>(null)
 
 export function Timeline({
   cursor,
@@ -79,12 +81,13 @@ export function Timeline({
   readonly onSelectedLane?: ((lane: string) => void) | undefined
   readonly primaryLane?: string | undefined
   readonly presentation?: TimelinePresentation | undefined
-  readonly selectedLane?: string | undefined
+  readonly selectedLane?: string | null | undefined
   readonly t: Translate
 }) {
   const time = useDisplayTime()
   const requestPhase = useContext(TimelineRequestContext)
   const navigation = useCursorNavigation()
+  const actions = useContext(TimelineActionsContext)
   const [previewCursor, setPreviewCursor] = useState<number | null>(null)
   const displayCursor = previewCursor ?? cursor
   const preview = useCallback((timestamp: number | null) => {
@@ -101,7 +104,7 @@ export function Timeline({
   const lanes = useMemo<readonly TimelineLane[]>(() => {
     const of = (name: string) => lanePoints
       .filter((point) => point.lane === name)
-      .map((point) => ({ segmentId: point.segmentId, timestamp: point.timestamp, value: point.value }))
+      .map((point) => ({ segmentId: point.segmentId, timestamp: point.timestamp, value: point.value, ...(point.device === undefined ? {} : { device: point.device }) }))
     const one = (color: TimelineSeries["color"], field: string, points: readonly SeriesPoint[]): readonly [TimelineSeries] => [{ color, field, points }]
     const recorded = (name: string) => of(name).some((point) => point.value !== null)
     const lane = (color: TimelineSeries["color"], key: string): TimelineLane => ({ key, series: one(color, key, of(key)) })
@@ -112,22 +115,24 @@ export function Timeline({
         lane("amber", "cg_cpu_psi"),
         lane("violet", recorded("cg_memory") ? "cg_memory" : "cg_memory_bytes"),
         lane("cyan", "cg_io_psi"),
+        { key: "host_disk", series: one("cyan", "disk_busy", of("disk_busy").filter((point) => point.device?.scope === 0 || point.value === null)) },
       ]
       : environment === "machine"
-        ? [lane("cyan", "cpu_busy"), lane("amber", "cpu_stall"), lane("violet", "memory"), lane("cyan", "io_stall")]
+        ? [lane("cyan", "cpu_busy"), lane("amber", "cpu_stall"), lane("violet", "memory"), lane("cyan", "io_stall"), lane("cyan", "disk_busy")]
         : []
     return [
       { key: "health", series: healthTrack.series, threshold: healthTrack.threshold },
       ...resources,
       lane("cyan", "pg_running"),
       lane("amber", "pg_waiting"),
+      lane("amber", "pg_lock_waiting"),
       { key: "oldest_xact", series: one("violet", "pg_oldest_xact", of("pg_oldest_xact")) },
     ].filter((candidate) => candidate.key === "health"
       ? candidate.series.some((line) => line.points.length !== 0)
-      : candidate.series.some((line) => line.points.some((point) => point.value !== null)))
+      : candidate.key === "pg_lock_waiting" && lanePoints.some((point) => point.locks !== undefined) || candidate.series.some((line) => line.points.length !== 0))
   }, [environment, healthTrack, lanePoints])
   const [localLane, setLocalLane] = useState(primaryLane)
-  const selectedLane = controlledLane ?? localLane
+  const selectedLane = controlledLane === null ? primaryLane : controlledLane ?? localLane
   const setSelectedLane = (lane: string) => {
     if (controlledLane === undefined) setLocalLane(lane)
     onSelectedLane?.(lane)
@@ -136,14 +141,12 @@ export function Timeline({
   useEffect(() => {
     if (previousPrimary.current === primaryLane) return
     previousPrimary.current = primaryLane
-    setSelectedLane(primaryLane)
-  }, [primaryLane])
-  useEffect(() => {
-    if (lanes.some((lane) => lane.key === selectedLane)) return
-    if (controlledLane !== undefined) return
-    setSelectedLane(lanes.find((lane) => lane.key === primaryLane)?.key ?? lanes[0]?.key ?? "health")
-  }, [controlledLane, lanes, primaryLane, selectedLane])
-  const selected = lanes.find((lane) => lane.key === selectedLane) ?? lanes[0]
+    if (controlledLane === undefined) setLocalLane(primaryLane)
+  }, [controlledLane, primaryLane])
+  const selected = lanes.find((lane) => lane.key === selectedLane)
+    ?? (controlledLane === undefined ? lanes[0] : { key: selectedLane, series: [] })
+  const choices = selected === undefined || lanes.some((lane) => lane.key === selected.key) ? lanes : [selected, ...lanes]
+  const selectedEmpty = selected !== undefined && selected.series.every((line) => line.points.length === 0)
   const laneTimes = useMemo(() => timelineNavigationTimes(lanes), [lanes])
   const cursorTimes = useMemo(
     () => navigation !== null
@@ -172,7 +175,7 @@ export function Timeline({
   }, [cursor, cursorTimes, navigation, onCursor, preview])
   const recorded = useMemo(() => selected === undefined ? [] : toRecordedSeries(selected, locale, t), [locale, selected, t])
   const healthAt = selected?.key === "health" ? healthEvaluationAtOrBefore(selected.series, displayCursor) : null
-  const current = (selected?.series ?? []).map((line) => {
+  const current = selected?.key === "disk_busy" || selected?.key === "host_disk" ? laneReading(selected, displayCursor, locale, t) : (selected?.series ?? []).map((line) => {
     const key = selected?.key ?? "health"
     const number = key === "health" ? healthAt === null ? null : exactValue(line.points, healthAt) : sampleAtOrBefore(line.points, displayCursor)?.value ?? null
     return `${key === "health" ? `${t(`lane.health.${line.field}`)} ` : ""}${number === null ? "—" : format(number, key, locale)}`
@@ -183,8 +186,17 @@ export function Timeline({
     return exportSelection === null ? drawn : [...drawn, { from: exportSelection.from, to: exportSelection.to, tone: "selection" as const }]
   }, [exportSelection, end, hour, lanes, selected])
   const threshold = useMemo(() => selected?.threshold === undefined ? undefined : { below: selected.threshold, seriesId: "overall_health" }, [selected])
-  const selectedReading = selected === undefined ? "—" : laneReading(selected, displayCursor, locale, t)
-  const markerLayer = <>{markers.map((marker, index) => {
+  const diskPoint = selected?.key === "disk_busy" || selected?.key === "host_disk"
+    ? sampleAtOrBefore(lanePoints.filter((point) => point.lane === "disk_busy" && (selected.key !== "host_disk" || point.device?.scope === 0 || point.value === null)), displayCursor) : null
+  const queuePoint = sampleAtOrBefore(lanePoints.filter((point) => point.lane === "disk_queue"), displayCursor)
+  const queueReading = diskPoint?.device === undefined ? "" : ` · ${t("use.lane.disk_queue")} ${queuePoint?.timestamp === diskPoint.timestamp && queuePoint.value !== null ? compact(queuePoint.value, locale) : "—"}`
+  const selectedReading = (selected === undefined ? "—" : laneReading(selected, displayCursor, locale, t)) + queueReading
+  const diskTitle = diskPoint?.device === undefined ? "" : `${selectedReading} · ${diskPoint.device.major}:${diskPoint.device.minor}`
+  const markerLayer = <>{selected?.key === "pg_lock_waiting" && lanePoints.filter((point) => point.locks !== undefined).map((point) => {
+    const graph = point.locks!
+    const label = `${time.timestamp(point.timestamp)} · ${t("lane.pg_lock_waiting.graph", { waiting: graph.waiting, blockers: graph.blockers })}${graph.prepared ? ` · ${t("lane.pg_lock_waiting.prepared")}` : ""}`
+    return <button aria-label={label} className="marker-button pointer-events-auto absolute top-1/2 z-[3] h-[18px] w-[18px] -translate-x-1/2 -translate-y-1/2 cursor-pointer border-0 bg-transparent p-0 text-warn" data-testid="lock-graph-marker" key={point.timestamp} onClick={(event) => { event.stopPropagation(); if (actions === null) onCursor(point.timestamp); else actions.locks(point.timestamp) }} onPointerDown={(event) => event.stopPropagation()} style={{ left: `${shareOf(point.timestamp, hour, end) * 100}%` }} title={label} type="button">◆</button>
+  })}{markers.map((marker, index) => {
     const first = marker.findings[0]
     if (first === undefined) return null
     return <FindingMarker
@@ -205,12 +217,12 @@ export function Timeline({
       {navigation !== null && <CursorRow cursor={cursor} cursorTimes={[]} onCursor={onCursor} navigation={navigation} reading="" t={t} />}
     </section>
   }
-  return <section aria-label={t("hour.range", { range: time.hourRange(hour).primary })} className={`timeline-shell mt-2 flex flex-col overflow-hidden border-y border-line2 bg-s1 timeline-${presentation}`} data-export-from={exportSelection?.from} data-export-to={exportSelection?.to} data-presentation={presentation}>
+  return <section aria-busy={requestPhase === "pending"} aria-label={t("hour.range", { range: time.hourRange(hour).primary })} className={`timeline-shell mt-2 flex flex-col overflow-hidden border-y border-line2 bg-s1 timeline-${presentation}`} data-export-from={exportSelection?.from} data-export-to={exportSelection?.to} data-presentation={presentation}>
     <div className="timeline-rail flex h-7 min-w-0 flex-none overflow-hidden border-b border-line2">
       {presentation === "inspector"
-        ? <label className="timeline-metric-picker"><span>{t("inspector.timeline")}</span><select aria-label={t("inspector.timeline")} data-testid="timeline-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{lanes.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select></label>
+        ? <label className="timeline-metric-picker"><span>{t("inspector.timeline")}</span><select aria-label={t("inspector.timeline")} data-testid="timeline-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{choices.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select></label>
         : <><div className="timeline-lanes flex min-w-0 flex-1 gap-0.5 overflow-hidden px-1">
-          {lanes.map((lane) => <LaneLabel
+          {choices.map((lane) => <LaneLabel
             help={`lane.${lane.key}.help`}
             key={lane.key}
             label={`lane.${lane.key}.label`}
@@ -221,9 +233,10 @@ export function Timeline({
             t={t}
           />)}
         </div><div className="timeline-preview-picker min-w-0 flex-1 items-center gap-1 px-1">
-          <select aria-label={t("inspector.timeline")} data-testid="timeline-preview-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{lanes.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select>
+          <select aria-label={t("inspector.timeline")} data-testid="timeline-preview-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{choices.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select>
           <span className="timeline-preview-reading min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-right text-sm tabular-nums text-fg" data-testid="timeline-preview-reading" title={selectedReading}>{selectedReading}</span>
         </div></>}
+      {diskPoint?.device !== undefined && actions !== null && <button className="max-w-[120px] flex-none cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap border-0 border-l border-line2 bg-s2 px-2 font-mono text-sm text-accent3" data-testid="timeline-disk-detail" onClick={() => actions.disk(diskPoint)} title={diskTitle} type="button">{diskPoint.device.name ?? `${diskPoint.device.major}:${diskPoint.device.minor}`} ↗</button>}
       {presentation === "preview" && onOpenChart !== undefined && <button aria-label={t("inspector.open_chart")} className="timeline-open-chart" onClick={onOpenChart} title={t("inspector.open_chart")} type="button"><span aria-hidden="true">↗</span><span>{t("inspector.chart")}</span></button>}
     </div>
     <UPlotChart
@@ -238,9 +251,10 @@ export function Timeline({
       onStep={navigation?.step}
       onPreview={preview}
       onPlotWidth={setPlotWidth}
-      reading={current}
+      reading={diskPoint?.device === undefined ? current : selectedReading}
       series={recorded}
       stats={presentation === "inspector"}
+      status={selectedEmpty ? <span role={requestPhase === "error" ? "alert" : "status"}>{t(requestPhase === "pending" ? "status.loading" : requestPhase === "error" ? "status.error" : "status.no_data")}</span> : undefined}
       t={t}
       testId="hour-timeline"
       threshold={threshold}
@@ -288,7 +302,7 @@ export function timelineSeriesHelpKey(lane: string, field: string): string {
   return lane === "health" ? `lane.health.${field}.help` : `lane.${lane}.help`
 }
 
-const PERCENT_LANES: ReadonlySet<string> = new Set(["health", "cpu_busy", "cpu_stall", "memory", "io_stall", "cg_cpu_share", "cg_cpu_psi", "cg_memory", "cg_io_psi"])
+const PERCENT_LANES: ReadonlySet<string> = new Set(["health", "disk_busy", "host_disk", "cpu_busy", "cpu_stall", "memory", "io_stall", "cg_cpu_share", "cg_cpu_psi", "cg_memory", "cg_io_psi"])
 
 function laneUnit(key: string, locale: Locale): string {
   if (PERCENT_LANES.has(key)) return "%"
@@ -307,7 +321,8 @@ function toRecordedSeries(lane: TimelineLane, locale: Locale, t: Translate): rea
     label: lane.key === "health" ? t(`lane.health.${line.field}`) : t(`lane.${lane.key}.label`),
     labelKey: lane.key === "health" ? `lane.health.${line.field}` : `lane.${lane.key}.label`,
     points: line.points,
-    scale: percent ? "percent" as const : "nonnegative" as const,
+    pointsOnly: lane.key === "pg_lock_waiting",
+    scale: percent && lane.key !== "disk_busy" && lane.key !== "host_disk" ? "percent" as const : "nonnegative" as const,
     tick: (number: number, place: Locale) => format(number, lane.key, place),
     unit,
     value: (number: number, place: Locale) => format(number, lane.key, place),
@@ -343,7 +358,7 @@ export function healthEvaluationAtOrBefore(
 
 function format(number: number, key: string, locale: Locale): string {
   if (key === "oldest_xact") return humanDuration(number * 1_000, locale)
-  if (key === "pg_running" || key === "pg_waiting") return compact(number, locale)
+  if (key === "pg_running" || key === "pg_waiting" || key === "pg_lock_waiting") return compact(number, locale)
   if (key === "cg_cpu_cores") return humanCores(number, locale)
   if (key === "cg_memory_bytes") return humanBytes(number, locale)
   return humanPercent(number, locale)
@@ -365,7 +380,9 @@ export function laneReading(lane: TimelineLane, cursor: number, locale: Locale, 
   const healthAt = lane.key === "health" ? healthEvaluationAtOrBefore(lane.series, cursor) : null
   return lane.series.map((line) => {
     const number = lane.key === "health" ? healthAt === null ? null : exactValue(line.points, healthAt) : sampleAtOrBefore(line.points, cursor)?.value ?? null
+    const point = sampleAtOrBefore(line.points, cursor)
     const output = number === null ? "—" : format(number, lane.key, locale)
+    if ((lane.key === "disk_busy" || lane.key === "host_disk") && point?.device !== undefined && number !== null) return `${output} · ${point.device.name ?? `${point.device.major}:${point.device.minor}`}`
     return lane.key === "health" ? `${t(`lane.health.${line.field}`)} ${output}` : output
   }).join(" · ")
 }

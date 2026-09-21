@@ -1,10 +1,10 @@
 //! Snapshot row windows and per-partition predecessor contexts.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use kronika_reader::Segment;
-use kronika_registry::ColumnClass;
+use kronika_reader::{Cell, Segment};
+use kronika_registry::{ColumnClass, logical_section_name};
 
 use super::{
     CachedFact, IdentityCell, Moments, PageContext, PageFacts, PageOrder, PartitionMoments,
@@ -80,7 +80,95 @@ impl PreparedSnapshot {
                 .max();
             contexts.retain(|context| context.sample_to.is_none() || context.sample_to == latest);
         }
+        if section.logical_name == "pg_locks"
+            && !self.pin_current
+            && self.row_ordinal.is_none()
+            && let Some(graph_at) = contexts
+                .iter()
+                .filter_map(|context| context.sample_to)
+                .min()
+            && let Some(cutoff) = self.lock_observation_cutoff(graph_at, cancelled)?
+        {
+            contexts.retain(|context| context.sample_to.is_some_and(|at| at >= cutoff));
+        }
         Ok(contexts)
+    }
+
+    fn lock_observation_cutoff(
+        &self,
+        graph_at: i64,
+        cancelled: &(impl Fn() -> bool + ?Sized),
+    ) -> Result<Option<i64>, QueryError> {
+        let mut observations = BTreeMap::<i64, bool>::new();
+        for descriptor in &self.validator_segments {
+            if descriptor.max_ts() <= graph_at || !super::preparation::has_activity(descriptor) {
+                continue;
+            }
+            if cancelled() {
+                return Err(QueryError::Cancelled);
+            }
+            let source = self.dataset.open(descriptor)?;
+            let mut samples = HashSet::new();
+            let mut ids = HashSet::new();
+            for (type_id, _) in source.sections() {
+                if logical_section_name(type_id) != Some("pg_stat_activity") {
+                    continue;
+                }
+                source.visit_rows(
+                    type_id,
+                    &["ts", "wait_event_type"],
+                    0,
+                    usize::MAX,
+                    |_ordinal, row| {
+                        if cancelled() {
+                            return false;
+                        }
+                        let Some(Cell::Ts(ts)) = row.get("ts") else {
+                            return true;
+                        };
+                        if *ts <= graph_at || *ts > self.at {
+                            return true;
+                        }
+                        let id = match row.get("wait_event_type") {
+                            Some(Cell::StrId(id)) => Some(*id),
+                            _ => None,
+                        };
+                        samples.insert((*ts, id));
+                        ids.extend(id);
+                        true
+                    },
+                )?;
+                if cancelled() {
+                    return Err(QueryError::Cancelled);
+                }
+            }
+            let dictionary = source.dictionary_for(&ids)?;
+            for (ts, id) in samples {
+                let waiting = if let Some(id) = id {
+                    dictionary
+                        .resolve(id)
+                        .ok_or_else(|| {
+                            QueryError::Unreadable(Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("unresolved dictionary id {id}"),
+                            )))
+                        })?
+                        .stored_bytes()
+                        == b"Lock"
+                } else {
+                    false
+                };
+                *observations.entry(ts).or_default() |= waiting;
+            }
+        }
+        if cancelled() {
+            return Err(QueryError::Cancelled);
+        }
+        // A later positive observation cannot revive a graph superseded by an earlier zero.
+        Ok(observations
+            .into_iter()
+            .rev()
+            .find_map(|(ts, waiting)| (!waiting).then_some(ts)))
     }
 
     pub(super) fn page_facts(

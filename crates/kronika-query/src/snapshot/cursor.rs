@@ -114,6 +114,44 @@ pub(super) fn snapshot_binding(
     hash
 }
 
+pub(super) fn bind_lock_observations(mut binding: u64, segments: &[DatasetSegment]) -> u64 {
+    hash_part(&mut binding, b"locks-observation", b"v1");
+    for segment in segments
+        .iter()
+        .filter(|segment| super::preparation::has_activity(segment))
+    {
+        hash_part(
+            &mut binding,
+            b"activity-segment",
+            &segment.id().to_le_bytes(),
+        );
+        hash_part(
+            &mut binding,
+            b"activity-prefix",
+            &segment.active_position().unwrap_or(0).to_le_bytes(),
+        );
+        hash_part(
+            &mut binding,
+            b"activity-from",
+            &segment.min_ts().to_le_bytes(),
+        );
+        hash_part(
+            &mut binding,
+            b"activity-to",
+            &segment.max_ts().to_le_bytes(),
+        );
+        for section in segment.sections() {
+            hash_part(
+                &mut binding,
+                b"activity-layout",
+                &section.type_id.to_le_bytes(),
+            );
+            hash_part(&mut binding, b"activity-rows", &section.rows.to_le_bytes());
+        }
+    }
+    binding
+}
+
 fn hash_part(hash: &mut u64, tag: &[u8], bytes: &[u8]) {
     hash_bytes(hash, tag);
     hash_bytes(hash, bytes);

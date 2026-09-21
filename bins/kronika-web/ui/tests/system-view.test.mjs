@@ -7,7 +7,7 @@ import { importModule, registryPlugin } from "./import-module.mjs"
 import { parseDictionary, validateDictionaries } from "../scripts/i18n.mjs"
 
 const helpers = await importModule(
-  'export { loadSelectedCgroupRow, entityMetricUnit, entityMetricValue, localizedSystemColumns, CGROUP_TABLE_COLUMNS, cgroupTableSection, cgroupTableRequest, cgroupSelectionRequest, cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"; export { cellAriaValue } from "../src/entity-table.tsx"; export { signInBasic } from "../src/session.ts"',
+  'export { diskHistoryPoints, diskSelectionHistoryRequest, entityRowKey, entitySelectionMatches, loadSelectedCgroupRow, entityMetricUnit, entityMetricValue, localizedSystemColumns, CGROUP_TABLE_COLUMNS, cgroupTableSection, cgroupTableRequest, cgroupSelectionRequest, cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"; export { cellAriaValue } from "../src/entity-table.tsx"; export { signInBasic } from "../src/session.ts"',
   { plugins: [registryPlugin([
     { typeId: "1202003", logicalName: "os_cgroup_memory", identity: ["cgroup_path", "cgroup_identity"], columns: ["ts", "cgroup_path", "cgroup_identity", "max", "max_unlimited"] },
     { typeId: "1202001", logicalName: "os_cgroup_memory", identity: ["cgroup_path"], columns: ["ts", "cgroup_path", "max"] },
@@ -323,7 +323,7 @@ test("System never depends on process rows loaded by another view", async () => 
 
 test("System entity tables keep exact meaning-first orders and rate presentation", () => {
   const fields = Object.fromEntries(helpers.SYSTEM_ENTITIES.map(({ section, columns }) => [section, columns.map(({ field }) => field)]))
-  assert.deepEqual(fields.os_diskstats, ["device", "device_id", "reads", "writes", "read_bytes", "write_bytes", "read_latency_ms", "write_latency_ms", "device_busy", "average_queue", "io_in_progress"])
+  assert.deepEqual(fields.os_diskstats, ["device", "device_id", "reads", "writes", "read_bytes", "write_bytes", "read_latency_ms", "write_latency_ms", "device_busy", "average_queue", "io_in_progress", "disk_mounts", "disk_links"])
   assert.deepEqual(fields.os_cgroup_cpu, ["cgroup_path", "cgroup_used_cores", "cgroup_user_cores", "cgroup_system_cores", "cgroup_other_cores", "cgroup_capacity", "cgroup_quota", "cpuset_cpus"])
   assert.deepEqual(fields.os_cgroup_memory, ["cgroup_path", "current", "effective_memory_max", "max", "anon", "file", "slab", "kernel_other", "memory_unclassified"])
   assert.deepEqual(fields.os_cgroup_io, ["cgroup_path", "cgroup_device", "device_id", "rbytes", "wbytes", "rios", "wios", "cgroup_device_chain", "cgroup_mount_associations", "cgroup_lower_layers"])
@@ -477,39 +477,37 @@ test("a cumulative metric stays absent until its section announces rate columns"
   assert.equal(cumulative.hasMetric({ points: [], sections: { os_diskstats: [row] }, rateColumns: { os_diskstats: ["reads"] } }, spec), true)
 })
 
-test("the storage rollups peak across devices and honor pre-computed rates", () => {
-  const row = (timestamp, major, ioTime) => ({ logicalName: "os_diskstats", ordinal: `${major}:${timestamp}`, segmentId: "a", timestamp, typeId: "1108001", values: { major, minor: 0, io_time_ms: ioTime } })
-  const busy = helpers.SYSTEM_METRICS.find(({ id }) => id === "device_busy")
-  const counter = helpers.metricPoints({ points: [], sections: { os_diskstats: [
-    row(1_000_000, 7, 100), row(1_000_000, 8, 300),
-    row(2_000_000, 7, 200), row(2_000_000, 8, 700),
-  ] }, rateColumns: { os_diskstats: ["io_time_ms"] } }, busy).map(({ value }) => value)
-  assert.deepEqual(counter, [30, 70])
-  const storedRates = helpers.metricPoints({ points: [], sections: { os_diskstats: [row(1_000_000, 7, 0.2), row(1_000_000, 8, 0.7)] }, rateColumns: { os_diskstats: ["io_time_ms"] } }, busy)
-  assert.ok(Math.abs((storedRates[0]?.value ?? 0) - 0.07) < 1e-9)
+test("storage summary aliases use the shared maximum and same-device queue", () => {
+  const device = { major: 8, minor: 0, name: "sda", scope: 0 }
+  const lanePoints = [
+    { lane: "disk_busy", segmentId: "a", timestamp: 200, value: 60, device },
+    { lane: "disk_queue", segmentId: "a", timestamp: 200, value: 0.8, device },
+  ]
+  for (const [id, value] of [["device_busy", 60], ["device_average_queue", 0.8]]) {
+    const spec = helpers.SYSTEM_METRICS.find((spec) => spec.id === id)
+    const actual = helpers.metricPoints({ lanePoints, points: [], sections: {}, rateColumns: {} }, spec)
+    assert.equal(actual[0].value, value)
+    assert.deepEqual(actual[0].device, device)
+    assert.equal(helpers.metricHistoryRequest(spec), null)
+    assert.ok(helpers.dockGroupMetrics(helpers.SYSTEM_METRICS.filter((spec) => spec.group === "storage"), "disk_busy").chips.some((spec) => spec.id === id))
+  }
 })
 
-test("the storage dock breaks device busy down to the devices that registered activity", () => {
-  const row = (timestamp, major, device, ioTime) => ({
-    logicalName: "os_diskstats", ordinal: `${major}:${timestamp}`, segmentId: "a", timestamp, typeId: "1108001",
-    values: { major, minor: 0, device, io_time_ms: ioTime, io_weighted_time_ms: ioTime },
-  })
-  const rows = [
-    row(1_000_000, 8, "sda", 100), row(2_000_000, 8, "sda", 400),
-    row(1_000_000, 9, "sdb", 50), row(2_000_000, 9, "sdb", 50),
-  ]
-  const series = helpers.resourceBreakdownSeries("device_busy", rows, false, "en", (key) => key)
-  assert.deepEqual(series.map(({ label }) => label), ["sda"])
-  assert.deepEqual(series[0].points.map(({ value }) => value), [null, 30])
-  assert.equal(series[0].unit, "%")
-  const allIdle = helpers.resourceBreakdownSeries("device_busy", [row(1_000_000, 9, "sdb", 50), row(2_000_000, 9, "sdb", 50)], false, "en", (key) => key)
-  assert.deepEqual(allIdle.map(({ label }) => label), ["sdb"])
-  const rated = helpers.resourceBreakdownSeries("device_busy", [row(1_000_000, 8, "sda", 0.42)], true, "en", (key) => key)
-  assert.deepEqual(rated.map(({ label }) => label), ["sda"])
-  assert.ok(Math.abs((rated[0].points[0]?.value ?? 0) - 0.042) < 1e-9)
-  const queue = helpers.resourceBreakdownSeries("device_average_queue", [row(1_000_000, 8, "sda", 42)], true, "en", (key) => key)
-  assert.deepEqual(queue.map(({ label }) => label), ["sda"])
-  assert.ok(Math.abs((queue[0].points[0]?.value ?? 0) - 0.042) < 1e-9)
+test("selected disk history keeps identity across parts and a missing current snapshot", () => {
+  const row = (segmentId, timestamp, busy) => ({ logicalName: "os_diskstats", typeId: "1108001", segmentId, timestamp, ordinal: "0", values: { major: 8, minor: 0, device: "sda", io_time_ms: busy, io_in_progress: 3 } })
+  const first = row("a", 1_000_000, 100)
+  const next = row("b", 2_000_000, 200)
+  const key = helpers.entityRowKey(first)
+  assert.equal(helpers.entityRowKey(next), key)
+  assert.ok(helpers.entitySelectionMatches(next, JSON.stringify(["a", "1108001", ["8", "0"]])))
+  const column = helpers.SYSTEM_ENTITIES.find((entity) => entity.section === "os_diskstats").columns.find((column) => column.field === "device_busy")
+  const request = helpers.diskSelectionHistoryRequest(key, column)
+  assert.deepEqual(request.where, { major: "8", minor: "0" })
+  assert.ok(request.fields.includes("io_time_ms"))
+  const points = helpers.diskHistoryPoints([first, next, row("c", 4_000_000, 500)], column, [1_000_000, 2_000_000, 3_000_000, 4_000_000])
+  assert.deepEqual(points.map((point) => point.value), [null, 10, null, null])
+  const gauge = helpers.SYSTEM_ENTITIES.find((entity) => entity.section === "os_diskstats").columns.find((column) => column.field === "io_in_progress")
+  assert.deepEqual(helpers.diskHistoryPoints([first, next, row("c", 4_000_000, 500)], gauge, [1_000_000, 2_000_000, 3_000_000, 4_000_000]).map((point) => point.value), [3, 3, null, 3])
 })
 
 test("registry cumulative fields become reset-safe rates across storage segments", () => {
@@ -646,7 +644,7 @@ test("System is one ledger: rows expand in place and the chart lives on the page
   // Container timelines use the selected ancestor's recorded lanes.
   assert.match(source, /<Timeline cursor=\{cursor\} environment=\{environment\}/)
   assert.doesNotMatch(source, /lane\.startsWith\("pg_"\)/)
-  assert.match(source, /EXACT_TIMELINE_METRIC_LANES[^\n]+\["cpu_busy", "cpu_stall", "memory"\]/)
+  assert.match(source, /EXACT_TIMELINE_METRIC_LANES[^\n]+\["cpu_busy", "cpu_stall", "memory", "disk_busy"\]/)
   assert.doesNotMatch(source, /function groupLane/)
   assert.doesNotMatch(source, /function timelineLane/)
   assert.match(source, /if \(section === "storage"\)[\s\S]*mode === "filesystems"[\s\S]*\["os_mountinfo"\]/)

@@ -588,3 +588,139 @@ fn overlapping_identity_observations_keep_true_transition_only() {
         .collect::<Vec<_>>();
     assert_eq!(cpu, [(20_000_000, Some(0.5)), (30_000_000, None)]);
 }
+
+#[test]
+fn disk_winners_keep_exact_deltas_queue_identity_and_membership() {
+    use super::{DiskCounters, DiskIdentity};
+    let disk = |major, name: &str, busy, weighted| DiskCounters {
+        identity: DiskIdentity {
+            major,
+            minor: 0,
+            name: Some(name.to_owned()),
+            scope: Some(0),
+        },
+        busy,
+        weighted,
+    };
+    let mut counters = Counters::default();
+    counters.disks.insert(
+        1_000_000,
+        BTreeMap::from([
+            ((8, 0), disk(8, "sda", Some(100), Some(100))),
+            ((253, 0), disk(253, "dm-0", Some(200), Some(200))),
+        ]),
+    );
+    counters.disks.insert(
+        2_000_000,
+        BTreeMap::from([
+            ((8, 0), disk(8, "sda", Some(1200), Some(4000))),
+            ((253, 0), disk(253, "dm-0", Some(1500), Some(400))),
+        ]),
+    );
+    counters.disks.insert(
+        3_000_000,
+        BTreeMap::from([
+            ((8, 0), disk(8, "sda", Some(1500), Some(4100))),
+            ((253, 0), disk(253, "dm-0", Some(1600), Some(9000))),
+        ]),
+    );
+    // Equal zero rates still identify one device. A reset of its queue remains null.
+    counters.disks.insert(
+        4_000_000,
+        BTreeMap::from([
+            ((8, 0), disk(8, "sda", Some(1500), Some(1))),
+            ((253, 0), disk(253, "dm-0", Some(1600), Some(9000))),
+        ]),
+    );
+    counters.disks.insert(
+        5_000_000,
+        BTreeMap::from([((253, 0), disk(253, "dm-0", None, Some(9500)))]),
+    );
+    counters.disks.insert(
+        6_000_000,
+        BTreeMap::from([((8, 0), disk(8, "renamed", Some(2000), Some(500)))]),
+    );
+    counters.disks.insert(
+        7_000_000,
+        BTreeMap::from([((8, 0), disk(8, "renamed", Some(1), Some(501)))]),
+    );
+    let output = points(&counters, 0, 0);
+    let actual: Vec<_> = output
+        .iter()
+        .filter(|point| point.key == "disk_busy")
+        .map(|point| {
+            (
+                point.ts,
+                point.value,
+                point.device.as_ref().map(|device| device.name.as_deref()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        actual,
+        [
+            (1_000_000, None, None),
+            (2_000_000, Some(130.0), Some(Some("dm-0"))),
+            (3_000_000, Some(30.0), Some(Some("sda"))),
+            (4_000_000, Some(0.0), Some(Some("sda"))),
+            (5_000_000, None, None),
+            (6_000_000, None, None),
+            (7_000_000, None, None),
+        ]
+    );
+    let queues: Vec<_> = output
+        .iter()
+        .filter(|point| point.key == "disk_queue")
+        .map(|point| point.value)
+        .collect();
+    assert_eq!(queues, [None, Some(0.2), Some(0.1), None, None, None, None]);
+    counters.retain_after(5_000_000);
+    assert_eq!(
+        counters.disks.keys().copied().collect::<Vec<_>>(),
+        [5_000_000, 6_000_000, 7_000_000]
+    );
+}
+
+#[test]
+fn disk_counter_subtraction_precedes_float_conversion() {
+    use super::{DiskCounters, DiskIdentity};
+    let mut counters = Counters::default();
+    for (ts, busy) in [
+        (1_000_000, 9_007_199_254_740_993),
+        (2_000_000, 9_007_199_254_740_994),
+    ] {
+        counters.disks.insert(
+            ts,
+            BTreeMap::from([(
+                (8, 0),
+                DiskCounters {
+                    identity: DiskIdentity {
+                        major: 8,
+                        minor: 0,
+                        name: Some("sda".to_owned()),
+                        scope: Some(0),
+                    },
+                    busy: Some(busy),
+                    weighted: Some(busy),
+                },
+            )]),
+        );
+    }
+    let points = points(&counters, 0, 0);
+    assert_eq!(
+        points
+            .iter()
+            .find(|point| point.key == "disk_busy" && point.ts == 2_000_000)
+            .expect("busy")
+            .value,
+        Some(0.1)
+    );
+    assert_eq!(
+        points
+            .iter()
+            .find(|point| point.key == "disk_queue" && point.ts == 2_000_000)
+            .expect("queue")
+            .value,
+        Some(0.001)
+    );
+}

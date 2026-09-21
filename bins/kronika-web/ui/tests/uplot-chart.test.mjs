@@ -261,5 +261,17 @@ test("full charts live only in the bounded shared Inspector", async () => {
   assert.match(stylesheet, /html \{[^}]*overflow-anchor: none;/)
   assert.match(source, /w-\[max\(1px,calc\(var\(--chart-plot-width,calc\(100%_-_70px\)\)_-_var\(--chart-marker-end-reserve,0px\)\)\)\]/)
   assert.match(relations, /<InspectorChartPortal identity=\{`pg:\$\{row\.logicalName\}/)
-  assert.match(system, /<InspectorChartPortal identity=\{`system:\$\{section\}:\$\{entityRowKey\(selectedRow\)\}:history`\}/)
+  assert.match(system, /<InspectorChartPortal identity=\{`system:\$\{section\}:\$\{selectionIdentity\}:history`\}/)
+})
+
+
+test("MAX hover identifies the recorded winner of each point", () => {
+  const series = [line("Device busy", "%", "percent", [
+    { segmentId: "a", timestamp: 100, value: 60, device: { major: 8, minor: 0, name: "sda", scope: 0 } },
+    { segmentId: "b", timestamp: 200, value: 30, device: { major: 253, minor: 0, name: "dm-0", scope: 0 } },
+  ])]
+  const frame = chart.alignRecordedSeries(series)
+  const time = chart.createDisplayTimeFormatter("en", "utc", "UTC")
+  assert.deepEqual(chart.exactReadings(frame, series, 100, "en", time).values, [{ label: "Device busy · sda 8:0", output: "60", unit: "%" }])
+  assert.deepEqual(chart.exactReadings(frame, series, 200, "en", time).values, [{ label: "Device busy · dm-0 253:0", output: "30", unit: "%" }])
 })

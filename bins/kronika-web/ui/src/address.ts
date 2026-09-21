@@ -13,6 +13,7 @@ export interface Address {
   readonly row: string | null
   readonly panel: InspectorPanel
   readonly find: string
+  readonly lane: string | null
   readonly metric: string | null
 }
 
@@ -58,6 +59,8 @@ const LENSES: readonly Lens[] = ["generic", "cpu", "memory", "disk", "tree"]
 const PG_LENSES: readonly PgLens[] = ["load", "per_call", "io", "resources", "stability", "timing", "identity", "access", "changes", "maintenance", "size_buffers", "freeze", "usage", "low_activity", "state"]
 const PG_LEVELS: readonly PgLevel[] = ["database", "schema", "tablespace", "object"]
 
+const TIMELINE_LANES = ["health", "cpu_busy", "cpu_stall", "memory", "io_stall", "disk_busy", "host_disk", "cg_cpu_share", "cg_cpu_cores", "cg_cpu_psi", "cg_memory", "cg_memory_bytes", "cg_io_psi", "pg_running", "pg_waiting", "pg_lock_waiting", "oldest_xact"]
+
 export const DEFAULT_ADDRESS: Address = {
   at: null,
   view: "processes",
@@ -74,6 +77,7 @@ export const DEFAULT_ADDRESS: Address = {
   panel: null,
   find: "",
   metric: null,
+  lane: null,
 }
 
 export function readAddress(search: string): Address {
@@ -114,6 +118,7 @@ export function readAddress(search: string): Address {
     panel: addressablePanel(requestedPanel) ?? (row !== null && row !== "" ? "detail" : null),
     find: parameters.get("find") ?? "",
     metric,
+    lane: TIMELINE_LANES.find((lane) => lane === parameters.get("lane")) ?? null,
   }
 }
 
@@ -137,6 +142,7 @@ export function writeAddress(address: Address): string {
   if (address.panel !== null && address.panel !== "detail") parameters.set("panel", address.panel)
   if (address.find !== "") parameters.set("find", address.find)
   if (address.view === "host" && address.metric !== null) parameters.set("metric", address.metric)
+  if (address.lane !== null && address.lane !== undefined) parameters.set("lane", address.lane)
   const query = parameters.toString()
   return query === "" ? "/" : `/?${query}`
 }
