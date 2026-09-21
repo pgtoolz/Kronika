@@ -1,8 +1,7 @@
 //! Reading a `PgBouncer` log.
 //!
-//! The line layout is fixed, unlike `PostgreSQL`'s: `lib/usual/logging.c:231`
-//! writes `<time> [<pid>] <LEVEL> <message>`, and `src/util.c:40` puts a socket
-//! context in front of the message when the line belongs to a connection.
+//! File output includes time, PID and level. Native journal messages can instead
+//! carry time and PID only in the exported journal wrapper.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -169,19 +168,19 @@ fn continues(_open: &[String], line: &str, _raw_quotes_odd: bool) -> bool {
 }
 
 fn payload(line: &str) -> &str {
+    wrapper(line).map_or(line, |(_, _, message)| message)
+}
+
+fn wrapper(line: &str) -> Option<(&str, Option<i32>, &str)> {
     if line.starts_with('\t') {
-        return line;
+        return None;
     }
-    let Some((prefix, payload)) = line.split_once("]: ") else {
-        return line;
-    };
+    let (prefix, payload) = line.split_once("]: ")?;
     let native = timestamp::calendar(prefix).map_or(prefix, |(_, _, _, rest)| rest);
     if header(native.trim_start()).is_some() {
-        return line;
+        return None;
     }
-    let Some((before_pid, pid)) = prefix.rsplit_once('[') else {
-        return line;
-    };
+    let (before_pid, pid) = prefix.rsplit_once('[')?;
     let identifier = before_pid.split_whitespace().last().unwrap_or("");
     if pid.is_empty()
         || !pid.bytes().all(|byte| byte.is_ascii_digit())
@@ -191,9 +190,35 @@ fn payload(line: &str) -> &str {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"_-./@".contains(&byte))
     {
-        return line;
+        return None;
     }
-    payload
+    Some((
+        before_pid.strip_suffix(identifier)?.trim_end(),
+        pid.parse().ok(),
+        payload,
+    ))
+}
+
+fn journal_time(prefix: &str) -> Option<i64> {
+    let mut fields = prefix.split_whitespace();
+    let first = fields.next()?;
+    let date = if matches!(first, "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun") {
+        fields.next()?
+    } else {
+        first
+    };
+    if date.contains('T') {
+        return chrono::DateTime::parse_from_rfc3339(date)
+            .or_else(|_| chrono::DateTime::parse_from_str(date, "%Y-%m-%dT%H:%M:%S%.f%z"))
+            .ok()
+            .map(|at| at.timestamp_micros());
+    }
+    let clock = fields.next()?;
+    let zone = fields.next()?;
+    let zone = if zone == "EDT" { "-04:00" } else { zone };
+    timestamp::parse(&format!("{date} {clock} {zone}"), None)
+        .ok()
+        .and_then(|(ts, rest)| rest.is_empty().then_some(ts))
 }
 
 fn header(rest: &str) -> Option<(Option<i32>, Level, &str)> {
@@ -203,7 +228,18 @@ fn header(rest: &str) -> Option<(Option<i32>, Level, &str)> {
     {
         (None, rest)
     } else if let Some((prefix, rest)) = rest.split_once("] ") {
-        let (_, pid) = prefix.rsplit_once('[')?;
+        let pid = if let Some(pid) = prefix.strip_prefix('[') {
+            pid
+        } else {
+            let (clock, pid) = prefix.split_once(" [")?;
+            if clock.contains(char::is_whitespace) && !calendar_header(clock) {
+                return None;
+            }
+            pid
+        };
+        if pid.is_empty() || !pid.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
         (pid.parse().ok(), rest)
     } else {
         (None, rest)
@@ -212,13 +248,55 @@ fn header(rest: &str) -> Option<(Option<i32>, Level, &str)> {
     Some((pid, Level::parse(level)?, message))
 }
 
+fn calendar_header(clock: &str) -> bool {
+    let mut fields = clock.split_whitespace();
+    let Some(date) = fields.next() else {
+        return false;
+    };
+    let Some(time) = fields.next() else {
+        return false;
+    };
+    date.len() == 10
+        && date.bytes().enumerate().all(|(at, byte)| {
+            if matches!(at, 4 | 7) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_digit()
+            }
+        })
+        && time.len() >= 8
+        && time.bytes().enumerate().all(|(at, byte)| {
+            if matches!(at, 2 | 5) {
+                byte == b':'
+            } else if at == 8 {
+                byte == b'.'
+            } else {
+                byte.is_ascii_digit()
+            }
+        })
+        && fields.count() <= 1
+}
+
 /// Read one line, or `None` when it is not an event this collector records.
 #[must_use]
 pub fn parse(record: &Record, now: i64) -> Option<Event> {
-    let first = payload(record.first());
+    let first = record.first();
+    let wrapped = wrapper(first);
+    let first = wrapped.map_or(first, |(_, _, message)| message);
     let timestamp = timestamp::parse_local(first);
     let rest = timestamp.map_or(first, |(_, rest)| rest).trim_start();
-    let (pid, level, message) = header(rest)?;
+    let (ts, pid, level, message) = if let Some((pid, level, message)) = header(rest) {
+        (timestamp.map_or(now, |(ts, _)| ts), pid, level, message)
+    } else {
+        let (prefix, pid, message) = wrapped?;
+        // Text journal exports omit PRIORITY; LOG is the unknown-severity fallback.
+        (
+            journal_time(prefix).unwrap_or(now),
+            pid,
+            Level::Log,
+            message,
+        )
+    };
     if matches!(level, Level::Debug | Level::Noise) {
         return None;
     }
@@ -234,7 +312,7 @@ pub fn parse(record: &Record, now: i64) -> Option<Event> {
         return None;
     }
     Some(Event {
-        ts: timestamp.map_or(now, |(ts, _)| ts),
+        ts,
         level,
         database: context.database,
         username: context.username,

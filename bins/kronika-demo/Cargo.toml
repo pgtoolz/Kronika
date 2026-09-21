@@ -13,8 +13,8 @@ anyhow = "1"
 bsize = "0.3"
 clap = { version = "4.6", features = ["env"] }
 humantime = "2"
-kronika-format = { version = "1.2.2", path = "../../crates/kronika-format" }
-kronika-registry = { version = "1.2.2", path = "../../crates/kronika-registry" }
+kronika-format = { version = "1.2.3", path = "../../crates/kronika-format" }
+kronika-registry = { version = "1.2.3", path = "../../crates/kronika-registry" }
 nix = { version = "0.29", features = ["signal"] }
 rustix = { version = "1", features = ["fs", "param"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }

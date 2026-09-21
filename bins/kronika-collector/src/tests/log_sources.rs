@@ -1030,7 +1030,7 @@ fn crash_logs(dir: &std::path::Path, path: &std::path::Path, position: Position)
 fn pgbouncer_read_context_survives_real_wal_and_seal() {
     use kronika_reader::Cell;
     use kronika_writer::Interner;
-    const INPUT: &str = "garbage\n2026-08-07 01:02:03 UTC host pgbouncer[762]: bad-time [123] WARNING S-0x1: shop/alice@[::1]:6432 closing because: unknown reason (age=42s)\n2026-08-07 01:02:03 UTC host pgbouncer[762]: \twrapped detail\nLOG got SIGTERM\nDEBUG sentinel\n";
+    const INPUT: &str = "garbage\n2026-08-07 01:02:03 UTC host pgbouncer[762]: bad-time [123] WARNING S-0x1: shop/alice@[::1]:6432 closing because: unknown reason (age=42s)\n2026-08-07 01:02:03 UTC host pgbouncer[762]: \twrapped detail\nMon 2026-09-21 08:17:37 EDT pgbouncer[1118]: tls_sbufio_recv: read failed: Connection reset by peer\nLOG got SIGTERM\nDEBUG sentinel\n";
     let dir = tempfile::tempdir().expect("fixture");
     let path = dir.path().join("pooler.log");
     std::fs::write(&path, INPUT).expect("input");
@@ -1041,6 +1041,12 @@ fn pgbouncer_read_context_survives_real_wal_and_seal() {
         .expect("writer");
     let mut journal = Journal::open(&owner, JournalConfig::default()).expect("journal");
     let mut interner = Interner::new(kronika_format::DictLimits::default());
+    assert!(
+        !logs
+            .collect(&DueSet::logs(), |_| Ok(false))
+            .expect("retryable admission rejection")
+    );
+    assert_eq!(logs.pgbouncer[0].position().offset, 0);
     let before = crate::clock::unix_now_us().expect("clock");
     let id = SegmentId::new(before).expect("id");
     assert!(
@@ -1072,8 +1078,22 @@ fn pgbouncer_read_context_survives_real_wal_and_seal() {
         let listing = reader.segments(..).expect("listing");
         assert_eq!(listing.segments.len(), 1);
         let segment = reader.open_segment(&listing.segments[0]).expect("segment");
+        let dictionary = segment.dictionary().expect("dictionary");
         let rows = segment.rows(2_100_002).expect("PgBouncer rows");
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
+        let native = rows
+            .iter()
+            .find(|row| row.get("pid") == Some(&Cell::I32(1118)))
+            .expect("native journal message");
+        assert_eq!(native.get("ts"), Some(&Cell::Ts(1_789_993_057_000_000)));
+        assert_eq!(native.get("level"), Some(&Cell::U32(3)));
+        let Some(Cell::StrId(text)) = native.get("text") else {
+            panic!("native text")
+        };
+        assert_eq!(
+            dictionary.resolve(*text).expect("message").stored_bytes(),
+            b"tls_sbufio_recv: read failed: Connection reset by peer"
+        );
         let row = rows
             .iter()
             .find(|row| row.get("level") == Some(&Cell::U32(2)))
@@ -1085,7 +1105,6 @@ fn pgbouncer_read_context_survives_real_wal_and_seal() {
             panic!("timestamp")
         };
         assert!((before..=after).contains(ts));
-        let dictionary = segment.dictionary().expect("dictionary");
         for (field, expected) in [
             ("side", "S"),
             ("host", "[::1]"),
@@ -1103,6 +1122,11 @@ fn pgbouncer_read_context_survives_real_wal_and_seal() {
             );
         }
     }
+    let mut restarted = sources(dir.path(), path.clone());
+    restarted.pgbouncer[0] = PgBouncerLog::new(path, committed);
+    restarted
+        .collect(&DueSet::logs(), |_| panic!("acknowledged input replayed"))
+        .expect("restart");
 }
 
 #[tokio::test]

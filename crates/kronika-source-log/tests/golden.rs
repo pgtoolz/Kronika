@@ -824,3 +824,141 @@ fn native_headers_win_over_wrapper_markers_inside_messages() {
     assert_eq!(events[3].pid, None);
     assert_eq!(events[3].text, "no pid app[999]: WARNING nested");
 }
+
+#[test]
+fn native_journal_owner_message_preserves_outer_time_and_pid() {
+    let dir = tempfile::tempdir().expect("fixture");
+    let path = dir.path().join("journal.log");
+    std::fs::write(&path, "Mon 2026-09-21 08:17:37 EDT pgbouncer[1118]: tls_sbufio_recv: read failed: Connection reset by peer\n").expect("input");
+    let mut log = PgBouncerLog::new(path, Position::default());
+    let events = log.read_batch(|| Ok(NOW), 8).expect("read").events;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].ts, 1_789_993_057_000_000);
+    assert_eq!(events[0].pid, Some(1118));
+    assert_eq!(events[0].level.code(), 3);
+    assert_eq!(
+        events[0].text,
+        "tls_sbufio_recv: read failed: Connection reset by peer"
+    );
+}
+
+#[test]
+fn native_journal_formats_preserve_context_and_retry_boundaries() {
+    let cases = [
+        (
+            "Mon 2026-09-21 08:17:37 EDT host",
+            Some(1_789_993_057_000_000),
+        ),
+        ("2026-09-21 12:17:37 UTC", Some(1_789_993_057_000_000)),
+        ("2026-09-21T08:17:37-0400 host", Some(1_789_993_057_000_000)),
+        ("2026-09-21T14:17:37+02:00", Some(1_789_993_057_000_000)),
+        ("2026-09-21T12:17:37Z", Some(1_789_993_057_000_000)),
+        ("2026-09-21T08:17:37-04:00", Some(1_789_993_057_000_000)),
+        ("2026-09-21T14:17:37+0200", Some(1_789_993_057_000_000)),
+        (
+            "2026-09-21 08:17:37 -04:00 host",
+            Some(1_789_993_057_000_000),
+        ),
+        (
+            "2026-09-21T12:17:37.123456Z host",
+            Some(1_789_993_057_123_456),
+        ),
+        ("Mon 2026-09-21 08:17:37 CST host", None),
+        ("Mon 2026-09-21 08:17:37 Unknown host", None),
+        ("Mon 2026-09-21 08:17:37 UTC? host", None),
+        ("Mon 2026-99-21 08:17:37 EDT host", None),
+    ];
+    for (prefix, expected) in cases {
+        let dir = tempfile::tempdir().expect("fixture");
+        let path = dir.path().join("journal.log");
+        let input = format!(
+            "garbage\n{prefix} pgbouncer[1118]: S-0x1: db/alice@[::1]:6432 closing because: unexpected eof (age=42s)\n{prefix} pgbouncer[1118]: \tfull detail\n{prefix} pgbouncer[1118]: C-0x2: db/bob@127.0.0.1:4321 unfamiliar diagnostic\n{prefix} pgbouncer[1118]: closing because: client close request (age=1s)\ninvalid prefix[pid]: ignored\n"
+        );
+        std::fs::write(&path, &input).expect("input");
+        let mut log = PgBouncerLog::new(path.clone(), Position::default());
+        let batch = log.read_batch(|| Ok(NOW), 32).expect("read");
+        assert_eq!(batch.events.len(), 2, "{prefix}");
+        let event = &batch.events[0];
+        assert_eq!(event.ts, expected.unwrap_or(NOW), "{prefix}");
+        assert_eq!(event.pid, Some(1118));
+        assert_eq!(event.level, Level::Log);
+        assert_eq!(
+            event.text,
+            "closing because: unexpected eof (age=42s) full detail"
+        );
+        assert_eq!(event.side.as_deref(), Some("S"));
+        assert_eq!(event.database.as_deref(), Some("db"));
+        assert_eq!(event.username.as_deref(), Some("alice"));
+        assert_eq!(event.host.as_deref(), Some("[::1]"));
+        assert_eq!(event.port, Some(6432));
+        assert_eq!(event.age_s, Some(42));
+        assert_eq!(batch.events[1].side.as_deref(), Some("C"));
+        assert_eq!(batch.events[1].text, "unfamiliar diagnostic");
+        assert_eq!(log.position().offset, 0);
+        log.retry();
+        assert_eq!(
+            log.read_batch(|| Ok(NOW), 32).expect("retry").events,
+            batch.events
+        );
+        let position = log.acknowledge().expect("ack");
+        assert_eq!(position.offset, input.len() as u64);
+        let mut restarted = PgBouncerLog::new(path, position);
+        assert!(
+            restarted
+                .read_batch(|| Ok(NOW), 32)
+                .expect("restart")
+                .events
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn native_journal_body_cannot_supply_a_nested_header() {
+    let dir = tempfile::tempdir().expect("fixture");
+    let path = dir.path().join("journal.log");
+    for body in [
+        "tls_sbufio_recv: detail [12] DEBUG nested text",
+        "tls_sbufio_recv: detail [12] WARNING nested text",
+        "tls_sbufio_recv: app[12]: WARNING nested text",
+    ] {
+        std::fs::write(
+            &path,
+            format!("Mon 2026-09-21 08:17:37 EDT pgbouncer[1118]: {body}\n"),
+        )
+        .expect("input");
+        let mut log = PgBouncerLog::new(path.clone(), Position::default());
+        let events = log.read_batch(|| Ok(NOW), 8).expect("read").events;
+        assert_eq!(events.len(), 1, "{body}");
+        assert_eq!(events[0].text, body);
+        assert_eq!(events[0].level, Level::Log);
+        assert_eq!(events[0].pid, Some(1118));
+        assert_eq!(events[0].ts, 1_789_993_057_000_000);
+    }
+}
+
+#[test]
+fn invalid_calendar_inner_header_keeps_its_metadata_and_batch_time() {
+    let dir = tempfile::tempdir().expect("fixture");
+    let path = dir.path().join("journal.log");
+    for clock in [
+        "bad-time",
+        "2026-99-21 08:17:37.123 UTC",
+        "2026-09-21 99:17:37",
+    ] {
+        std::fs::write(
+            &path,
+            format!(
+                "Mon 2026-09-21 08:17:37 EDT pgbouncer[1118]: {clock} [66] ERROR invalid time\n"
+            ),
+        )
+        .expect("input");
+        let mut log = PgBouncerLog::new(path.clone(), Position::default());
+        let events = log.read_batch(|| Ok(NOW), 8).expect("read").events;
+        assert_eq!(events.len(), 1, "{clock}");
+        assert_eq!(events[0].ts, NOW);
+        assert_eq!(events[0].pid, Some(66));
+        assert_eq!(events[0].level, Level::Error);
+        assert_eq!(events[0].text, "invalid time");
+    }
+}
