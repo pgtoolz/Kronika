@@ -165,15 +165,38 @@ impl PgBouncerLog {
 /// (`lib/usual/logging.c:177`), so a line starting with a tab continues the
 /// line before it.
 fn continues(_open: &[String], line: &str, _raw_quotes_odd: bool) -> bool {
-    line.starts_with('\t')
+    payload(line).starts_with('\t')
 }
 
-/// Read one line, or `None` when it is not an event this collector records.
-#[must_use]
-pub fn parse(record: &Record, now: i64) -> Option<Event> {
-    let first = record.first();
-    let timestamp = timestamp::parse_local(first);
-    let rest = timestamp.map_or(first, |(_, rest)| rest).trim_start();
+fn payload(line: &str) -> &str {
+    if line.starts_with('\t') {
+        return line;
+    }
+    let Some((prefix, payload)) = line.split_once("]: ") else {
+        return line;
+    };
+    let native = timestamp::calendar(prefix).map_or(prefix, |(_, _, _, rest)| rest);
+    if header(native.trim_start()).is_some() {
+        return line;
+    }
+    let Some((before_pid, pid)) = prefix.rsplit_once('[') else {
+        return line;
+    };
+    let identifier = before_pid.split_whitespace().last().unwrap_or("");
+    if pid.is_empty()
+        || !pid.bytes().all(|byte| byte.is_ascii_digit())
+        || identifier.is_empty()
+        || before_pid.ends_with(char::is_whitespace)
+        || !identifier
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-./@".contains(&byte))
+    {
+        return line;
+    }
+    payload
+}
+
+fn header(rest: &str) -> Option<(Option<i32>, Level, &str)> {
     let (pid, rest) = if rest
         .split_once(' ')
         .is_some_and(|(level, _)| Level::parse(level).is_some())
@@ -186,7 +209,16 @@ pub fn parse(record: &Record, now: i64) -> Option<Event> {
         (None, rest)
     };
     let (level, message) = rest.split_once(' ')?;
-    let level = Level::parse(level)?;
+    Some((pid, Level::parse(level)?, message))
+}
+
+/// Read one line, or `None` when it is not an event this collector records.
+#[must_use]
+pub fn parse(record: &Record, now: i64) -> Option<Event> {
+    let first = payload(record.first());
+    let timestamp = timestamp::parse_local(first);
+    let rest = timestamp.map_or(first, |(_, rest)| rest).trim_start();
+    let (pid, level, message) = header(rest)?;
     if matches!(level, Level::Debug | Level::Noise) {
         return None;
     }
@@ -196,7 +228,7 @@ pub fn parse(record: &Record, now: i64) -> Option<Event> {
     }
     let mut text = truncate(message.trim(), MAX_TEXT_BYTES).to_owned();
     for line in record.rest() {
-        crate::text::append_str(&mut text, line);
+        crate::text::append_str(&mut text, payload(line));
     }
     if text.is_empty() {
         return None;

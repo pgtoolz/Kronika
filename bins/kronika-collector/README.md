@@ -159,7 +159,7 @@ Command-line values are not split at semicolons. Environment lists keep the
 | `--pgbouncer-dsn` | `KRONIKA_PGBOUNCER_DSNS` | Unset | Connections to the administrative console (`dbname=pgbouncer`) to read `SHOW CONFIG`/`logfile`. The account must belong to `stats_users`. |
 | `--pgbouncer-log` | `KRONIKA_PGBOUNCER_LOGS` | Unset | Local PgBouncer log paths. Filenames can use `*` and `?` wildcards. |
 
-The collector retains PgBouncer warnings, errors and unknown LOG messages with connection context. Missing or invalid timestamps use the read time. Routine connection chatter, periodic statistics and DEBUG/NOISE are skipped. See [recorded fields](../../docs/type-registry/pgbouncer.md).
+The collector retains PgBouncer warnings, errors and unknown LOG messages with connection context. Missing or invalid timestamps use the read time. Routine connection chatter, periodic statistics and DEBUG/NOISE are skipped. Text `journalctl`/syslog prefixes ending in `tag[pid]: ` are accepted before the PgBouncer line. Event time and PID come from the payload. See [recorded fields](../../docs/type-registry/pgbouncer.md).
 
 Complete records at EOF are read in the same pass. Incomplete lines and CSV records wait for more input. Known log paths are retried every log interval even when absent. Server metadata and filename patterns refresh every five minutes. Empty readable files yield no events.
 

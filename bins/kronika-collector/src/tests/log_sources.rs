@@ -1030,7 +1030,7 @@ fn crash_logs(dir: &std::path::Path, path: &std::path::Path, position: Position)
 fn pgbouncer_read_context_survives_real_wal_and_seal() {
     use kronika_reader::Cell;
     use kronika_writer::Interner;
-    const INPUT: &str = "garbage\nbad-time [123] WARNING S-0x1: shop/alice@[::1]:6432 closing because: unknown reason (age=42s)\nLOG got SIGTERM\nDEBUG sentinel\n";
+    const INPUT: &str = "garbage\n2026-08-07 01:02:03 UTC host pgbouncer[762]: bad-time [123] WARNING S-0x1: shop/alice@[::1]:6432 closing because: unknown reason (age=42s)\n2026-08-07 01:02:03 UTC host pgbouncer[762]: \twrapped detail\nLOG got SIGTERM\nDEBUG sentinel\n";
     let dir = tempfile::tempdir().expect("fixture");
     let path = dir.path().join("pooler.log");
     std::fs::write(&path, INPUT).expect("input");
@@ -1089,7 +1089,10 @@ fn pgbouncer_read_context_survives_real_wal_and_seal() {
         for (field, expected) in [
             ("side", "S"),
             ("host", "[::1]"),
-            ("text", "closing because: unknown reason (age=42s)"),
+            (
+                "text",
+                "closing because: unknown reason (age=42s) wrapped detail",
+            ),
         ] {
             let Some(Cell::StrId(id)) = row.get(field) else {
                 panic!("{field}")

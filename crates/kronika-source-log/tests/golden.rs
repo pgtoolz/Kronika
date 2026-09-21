@@ -645,3 +645,182 @@ fn pgbouncer_mixed_batch_preserves_messages_and_retries_unacknowledged_input() {
             .is_empty()
     );
 }
+
+#[test]
+fn pr12_journal_fixture_retains_native_events_and_both_error_messages() {
+    let mut plain = PgBouncerLog::new(fixture("pgbouncer.log"), Position::default());
+    let plain = plain
+        .read_batch(|| Ok(NOW), 1024)
+        .expect("plain input")
+        .events;
+    let path = fixture("pgbouncer-journald.log");
+    let mut wrapped = PgBouncerLog::new(path.clone(), Position::default());
+    let batch = wrapped.read_batch(|| Ok(NOW), 1024).expect("wrapped input");
+    assert_eq!(batch.events.len(), 9);
+    assert_eq!(&batch.events[..plain.len()], plain.as_slice());
+    assert_eq!(
+        batch.events[7].text,
+        "closing because: query_timeout (age=3s)"
+    );
+    assert!(
+        batch.events[8]
+            .text
+            .starts_with("process up: PgBouncer 1.16.0,")
+    );
+    assert_eq!(wrapped.position().offset, 0);
+    let position = wrapped.acknowledge().expect("ack");
+    assert_eq!(
+        position.offset,
+        std::fs::metadata(&path).expect("length").len()
+    );
+    let mut restarted = PgBouncerLog::new(path, position);
+    assert!(
+        restarted
+            .read_batch(|| Ok(NOW), 1)
+            .expect("restart")
+            .events
+            .is_empty()
+    );
+}
+
+#[test]
+fn pr12_pooler_errors_are_not_deduplicated_on_retry_or_restart() {
+    let path = fixture("pgbouncer-pooler-errors.log");
+    let mut log = PgBouncerLog::new(path.clone(), Position::default());
+    let mut events = Vec::new();
+    loop {
+        let batch = log.read_batch(|| Ok(NOW), 1).expect("one record");
+        assert!(batch.events.len() <= 1);
+        if batch.needs_ack {
+            log.retry();
+            let replay = log.read_batch(|| Ok(NOW), 1).expect("retry");
+            assert_eq!(replay.events, batch.events);
+            events.extend(replay.events);
+            let position = log.acknowledge().expect("ack after admission");
+            log = PgBouncerLog::new(path.clone(), position);
+        }
+        if batch.at_eof {
+            break;
+        }
+    }
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.text.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "closing because: query_wait_timeout (age=42s)",
+            "pooler error: query_wait_timeout",
+            "pooler error: no such user",
+            "pooler error: SSL required",
+            "server login failed: FATAL database \"nope\" does not exist",
+            "pooler error: database \"nope\" does not exist",
+            "closing because: query_wait_timeout (age=1s)",
+            "pooler error: query_wait_timeout",
+            "pooler error: password authentication failed",
+            "pooler error: \"trust\" authentication failed",
+        ]
+    );
+    assert_eq!(events[0].level, Level::Log);
+    assert_eq!(events[1].level, Level::Warning);
+    assert_eq!(events[0].username, events[1].username);
+    assert_eq!(events[3].database.as_deref(), Some("(nodb)"));
+    assert_eq!(events[5].database.as_deref(), Some("nope"));
+    assert_eq!(events[9].username.as_deref(), Some("grace"));
+    assert_eq!(
+        log.position().offset,
+        std::fs::metadata(path).expect("length").len()
+    );
+}
+
+#[test]
+fn text_wrappers_use_only_payload_time_pid_and_multiline_text() {
+    let inner = "2026-08-07 12:34:56.789 UTC [12345] WARNING C-0x1: shop/alice@[::1]:6432 failure";
+    let expected_time = chrono::DateTime::parse_from_rfc3339("2026-08-07T12:34:56.789Z")
+        .expect("inner time")
+        .timestamp_micros();
+    for prefix in [
+        "Aug  7 01:02:03 host pgbouncer[762]: ",
+        "Fri 2026-08-07 01:02:03 UTC pgbouncer[762]: ",
+        "2026-08-07T01:02:03+0000 host pgbouncer[762]: ",
+        "2026-08-07 01:02:03 UTC host pgbouncer[762]: ",
+    ] {
+        let dir = tempfile::tempdir().expect("fixture");
+        let path = dir.path().join("wrapped.log");
+        let input = format!(
+            "garbage\n{prefix}{inner}\n{prefix}\twrapped detail\n\tnative detail app[999]: literal\n{prefix}bad-time [66] ERROR invalid time\n{prefix}WARNING missing time\n"
+        );
+        std::fs::write(&path, &input).expect("mixed input");
+        let mut log = PgBouncerLog::new(path.clone(), Position::default());
+        let mut events = Vec::new();
+        loop {
+            let batch = log.read_batch(|| Ok(NOW), 1).expect("bounded wrapped read");
+            if batch.needs_ack {
+                log.retry();
+                let replay = log
+                    .read_batch(|| Ok(NOW), 1)
+                    .expect("replay wrapped record");
+                assert_eq!(replay.events, batch.events);
+                events.extend(replay.events);
+                let position = log.acknowledge().expect("ack");
+                log = PgBouncerLog::new(path.clone(), position);
+            }
+            if batch.at_eof {
+                break;
+            }
+        }
+        assert_eq!(events.len(), 3, "{prefix}");
+        assert_eq!(events[0].ts, expected_time);
+        assert_eq!(events[0].pid, Some(12345));
+        assert_eq!(
+            events[0].text,
+            "failure wrapped detail native detail app[999]: literal"
+        );
+        assert_eq!(events[0].host.as_deref(), Some("[::1]"));
+        assert_eq!(events[0].port, Some(6432));
+        assert_eq!(events[0].side.as_deref(), Some("C"));
+        assert_eq!(events[1].ts, NOW);
+        assert_eq!(events[1].pid, Some(66));
+        assert_eq!(events[2].ts, NOW);
+        assert_eq!(events[2].pid, None);
+        assert_eq!(log.position().offset, input.len() as u64);
+        assert!(
+            log.read_batch(|| Ok(NOW), 1)
+                .expect("idle")
+                .events
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn native_headers_win_over_wrapper_markers_inside_messages() {
+    let dir = tempfile::tempdir().expect("fixture");
+    let path = dir.path().join("native.log");
+    let input = concat!(
+        "WARNING bare app[999]: 2026-08-07 01:02:03 UTC [88] DEBUG nested\n",
+        "bad-time [66] ERROR native app[999]: WARNING nested\n",
+        "2026-08-07 12:34:56.789 UTC [12345] FATAL native app[999]: WARNING nested\n",
+        "2026-08-07 12:34:56.789 UTC WARNING no pid app[999]: WARNING nested\n",
+        "DEBUG app[999]: WARNING not an event\n",
+        "bad-time [66] NOISE app[999]: WARNING not an event\n",
+        "2026-08-07 12:34:56.789 UTC [12345] DEBUG app[999]: WARNING not an event\n",
+        "LOG login attempt: db=shop user=alice tls=app[999]: WARNING not an event\n",
+    );
+    std::fs::write(&path, input).expect("native input");
+    let mut log = PgBouncerLog::new(path, Position::default());
+    let events = log.read_batch(|| Ok(NOW), 16).expect("read").events;
+    assert_eq!(events.len(), 4);
+    assert_eq!(events[0].level, Level::Warning);
+    assert_eq!(events[0].pid, None);
+    assert_eq!(
+        events[0].text,
+        "bare app[999]: 2026-08-07 01:02:03 UTC [88] DEBUG nested"
+    );
+    assert_eq!(events[1].pid, Some(66));
+    assert_eq!(events[1].text, "native app[999]: WARNING nested");
+    assert_eq!(events[2].pid, Some(12345));
+    assert_eq!(events[2].level, Level::Fatal);
+    assert_eq!(events[3].pid, None);
+    assert_eq!(events[3].text, "no pid app[999]: WARNING nested");
+}

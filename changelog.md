@@ -5,7 +5,7 @@
 ## [1.2.2](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.2)
 
 - Fixed PostgreSQL log collection stopping on messages without a prefix or a usable timestamp. Recognized messages without a usable timestamp are saved with the read time.
-- PgBouncer logs retain unlisted warnings, errors and lifecycle messages, with PID, connection side, port and age. Routine connection chatter is omitted.
+- PgBouncer logs retain unlisted warnings, errors and lifecycle messages, with PID, connection side, port and age. Routine connection chatter is omitted. Text journalctl/syslog wrappers are supported.
 
 ## [1.2.1](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.1)
 
