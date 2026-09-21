@@ -12,9 +12,9 @@ fi
 target=${CARGO_BUILD_TARGET:-x86_64-unknown-linux-gnu}
 report_bin=${KRONIKA_REPORT_BIN:-${CARGO_TARGET_DIR:-target}/$target/release/kronika-report}
 fixture_dir=bins/kronika-demo/fixtures
-fixture=$fixture_dir/github-pages-hour.zms
-slice=$fixture_dir/github-pages-hour.slice
-checksum=$fixture_dir/github-pages-hour.zms.sha256
+fixture=$fixture_dir/github-pages-hour-20260921T085946Z.zms
+slice=$fixture_dir/github-pages-hour-20260921T085946Z.slice
+checksum=$fixture_dir/github-pages-hour-20260921T085946Z.zms.sha256
 output=$1
 
 if [[ ! -x $report_bin ]]; then

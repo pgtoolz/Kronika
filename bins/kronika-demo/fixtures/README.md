@@ -2,33 +2,29 @@
 
 [Русская версия](README.ru.md)
 
-`github-pages-hour.zms` is the fixed production input for the Kronika Pages
-report. It contains one full hour of synthetic Linux, PostgreSQL, and PgBouncer
-data under the public hostname `kronika-demo`: short concurrent commerce
-transactions, lock waits, query plans, and bounded CPU, memory, disk, and
-network activity. `kronika-dump slice` created the standalone ZMS with the
-command below, where `CAPTURE` is the collector's data directory:
+`github-pages-hour-20260921T085946Z.zms` is the current Pages input, recorded
+on 21 September 2026 during a full hour of demo workloads. It contains real
+Linux, PostgreSQL and PgBouncer observations: seven cgroups, processes,
+concurrent transactions, lock waits, query plans and 429 PgBouncer events
+with full messages and connection context.
+
+`kronika-dump slice` created the standalone file from the collector directory
+`CAPTURE`:
 
 ```sh
 KRONIKA_STORAGE_DIR=CAPTURE kronika-dump slice \
-  --from 2026-09-05T19:00:00Z \
-  --to 2026-09-05T19:59:59Z \
-  --out github-pages-hour.zms
+  --from 2026-09-21T08:59:46Z \
+  --to 2026-09-21T09:59:45Z \
+  --out github-pages-hour-20260921T085946Z.zms
 ```
 
-The inclusive whole-second endpoints represent the half-open interval
-`[19:00:00, 20:00:00)`, exactly 3,600,000,000 microseconds. Production slicing
-may retain nearby snapshots outside the requested interval. The report uses
-the explicit bounds in `github-pages-hour.slice`; its timeline shows the
-19:00–20:00 calendar hour.
+The inclusive whole-second endpoints select `[08:59:46, 09:59:46)` UTC,
+exactly 3,600 seconds. The 813,685-byte ZMS contains 57 physical sections.
+Nearby snapshots support interval calculations. The report uses the explicit
+visible bounds in `github-pages-hour-20260921T085946Z.slice`.
 
-The live recorder uses runtime timestamps and counters, so CI keeps this ZMS as
-its fixed input. `scripts/build-pages-report.sh` checks its SHA-256, passes this
-exact file and range to `kronika-report`, checks the embedded range, compares
-two generated HTML files byte for byte, and exercises the result directly from
-disk in Chromium.
+`scripts/build-pages-report.sh` verifies the checksum, renders the fixed input
+twice, compares the HTML bytes and exercises the report offline in Chromium.
 
-Captured on 5 September 2026 with the demo workload running throughout the
-requested hour. The 2,360,449-byte ZMS has 52 physical sections; its retained
-snapshots span 18:59:58.821275–20:00:03.308629 UTC. These surrounding snapshots
-support interval calculations; the visible report interval remains exactly 19:00–20:00 UTC.
+The original `github-pages-hour.zms`, checksum and slice retain the
+5 September 2026 recording used by the historical operator-guide examples.
