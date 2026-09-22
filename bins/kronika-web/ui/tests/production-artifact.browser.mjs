@@ -5507,17 +5507,14 @@ test("PostgreSQL is unavailable without current telemetry and returns for a stor
     await cdp.send("Emulation.setDeviceMetricsOverride", { deviceScaleFactor: 1, height: 768, mobile: false, width: 1024 })
     await cdp.send("Network.setCookie", { name: "kronika_session", url: origin, value: SESSION_COOKIE.slice(SESSION_COOKIE.indexOf("=") + 1) })
     await cdp.send("Page.navigate", { url: `${origin}/?at=${AT}&view=pg.overview` })
-    await cdp.waitFor(`document.querySelector('.pg-tabs') !== null && document.querySelectorAll('.source-tabs button')[2]?.getAttribute('aria-current') === "page"`, "the explicit PostgreSQL destination", 15_000)
-    const unavailable = await cdp.evaluate(`(() => {
-      const sourceButtons = document.querySelectorAll('.source-tabs button')
-      return {
-        pgDisabled: sourceButtons[2].disabled,
-        pgPanels: document.querySelectorAll('.pg-tabs, .pg-overview, [data-testid^="pg-"]').length,
-        pgHealth: document.querySelector('[data-primary]')?.textContent.includes('PostgreSQL') ?? false,
-        view: new URL(location.href).searchParams.get('view'),
-      }
-    })()`)
-    assert.deepEqual(unavailable, { pgDisabled: false, pgHealth: false, pgPanels: 1, view: "pg.overview" })
+    // Neither configured nor recorded: the PostgreSQL deep link lands on Host and the tab is absent.
+    await cdp.waitFor(`document.querySelector('.system-main') !== null && new URL(location.href).searchParams.get('view') === "host"`, "the Host fallback for a PostgreSQL deep link", 15_000)
+    const unavailable = await cdp.evaluate(`(() => ({
+      tabs: [...document.querySelectorAll('.source-tabs button')].map((button) => button.textContent.trim()),
+      pgPanels: document.querySelectorAll('.pg-tabs, .pg-overview, [data-testid^="pg-"]').length,
+      pgHealth: document.querySelector('[data-primary]')?.textContent.includes('PostgreSQL') ?? false,
+    }))()`)
+    assert.deepEqual(unavailable, { tabs: ["Host", "Processes", "Events"], pgHealth: false, pgPanels: 0 })
     await cdp.evaluate(`([...document.querySelectorAll('.source-tabs button')].find((button) => button.textContent.trim() === 'Host')).click()`)
     await cdp.waitFor(`document.querySelector('.system-main') !== null`, "the Host destination", 15_000)
     await cdp.waitFor(`document.querySelector('[data-testid="use-toggle-cpu"]') !== null`, "the cpu ledger row", 15_000)

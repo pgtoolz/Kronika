@@ -301,6 +301,15 @@ function App({ locale, onLocale, t }: {
     setSelectedKey(null)
     setInspectorPanel(null)
   }, [osEnabled, source])
+  useEffect(() => {
+    // A recording that neither configures nor holds PostgreSQL has no PostgreSQL tab.
+    if (loading || error !== null || pgPresent || source !== "postgresql") return
+    setSource(osEnabled ? "host" : "events")
+    setFind("")
+    setOrder(null)
+    setSelectedKey(null)
+    setInspectorPanel(null)
+  }, [error, loading, osEnabled, pgPresent, source])
   const [mobileSearch, setMobileSearch] = useState(false)
   const [inspectorDetailRoot, setInspectorDetailRoot] = useState<HTMLElement | null>(null)
   const [inspectorChartRoot, setInspectorChartRoot] = useState<HTMLElement | null>(null)
@@ -1224,7 +1233,7 @@ function App({ locale, onLocale, t }: {
       <nav aria-label={t("nav.sources")} className="source-tabs max-[760px]:overflow-x-auto">
         {osEnabled && <button aria-current={visibleSource === "host" ? "page" : undefined} className={visibleSource === "host" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(null); setSystemFocus(null); setSelectedKey(null); setInspectorPanel(null); setSource("host") }} type="button">{t("nav.host")}</button>}
         {osEnabled && <button aria-current={visibleSource === "processes" ? "page" : undefined} className={visibleSource === "processes" ? "source-active" : undefined} data-testid="process-tab" onClick={() => { navigateSearchSurface("os_process"); setSelectedKey(null); setInspectorPanel(null); setSource("processes") }} type="button">{t("nav.processes")}</button>}
-        <button aria-current={visibleSource === "postgresql" ? "page" : undefined} className={visibleSource === "postgresql" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(searchSurfaceForSection(pgSection)); setSelectedKey(null); setInspectorPanel(null); setSource("postgresql") }} title={pgPresent ? undefined : t("nav.no_data")} type="button">{t("nav.postgresql")}</button>
+        {pgPresent && <button aria-current={visibleSource === "postgresql" ? "page" : undefined} className={visibleSource === "postgresql" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(searchSurfaceForSection(pgSection)); setSelectedKey(null); setInspectorPanel(null); setSource("postgresql") }} type="button">{t("nav.postgresql")}</button>}
         <button aria-current={visibleSource === "events" ? "page" : undefined} className={visibleSource === "events" ? "source-active" : undefined} onClick={() => { navigateSearchSurface("events"); setEventScope(null); setSelectedFinding(null); setInspectorPanel(null); setSource("events") }} title={eventsPresent ? undefined : t("nav.no_data")} type="button">{t("nav.events")}</button>
       </nav>
 
