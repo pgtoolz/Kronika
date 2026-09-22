@@ -99,10 +99,28 @@ impl PreparedSnapshot {
         graph_at: i64,
         cancelled: &(impl Fn() -> bool + ?Sized),
     ) -> Result<Option<i64>, QueryError> {
+        // Only the latest zero decides, so read the newest activity first and
+        // stop once every remaining segment ends before it: a database without
+        // lock waits answers from its most recent segment instead of the whole
+        // history since the last recorded graph.
+        let mut descriptors: Vec<&DatasetSegment> = self
+            .validator_segments
+            .iter()
+            .filter(|descriptor| {
+                descriptor.max_ts() > graph_at && super::preparation::has_activity(descriptor)
+            })
+            .collect();
+        descriptors.sort_by_key(|descriptor| std::cmp::Reverse(descriptor.max_ts()));
+        let latest_zero = |observations: &BTreeMap<i64, bool>| {
+            observations
+                .iter()
+                .rev()
+                .find_map(|(ts, waiting)| (!waiting).then_some(*ts))
+        };
         let mut observations = BTreeMap::<i64, bool>::new();
-        for descriptor in &self.validator_segments {
-            if descriptor.max_ts() <= graph_at || !super::preparation::has_activity(descriptor) {
-                continue;
+        for descriptor in descriptors {
+            if latest_zero(&observations).is_some_and(|zero| descriptor.max_ts() < zero) {
+                break;
             }
             if cancelled() {
                 return Err(QueryError::Cancelled);
@@ -165,10 +183,7 @@ impl PreparedSnapshot {
             return Err(QueryError::Cancelled);
         }
         // A later positive observation cannot revive a graph superseded by an earlier zero.
-        Ok(observations
-            .into_iter()
-            .rev()
-            .find_map(|(ts, waiting)| (!waiting).then_some(ts)))
+        Ok(latest_zero(&observations))
     }
 
     pub(super) fn page_facts(

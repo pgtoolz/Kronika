@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use kronika_format::DictLimits;
 use kronika_layout::{DataRoot, LayoutLimits, SegmentAddress, SegmentId};
 use kronika_registry::os_loadavg::OsLoadavg;
+use kronika_registry::pg_locks::PgLocksV2;
 use kronika_registry::pg_stat_activity::{PgStatActivityV2, PgStatActivityV3};
 use kronika_registry::{Section, StrId, Ts};
 use kronika_store::PosixSource;
@@ -24,6 +25,8 @@ enum Sample {
     LegacyActivity(i64),
     LegacyActivityPid(i64, i32),
     Host(i64),
+    LockWait(i64),
+    Graph(i64),
 }
 
 fn activity(at: i64, label: StrId) -> PgStatActivityV3 {
@@ -51,9 +54,51 @@ fn activity(at: i64, label: StrId) -> PgStatActivityV3 {
     }
 }
 
-fn push_sample(buffers: &mut SectionBuffers, label: StrId, sample: &Sample) {
+fn push_sample(buffers: &mut SectionBuffers, label: StrId, lock: StrId, sample: &Sample) {
     match *sample {
         Sample::Activity(at) => buffers.push(activity(at, label)).expect("activity row"),
+        Sample::LockWait(at) => {
+            let mut row = activity(at, label);
+            row.wait_event_type = Some(lock);
+            buffers.push(row).expect("waiting row");
+        }
+        Sample::Graph(at) => buffers
+            .push(PgLocksV2 {
+                ts: Ts(at),
+                pid: 42,
+                blocked_by: vec![7, 0],
+                datid: 1,
+                datname: label,
+                usename: None,
+                application_name: label,
+                client_addr: label,
+                backend_type: label,
+                state: None,
+                wait_event_type: None,
+                wait_event: None,
+                query: label,
+                backend_xid_age: None,
+                backend_xmin_age: None,
+                backend_start: None,
+                xact_start: None,
+                query_start: None,
+                state_change: None,
+                lock_locktype: None,
+                lock_mode: None,
+                lock_database: None,
+                lock_relation: None,
+                lock_relname: None,
+                lock_page: None,
+                lock_tuple: None,
+                lock_virtualxid: None,
+                lock_transactionid: None,
+                lock_classid: None,
+                lock_objid: None,
+                lock_objsubid: None,
+                lock_target: None,
+                waitstart: None,
+            })
+            .expect("graph row"),
         Sample::LegacyActivity(at) | Sample::LegacyActivityPid(at, _) => {
             let row = activity(at, label);
             buffers
@@ -112,8 +157,9 @@ fn fixture(segments: &[(i64, &[Sample])]) -> Fixture {
         let mut buffers = SectionBuffers::new();
         let mut interner = Interner::new(DictLimits::default());
         let label = StrId(interner.intern(b"fixture").expect("fixture label").get());
+        let lock = StrId(interner.intern(b"Lock").expect("Lock").get());
         for sample in samples {
-            push_sample(&mut buffers, label, sample);
+            push_sample(&mut buffers, label, lock, sample);
         }
         let dictionary = dict::encode(interner.window()).expect("fixture dictionary");
         let part = buffers.flush(&dictionary).expect("part").expect("rows");
@@ -613,6 +659,42 @@ fn observed(context: &QueryContext) -> (QueryContext, Arc<Mutex<Vec<i64>>>) {
         opened: Arc::clone(&opened),
     });
     (QueryContext::new(dataset, 0, false), opened)
+}
+
+#[test]
+fn lock_cutoff_reads_the_newest_activity_first_and_stops_at_its_zero() {
+    let data = fixture(&[
+        (BASE, &[Sample::Graph(BASE + 100_000)]),
+        (BASE + 1, &[Sample::LockWait(BASE + 1_000_000)]),
+        (BASE + 2, &[Sample::Activity(BASE + 2_000_000)]),
+        (BASE + 3, &[Sample::Activity(BASE + 3_000_000)]),
+        (BASE + 4, &[Sample::LockWait(BASE + 4_000_000)]),
+    ]);
+    let locks = |segment_id: i64, at: i64| {
+        let (context, opened) = observed(&data.context);
+        let mut request = snapshot_request(segment_id, at);
+        request.sections = vec!["pg_locks".to_owned()];
+        let rows = snapshot(&context, request)
+            .into_iter()
+            .filter(|record| record["record"] == "row")
+            .count();
+        let opened = opened.lock().expect("opened lock").clone();
+        (rows, opened)
+    };
+    // Only waits since the graph: it stays on screen.
+    let (rows, opened) = locks(BASE + 1, BASE + 1_500_000);
+    assert_eq!(rows, 1);
+    assert!(opened.contains(&(BASE + 1)));
+    // The newest segment shows no wait, so older activity is never opened.
+    let (rows, opened) = locks(BASE + 3, BASE + 3_500_000);
+    assert_eq!(rows, 0);
+    assert!(opened.contains(&(BASE + 3)));
+    assert!(!opened.contains(&(BASE + 2)) && !opened.contains(&(BASE + 1)));
+    // A waiting newest segment continues to the next older one and stops there.
+    let (rows, opened) = locks(BASE + 4, BASE + 4_500_000);
+    assert_eq!(rows, 0);
+    assert!(opened.contains(&(BASE + 4)) && opened.contains(&(BASE + 3)));
+    assert!(!opened.contains(&(BASE + 2)) && !opened.contains(&(BASE + 1)));
 }
 
 #[test]
