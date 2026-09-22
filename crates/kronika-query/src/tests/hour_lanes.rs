@@ -596,7 +596,7 @@ fn disk_winners_keep_exact_deltas_queue_identity_and_membership() {
         identity: DiskIdentity {
             major,
             minor: 0,
-            name: Some(name.to_owned()),
+            name: Some(name.into()),
             scope: Some(0),
         },
         busy,
@@ -697,7 +697,7 @@ fn disk_counter_subtraction_precedes_float_conversion() {
                     identity: DiskIdentity {
                         major: 8,
                         minor: 0,
-                        name: Some("sda".to_owned()),
+                        name: Some("sda".into()),
                         scope: Some(0),
                     },
                     busy: Some(busy),

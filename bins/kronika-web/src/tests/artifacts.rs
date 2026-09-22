@@ -8265,7 +8265,10 @@ fn locks_current_cache_revalidates_new_activity_only_dependencies() {
         "/api/segments/{SEGMENT_ID}/snapshot?at=125&section=pg_locks&selection=latest&field=pid"
     );
     let initial = fixture.prepare(&target, None);
-    assert_eq!(initial.meta().cache.header(), "private,no-cache");
+    // The continuation was created after `at` and holds nothing yet, so the
+    // finished anchor alone answers. This fixture then appends rows dated before
+    // the continuation began, which real collection never does; they still bind.
+    assert_eq!(initial.meta().cache, CachePolicy::Immutable);
     let etag = initial.meta().etag.expect("finished captured validator");
     assert_eq!(
         row_records(&stream(initial).expect("initial graph")).len(),
@@ -8284,7 +8287,8 @@ fn locks_current_cache_revalidates_new_activity_only_dependencies() {
     fixture.finish();
     let finished = fixture.prepare(&target, Some(&etag));
     assert_eq!(finished.meta().status, StatusCode::OK);
-    assert_eq!(finished.meta().cache.header(), "private,no-cache");
+    // Every segment that can hold an observation is finished: the answer is final.
+    assert_eq!(finished.meta().cache, CachePolicy::Immutable);
     let updated = finished.meta().etag.expect("new dependency validator");
     assert_ne!(updated, etag);
     assert!(row_records(&stream(finished).expect("finished cutoff")).is_empty());

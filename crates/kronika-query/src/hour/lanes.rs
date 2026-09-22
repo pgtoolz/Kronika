@@ -1,7 +1,8 @@
 mod cgroup;
 mod points;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use cgroup::{
     read_cgroup_context, read_cgroup_cpu, read_cgroup_io, read_cgroup_memory, read_cgroup_pids,
@@ -25,8 +26,20 @@ pub(super) struct LanePoint {
 pub(super) struct DiskIdentity {
     major: i64,
     minor: i64,
-    name: Option<String>,
+    #[serde(serialize_with = "serialize_name")]
+    name: Option<Arc<str>>,
     scope: Option<i64>,
+}
+
+#[expect(
+    clippy::ref_option,
+    reason = "serde's serialize_with hands over the field by reference"
+)]
+fn serialize_name<S: serde::Serializer>(
+    name: &Option<Arc<str>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&name.as_deref(), serializer)
 }
 
 type DiskSnapshot = BTreeMap<(i64, i64), DiskCounters>;
@@ -421,6 +434,13 @@ fn read_disk(segment: &Segment, type_id: u32, counters: &mut Counters) -> Result
     })?;
     // The device name is presentation only: a damaged dictionary must not cost the hour its lanes.
     let dictionary = segment.dictionary_for(&ids).unwrap_or_default();
+    // A handful of names serve thousands of rows: resolve each id once.
+    let names: HashMap<u64, Arc<str>> = ids
+        .into_iter()
+        .filter_map(|id| {
+            text(Some(id), &dictionary).map(|name| (id, Arc::from(String::from_utf8_lossy(name))))
+        })
+        .collect();
     for row in rows {
         let (Some(ts), Some(major), Some(minor)) = (
             timestamp(&row, "ts"),
@@ -432,8 +452,7 @@ fn read_disk(segment: &Segment, type_id: u32, counters: &mut Counters) -> Result
         let identity = DiskIdentity {
             major,
             minor,
-            name: text(string_id(&row, "device"), &dictionary)
-                .map(|name| String::from_utf8_lossy(name).into_owned()),
+            name: string_id(&row, "device").and_then(|id| names.get(&id).cloned()),
             scope: integer(&row, "scope"),
         };
         counters.disks.entry(ts).or_default().insert(

@@ -189,11 +189,19 @@ fn prepare_selected_state_with_inputs(
     let lock_observations = !pin_current
         && request.row_ordinal.is_none()
         && request.sections.iter().any(|section| section == "pg_locks");
+    // An active segment created at or before `at` may still receive the activity
+    // sample that supersedes the graph, so it binds a Locks answer before it holds
+    // any rows. One created after `at` cannot, and a finished hour stays cacheable.
+    let binds_lock_observations = |candidate: &DatasetSegment| {
+        lock_observations
+            && (has_activity(candidate) && candidate.min_ts() <= request.at
+                || candidate.kind() == SegmentKind::Active && candidate.id() <= request.at)
+    };
     let mut validator_segments = std::iter::once(&anchor)
         .chain(segments.iter().filter(|candidate| {
             candidate.id() != anchor.id()
-                && candidate.min_ts() <= request.at
-                && (candidate.id() < anchor.id() || lock_observations && has_activity(candidate))
+                && (candidate.id() < anchor.id() && candidate.min_ts() <= request.at
+                    || binds_lock_observations(candidate))
         }))
         .cloned()
         .collect::<Vec<_>>();

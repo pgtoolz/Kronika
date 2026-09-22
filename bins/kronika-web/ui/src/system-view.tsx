@@ -428,6 +428,8 @@ export function recordedEnvironment(data: Pick<HourData, "sections">, cursor: nu
   return environment === 0 ? "machine" : environment === 1 ? "container" : null
 }
 
+const NO_TIMES: readonly number[] = []
+
 export function SystemView({
   context,
   contextRow,
@@ -497,6 +499,7 @@ export function SystemView({
   readonly requestPhase?: TableRequestPhase | undefined
   readonly t: Translate
 }) {
+  const diskBusyTimes = useMemo(() => data.lanePoints.filter((point) => point.lane === "disk_busy").map((point) => point.timestamp), [data.lanePoints])
   const available = useMemo(() => SYSTEM_METRICS.map((spec) => ({ points: metricPoints(data, spec), spec }))
     .filter(({ points, spec }) => points.some((point) => point.value !== null && Number.isFinite(point.value))
       || (spec.id === "cpu_actual_frequency" && sectionRows(data, "os_cpufreq").some((row) => {
@@ -612,7 +615,7 @@ export function SystemView({
           const finding = focus?.logicalName === entity.section ? focus : null
           return <SystemEntityPanel
             columns={entity.columns}
-            diskTimes={entity.section === "os_diskstats" ? data.lanePoints.filter((point) => point.lane === "disk_busy").map((point) => point.timestamp) : []}
+            diskTimes={entity.section === "os_diskstats" ? diskBusyTimes : NO_TIMES}
             {...(isContainerResource(key) ? { metadata, segmentId, densePageState, onLoadMore, onRetry, onOrder, onPattern, order, pattern, searchRequest } : {})}
             contextLabel={activeContext?.label}
             cursor={cursor}
@@ -1842,6 +1845,8 @@ export function systemEntityRows(data: HourData, section: string, cursor: number
   })
   const context = snapshot(sectionRows(data, "os_cgroup_context"), cursor)[0] ?? null
   const devices = section === "os_cgroup_io" ? cgroupDevicePresentations(data, cursor) : null
+  // One cursor snapshot of each section serves every device row.
+  const diskFacts = section === "os_diskstats" ? hostDiskSnapshot(data, cursor) : null
   const pathField = section === "os_cgroup_cpu" ? "cpu_path" : section === "os_cgroup_memory" ? "memory_path" : section === "os_cgroup_io" ? "io_path" : null
   const decorated = rows.map((row) => {
     const collectorContext = context !== null && pathField !== null
@@ -1851,16 +1856,30 @@ export function systemEntityRows(data: HourData, section: string, cursor: number
       : null
     const id = deviceId(row)
     const decorated = decorateSystemRow(row, collectorContext, id === null ? null : devices?.get(cgroupDeviceKey(rawText(value(row, "cgroup_path")), id)) ?? null)
-    return section === "os_diskstats" ? hostDiskFacts(decorated, data, cursor) : decorated
+    return diskFacts === null ? decorated : hostDiskFacts(decorated, diskFacts)
   })
   return devices === null ? decorated : foldCgroupIoRows(decorated, devices)
 }
 
-function hostDiskFacts(row: DataRow, data: HourData, cursor: number): DataRow {
+interface HostDiskSnapshot {
+  readonly edges: readonly DataRow[]
+  readonly devices: readonly DataRow[]
+  readonly mounts: readonly DataRow[]
+  readonly parents: ReturnType<typeof blockParents>
+}
+
+function hostDiskSnapshot(data: HourData, cursor: number): HostDiskSnapshot {
   const edges = snapshot(sectionRows(data, "os_block_topology"), cursor)
-  const devices = snapshot(sectionRows(data, "os_diskstats"), cursor)
-  const mounts = snapshot(sectionRows(data, "os_mountinfo"), cursor)
-  const presentation = cgroupDevicePresentation(row, mounts, devices, blockParents(edges))
+  return {
+    edges,
+    devices: snapshot(sectionRows(data, "os_diskstats"), cursor),
+    mounts: snapshot(sectionRows(data, "os_mountinfo"), cursor),
+    parents: blockParents(edges),
+  }
+}
+
+function hostDiskFacts(row: DataRow, { edges, devices, mounts, parents }: HostDiskSnapshot): DataRow {
+  const presentation = cgroupDevicePresentation(row, mounts, devices, parents)
   const named = (id: string) => {
     const name = rawText(value(devices.find((device) => deviceId(device) === id) ?? null, "device"))
     return name === null ? id : `${name} ${id}`

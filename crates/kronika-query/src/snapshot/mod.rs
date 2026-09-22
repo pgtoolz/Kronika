@@ -560,18 +560,8 @@ struct RowLocator {
 }
 
 impl PreparedSnapshot {
-    pub(crate) fn stability(&self) -> QueryStability {
-        if self.stability == QueryStability::Immutable
-            && !self.pin_current
-            && self
-                .sections
-                .iter()
-                .any(|section| section.logical_name == "pg_locks")
-        {
-            QueryStability::Revalidate
-        } else {
-            self.stability
-        }
+    pub(crate) const fn stability(&self) -> QueryStability {
+        self.stability
     }
 
     pub(crate) fn validator_input(&self) -> Option<(&str, &str, &[DatasetSegment])> {
