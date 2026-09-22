@@ -1487,6 +1487,33 @@ mod cgroup_search;
 #[path = "snapshot_cgroup_history.rs"]
 mod cgroup_history;
 
+fn lane_records(payload: &Arc<[u8]>, from: i64, to: i64) -> SnapshotRecords {
+    let source = EmbeddedSource::from_owned(
+        SegmentId::new(SEGMENT_ID).expect("id"),
+        payload.to_vec(),
+        u64::try_from(payload.len()).expect("length"),
+    )
+    .expect("embedded lanes");
+    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false);
+    let execution = execute(
+        &context,
+        QueryRequest::Hour(crate::HourRequest {
+            window: crate::Window {
+                from: Some(from),
+                to: Some(to),
+            },
+            part: crate::HourPart::Lanes,
+            series: None,
+            segments: Some(vec![SEGMENT_ID]),
+            active: None,
+        }),
+    )
+    .expect("prepare lanes");
+    let mut records = SnapshotRecords::default();
+    execution.stream(&mut records).expect("lanes");
+    records
+}
+
 #[test]
 fn disk_lane_uses_one_device_delta_and_its_queue() {
     use kronika_registry::os_diskstats::OsDiskstats;
@@ -1526,29 +1553,7 @@ fn disk_lane_uses_one_device_delta_and_its_queue() {
             }
         }
     });
-    let source = EmbeddedSource::from_owned(
-        SegmentId::new(SEGMENT_ID).expect("id"),
-        payload.to_vec(),
-        u64::try_from(payload.len()).expect("length"),
-    )
-    .expect("embedded disks");
-    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false);
-    let execution = execute(
-        &context,
-        QueryRequest::Hour(crate::HourRequest {
-            window: crate::Window {
-                from: Some(1_000_000),
-                to: Some(2_000_000),
-            },
-            part: crate::HourPart::Lanes,
-            series: None,
-            segments: Some(vec![SEGMENT_ID]),
-            active: None,
-        }),
-    )
-    .expect("prepare disk lanes");
-    let mut records = SnapshotRecords::default();
-    execution.stream(&mut records).expect("disk lanes");
+    let records = lane_records(&payload, 1_000_000, 2_000_000);
     let point = |lane| {
         records
             .0
@@ -1618,29 +1623,7 @@ fn disk_lane_tie_reads_the_recorded_block_stack() {
             }
         }
     });
-    let source = EmbeddedSource::from_owned(
-        SegmentId::new(SEGMENT_ID).expect("id"),
-        payload.to_vec(),
-        u64::try_from(payload.len()).expect("length"),
-    )
-    .expect("embedded disks");
-    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false);
-    let execution = execute(
-        &context,
-        QueryRequest::Hour(crate::HourRequest {
-            window: crate::Window {
-                from: Some(1_000_000),
-                to: Some(2_000_000),
-            },
-            part: crate::HourPart::Lanes,
-            series: None,
-            segments: Some(vec![SEGMENT_ID]),
-            active: None,
-        }),
-    )
-    .expect("prepare disk lanes");
-    let mut records = SnapshotRecords::default();
-    execution.stream(&mut records).expect("disk lanes");
+    let records = lane_records(&payload, 1_000_000, 2_000_000);
     let point = records
         .0
         .iter()
@@ -1908,29 +1891,7 @@ fn locks_observations_merge_all_rows_before_filters_and_preserve_finder_and_exac
 #[test]
 fn recorded_lock_markers_count_distinct_waiters_and_blockers_without_inventing_prepared_pids() {
     let payload = lock_observations(&[100, 100], &[(100, false), (100, true), (110, false)]);
-    let source = EmbeddedSource::from_owned(
-        SegmentId::new(SEGMENT_ID).expect("id"),
-        payload.to_vec(),
-        u64::try_from(payload.len()).expect("length"),
-    )
-    .expect("source");
-    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false);
-    let execution = execute(
-        &context,
-        QueryRequest::Hour(crate::HourRequest {
-            window: crate::Window {
-                from: Some(100),
-                to: Some(110),
-            },
-            part: crate::HourPart::Lanes,
-            series: None,
-            segments: Some(vec![SEGMENT_ID]),
-            active: None,
-        }),
-    )
-    .expect("prepare lanes");
-    let mut records = SnapshotRecords::default();
-    execution.stream(&mut records).expect("lanes");
+    let records = lane_records(&payload, 100, 110);
     let graphs: Vec<_> = records
         .0
         .iter()

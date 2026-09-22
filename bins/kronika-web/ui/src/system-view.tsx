@@ -607,7 +607,9 @@ export function SystemView({
       />}
       {entities.length > 0 && <section className="entity-panels grid grid-cols-1 content-start gap-2">
         {[...SYSTEM_ENTITIES, ...Object.entries(CGROUP_TABLE_COLUMNS).map(([section, columns]) => ({ section, columns, label: `system.entities.cgroup_${section.endsWith("pids") ? "tasks" : section.split("_").at(-1)}` }))].filter((entity) => entities.includes(entity.section)).map((entity) => {
-          const allRows = systemEntityRows(data, entity.section, cursor)
+          const snapshotRows = systemEntityRows(data, entity.section, cursor)
+          const diskFacts = entity.section === "os_diskstats" ? hostDiskSnapshot(data, cursor) : null
+          const allRows = diskFacts === null ? snapshotRows : snapshotRows.map((row) => hostDiskFacts(row, diskFacts, t))
           const activeContext = context?.logicalName === entity.section ? context : null
           const rows = contextualRows(allRows, activeContext, activeContext === null ? null : contextRow)
           if (rows.length === 0 && activeContext === null && requestPhase === "ready" && !isContainerResource(key) && !(entity.section === "os_diskstats" && selectedKey !== null && entityKeyOwnedBySection(selectedKey, entity.section))) return null
@@ -1596,7 +1598,6 @@ function deviceBreakdownSeries(
   }))
 }
 
-// The rollup is the busiest device, not an average.
 function maxField(rows: readonly DataRow[], field: string, scale: number): number | null | undefined {
   let peak: number | null = null
   for (const row of rows) {
@@ -1621,8 +1622,6 @@ function aggregateRows(rows: readonly DataRow[], aggregate: (rows: readonly Data
     (stored) => aggregate(stored.rows),
   )
 }
-
-// The rollup is the busiest device, not an average.
 
 function sumFields(rows: readonly DataRow[], fields: readonly string[]): number | null | undefined {
   let total = 0
@@ -1845,8 +1844,6 @@ export function systemEntityRows(data: HourData, section: string, cursor: number
   })
   const context = snapshot(sectionRows(data, "os_cgroup_context"), cursor)[0] ?? null
   const devices = section === "os_cgroup_io" ? cgroupDevicePresentations(data, cursor) : null
-  // One cursor snapshot of each section serves every device row.
-  const diskFacts = section === "os_diskstats" ? hostDiskSnapshot(data, cursor) : null
   const pathField = section === "os_cgroup_cpu" ? "cpu_path" : section === "os_cgroup_memory" ? "memory_path" : section === "os_cgroup_io" ? "io_path" : null
   const decorated = rows.map((row) => {
     const collectorContext = context !== null && pathField !== null
@@ -1855,8 +1852,7 @@ export function systemEntityRows(data: HourData, section: string, cursor: number
       ? context
       : null
     const id = deviceId(row)
-    const decorated = decorateSystemRow(row, collectorContext, id === null ? null : devices?.get(cgroupDeviceKey(rawText(value(row, "cgroup_path")), id)) ?? null)
-    return diskFacts === null ? decorated : hostDiskFacts(decorated, diskFacts)
+    return decorateSystemRow(row, collectorContext, id === null ? null : devices?.get(cgroupDeviceKey(rawText(value(row, "cgroup_path")), id)) ?? null)
   })
   return devices === null ? decorated : foldCgroupIoRows(decorated, devices)
 }
@@ -1878,7 +1874,7 @@ function hostDiskSnapshot(data: HourData, cursor: number): HostDiskSnapshot {
   }
 }
 
-function hostDiskFacts(row: DataRow, { edges, devices, mounts, parents }: HostDiskSnapshot): DataRow {
+export function hostDiskFacts(row: DataRow, { edges, devices, mounts, parents }: HostDiskSnapshot, t: Translate): DataRow {
   const presentation = cgroupDevicePresentation(row, mounts, devices, parents)
   const named = (id: string) => {
     const name = rawText(value(devices.find((device) => deviceId(device) === id) ?? null, "device"))
@@ -1891,7 +1887,7 @@ function hostDiskFacts(row: DataRow, { edges, devices, mounts, parents }: HostDi
     const parent = major === null || minor === null ? null : `${major}:${minor}`
     return child !== null && parent !== null && (child === deviceId(row) || parent === deviceId(row)) ? [`${named(child)} → ${named(parent)}`] : []
   })
-  const associations = presentation?.associations.map((mount) => [mount.mountPoint, mount.source, mount.root === null ? null : `root ${mount.root}`, mount.via === null ? null : `via ${named(mount.via)}`].filter((part) => part !== null).join(" · ")) ?? []
+  const associations = presentation?.associations.map((mount) => [mount.mountPoint, mount.source, mount.root === null ? null : `root ${mount.root}`, mount.via === null ? null : t("system.field.disk_mounts.via", { device: named(mount.via) })].filter((part) => part !== null).join(" · ")) ?? []
   return { ...row, values: { ...row.values, disk_mounts: associations.length === 0 ? null : associations.join("\n"), disk_links: links.length === 0 ? null : links.join("\n") } }
 }
 

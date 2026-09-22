@@ -125,8 +125,7 @@ fn disk_points(counters: &Counters, out: &mut Vec<LanePoint>) {
                     continue;
                 };
                 let busy = busy * 100.0;
-                // One request is counted on every layer it crosses, so a partition, its
-                // disk and a volume above them tie exactly. The tie names the device beneath.
+                // Exact busy ties prefer the lower device in the recorded stack.
                 let leads =
                     winner
                         .as_ref()

@@ -1503,14 +1503,14 @@ dependencies = [
 
 [[package]]
 name = "kronika-api"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "kronika-query",
 ]
 
 [[package]]
 name = "kronika-bdd"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "anyhow",
  "cucumber",
@@ -1525,7 +1525,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-collector"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "anyhow",
  "bsize",
@@ -1551,7 +1551,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-demo"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "anyhow",
  "bsize",
@@ -1568,7 +1568,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-derive"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-dump"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "chrono",
  "clap",
@@ -1595,7 +1595,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-format"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "crc",
  "proptest",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-index"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "kronika-format",
  "kronika-layout",
@@ -1618,7 +1618,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-layout"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "rustix",
  "tempfile",
@@ -1626,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-query"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "base64 0.22.1",
  "icu_collator",
@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-reader"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1661,7 +1661,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-registry"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "arrow-array",
  "arrow-ord",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-report"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -1695,7 +1695,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-report-cli"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "clap",
  "kronika-report",
@@ -1705,7 +1705,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-report-wasm"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "kronika-api",
  "kronika-layout",
@@ -1716,7 +1716,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-slice"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "arrow-array",
  "arrow-select",
@@ -1733,7 +1733,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-source-log"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "chrono",
  "jiff",
@@ -1744,7 +1744,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-source-os"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "kronika-registry",
  "nix",
@@ -1754,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-source-pg"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -1769,7 +1769,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-store"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "kronika-format",
  "kronika-layout",
@@ -1779,7 +1779,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-web"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1810,7 +1810,7 @@ dependencies = [
 
 [[package]]
 name = "kronika-writer"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "arrow-array",
  "arrow-schema",

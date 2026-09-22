@@ -2,6 +2,12 @@
 
 [Русская версия](changelog.ru.md)
 
+## [1.2.4](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.4)
+
+- Fixed sorting across all PostgreSQL Activity columns and restoring the selected order with Back.
+- Added Disk timelines with the busiest device, its queue and selected device history. Host devices appear as Host Disk in containers.
+- Added Locks timelines with lock-wait counts and recorded blocking graphs. Later observations with no lock waits clear stale graphs.
+
 ## [1.2.3](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.3)
 
 - Fixed native PgBouncer journal messages being dropped. Exported wrapper timestamps and PIDs are retained. Messages without a severity use LOG.

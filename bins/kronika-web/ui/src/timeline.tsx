@@ -184,12 +184,6 @@ export function Timeline({
     return () => window.removeEventListener("keydown", move)
   }, [cursor, cursorTimes, navigation, onCursor, preview])
   const recorded = useMemo(() => selected === undefined ? [] : toRecordedSeries(selected, locale, t), [locale, selected, t])
-  const healthAt = selected?.key === "health" ? healthEvaluationAtOrBefore(selected.series, displayCursor) : null
-  const current = selected?.key === "disk_busy" || selected?.key === "host_disk" ? laneReading(selected, displayCursor, locale, t) : (selected?.series ?? []).map((line) => {
-    const key = selected?.key ?? "health"
-    const number = key === "health" ? healthAt === null ? null : exactValue(line.points, healthAt) : sampleAtOrBefore(line.points, displayCursor)?.value ?? null
-    return `${key === "health" ? `${t(`lane.health.${line.field}`)} ` : ""}${number === null ? "—" : format(number, key, locale)}`
-  }).join(" · ")
   const exportSelection = useExportSelection()
   const decorations = useMemo(() => {
     const drawn = timelineDecorations(lanes, selected?.series ?? [], hour, end)
@@ -281,7 +275,7 @@ export function Timeline({
       onStep={navigation?.step}
       onPreview={preview}
       onPlotWidth={setPlotWidth}
-      reading={diskPoint?.device === undefined ? current : selectedReading}
+      reading={selectedReading}
       series={recorded}
       stats={presentation === "inspector"}
       status={selectedEmpty ? <span role={requestPhase === "error" ? "alert" : "status"}>{t(requestPhase === "pending" ? "status.loading" : requestPhase === "error" ? "status.error" : "status.no_data")}</span> : undefined}

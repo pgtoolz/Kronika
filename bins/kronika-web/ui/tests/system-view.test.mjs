@@ -7,7 +7,7 @@ import { importModule, registryPlugin } from "./import-module.mjs"
 import { parseDictionary, validateDictionaries } from "../scripts/i18n.mjs"
 
 const helpers = await importModule(
-  'export { diskHistoryPoints, diskSelectionHistoryRequest, entityRowKey, entitySelectionMatches, loadSelectedCgroupRow, entityMetricUnit, entityMetricValue, localizedSystemColumns, CGROUP_TABLE_COLUMNS, cgroupTableSection, cgroupTableRequest, cgroupSelectionRequest, cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"; export { cellAriaValue } from "../src/entity-table.tsx"; export { signInBasic } from "../src/session.ts"',
+  'export { hostDiskFacts, diskHistoryPoints, diskSelectionHistoryRequest, entityRowKey, entitySelectionMatches, loadSelectedCgroupRow, entityMetricUnit, entityMetricValue, localizedSystemColumns, CGROUP_TABLE_COLUMNS, cgroupTableSection, cgroupTableRequest, cgroupSelectionRequest, cgroupDevicePresentations, dockGroupMetrics, effectiveCpuCapacity, chartableEntityColumns, currentValue, entityHistoryRequest, fallbackMetric, hasMetric, metricChartUnit, metricChartValue, metricHistoryPoints, metricHistoryRequest, metricPoints, metricRequestKey, mountPairSeries, recordedEnvironment, resourceBreakdownSeries, sharedCgroupPath, storageTopologyEntries, systemEntityRows, SYSTEM_ENTITIES, SYSTEM_METRICS, SYSTEM_REQUESTS } from "../src/system-view.tsx"; export { bundledFixtureHour } from "../src/fixture.ts"; export { cellAriaValue } from "../src/entity-table.tsx"; export { signInBasic } from "../src/session.ts"',
   { plugins: [registryPlugin([
     { typeId: "1202003", logicalName: "os_cgroup_memory", identity: ["cgroup_path", "cgroup_identity"], columns: ["ts", "cgroup_path", "cgroup_identity", "max", "max_unlimited"] },
     { typeId: "1202001", logicalName: "os_cgroup_memory", identity: ["cgroup_path"], columns: ["ts", "cgroup_path", "max"] },
@@ -36,6 +36,28 @@ const data = {
   ],
 }
 const spec = { group: "cpu", help: "x.help", id: "x", label: "x.label", series: "test", unit: "" }
+
+test("host disk mount associations localize via while retaining recorded facts", async () => {
+  const row = (values) => ({ logicalName: "os_diskstats", typeId: "1108001", segmentId: "recorded", timestamp: 100, ordinal: "0", values })
+  const disk = row({ major: 8, minor: 0, device: "sda", io_in_progress: 2 })
+  const volume = row({ major: 253, minor: 0, device: "dm-0" })
+  const snapshot = {
+    devices: [disk, volume],
+    edges: [row({ major: 253, minor: 0, parent_major: 8, parent_minor: 0 })],
+    mounts: [row({ major: 253, minor: 0, mount_point: "/data", source: "/dev/mapper/db", root: "/postgres", is_k8s_infra: false })],
+    parents: new Map([["253:0", ["8:0"]]]),
+  }
+  for (const [locale, via] of [["en", "via"], ["ru", "через"]]) {
+    const dictionary = parseDictionary(await readFile(new URL(`../i18n/${locale}.yaml`, import.meta.url), "utf8"), `${locale}.yaml`)
+    const t = (key, slots = {}) => dictionary[key].replace(/\{(\w+)\}/g, (_, name) => String(slots[name]))
+    const result = helpers.hostDiskFacts(disk, snapshot, t)
+    assert.equal(result.values.disk_mounts, `/data · /dev/mapper/db · root /postgres · ${via} dm-0 253:0`)
+    assert.equal(result.values.disk_links, "dm-0 253:0 → sda 8:0")
+    assert.deepEqual(Object.fromEntries(Object.keys(disk.values).map((key) => [key, result.values[key]])), disk.values)
+    assert.equal(result.timestamp, disk.timestamp)
+    assert.equal(result.segmentId, disk.segmentId)
+  }
+})
 
 test("system current values use the stored observation at or before the cursor", () => {
   assert.equal(helpers.currentValue(data, spec, 150, "en"), "5")
