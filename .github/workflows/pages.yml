@@ -59,16 +59,18 @@ jobs:
           chmod 0644 "$RUNNER_TEMP/site/index.html"
           test "$(find "$RUNNER_TEMP/site" -mindepth 1 | wc -l)" -eq 1
 
-      - name: Keep the published example available
+      - name: Keep versioned examples available
         shell: bash
         run: |
           install -d "$RUNNER_TEMP/site/reports"
           curl --fail --location --silent --show-error \
+            https://github.com/pgtoolz/Kronika/releases/download/v1.2.4/kronika-v1.2.4.html \
+            --output "$RUNNER_TEMP/site/reports/kronika-v1.2.4.html"
+          echo "ff8f2011f156df8a05c1297fe0ec430f2d66e2ae2a23c8eab8305c9703105bcd  $RUNNER_TEMP/site/reports/kronika-v1.2.4.html" | sha256sum --check --strict
+          curl --fail --location --silent --show-error \
             https://github.com/pgtoolz/Kronika/releases/download/v1.2.2/kronika-v1.2.2.html \
-            --output "$RUNNER_TEMP/site/index.html"
-          echo "48091c20ef9fe08462c788fb100fbc124a74b00b3ed3537a4f818f6e09ef3bf9  $RUNNER_TEMP/site/index.html" | sha256sum --check --strict
-          cp "$RUNNER_TEMP/site/index.html" \
-            "$RUNNER_TEMP/site/reports/kronika-v1.2.2.html"
+            --output "$RUNNER_TEMP/site/reports/kronika-v1.2.2.html"
+          echo "48091c20ef9fe08462c788fb100fbc124a74b00b3ed3537a4f818f6e09ef3bf9  $RUNNER_TEMP/site/reports/kronika-v1.2.2.html" | sha256sum --check --strict
           curl --fail --location --silent --show-error \
             https://github.com/pgtoolz/Kronika/releases/download/v1.2.0/kronika-v1.2.0.html \
             --output "$RUNNER_TEMP/site/reports/kronika-v1.2.0.html"
