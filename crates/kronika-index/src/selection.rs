@@ -66,3 +66,19 @@ pub fn series_keys_for_sections(sections: &[SegmentSection], logical_name: &str)
     keys.dedup();
     keys
 }
+
+/// Return the lock-waiting series of every recorded `pg_stat_activity` layout.
+#[must_use]
+pub fn lock_wait_keys_for_sections(sections: &[SegmentSection]) -> Vec<SeriesKey> {
+    let mut keys = sections
+        .iter()
+        .filter(|section| pg_activity_layout(section.type_id))
+        .map(|section| SeriesKey {
+            kind: SeriesKind::PgLockWaiting,
+            type_id: section.type_id,
+        })
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    keys.dedup();
+    keys
+}

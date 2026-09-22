@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use kronika_index::{SeriesBlock, lock_wait_keys_for_sections};
 use kronika_reader::Segment;
 use kronika_registry::ColumnClass;
 
@@ -80,7 +81,72 @@ impl PreparedSnapshot {
                 .max();
             contexts.retain(|context| context.sample_to.is_none() || context.sample_to == latest);
         }
+        if section.logical_name == "pg_locks"
+            && !self.pin_current
+            && self.row_ordinal.is_none()
+            && let Some(graph_at) = contexts
+                .iter()
+                .filter_map(|context| context.sample_to)
+                .min()
+            && let Some(cutoff) = self.lock_observation_cutoff(graph_at, cancelled)?
+        {
+            contexts.retain(|context| context.sample_to.is_some_and(|at| at >= cutoff));
+        }
         Ok(contexts)
+    }
+
+    fn lock_observation_cutoff(
+        &self,
+        graph_at: i64,
+        cancelled: &(impl Fn() -> bool + ?Sized),
+    ) -> Result<Option<i64>, QueryError> {
+        let indexes = self
+            .indexes
+            .as_deref()
+            .ok_or_else(crate::hour::missing_index_provider)?;
+        // The index carries every activity sample's lock-waiting count, so no
+        // segment body is decoded. Only the latest zero decides: read the newest
+        // segments first and stop once every remaining one ends before it.
+        let mut descriptors: Vec<&DatasetSegment> = self
+            .validator_segments
+            .iter()
+            .filter(|descriptor| {
+                descriptor.max_ts() > graph_at && super::preparation::has_activity(descriptor)
+            })
+            .collect();
+        descriptors.sort_by_key(|descriptor| std::cmp::Reverse(descriptor.max_ts()));
+        let latest_zero = |observations: &BTreeMap<i64, bool>| {
+            observations
+                .iter()
+                .rev()
+                .find_map(|(ts, waiting)| (!waiting).then_some(*ts))
+        };
+        let mut observations = BTreeMap::<i64, bool>::new();
+        for descriptor in descriptors {
+            if latest_zero(&observations).is_some_and(|zero| descriptor.max_ts() < zero) {
+                break;
+            }
+            if cancelled() {
+                return Err(QueryError::Cancelled);
+            }
+            let keys = lock_wait_keys_for_sections(descriptor.sections());
+            let resource = indexes.load(descriptor, "pg_stat_activity", &keys)?;
+            for block in resource.index.blocks {
+                let SeriesBlock::PgLockWaiting { points, .. } = block else {
+                    continue;
+                };
+                for point in points {
+                    if point.timestamp > graph_at && point.timestamp <= self.at {
+                        *observations.entry(point.timestamp).or_default() |= point.count > 0;
+                    }
+                }
+            }
+        }
+        if cancelled() {
+            return Err(QueryError::Cancelled);
+        }
+        // A later positive observation cannot revive a graph superseded by an earlier zero.
+        Ok(latest_zero(&observations))
     }
 
     pub(super) fn page_facts(

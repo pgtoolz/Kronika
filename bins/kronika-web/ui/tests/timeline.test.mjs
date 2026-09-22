@@ -11,7 +11,7 @@ import { build } from "esbuild"
 import { importModule, registryPlugin } from "./import-module.mjs"
 
 const helpers = await importModule(
-  'export { CursorRow } from "../src/cursor-row.tsx"; export { FindingMarker, MARKER_CLUSTER_PX, exactValue, findingShape, findingTrack, groupFindings, healthEvaluationAtOrBefore, healthThreshold, healthTimelineSeries, laneReading, sampleWindow, timelineDecorations, timelineNavigationTimes, timelineRecordedTimes, timelineSeriesHelpKey } from "../src/timeline.tsx"',
+  'export { CursorRow } from "../src/cursor-row.tsx"; export { FindingMarker, LockGraphMarker, MARKER_CLUSTER_PX, exactValue, findingShape, findingTrack, groupFindings, groupTimedMarkers, healthEvaluationAtOrBefore, healthThreshold, healthTimelineSeries, laneReading, sampleWindow, timelineDecorations, timelineNavigationTimes, timelineRecordedTimes, timelineSeriesHelpKey } from "../src/timeline.tsx"',
   { plugins: [registryPlugin([{ typeId: "1104001", logicalName: "os_meminfo", columns: ["ts", "mem_total", "mem_free", "mem_available"] }])] },
 )
 
@@ -23,10 +23,10 @@ const rendered = await build({
   import { createElement } from "react";
   import { renderToStaticMarkup } from "react-dom/server";
   import { Timeline, TimelineRequestContext } from "../src/timeline.tsx";
-  export function render(phase, health = [], presentation = "preview") {
+  export function render(phase, health = [], presentation = "preview", options = {}) {
     return renderToStaticMarkup(createElement(TimelineRequestContext, { value: phase },
       createElement(Timeline, { cursor: 200, hour: 0, environment: null, findings: [], health,
-        lanePoints: [], locale: "en", presentation, onCursor() {}, onFinding() {}, t: (key) => key })));
+        lanePoints: [], locale: "en", presentation, onCursor() {}, onFinding() {}, t: (key) => key, ...options })));
   }
 ` },
 })
@@ -87,8 +87,7 @@ test("the selected lane draws while shared step controls use source navigation",
   assert.doesNotMatch(timeline, /mergeObservationTimestamps/)
   assert.match(timeline, /<UPlotChart/)
   assert.match(timeline, /window\.addEventListener\("keydown", move\)/)
-  assert.match(timeline, /if \(controlledLane !== undefined\) return/)
-  assert.match(timeline, /previousPrimary\.current = primaryLane\s+setSelectedLane\(primaryLane\)/)
+  assert.match(timeline, /previousPrimary\.current = primaryLane\s+if \(controlledLane === undefined\) setLocalLane\(primaryLane\)/)
 })
 
 test("the mobile cursor row keeps navigation and the live reading without a second clock", () => {
@@ -421,7 +420,13 @@ test("timeline controls stay above a full-width plot without a redundant time ti
   assert.doesNotMatch(source, /className="timeline-lanes[^"]*overflow-x-auto/)
   assert.match(source, /data-testid="timeline-preview-metric-select"/)
   assert.match(source, /aria-label=\{accessible\}/)
-  assert.match(styles, /\.timeline-lane-label\[data-primary="true"\] \{[^}]*flex:/s)
+  // Lanes size to their content so a short selected reading does not starve a long one.
+  assert.match(styles, /\.timeline-lane-label \{ flex: 1 1 auto; \}/)
+  assert.doesNotMatch(styles, /data-primary="true"\] \{[^}]*flex:/)
+  // Clipped readings hide before the picker replaces the lane names.
+  assert.match(styles, /\.timeline-lane-slot\[data-density="names"\] \.timeline-lane-label:not\(\[data-primary="true"\]\) \.timeline-lane-reading \{ display: none; \}/)
+  assert.match(source, /setLaneDensity\(laneDensity === "full" \? "names" : "picker"\)/)
+  assert.match(source, /data-compact=\{compactPicker \|\| undefined\} data-density=\{laneDensity\}/)
   assert.match(styles, /\.timeline-open-chart \{[^}]*flex: 0 0 64px;[^}]*width: 64px;/s)
   assert.match(styles, /\.timeline-preview \{[^}]*height: 124px;/s)
   assert.match(chart, /variant === "preview" \? "h-\[94px\]/)
@@ -430,4 +435,125 @@ test("timeline controls stay above a full-width plot without a redundant time ti
   // longer exists made this pass on two -1s.
   assert.ok(source.indexOf(railMarkup) < source.indexOf('className="timeline-chart"'))
   assert.doesNotMatch(chart, /Time, browser local|Время, местное в браузере/)
+})
+
+
+test("automatic lanes remain automatic while explicit unavailable lanes keep their picker", () => {
+  const lanePoints = [{ segmentId: "s", lane: "pg_waiting", timestamp: 200, value: 3 }]
+  const automatic = requestTimeline.render("ready", [], "preview", { selectedLane: null, primaryLane: "pg_waiting", lanePoints })
+  assert.match(automatic, /aria-pressed="true"[^>]*>[^]*?lane.pg_waiting.label/)
+  const pending = requestTimeline.render("pending", [], "preview", { selectedLane: null, primaryLane: "pg_waiting" })
+  assert.match(pending, /value="pg_waiting"/)
+  for (const presentation of ["preview", "inspector"]) {
+    const unavailable = requestTimeline.render("ready", [], presentation, { selectedLane: "disk_busy", lanePoints })
+    assert.match(unavailable, /value="disk_busy"[^>]*>lane.disk_busy.label/)
+    assert.match(unavailable, /value="pg_waiting"[^>]*>lane.pg_waiting.label/)
+    assert.match(unavailable, /status.no_data/)
+  }
+})
+
+test("each lane reserves its widest reading of the hour so pointer travel never reflows the strip", () => {
+  const lanePoints = [
+    { segmentId: "s", lane: "pg_waiting", timestamp: 100, value: 3 },
+    { segmentId: "s", lane: "pg_waiting", timestamp: 300, value: 1234 },
+  ]
+  const html = requestTimeline.render("ready", [], "preview", { selectedLane: null, primaryLane: "pg_waiting", lanePoints })
+  assert.match(html, /<span data-testid="lane-reading" title="3">3<\/span><span aria-hidden="true">1\.23K<\/span>/)
+})
+
+test("a lane whose every value is null is not offered", () => {
+  const lanePoints = [
+    { segmentId: "s", lane: "pg_waiting", timestamp: 200, value: 3 },
+    { segmentId: "s", lane: "disk_busy", timestamp: 200, value: null, device: { major: 8, minor: 0, name: "sda", scope: 0 } },
+  ]
+  const html = requestTimeline.render("ready", [], "preview", { selectedLane: null, primaryLane: "pg_waiting", environment: "machine", lanePoints })
+  assert.doesNotMatch(html, /value="disk_busy"/)
+  assert.match(html, /value="pg_waiting"/)
+})
+
+test("an unavailable automatic lane falls back to the first recorded lane", () => {
+  const lanePoints = [{ segmentId: "s", lane: "pg_waiting", timestamp: 200, value: 3 }]
+  for (const presentation of ["preview", "inspector"]) {
+    const html = requestTimeline.render("ready", [], presentation, { selectedLane: null, primaryLane: "health", lanePoints })
+    assert.match(html, /value="pg_waiting" selected=""/)
+    assert.doesNotMatch(html, /value="health"|status.no_data/)
+  }
+  const pending = requestTimeline.render("pending", [], "preview", { selectedLane: null, primaryLane: "health" })
+  assert.match(pending, /value="health" selected=""/)
+})
+
+test("Disk and Locks choices expose recorded point identity, same-device queue and graph markers", () => {
+  const device = { major: 8, minor: 0, name: "sda", scope: 0 }
+  const lanePoints = [
+    { segmentId: "s", lane: "disk_busy", timestamp: 200, value: 60, device },
+    { segmentId: "s", lane: "disk_queue", timestamp: 200, value: 0.8, device },
+    { segmentId: "s", lane: "pg_lock_waiting", timestamp: 200, value: 0 },
+    { segmentId: "s", lane: "pg_lock_graph", timestamp: 199, value: null, locks: { waiting: 2, blockers: 1, prepared: true } },
+  ]
+  const disk = requestTimeline.render("ready", [], "preview", { selectedLane: "disk_busy", environment: "machine", lanePoints })
+  assert.match(disk, /60% · sda · use.lane.disk_queue 0.8/)
+  assert.match(disk, /lane.pg_lock_waiting.label/)
+  const locks = requestTimeline.render("ready", [], "preview", { selectedLane: "pg_lock_waiting", environment: "machine", lanePoints })
+  assert.match(locks, /data-testid="lock-graph-marker"/)
+  assert.match(locks, /lane.pg_lock_waiting.prepared/)
+  assert.match(locks, /aria-label="lane.pg_lock_waiting.label, count"/)
+  assert.match(locks, /data-testid="timeline-preview-reading" title="0">0<\/span>/)
+  const host = requestTimeline.render("ready", [], "preview", { selectedLane: "host_disk", environment: "container", lanePoints })
+  assert.match(host, /lane.host_disk.label/)
+  assert.doesNotMatch(host, /value="disk_busy"/)
+})
+
+
+test("Host Disk uses the same scope-filtered point for reading and queue", () => {
+  const device = { major: 8, minor: 0, name: "host-disk", scope: 0 }
+  const lanePoints = [
+    { segmentId: "s", lane: "disk_busy", timestamp: 100, value: 60, device },
+    { segmentId: "s", lane: "disk_queue", timestamp: 100, value: 0.8, device },
+    { segmentId: "s", lane: "disk_busy", timestamp: 200, value: 99, device: { ...device, name: "unknown", scope: null } },
+  ]
+  const html = requestTimeline.render("ready", [], "preview", { selectedLane: "host_disk", environment: "container", lanePoints })
+  assert.match(html, /60% · host-disk · use.lane.disk_queue 0.8/)
+  assert.doesNotMatch(html, /99%|unknown/)
+})
+
+
+test("Locks marker clusters retain every exact graph at narrow and wide plot widths", () => {
+  const points = [0, 45_000_000, 50_000_000, 1_800_000_000, 3_599_000_000].map((timestamp, index) => ({
+    segmentId: "s", lane: "pg_lock_graph", timestamp, value: null,
+    locks: { waiting: index + 1, blockers: 1, prepared: index === 2 },
+  }))
+  for (const width of [280, 720, 1200]) {
+    const groups = helpers.groupTimedMarkers(points, 0, 3_600_000_000, width)
+    assert.deepEqual(groups.flat(), points)
+    assert.deepEqual(groups[0], points.slice(0, 3))
+    assert.equal(groups[1].length, 1)
+    const anchors = groups.map(group => Math.max(44, Math.min(width - 44, group[0].timestamp / 3_600_000_000 * width)))
+    for (let i = 1; i < anchors.length; i++) assert.ok(anchors[i] - anchors[i - 1] > helpers.MARKER_CLUSTER_PX)
+  }
+  const t = (key, values) => key + (values === undefined ? "" : JSON.stringify(values))
+  const grouped = renderToStaticMarkup(createElement(helpers.LockGraphMarker, { points: points.slice(0, 3), share: 0, onActivate() {}, t, time: String }))
+  assert.match(grouped, /<select[^>]*data-testid="lock-graph-cluster"/)
+  assert.match(grouped, /<option[^>]*disabled=""[^>]*value=""[^>]*>◆ \+3<\/option>/)
+  for (const point of points.slice(0, 3)) assert.ok(grouped.includes(`value="${point.timestamp}"`))
+  assert.match(grouped, /lane.pg_lock_waiting.prepared/)
+  assert.match(grouped, /clamp\(44px, 0%, calc\(100% - 44px\)\)/)
+  const single = renderToStaticMarkup(createElement(helpers.LockGraphMarker, { points: [points[3]], share: 0.5, onActivate() {}, t, time: String }))
+  assert.match(single, /<button[^>]*data-testid="lock-graph-marker"/)
+  assert.doesNotMatch(single, /<select/)
+})
+
+
+test("the Locks lane reserves markers for captured graphs while other lanes keep findings", () => {
+  const lanePoints = [
+    { segmentId: "s", lane: "pg_lock_waiting", timestamp: 200, value: 2 },
+    { segmentId: "s", lane: "pg_lock_graph", timestamp: 199, value: null, locks: { waiting: 2, blockers: 1, prepared: false } },
+    { segmentId: "s", lane: "pg_waiting", timestamp: 200, value: 2 },
+  ]
+  const findings = [finding("known_bad", 199, "1")]
+  const locks = requestTimeline.render("ready", [], "preview", { selectedLane: "pg_lock_waiting", lanePoints, findings })
+  assert.match(locks, /data-testid="lock-graph-marker"/)
+  assert.doesNotMatch(locks, /data-marker-count/)
+  const waiting = requestTimeline.render("ready", [], "preview", { selectedLane: "pg_waiting", lanePoints, findings })
+  assert.match(waiting, /data-marker-count="1"/)
+  assert.doesNotMatch(waiting, /data-testid="lock-graph-marker"/)
 })

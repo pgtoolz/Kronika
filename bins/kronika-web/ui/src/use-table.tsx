@@ -4,7 +4,7 @@ import { useMemo, type ReactNode } from "react"
 import type { LanePoint } from "./api"
 import { LabelHelp, type Translate } from "./help"
 import { humanBytes, humanPercent, measure, type Locale } from "./model"
-import { readingAt, type ChartPoint } from "./series-chart"
+import { readingAt, sampleAtOrBefore, type ChartPoint } from "./series-chart"
 import { SparkCell } from "./spark-cell"
 import { sparkScaleMax } from "./spark"
 
@@ -158,7 +158,9 @@ export function UseTable({
           const primary = seriesReading(points, cursor, locale, cell.kind, t("unit.per_second"))
           const secondary = second === undefined ? null : seriesReading(second, cursor, locale, cell.kind, t("unit.per_second"))
           const laneLabels = [t(`use.lane.${cell.lane}`), ...(cell.second === undefined ? [] : [t(`use.lane.${cell.second}`)])]
-          const readings = [primary, ...(secondary === null ? [] : [secondary])]
+          const device = resource.key === "disk" ? sampleAtOrBefore(lanePoints.filter((point) => point.lane === cell.lane), cursor)?.device : undefined
+          const deviceLabel = device === undefined ? null : device.name ?? `${device.major}:${device.minor}`
+          const readings = [deviceLabel === null ? primary : `${primary} · ${deviceLabel}`, ...(secondary === null ? [] : [secondary])]
           const accessibleName = `${resourceLabel(resource.key)} · ${t(`use.${column}`)} · ${laneLabels.map((label, index) => `${label}: ${readings[index]}`).join(" · ")}`
           return <span className="use-cell relative min-w-0 px-2 py-1.5 coarse:min-h-11 max-[760px]:px-[5px]" key={column}>
             <button
@@ -332,7 +334,7 @@ export function lanePointsByLane(lanePoints: readonly LanePoint[]): ReadonlyMap<
   const map = new Map<string, ChartPoint[]>()
   for (const point of lanePoints) {
     const stored = map.get(point.lane)
-    const entry = { segmentId: point.segmentId, timestamp: point.timestamp, value: point.value }
+    const entry = { segmentId: point.segmentId, timestamp: point.timestamp, value: point.value, ...(point.device === undefined ? {} : { device: point.device }) }
     if (stored === undefined) map.set(point.lane, [entry])
     else stored.push(entry)
   }

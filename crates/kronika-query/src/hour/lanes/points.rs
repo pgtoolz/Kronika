@@ -1,8 +1,9 @@
 //! Lane values and rates with recorded continuity boundaries.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Counters, LanePoint};
+use super::{Counters, DiskIdentity, DiskSnapshot, LanePoint, LockGraph};
 
 use crate::Window;
 
@@ -34,11 +35,11 @@ pub(super) fn points(counters: &Counters, ticks_per_second: i64, cpu_count: i64)
                 reason = "core counts and clock rates are small"
             )]
             let capacity = (ticks * cores) as f64;
-            out.push(LanePoint {
-                key: "cpu_busy",
+            out.push(lane_point(
+                "cpu_busy",
                 ts,
-                value: value.map(|value| value / capacity * 100.0),
-            });
+                value.map(|value| value / capacity * 100.0),
+            ));
         }
     }
     for (key, stalls) in [
@@ -49,33 +50,37 @@ pub(super) fn points(counters: &Counters, ticks_per_second: i64, cpu_count: i64)
             value / 1_000_000.0 / seconds * 100.0
         });
         for (ts, value) in stalled {
-            out.push(LanePoint { key, ts, value });
+            out.push(lane_point(key, ts, value));
         }
     }
-    // io_time_ms per elapsed second is device busy percent.
-    for (ts, value) in rate(&counters.disk_busy, |value, seconds| {
-        (value / 1000.0 / seconds * 100.0).min(100.0)
-    }) {
+    disk_points(counters, &mut out);
+    for (ts, graph) in &counters.lock_graphs {
+        let locks = LockGraph {
+            waiting: graph.waiting.len(),
+            blockers: graph.blockers.len(),
+            prepared: graph.prepared,
+        };
         out.push(LanePoint {
-            key: "disk_busy",
-            ts,
-            value,
+            key: "pg_lock_graph",
+            ts: *ts,
+            value: None,
+            device: None,
+            locks: Some(locks),
         });
     }
     for (key, stored, scale) in [
-        ("disk_queue", &counters.disk_queue, 1000.0),
         ("net_rx", &counters.net_rx, 1.0),
         ("net_tx", &counters.net_tx, 1.0),
         ("net_drop", &counters.net_drop, 1.0),
         ("net_errors", &counters.net_errors, 1.0),
     ] {
         for (ts, value) in rate(stored, |value, seconds| value / scale / seconds) {
-            out.push(LanePoint { key, ts, value });
+            out.push(lane_point(key, ts, value));
         }
     }
     for (key, stored) in [("mem_swap", &counters.swap), ("mem_oom", &counters.oom)] {
         for (ts, value) in nullable_rate(stored, |value, seconds| value / seconds) {
-            out.push(LanePoint { key, ts, value });
+            out.push(lane_point(key, ts, value));
         }
     }
     for (key, stored) in [
@@ -86,16 +91,113 @@ pub(super) fn points(counters: &Counters, ticks_per_second: i64, cpu_count: i64)
         ("pg_oldest_xact", &counters.oldest_xact),
     ] {
         for (ts, value) in stored {
-            out.push(LanePoint {
-                key,
-                ts: *ts,
-                value: Some(*value),
-            });
+            out.push(lane_point(key, *ts, Some(*value)));
         }
     }
     container_points(counters, &mut out);
     out.sort_by_key(|point| (point.ts, point.key));
     out
+}
+
+const fn lane_point(key: &'static str, ts: i64, value: Option<f64>) -> LanePoint {
+    LanePoint {
+        key,
+        ts,
+        value,
+        device: None,
+        locks: None,
+    }
+}
+
+fn disk_points(counters: &Counters, out: &mut Vec<LanePoint>) {
+    let mut previous: Option<(i64, &DiskSnapshot)> = None;
+    for (&ts, devices) in &counters.disks {
+        let mut winner: Option<(f64, Option<f64>, DiskIdentity)> = None;
+        if let Some((before, preceding)) = previous {
+            for (key, current) in devices {
+                let Some(prior) = preceding.get(key) else {
+                    continue;
+                };
+                if current.identity.scope != Some(0) || prior.identity.scope != Some(0) {
+                    continue;
+                }
+                let Some(busy) = disk_rate(current.busy, prior.busy, ts, before) else {
+                    continue;
+                };
+                let busy = busy * 100.0;
+                // Exact busy ties prefer the lower device in the recorded stack.
+                let leads =
+                    winner
+                        .as_ref()
+                        .is_none_or(|(peak, _, leader)| match busy.total_cmp(peak) {
+                            Ordering::Greater => true,
+                            Ordering::Equal => sits_beneath(
+                                &counters.disk_parents,
+                                (leader.major, leader.minor),
+                                *key,
+                            ),
+                            Ordering::Less => false,
+                        });
+                if leads {
+                    winner = Some((
+                        busy,
+                        disk_rate(current.weighted, prior.weighted, ts, before),
+                        current.identity.clone(),
+                    ));
+                }
+            }
+        }
+        for (key, value) in [
+            ("disk_busy", winner.as_ref().map(|(busy, _, _)| *busy)),
+            (
+                "disk_queue",
+                winner.as_ref().and_then(|(_, queue, _)| *queue),
+            ),
+        ] {
+            out.push(LanePoint {
+                key,
+                ts,
+                value,
+                device: winner.as_ref().map(|(_, _, identity)| identity.clone()),
+                locks: None,
+            });
+        }
+        previous = Some((ts, devices));
+    }
+}
+
+/// Whether `candidate` lies beneath `upper` in the recorded block stack: the disk
+/// under a partition, or a device an LVM, MD or dm volume lists among its slaves.
+fn sits_beneath(
+    parents: &BTreeMap<(i64, i64), BTreeSet<(i64, i64)>>,
+    upper: (i64, i64),
+    candidate: (i64, i64),
+) -> bool {
+    let mut seen = BTreeSet::from([upper]);
+    let mut pending = vec![upper];
+    while let Some(device) = pending.pop() {
+        for &parent in parents.get(&device).into_iter().flatten() {
+            if parent == candidate {
+                return true;
+            }
+            if seen.insert(parent) {
+                pending.push(parent);
+            }
+        }
+    }
+    false
+}
+
+fn disk_rate(current: Option<i64>, previous: Option<i64>, ts: i64, before: i64) -> Option<f64> {
+    let delta = current?
+        .checked_sub(previous?)
+        .filter(|delta| *delta >= 0)?;
+    let elapsed = ts.checked_sub(before).filter(|elapsed| *elapsed > 0)?;
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "recorded interval counter deltas fit f64"
+    )]
+    Some(delta as f64 * 1000.0 / elapsed as f64)
 }
 
 /// Resource lanes for the selected cgroup, using its recorded capacity.
@@ -105,11 +207,7 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         &counters.cg_cpu_boundaries,
         |value, seconds| value / 1_000_000.0 / seconds,
     ) {
-        out.push(LanePoint {
-            key: "cg_cpu_cores",
-            ts,
-            value: cores,
-        });
+        out.push(lane_point("cg_cpu_cores", ts, cores));
         // A share needs a recorded capacity; host cores never substitute.
         if !counters.cg_cpu_capacity.is_empty() {
             let share = cores.and_then(|cores| {
@@ -120,11 +218,7 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
                     .and_then(|(_, capacity)| *capacity)
                     .map(|capacity| cores / capacity * 100.0)
             });
-            out.push(LanePoint {
-                key: "cg_cpu_share",
-                ts,
-                value: share,
-            });
+            out.push(lane_point("cg_cpu_share", ts, share));
         }
     }
     for (key, stalls, boundaries) in [
@@ -152,7 +246,7 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         for (ts, value) in group_rate(stalls, boundaries, |value, seconds| {
             value / 1_000_000.0 / seconds * 100.0
         }) {
-            out.push(LanePoint { key, ts, value });
+            out.push(lane_point(key, ts, value));
         }
     }
     for (key, stored) in [
@@ -162,7 +256,7 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         for (ts, value) in group_rate(stored, &counters.cg_io_boundaries, |value, seconds| {
             value / seconds
         }) {
-            out.push(LanePoint { key, ts, value });
+            out.push(lane_point(key, ts, value));
         }
     }
     for (ts, value) in rate_samples(
@@ -171,22 +265,14 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         |value, seconds| value / seconds,
         Some(&counters.cg_memory_boundaries),
     ) {
-        out.push(LanePoint {
-            key: "cg_oom",
-            ts,
-            value,
-        });
+        out.push(lane_point("cg_oom", ts, value));
     }
     for (key, stored) in [
         ("cg_memory", &counters.cg_memory_share),
         ("cg_pids_share", &counters.cg_pids_share),
     ] {
         for (ts, value) in stored {
-            out.push(LanePoint {
-                key,
-                ts: *ts,
-                value: *value,
-            });
+            out.push(lane_point(key, *ts, *value));
         }
     }
     for (key, stored) in [
@@ -194,11 +280,7 @@ fn container_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         ("cg_pids", &counters.cg_pids),
     ] {
         for (ts, value) in stored {
-            out.push(LanePoint {
-                key,
-                ts: *ts,
-                value: Some(*value),
-            });
+            out.push(lane_point(key, *ts, Some(*value)));
         }
     }
 }

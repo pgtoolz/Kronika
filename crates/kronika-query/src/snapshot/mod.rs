@@ -37,11 +37,13 @@ use serde_json::{Value, json};
 
 use crate::StatementScope;
 use crate::dataset::{DatasetSegment, QueryDataset};
+use crate::index_provider::IndexProvider;
 use crate::projection::{Plan, resolved_dictionary};
 use crate::{Order, QueryError, QuerySink, QueryStability, RelationGroup};
 
 pub(crate) struct PreparedSnapshot {
     dataset: Arc<dyn QueryDataset>,
+    indexes: Option<Arc<dyn IndexProvider>>,
     anchor: DatasetSegment,
     latest: bool,
     pin_current: bool,

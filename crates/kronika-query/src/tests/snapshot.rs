@@ -117,6 +117,14 @@ fn snapshot_request(section: &str, fields: &[&str]) -> SnapshotRequest {
 }
 
 fn snapshot_records(payload: &Arc<[u8]>, request: SnapshotRequest) -> Vec<Value> {
+    snapshot_records_indexed(payload, None, request)
+}
+
+fn snapshot_records_indexed(
+    payload: &Arc<[u8]>,
+    index: Option<Vec<u8>>,
+    request: SnapshotRequest,
+) -> Vec<Value> {
     let source = EmbeddedSource::from_owned(
         SegmentId::new(SEGMENT_ID).expect("snapshot segment id"),
         payload.as_ref().to_vec(),
@@ -124,7 +132,13 @@ fn snapshot_records(payload: &Arc<[u8]>, request: SnapshotRequest) -> Vec<Value>
     )
     .expect("embedded snapshot source");
     let dataset: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(source));
-    let context = QueryContext::new(dataset, 0b11, false);
+    let mut context = QueryContext::new(dataset, 0b11, false);
+    if let Some(index) = index {
+        context = context.with_index_provider(Arc::new(
+            crate::MemoryIndexProvider::new(SegmentId::new(SEGMENT_ID).expect("id"), index)
+                .expect("lock index"),
+        ));
+    }
     let execution = execute(&context, QueryRequest::Snapshot(request)).expect("prepare snapshot");
     let mut records = SnapshotRecords::default();
     execution
@@ -1472,3 +1486,499 @@ mod cgroup_search;
 
 #[path = "snapshot_cgroup_history.rs"]
 mod cgroup_history;
+
+fn lane_records(payload: &Arc<[u8]>, from: i64, to: i64) -> SnapshotRecords {
+    let source = EmbeddedSource::from_owned(
+        SegmentId::new(SEGMENT_ID).expect("id"),
+        payload.to_vec(),
+        u64::try_from(payload.len()).expect("length"),
+    )
+    .expect("embedded lanes");
+    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false);
+    let execution = execute(
+        &context,
+        QueryRequest::Hour(crate::HourRequest {
+            window: crate::Window {
+                from: Some(from),
+                to: Some(to),
+            },
+            part: crate::HourPart::Lanes,
+            series: None,
+            segments: Some(vec![SEGMENT_ID]),
+            active: None,
+        }),
+    )
+    .expect("prepare lanes");
+    let mut records = SnapshotRecords::default();
+    execution.stream(&mut records).expect("lanes");
+    records
+}
+
+#[test]
+fn disk_lane_uses_one_device_delta_and_its_queue() {
+    use kronika_registry::os_diskstats::OsDiskstats;
+    let payload = fixture_payload(|interner, buffers| {
+        for (major, minor, name, delta, queue) in [
+            (8, 0, b"sda".as_slice(), 600, 800),
+            (253, 0, b"dm-0".as_slice(), 600, 9000),
+        ] {
+            let device = StrId(interner.intern(name).expect("device name").get());
+            for (ts, counter) in [(1_000_000, 0), (2_000_000, 1)] {
+                buffers
+                    .push(OsDiskstats {
+                        ts: Ts(ts),
+                        major,
+                        minor,
+                        device,
+                        reads: 0,
+                        r_merged: 0,
+                        read_sectors: 0,
+                        read_time_ms: 0,
+                        writes: 0,
+                        w_merged: 0,
+                        write_sectors: 0,
+                        write_time_ms: 0,
+                        io_in_progress: 0,
+                        io_time_ms: delta * counter,
+                        io_weighted_time_ms: queue * counter,
+                        discards: None,
+                        d_merged: None,
+                        discard_sectors: None,
+                        discard_time_ms: None,
+                        flushes: None,
+                        flush_time_ms: None,
+                        scope: 0,
+                    })
+                    .expect("disk row");
+            }
+        }
+    });
+    let records = lane_records(&payload, 1_000_000, 2_000_000);
+    let point = |lane| {
+        records
+            .0
+            .iter()
+            .find(|row| row["lane"] == lane && row["ts"] == "2000000")
+            .expect("disk point")
+    };
+    assert_eq!(point("disk_busy")["value"], json!(60.0));
+    assert_eq!(point("disk_queue")["value"], json!(0.8));
+    assert_eq!(
+        point("disk_busy")["device"],
+        json!({"major": 8, "minor": 0, "name": "sda", "scope": 0})
+    );
+    assert_eq!(point("disk_queue")["device"], point("disk_busy")["device"]);
+}
+
+#[test]
+fn disk_lane_tie_reads_the_recorded_block_stack() {
+    use kronika_registry::os_block_topology::OsBlockTopology;
+    use kronika_registry::os_diskstats::OsDiskstats;
+    let payload = fixture_payload(|interner, buffers| {
+        // dm-0 sits on partition 259:4, which sits on nvme0n1; the partition has no counters.
+        for (major, minor, parent_major, parent_minor) in [(252, 0, 259, 4), (259, 4, 259, 0)] {
+            buffers
+                .push(OsBlockTopology {
+                    ts: Ts(1_000_000),
+                    major,
+                    minor,
+                    parent_major,
+                    parent_minor,
+                    scope: 0,
+                })
+                .expect("topology row");
+        }
+        for (major, minor, name) in [
+            (252, 0, b"dm-0".as_slice()),
+            (259, 0, b"nvme0n1".as_slice()),
+        ] {
+            let device = StrId(interner.intern(name).expect("device name").get());
+            for (ts, counter) in [(1_000_000, 0), (2_000_000, 1)] {
+                buffers
+                    .push(OsDiskstats {
+                        ts: Ts(ts),
+                        major,
+                        minor,
+                        device,
+                        reads: 0,
+                        r_merged: 0,
+                        read_sectors: 0,
+                        read_time_ms: 0,
+                        writes: 0,
+                        w_merged: 0,
+                        write_sectors: 0,
+                        write_time_ms: 0,
+                        io_in_progress: 0,
+                        io_time_ms: 600 * counter,
+                        io_weighted_time_ms: 800 * counter,
+                        discards: None,
+                        d_merged: None,
+                        discard_sectors: None,
+                        discard_time_ms: None,
+                        flushes: None,
+                        flush_time_ms: None,
+                        scope: 0,
+                    })
+                    .expect("disk row");
+            }
+        }
+    });
+    let records = lane_records(&payload, 1_000_000, 2_000_000);
+    let point = records
+        .0
+        .iter()
+        .find(|row| row["lane"] == "disk_busy" && row["ts"] == "2000000")
+        .expect("disk point");
+    assert_eq!(point["value"], json!(60.0));
+    assert_eq!(
+        point["device"],
+        json!({"major": 259, "minor": 0, "name": "nvme0n1", "scope": 0})
+    );
+}
+
+/// The lock-waiting blocks an exporter builds for this segment.
+fn lock_index(payload: &Arc<[u8]>) -> Vec<u8> {
+    let source = EmbeddedSource::from_owned(
+        SegmentId::new(SEGMENT_ID).expect("id"),
+        payload.to_vec(),
+        u64::try_from(payload.len()).expect("length"),
+    )
+    .expect("source");
+    let dataset = FinishedDataset::new(source);
+    let descriptor = dataset
+        .segment(SEGMENT_ID)
+        .expect("listing")
+        .segments
+        .into_iter()
+        .next()
+        .expect("segment");
+    let segment = dataset.open(&descriptor).expect("segment body");
+    let keys = kronika_index::lock_wait_keys_for_sections(descriptor.sections());
+    kronika_index::build_selected(&segment, &keys)
+        .expect("lock index")
+        .encode()
+        .expect("encoded lock index")
+}
+
+fn lock_context(payload: &Arc<[u8]>) -> QueryContext {
+    let source = EmbeddedSource::from_owned(
+        SegmentId::new(SEGMENT_ID).expect("id"),
+        payload.to_vec(),
+        u64::try_from(payload.len()).expect("length"),
+    )
+    .expect("source");
+    QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false).with_index_provider(
+        Arc::new(
+            crate::MemoryIndexProvider::new(
+                SegmentId::new(SEGMENT_ID).expect("id"),
+                lock_index(payload),
+            )
+            .expect("lock index"),
+        ),
+    )
+}
+
+fn lock_observations(graphs: &[i64], activity: &[(i64, bool)]) -> Arc<[u8]> {
+    use kronika_registry::pg_locks::PgLocksV2;
+    use kronika_registry::pg_stat_activity::PgStatActivityV3;
+    fixture_payload(|interner, buffers| {
+        let label = StrId(interner.intern(b"fixture").expect("label").get());
+        let lock = StrId(interner.intern(b"Lock").expect("Lock").get());
+        for &ts in graphs {
+            buffers
+                .push(PgLocksV2 {
+                    ts: Ts(ts),
+                    pid: 42,
+                    blocked_by: vec![7, 0],
+                    datid: 1,
+                    datname: label,
+                    usename: None,
+                    application_name: label,
+                    client_addr: label,
+                    backend_type: label,
+                    state: None,
+                    wait_event_type: None,
+                    wait_event: None,
+                    query: label,
+                    backend_xid_age: None,
+                    backend_xmin_age: None,
+                    backend_start: None,
+                    xact_start: None,
+                    query_start: None,
+                    state_change: None,
+                    lock_locktype: None,
+                    lock_mode: None,
+                    lock_database: None,
+                    lock_relation: None,
+                    lock_relname: None,
+                    lock_page: None,
+                    lock_tuple: None,
+                    lock_virtualxid: None,
+                    lock_transactionid: None,
+                    lock_classid: None,
+                    lock_objid: None,
+                    lock_objsubid: None,
+                    lock_target: None,
+                    waitstart: None,
+                })
+                .expect("graph row");
+        }
+        for (index, &(ts, waiting)) in activity.iter().enumerate() {
+            let row = PgStatActivityV3 {
+                ts: Ts(ts),
+                pid: i32::try_from(index).expect("PID"),
+                leader_pid: Some(42),
+                datid: None,
+                datname: None,
+                usename: None,
+                application_name: label,
+                client_addr: label,
+                backend_type: label,
+                state: None,
+                wait_event_type: waiting.then_some(lock),
+                wait_event: None,
+                query: None,
+                query_id: None,
+                backend_xid_age: None,
+                backend_xmin_age: None,
+                backend_start: Ts(1),
+                xact_start: None,
+                query_start: None,
+                state_change: None,
+            };
+            if index % 2 == 0 {
+                buffers.push(row).expect("activity v3");
+            } else {
+                buffers
+                    .push(kronika_registry::pg_stat_activity::PgStatActivityV2 {
+                        ts: row.ts,
+                        pid: row.pid,
+                        leader_pid: row.leader_pid,
+                        datname: row.datname,
+                        usename: row.usename,
+                        application_name: row.application_name,
+                        client_addr: row.client_addr,
+                        backend_type: row.backend_type,
+                        state: row.state,
+                        wait_event_type: row.wait_event_type,
+                        wait_event: row.wait_event,
+                        query: row.query,
+                        backend_xid_age: row.backend_xid_age,
+                        backend_xmin_age: row.backend_xmin_age,
+                        backend_start: row.backend_start,
+                        xact_start: row.xact_start,
+                        query_start: row.query_start,
+                        state_change: row.state_change,
+                    })
+                    .expect("activity v2");
+            }
+        }
+    })
+}
+
+#[test]
+fn locks_do_not_revive_after_a_recorded_zero() {
+    let activity = [
+        (99, false),
+        (100, false),
+        (110, false),
+        (120, true),
+        (140, false),
+    ];
+    let payload = lock_observations(&[100, 130], &activity);
+    for (at, graph) in [
+        (100, Some(100)),
+        (105, Some(100)),
+        (115, None),
+        (125, None),
+        (135, Some(130)),
+        (140, None),
+    ] {
+        let records = snapshot_records_indexed(
+            &payload,
+            Some(lock_index(&payload)),
+            SnapshotRequest {
+                at,
+                latest: true,
+                ..snapshot_request("pg_locks", &["pid"])
+            },
+        );
+        let rows: Vec<_> = records
+            .iter()
+            .filter(|row| row["record"] == "row")
+            .collect();
+        assert_eq!(!rows.is_empty(), graph.is_some(), "cursor {at}");
+        if let Some(graph) = graph {
+            assert!(rows.iter().all(|row| {
+                row["timestamp"]
+                    .as_str()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    == Some(graph)
+            }));
+        }
+    }
+    let exact = snapshot_records_indexed(
+        &payload,
+        Some(lock_index(&payload)),
+        SnapshotRequest {
+            at: 125,
+            ..snapshot_request("pg_locks", &["pid"])
+        },
+    );
+    assert!(
+        exact.iter().any(|row| row["record"] == "row"),
+        "anchored history remains accessible"
+    );
+}
+
+#[test]
+fn locks_observations_merge_all_rows_before_filters_and_preserve_finder_and_exact_access() {
+    let activity = [(110, false), (110, true), (120, false), (125, true)];
+    let payload = lock_observations(&[100], &activity);
+    for (at, count) in [(115, 1), (126, 0)] {
+        let records = snapshot_records_indexed(
+            &payload,
+            Some(lock_index(&payload)),
+            SnapshotRequest {
+                at,
+                latest: true,
+                filters: vec![Filter {
+                    column: "pid".to_owned(),
+                    value: "42".to_owned(),
+                }],
+                page_size: Some(1),
+                ..snapshot_request("pg_locks", &["pid"])
+            },
+        );
+        assert_eq!(
+            records.iter().filter(|row| row["record"] == "row").count(),
+            count
+        );
+    }
+    let context = lock_context(&payload);
+    for (at, expected) in [(115, 1), (126, 0)] {
+        let query = super::FinderQuery {
+            surface: super::FinderSurface::Locks,
+            point: super::SnapshotPoint::At(at),
+            search: None,
+            order: None,
+            group: None,
+            limit: 1,
+        };
+        let result = super::execute_plain(&context, &query, &|| false).expect("Finder");
+        assert_eq!(result.rows.len(), expected);
+        assert!(matches!(
+            super::execute_plain(&context, &query, &|| true),
+            Err(crate::QueryError::Cancelled)
+        ));
+    }
+    let exact = snapshot_records_indexed(
+        &payload,
+        Some(lock_index(&payload)),
+        SnapshotRequest {
+            at: 100,
+            latest: true,
+            type_id: Some(1_011_002),
+            row_ordinal: Some(0),
+            ..snapshot_request("pg_locks", &["pid", "blocked_by"])
+        },
+    );
+    let rows: Vec<_> = exact.iter().filter(|row| row["record"] == "row").collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["values"], json!([42, [7, 0]]));
+}
+
+#[test]
+fn recorded_lock_markers_count_distinct_waiters_and_blockers_without_inventing_prepared_pids() {
+    let payload = lock_observations(&[100, 100], &[(100, false), (100, true), (110, false)]);
+    let records = lane_records(&payload, 100, 110);
+    let graphs: Vec<_> = records
+        .0
+        .iter()
+        .filter(|row| row["lane"] == "pg_lock_graph")
+        .collect();
+    assert_eq!(graphs.len(), 1);
+    assert_eq!(graphs[0]["ts"], "100");
+    assert_eq!(
+        graphs[0]["locks"],
+        json!({"waiting": 1, "blockers": 1, "prepared": true})
+    );
+    let waits: Vec<_> = records
+        .0
+        .iter()
+        .filter(|row| row["lane"] == "pg_lock_waiting")
+        .map(|row| (&row["ts"], &row["value"]))
+        .collect();
+    assert_eq!(
+        waits,
+        vec![(&json!("100"), &json!(1.0)), (&json!("110"), &json!(0.0))]
+    );
+}
+
+#[test]
+fn cancellation_during_lock_observation_rows_is_an_error_not_a_zero() {
+    let activity = [(110, true)];
+    let payload = lock_observations(&[100], &activity);
+    let loads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let context = QueryContext::new(
+        Arc::new(FinishedDataset::new(
+            EmbeddedSource::from_owned(
+                SegmentId::new(SEGMENT_ID).expect("id"),
+                payload.to_vec(),
+                u64::try_from(payload.len()).expect("length"),
+            )
+            .expect("source"),
+        )),
+        0,
+        false,
+    )
+    .with_index_provider(Arc::new(CountingIndexProvider {
+        inner: crate::MemoryIndexProvider::new(
+            SegmentId::new(SEGMENT_ID).expect("id"),
+            lock_index(&payload),
+        )
+        .expect("lock index"),
+        loads: Arc::clone(&loads),
+    }));
+    let query = super::FinderQuery {
+        surface: super::FinderSurface::Locks,
+        point: super::SnapshotPoint::At(115),
+        search: None,
+        order: None,
+        group: None,
+        limit: 1,
+    };
+    // Cancel right after the observation index is read: the graph must not be
+    // reported either as kept or as superseded.
+    let cancelled = || loads.load(std::sync::atomic::Ordering::SeqCst) >= 1;
+    assert!(matches!(
+        super::execute_plain(&context, &query, &cancelled),
+        Err(crate::QueryError::Cancelled)
+    ));
+    assert_eq!(loads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        super::execute_plain(&context, &query, &|| false)
+            .expect("uncancelled graph")
+            .rows
+            .len(),
+        1
+    );
+}
+
+#[derive(Debug)]
+struct CountingIndexProvider {
+    inner: crate::MemoryIndexProvider,
+    loads: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl crate::IndexProvider for CountingIndexProvider {
+    fn load(
+        &self,
+        segment: &crate::DatasetSegment,
+        logical_name: &str,
+        keys: &[kronika_index::SeriesKey],
+    ) -> Result<crate::IndexResource, crate::QueryError> {
+        self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.load(segment, logical_name, keys)
+    }
+}

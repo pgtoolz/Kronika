@@ -4,19 +4,19 @@
 
 ## Release
 
-Download [Kronika 1.2.3](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.3)
+Download [Kronika 1.2.4](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.4)
 for Linux x86-64 or ARM64. You can also [build from source](build.md) or use a
 [development build](#development-builds).
 
 <a id="download"></a>
 ## Archives
 
-Release archives for 1.2.3:
+Release archives for 1.2.4:
 
 | Architecture | Archive |
 | --- | --- |
-| x86-64 | [kronika-1.2.3-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.3/kronika-1.2.3-x86_64-unknown-linux-musl.tar.gz) |
-| ARM64 | [kronika-1.2.3-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.3/kronika-1.2.3-aarch64-unknown-linux-musl.tar.gz) |
+| x86-64 | [kronika-1.2.4-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.4/kronika-1.2.4-x86_64-unknown-linux-musl.tar.gz) |
+| ARM64 | [kronika-1.2.4-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.4/kronika-1.2.4-aarch64-unknown-linux-musl.tar.gz) |
 
 Each archive has a matching `.tar.gz.sha256` checksum file. See
 [download and extraction](../INSTALL.md#1-download-and-extract), then

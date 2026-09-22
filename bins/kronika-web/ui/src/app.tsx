@@ -74,7 +74,7 @@ import {
   type Lens,
   type Locale,
 } from "./model"
-import { PostgresView, statementScopeFor, type PostgresSection } from "./postgres-view"
+import { PostgresView, postgresTimelineLane, statementScopeFor, type PostgresSection } from "./postgres-view"
 import { planRequest, statementRequest, type PlanLens, type StatementLens } from "./postgres-metrics"
 import { isRelationLens, relationRequest, type RelationGroup, type RelationLens, type RelationNavigation, type RelationSection } from "./postgres-relations"
 import { EMPTY_PROCESS_SUMMARY, LENS_FIELDS, ProcessSummary, ProcessTable, processSummaryReducer, processTableDefaultOrder } from "./process-table"
@@ -90,11 +90,11 @@ import {
   cgroupTableSection,
   SYSTEM_REQUESTS,
   systemNavigationSections,
-  SystemView,
+  SystemView, hostTimelineLane,
   recordedEnvironment,
 } from "./system-view"
 import { beginSnapshotRequest, READY_SNAPSHOT_REQUEST, settleSnapshotRequest, snapshotRowsVisible, tableRequestPhase, visibleSnapshotRequest, type SnapshotRequestState } from "./table-request"
-import { Timeline, TimelineRequestContext, type TimelineRequestPhase } from "./timeline"
+import { Timeline, TimelineActionsContext, TimelineRequestContext, type TimelineRequestPhase } from "./timeline"
 import { TimezoneSelect } from "./timezone-select"
 
 type Theme = "dark" | "light"
@@ -301,13 +301,22 @@ function App({ locale, onLocale, t }: {
     setSelectedKey(null)
     setInspectorPanel(null)
   }, [osEnabled, source])
+  useEffect(() => {
+    // A recording that neither configures nor holds PostgreSQL has no PostgreSQL tab.
+    if (loading || error !== null || pgPresent || source !== "postgresql") return
+    setSource(osEnabled ? "host" : "events")
+    setFind("")
+    setOrder(null)
+    setSelectedKey(null)
+    setInspectorPanel(null)
+  }, [error, loading, osEnabled, pgPresent, source])
   const [mobileSearch, setMobileSearch] = useState(false)
   const [inspectorDetailRoot, setInspectorDetailRoot] = useState<HTMLElement | null>(null)
   const [inspectorChartRoot, setInspectorChartRoot] = useState<HTMLElement | null>(null)
   const [entityChartAvailable, setEntityChartAvailable] = useState(false)
   const [inspectorDetailTitle, setInspectorDetailTitle] = useState<string | null>(null)
   const inspectorDismiss = useRef<(() => void) | null>(null)
-  const [timelineLane, setTimelineLane] = useState<string>(opened.current.lens === "memory" ? "memory" : opened.current.lens === "disk" ? "io_stall" : opened.current.lens === "cpu" ? "cpu_busy" : "health")
+  const [timelineLane, setTimelineLane] = useState<string | null>(opened.current.lane)
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
   const [eventScope, setEventScope] = useState<readonly Finding[] | null>(null)
   const [findingRow, setFindingRow] = useState<DataRow | null>(null)
@@ -489,11 +498,6 @@ function App({ locale, onLocale, t }: {
     setCursor(reportVisibleCursor(next, reportRange))
   }, [reportRange])
   const previousView = useRef(baseViewKey)
-  useEffect(() => {
-    if (previousView.current === baseViewKey) return
-    previousView.current = baseViewKey
-    setOrder(null)
-  }, [baseViewKey])
   useEffect(() => {
     if (hour === null) return
     clearEntityContext()
@@ -1004,9 +1008,14 @@ function App({ locale, onLocale, t }: {
     panel: inspectorPanel,
     find,
     metric: source === "host" ? systemMetric : null,
-  }), [activeRelation, activeRelationLens, cursor, find, inspectorPanel, lens, order, pgSection, planLens, relationFilters, relationLevel, relationSelectedKey, selectedKey, source, statementLens, systemMetric])
+    lane: timelineLane,
+  }), [activeRelation, activeRelationLens, cursor, find, inspectorPanel, lens, order, pgSection, planLens, relationFilters, relationLevel, relationSelectedKey, selectedKey, source, statementLens, systemMetric, timelineLane])
   const steps = useRef<string | null>(null)
   useEffect(() => {
+    if (previousView.current !== baseViewKey) {
+      previousView.current = baseViewKey
+      if (order !== null || timelineLane !== null) { setOrder(null); setTimelineLane(null); return }
+    }
     if (loading) return
     const destination = historyAddress(address, window.location.pathname)
     const replace = replaceReportAddress.current
@@ -1015,13 +1024,16 @@ function App({ locale, onLocale, t }: {
     const dragging = steps.current !== null && stepOf(steps.current) === stepOf(destination)
     steps.current = destination
     window["history"][replace || dragging ? "replaceState" : "pushState"]({}, "", destination)
-  }, [address, loading])
+  }, [address, baseViewKey, loading, order, timelineLane])
   useEffect(() => {
     const back = () => {
       const opening = readAddress(window.location.search)
       const openingAt = reportVisibleAt(opening.at, reportRange)
-      setSource(sourceOf(opening.view))
+      const openingSource = sourceOf(opening.view)
+      previousView.current = openingSource === "postgresql" ? `postgresql:${pgSectionOf(opening.view)}` : openingSource
+      setSource(openingSource)
       setSystemMetric(opening.metric)
+      setTimelineLane(opening.lane)
       setPgSection(pgSectionOf(opening.view))
       setLens(opening.lens)
       setStatementLens(statementLensOf(opening.pgLens))
@@ -1187,10 +1199,32 @@ function App({ locale, onLocale, t }: {
   }, [])
   const timelinePrimary = visibleSource === "processes"
     ? lens === "cpu" ? "cpu_busy" : lens === "memory" ? "memory" : lens === "disk" ? "io_stall" : "health"
-    : visibleSource === "postgresql" ? pgSection === "statements" || pgSection === "plans" ? "pg_running" : pgSection === "activity" || pgSection === "locks" || pgSection === "vacuum" ? "pg_waiting" : "health"
-      : "health"
+    : visibleSource === "postgresql" ? postgresTimelineLane(pgSection)
+      : visibleSource === "host" ? hostTimelineLane(systemMetric, environment) : "health"
+  const timelineActions = {
+    disk: (point: import("./api").LanePoint) => {
+      if (point.device === undefined) return
+      clearEntityContext()
+      navigateSearchSurface(null)
+      setSource("host")
+      setSystemMetric("device_busy")
+      setSelectedKey(JSON.stringify(["disk", "1108001", [String(point.device.major), String(point.device.minor)]]))
+      setInspectorPanel("detail")
+      chooseCursor(point.timestamp)
+    },
+    locks: (timestamp: number) => {
+      clearEntityContext()
+      navigateSearchSurface("pg_locks")
+      setSelectedKey(null)
+      setInspectorPanel(null)
+      setSource("postgresql")
+      setPgSection("locks")
+      setTimelineLane("pg_lock_waiting")
+      chooseCursor(timestamp)
+    },
+  }
   const exportSelection = !KRONIKA_REPORT && exportOpen && hour !== null && exportRange !== null ? rangeOnHour(exportRange, hour) : null
-  return <DisplayTimeScope hour={hour}><CursorNavigationContext value={cursorNavigation}><TimelineRequestContext value={timelinePhase}><main className={`app-shell flex h-dvh min-h-0 flex-col overflow-hidden${stretchPostgres ? " pg-table-shell" : ""}${inspectorOpen ? " inspector-open" : ""}${inspectorOpen && inspectorPanel === "chart" && !(entityChartAvailable && detailAvailable) ? " inspector-chart-open" : ""}${mobileSearch ? " mobile-search-open" : ""}`}>
+  return <DisplayTimeScope hour={hour}><CursorNavigationContext value={cursorNavigation}><TimelineRequestContext value={timelinePhase}><TimelineActionsContext value={timelineActions}><main className={`app-shell flex h-dvh min-h-0 flex-col overflow-hidden${stretchPostgres ? " pg-table-shell" : ""}${inspectorOpen ? " inspector-open" : ""}${inspectorOpen && inspectorPanel === "chart" && !(entityChartAvailable && detailAvailable) ? " inspector-chart-open" : ""}${mobileSearch ? " mobile-search-open" : ""}`}>
     {data.syntheticDemo === true && <p className="pointer-events-none fixed bottom-2 left-2 z-[70] m-0 rounded border border-line3 bg-s1/95 px-2 py-1 font-sans text-[11px] font-medium tracking-[0.04em] text-fg3 shadow-sm" data-testid="demo-notice">{t("demo.synthetic")}</p>}
     <header className="topbar [.pg-table-shell>&]:flex-none">
       <span className="flex flex-none items-center text-accent2"><Activity aria-hidden="true" size={15} strokeWidth={2} /></span>
@@ -1199,7 +1233,7 @@ function App({ locale, onLocale, t }: {
       <nav aria-label={t("nav.sources")} className="source-tabs max-[760px]:overflow-x-auto">
         {osEnabled && <button aria-current={visibleSource === "host" ? "page" : undefined} className={visibleSource === "host" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(null); setSystemFocus(null); setSelectedKey(null); setInspectorPanel(null); setSource("host") }} type="button">{t("nav.host")}</button>}
         {osEnabled && <button aria-current={visibleSource === "processes" ? "page" : undefined} className={visibleSource === "processes" ? "source-active" : undefined} data-testid="process-tab" onClick={() => { navigateSearchSurface("os_process"); setSelectedKey(null); setInspectorPanel(null); setSource("processes") }} type="button">{t("nav.processes")}</button>}
-        <button aria-current={visibleSource === "postgresql" ? "page" : undefined} className={visibleSource === "postgresql" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(searchSurfaceForSection(pgSection)); setSelectedKey(null); setInspectorPanel(null); setSource("postgresql") }} title={pgPresent ? undefined : t("nav.no_data")} type="button">{t("nav.postgresql")}</button>
+        {pgPresent && <button aria-current={visibleSource === "postgresql" ? "page" : undefined} className={visibleSource === "postgresql" ? "source-active" : undefined} onClick={() => { navigateSearchSurface(searchSurfaceForSection(pgSection)); setSelectedKey(null); setInspectorPanel(null); setSource("postgresql") }} type="button">{t("nav.postgresql")}</button>}
         <button aria-current={visibleSource === "events" ? "page" : undefined} className={visibleSource === "events" ? "source-active" : undefined} onClick={() => { navigateSearchSurface("events"); setEventScope(null); setSelectedFinding(null); setInspectorPanel(null); setSource("events") }} title={eventsPresent ? undefined : t("nav.no_data")} type="button">{t("nav.events")}</button>
       </nav>
 
@@ -1283,7 +1317,7 @@ function App({ locale, onLocale, t }: {
 
     {helpOpen && <HelpPanel build={serverBuild} items={helpItems} onClose={() => setHelpOpen(false)} t={t} version={serverVersion} />}
     {!KRONIKA_REPORT && mcpOpen && <McpPanel database={database} onClose={() => setMcpOpen(false)} t={t} />}
-  </main></TimelineRequestContext></CursorNavigationContext></DisplayTimeScope>
+  </main></TimelineActionsContext></TimelineRequestContext></CursorNavigationContext></DisplayTimeScope>
 }
 
 const LOAD_SECONDS_KEY = "kronika.hourload-seconds"

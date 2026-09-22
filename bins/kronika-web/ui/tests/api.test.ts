@@ -1103,6 +1103,32 @@ test("timeline base is lane-free and the atomic background result retains segmen
   }
 })
 
+test("background lane metadata keeps each disk winner and exact captured graph counts", async () => {
+  const api = await bundledApi()
+  Reflect.deleteProperty(globalThis, "__KRONIKA_REAL_HOUR__")
+  const originalFetch = globalThis.fetch
+  const device = { major: 8, minor: 16, name: "sdb", scope: 0 }
+  const locks = { waiting: 2, blockers: 1, prepared: true }
+  globalThis.fetch = async () => ndjson([
+    { record: "hour", from: String(START), to: String(START + 100) },
+    { record: "finished_segment", id: "7", min_ts: String(START), max_ts: String(START + 100), sections: [] },
+    { record: "lane", segment_id: "7", lane: "disk_busy", ts: String(START + 10), value: 0, device },
+    { record: "lane", segment_id: "7", lane: "disk_busy", ts: String(START + 20), value: null },
+    { record: "lane", segment_id: "7", lane: "pg_lock_graph", ts: String(START + 30), value: null, locks },
+  ])
+  try {
+    const timeline = await api.loadTimeline(START, new AbortController().signal)
+    const lanes = await api.loadTimelineLanes(timeline, new AbortController().signal)
+    assert.deepEqual(lanes.points, [
+      { segmentId: "7", lane: "disk_busy", timestamp: START + 10, value: 0, device },
+      { segmentId: "7", lane: "disk_busy", timestamp: START + 20, value: null },
+      { segmentId: "7", lane: "pg_lock_graph", timestamp: START + 30, value: null, locks },
+    ])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test("background lanes carry the exact ordered base segments and lossless active WAL pin", async () => {
   const api = await bundledApi()
   Reflect.deleteProperty(globalThis, "__KRONIKA_REAL_HOUR__")

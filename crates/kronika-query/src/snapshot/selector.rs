@@ -358,7 +358,14 @@ fn prepare_current(
     };
     drop(catalog);
     super::preparation::prepare_selected_state(
-        dataset, anchor, segments, clean, request, true, None,
+        dataset,
+        context.indexes.clone(),
+        anchor,
+        segments,
+        clean,
+        request,
+        true,
+        None,
     )?
     .finish_prepared()
     .map(Some)
@@ -445,6 +452,7 @@ fn prepare(
     drop(catalog);
     let prepared = super::preparation::prepare_selected(
         dataset,
+        context.indexes.clone(),
         anchor,
         segments,
         clean,

@@ -51,7 +51,7 @@ fn run_snapshot_query<R>(
 ) -> Result<R, crate::api::ApiError> {
     let mut attempt = || {
         let dataset = Arc::new(NativeDataset::from_root(&config.data_root)?);
-        let context = QueryContext::new(dataset, config.sources, config.synthetic_demo);
+        let context = crate::api::query_context(dataset, config.sources, config.synthetic_demo);
         execute(&context)
     };
     match attempt() {

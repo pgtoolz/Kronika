@@ -327,7 +327,7 @@ impl PreparedHour {
     }
 }
 
-fn missing_index_provider() -> QueryError {
+pub(crate) fn missing_index_provider() -> QueryError {
     QueryError::Unreadable(Box::new(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "this query context has no derived-index provider",
@@ -518,18 +518,24 @@ fn emit_lanes(
         return Ok(false);
     }
     for point in points {
-        if sink.cancelled()
-            || !sink.record(record(json!({
-                "record": "lane",
-                "segment_id": descriptor.id().to_string(),
-                "lane": point.key,
-                "ts": point.ts.to_string(),
-                "value": point.value,
-            }))?)
-        {
+        let mut payload = json!({
+            "record": "lane",
+            "segment_id": descriptor.id().to_string(),
+            "lane": point.key,
+            "ts": point.ts.to_string(),
+            "value": point.value,
+        });
+        if let Some(device) = point.device {
+            payload["device"] = json!(device);
+        }
+        if let Some(locks) = point.locks {
+            payload["locks"] = json!(locks);
+        }
+        if sink.cancelled() || !sink.record(record(payload)?) {
             return Ok(false);
         }
     }
+
     Ok(true)
 }
 

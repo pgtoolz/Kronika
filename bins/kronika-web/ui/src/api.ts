@@ -203,7 +203,22 @@ export function mergeSnapshotData(current: HourData, incoming: HourData, appendS
   })
 }
 
+export interface DiskIdentity {
+  readonly major: number
+  readonly minor: number
+  readonly name: string | null
+  readonly scope: number | null
+}
+
+export interface LockGraph {
+  readonly waiting: number
+  readonly blockers: number
+  readonly prepared: boolean
+}
+
 export interface LanePoint {
+  readonly device?: DiskIdentity
+  readonly locks?: LockGraph
   readonly segmentId: string
   readonly lane: string
   readonly timestamp: number
@@ -476,12 +491,24 @@ export async function loadTimelineLanes(
       points.push({
         segmentId: requiredText(record.segment_id, "lane segment id"),
         lane: requiredText(record["lane"], "lane name"),
+        ...(record.device === undefined ? {} : { device: laneDevice(record.device) }),
+        ...(record.locks === undefined ? {} : { locks: laneLocks(record.locks) }),
         timestamp: integer(record.ts, "lane timestamp"),
         value: record.value === null ? null : finiteNumber(record.value, "lane value"),
       })
     }
   }
   return { contexts, points }
+}
+
+function laneDevice(stored: unknown): DiskIdentity {
+  const device = stored as Record<string, unknown>
+  return { major: integer(device.major, "device major"), minor: integer(device.minor, "device minor"), name: device.name === null ? null : requiredText(device.name, "device name"), scope: device.scope === null ? null : integer(device.scope, "device scope") }
+}
+
+function laneLocks(stored: unknown): LockGraph {
+  const graph = stored as Record<string, unknown>
+  return { waiting: integer(graph.waiting, "waiting PIDs"), blockers: integer(graph.blockers, "blocking PIDs"), prepared: graph.prepared === true }
 }
 
 function timelineWindow(hour: number, visibleRange: TimelineRange | null): TimelineRange {

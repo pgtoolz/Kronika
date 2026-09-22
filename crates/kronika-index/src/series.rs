@@ -21,6 +21,8 @@ pub enum SeriesKind {
     PgActiveBackends = 5,
     /// Sparse source locators for one physical section.
     Findings = 6,
+    /// `PostgreSQL` backends whose instantaneous wait event type is `Lock`.
+    PgLockWaiting = 7,
 }
 
 impl SeriesKind {
@@ -32,6 +34,7 @@ impl SeriesKind {
             4 => Ok(Self::PgTransactionsPerSecond),
             5 => Ok(Self::PgActiveBackends),
             6 => Ok(Self::Findings),
+            7 => Ok(Self::PgLockWaiting),
             _ => Err(IndexError::BadLayout),
         }
     }
@@ -93,6 +96,15 @@ pub struct ActiveBackendPoint {
     pub count: u32,
 }
 
+/// One instantaneous lock-waiting backend count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockWaitPoint {
+    /// Snapshot timestamp in unix microseconds.
+    pub timestamp: i64,
+    /// Rows whose recorded wait event type is exactly `Lock`.
+    pub count: u32,
+}
+
 /// One allowlisted presentation block.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SeriesBlock {
@@ -118,6 +130,13 @@ pub enum SeriesBlock {
     },
     /// Sparse locators into one physical section.
     Findings(FindingBlock),
+    /// Full-resolution lock-waiting backend counts from one physical layout.
+    PgLockWaiting {
+        /// Physical `pg_stat_activity` layout.
+        type_id: u32,
+        /// Points ordered by timestamp.
+        points: Vec<LockWaitPoint>,
+    },
 }
 
 impl SeriesBlock {
@@ -140,6 +159,10 @@ impl SeriesBlock {
                 kind: SeriesKind::Findings,
                 type_id: block.type_id,
             },
+            Self::PgLockWaiting { type_id, .. } => SeriesKey {
+                kind: SeriesKind::PgLockWaiting,
+                type_id: *type_id,
+            },
         }
     }
 
@@ -149,8 +172,13 @@ impl SeriesBlock {
                 encode_health(points)
             }
             Self::PgTransactions { points, .. } => encode_transactions(points),
-            Self::PgActiveBackends { points, .. } => encode_active(points),
+            Self::PgActiveBackends { points, .. } => {
+                encode_counts(points.iter().map(|point| (point.timestamp, point.count)))
+            }
             Self::Findings(block) => block.encode(),
+            Self::PgLockWaiting { points, .. } => {
+                encode_counts(points.iter().map(|point| (point.timestamp, point.count)))
+            }
         }
     }
 
@@ -172,7 +200,19 @@ impl SeriesBlock {
             SeriesKind::PgActiveBackends if pg_activity_layout(key.type_id) => {
                 Ok(Self::PgActiveBackends {
                     type_id: key.type_id,
-                    points: decode_active(bytes)?,
+                    points: decode_counts(bytes)?
+                        .into_iter()
+                        .map(|(timestamp, count)| ActiveBackendPoint { timestamp, count })
+                        .collect(),
+                })
+            }
+            SeriesKind::PgLockWaiting if pg_activity_layout(key.type_id) => {
+                Ok(Self::PgLockWaiting {
+                    type_id: key.type_id,
+                    points: decode_counts(bytes)?
+                        .into_iter()
+                        .map(|(timestamp, count)| LockWaitPoint { timestamp, count })
+                        .collect(),
                 })
             }
             SeriesKind::Findings if key.type_id == 0 || finding_layout(key.type_id) => {
@@ -276,21 +316,21 @@ fn decode_transactions(bytes: &[u8]) -> Result<Vec<TransactionPoint>, IndexError
     Ok(points)
 }
 
-fn encode_active(points: &[ActiveBackendPoint]) -> Result<Vec<u8>, IndexError> {
+fn encode_counts(points: impl ExactSizeIterator<Item = (i64, u32)>) -> Result<Vec<u8>, IndexError> {
     let mut out = with_count(points.len(), 12)?;
     let mut previous = None;
-    for point in points {
-        if previous.is_some_and(|timestamp| timestamp > point.timestamp) {
+    for (timestamp, count) in points {
+        if previous.is_some_and(|before| before > timestamp) {
             return Err(IndexError::BadLayout);
         }
-        previous = Some(point.timestamp);
-        out.extend_from_slice(&point.timestamp.to_le_bytes());
-        out.extend_from_slice(&point.count.to_le_bytes());
+        previous = Some(timestamp);
+        out.extend_from_slice(&timestamp.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
     }
     Ok(out)
 }
 
-fn decode_active(bytes: &[u8]) -> Result<Vec<ActiveBackendPoint>, IndexError> {
+fn decode_counts(bytes: &[u8]) -> Result<Vec<(i64, u32)>, IndexError> {
     let (count, body) = count_and_body(bytes, 12)?;
     let mut points = Vec::with_capacity(count);
     let mut previous = None;
@@ -300,10 +340,7 @@ fn decode_active(bytes: &[u8]) -> Result<Vec<ActiveBackendPoint>, IndexError> {
             return Err(IndexError::BadLayout);
         }
         previous = Some(timestamp);
-        points.push(ActiveBackendPoint {
-            timestamp,
-            count: u32_at(raw, 8)?,
-        });
+        points.push((timestamp, u32_at(raw, 8)?));
     }
     Ok(points)
 }

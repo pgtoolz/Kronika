@@ -137,7 +137,7 @@ Device metrics describe the number, size and duration of storage operations. Rec
 | Queue depth | `Δio_weighted_time_ms / (1,000 × Δt)` | Average requests active or waiting |
 | Active I/O | `io_in_progress` | Current requests |
 
-Host **Device busy** and **Queue depth** charts take the maximum per-device value at each timestamp. Their breakdown lines are individual devices; devices that remain zero throughout the hour are hidden if any device is active. The USE Storage cells instead use `min(100, 100 × R(Σio_time_ms)/1,000)` and `R(Σio_weighted_time_ms)/1,000`. **Active I/O** in the host overview is `Σio_in_progress`; **Block devices** is the number of recorded device rows.
+Host **Device busy** and **Queue depth** charts take the maximum per-device value at each timestamp. Their breakdown lines are individual devices; devices that remain zero throughout the hour are hidden if any device is active. The timeline **Disk** lane and the USE Storage cells name the busiest recorded host device and report its busy % and queue depth; layers are not summed. A tie names the device beneath the others according to the recorded block topology (the whole disk under its partition, the slave under an LVM, MD or dm volume); devices with no recorded stack between them tie towards the lower `major:minor`. **Active I/O** in the host overview is `Σio_in_progress`; **Block devices** is the number of recorded device rows.
 
 Sources: [diskstats parser](../crates/kronika-source-os/src/proc/diskstats.rs), [`SYSTEM_ENTITIES`, `latencyPoints`, `peakDeviceRate`](../bins/kronika-web/ui/src/system-view.tsx), [`read_disk`, `points`](../crates/kronika-query/src/hour/lanes.rs).
 
@@ -302,7 +302,7 @@ USE columns are Utilization (U), Saturation (S), and Errors (E). Cells read thei
 |---|---|---|---|
 | Host CPU | CPU usage % | CPU PSI interval % | Unavailable |
 | Host memory | In use % | Swapped pages/s | OOM kills/s |
-| Host storage | Capped summed busy % | Summed average queue | Unavailable |
+| Host storage | Busiest device busy % | Busiest device queue depth | Unavailable |
 | Host/namespace network | RX and TX B/s | Drops including FIFO/s | RX + TX errors/s |
 | Cgroup CPU | CPU-limit share %, otherwise used cores | Throttled % and CPU PSI % | Unavailable |
 | Cgroup memory | Effective-limit share %, fallback current bytes | Memory PSI % | OOM kills/s |

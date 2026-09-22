@@ -6,18 +6,20 @@ import { useDisplayTime } from "./display-time-context"
 import { LabelHelp, type Translate } from "./help"
 import { orderedRecordedTimes } from "./keyboard"
 import { humanDurationAxis, type Locale } from "./model"
-import type { SnapshotDirection } from "./api"
+import type { DiskIdentity, SnapshotDirection } from "./api"
 import { niceCeiling } from "./spark"
 
 export type ChartScale = "percent" | "nonnegative" | "signed"
 
 export interface RecordedPoint {
+  readonly device?: DiskIdentity
   readonly segmentId: string
   readonly timestamp: number
   readonly value: number | null
 }
 
 export interface RecordedSeries {
+  readonly pointsOnly?: boolean
   readonly color: "cyan" | "amber" | "violet" | "green" | "red" | "gray" | "blue" | "rose"
   readonly id: string
   readonly helpKey: string
@@ -519,14 +521,17 @@ export function exactReadings(frame: ChartFrame, series: readonly RecordedSeries
     time: compactChartTime(timestamp, time, chartSecondsUseful(frame.timestamps, time)),
     values: series.map((line, ordinal) => {
       const stored = frame.data[ordinal + 1]?.[index]
-      return { label: line.label, output: typeof stored === "number" ? line.value(stored, locale) : "—", unit: line.unit }
+      const device = line.points.find((point) => point.timestamp === timestamp)?.device
+      const label = device === undefined ? line.label : `${line.label} · ${device.name ?? ""} ${device.major}:${device.minor}`
+      return { label, output: typeof stored === "number" ? line.value(stored, locale) : "—", unit: line.unit }
     }),
   }
 }
 
 export function scaleRange(scale: ChartScale, values: readonly number[]): readonly [number, number] {
-  if (scale === "percent") return [0, 100]
   const finite = values.filter(Number.isFinite)
+  // Percent axes share 0–100; a kernel reading above 100 lifts the ceiling instead of clipping.
+  if (scale === "percent") return [0, Math.max(100, finite.length === 0 ? 0 : niceCeiling(Math.max(...finite)))]
   if (scale === "nonnegative") return [0, niceCeiling(Math.max(0, ...finite))]
   if (finite.length === 0) return [-1, 1]
   const low = Math.min(...finite)
@@ -598,7 +603,7 @@ function chartTopology(series: readonly RecordedSeries[], compact: boolean): Cha
       const line = series[seriesIndices[0]!]!
       return [seriesIndices, !compact && line.unit !== "" && line.tickAxis !== "duration"]
     }),
-    series: series.map(({ color, id, scale, tickAxis }) => [id, color, scale, tickAxis ?? ""]),
+    series: series.map(({ color, id, scale, tickAxis, pointsOnly }) => [id, color, scale, tickAxis ?? "", pointsOnly ?? false]),
   })
   return { partitions, seriesScaleKeys, signature }
 }
@@ -764,9 +769,9 @@ function chartOptions(
         label: line.label,
         scale: topology.seriesScaleKeys[index]!,
         stroke: color(chartColor(line.color)),
-        width: compact ? 1.5 : 2,
-        ...(singleSeries ? { fill: (chart: uPlot) => areaFill(chart, color(chartColor(line.color))) } : {}),
-        points: { filter: () => [...(runtime.current.frame.isolated.get(index + 1) ?? [])], show: true, size: 5 },
+        width: line.pointsOnly === true ? 0 : compact ? 1.5 : 2,
+        ...(singleSeries && line.pointsOnly !== true ? { fill: (chart: uPlot) => areaFill(chart, color(chartColor(line.color))) } : {}),
+        points: { ...(line.pointsOnly === true ? {} : { filter: () => [...(runtime.current.frame.isolated.get(index + 1) ?? [])] }), show: true, size: 5 },
       })),
     ],
   }

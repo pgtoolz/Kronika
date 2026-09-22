@@ -1,7 +1,8 @@
 mod cgroup;
 mod points;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use cgroup::{
     read_cgroup_context, read_cgroup_cpu, read_cgroup_io, read_cgroup_memory, read_cgroup_pids,
@@ -17,6 +18,50 @@ pub(super) struct LanePoint {
     pub(super) key: &'static str,
     pub(super) ts: i64,
     pub(super) value: Option<f64>,
+    pub(super) device: Option<DiskIdentity>,
+    pub(super) locks: Option<LockGraph>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub(super) struct DiskIdentity {
+    major: i64,
+    minor: i64,
+    #[serde(serialize_with = "serialize_name")]
+    name: Option<Arc<str>>,
+    scope: Option<i64>,
+}
+
+#[expect(
+    clippy::ref_option,
+    reason = "serde's serialize_with hands over the field by reference"
+)]
+fn serialize_name<S: serde::Serializer>(
+    name: &Option<Arc<str>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&name.as_deref(), serializer)
+}
+
+type DiskSnapshot = BTreeMap<(i64, i64), DiskCounters>;
+
+struct DiskCounters {
+    identity: DiskIdentity,
+    busy: Option<i64>,
+    weighted: Option<i64>,
+}
+
+#[derive(Default, Clone, serde::Serialize)]
+pub(super) struct LockGraph {
+    waiting: usize,
+    blockers: usize,
+    prepared: bool,
+}
+
+#[derive(Default)]
+struct LockGraphRows {
+    waiting: BTreeSet<i64>,
+    blockers: BTreeSet<i32>,
+    prepared: bool,
 }
 
 #[derive(Default)]
@@ -27,8 +72,11 @@ struct Counters {
     stall_cpu: BTreeMap<i64, i64>,
     stall_io: BTreeMap<i64, i64>,
     memory: BTreeMap<i64, f64>,
-    disk_busy: BTreeMap<i64, i64>,
-    disk_queue: BTreeMap<i64, i64>,
+    disks: BTreeMap<i64, DiskSnapshot>,
+    // Recorded block stack, upper device to the devices beneath it, as an hour-wide union:
+    // major:minor pairs stay put within an hour, and the lane only breaks exact ties with it.
+    disk_parents: BTreeMap<(i64, i64), BTreeSet<(i64, i64)>>,
+    lock_graphs: BTreeMap<i64, LockGraphRows>,
     net_rx: BTreeMap<i64, i64>,
     net_tx: BTreeMap<i64, i64>,
     net_drop: BTreeMap<i64, i64>,
@@ -66,8 +114,8 @@ impl Counters {
         retain_after(&mut self.stall_cpu, finalized);
         retain_after(&mut self.stall_io, finalized);
         retain_after(&mut self.memory, finalized);
-        retain_after(&mut self.disk_busy, finalized);
-        retain_after(&mut self.disk_queue, finalized);
+        retain_after(&mut self.disks, finalized);
+        retain_after(&mut self.lock_graphs, finalized);
         retain_after(&mut self.net_rx, finalized);
         retain_after(&mut self.net_tx, finalized);
         retain_after(&mut self.net_drop, finalized);
@@ -173,6 +221,7 @@ pub(super) fn collect(
             "os_psi" => read_psi(segment, type_id, &mut state.counters)?,
             "os_meminfo" => read_memory(segment, type_id, &mut state.counters)?,
             "os_diskstats" => read_disk(segment, type_id, &mut state.counters)?,
+            "os_block_topology" => read_block_topology(segment, type_id, &mut state.counters)?,
             "os_netdev" => read_network(segment, type_id, &mut state.counters)?,
             "os_vmstat" => read_vmstat(segment, type_id, &mut state.counters)?,
             "os_cgroup_cpu" => read_cgroup_cpu(segment, type_id, &facts, &mut state.counters)?,
@@ -184,6 +233,7 @@ pub(super) fn collect(
                 read_cgroup_pids(segment, type_id, &facts, &mut state.counters)?;
             }
             "pg_stat_activity" => read_activity(segment, type_id, &mut state.counters)?,
+            "pg_locks" => read_locks(segment, type_id, &mut state.counters)?,
             _other => {}
         }
     }
@@ -369,21 +419,118 @@ fn read_memory(segment: &Segment, type_id: u32, counters: &mut Counters) -> Resu
 fn read_disk(segment: &Segment, type_id: u32, counters: &mut Counters) -> Result<(), QueryError> {
     let names = with_columns(
         type_id,
-        &["ts", "io_time_ms", "io_weighted_time_ms"],
+        &[
+            "ts",
+            "major",
+            "minor",
+            "device",
+            "io_time_ms",
+            "io_weighted_time_ms",
+        ],
+        &["scope"],
+    );
+    let mut rows = Vec::new();
+    let mut ids = HashSet::new();
+    segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
+        ids.extend(string_id(&row, "device"));
+        rows.push(row);
+        true
+    })?;
+    // The device name is presentation only: a damaged dictionary must not cost the hour its lanes.
+    let dictionary = segment.dictionary_for(&ids).unwrap_or_default();
+    // A handful of names serve thousands of rows: resolve each id once.
+    let names: HashMap<u64, Arc<str>> = ids
+        .into_iter()
+        .filter_map(|id| {
+            text(Some(id), &dictionary).map(|name| (id, Arc::from(String::from_utf8_lossy(name))))
+        })
+        .collect();
+    for row in rows {
+        let (Some(ts), Some(major), Some(minor)) = (
+            timestamp(&row, "ts"),
+            integer(&row, "major"),
+            integer(&row, "minor"),
+        ) else {
+            continue;
+        };
+        let identity = DiskIdentity {
+            major,
+            minor,
+            name: string_id(&row, "device").and_then(|id| names.get(&id).cloned()),
+            scope: integer(&row, "scope"),
+        };
+        counters.disks.entry(ts).or_default().insert(
+            (major, minor),
+            DiskCounters {
+                identity,
+                busy: integer(&row, "io_time_ms"),
+                weighted: integer(&row, "io_weighted_time_ms"),
+            },
+        );
+    }
+    Ok(())
+}
+
+fn read_block_topology(
+    segment: &Segment,
+    type_id: u32,
+    counters: &mut Counters,
+) -> Result<(), QueryError> {
+    let names = with_columns(
+        type_id,
+        &["major", "minor", "parent_major", "parent_minor"],
         &["scope"],
     );
     segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
-        let (Some(ts), Some(busy), Some(weighted)) = (
-            timestamp(&row, "ts"),
-            number(&row, "io_time_ms"),
-            number(&row, "io_weighted_time_ms"),
+        let (Some(major), Some(minor), Some(parent_major), Some(parent_minor)) = (
+            integer(&row, "major"),
+            integer(&row, "minor"),
+            integer(&row, "parent_major"),
+            integer(&row, "parent_minor"),
         ) else {
             return true;
         };
-        add(&mut counters.disk_busy, ts, busy);
-        add(&mut counters.disk_queue, ts, weighted);
+        if integer(&row, "scope").is_none_or(|scope| scope == 0) {
+            counters
+                .disk_parents
+                .entry((major, minor))
+                .or_default()
+                .insert((parent_major, parent_minor));
+        }
         true
     })?;
+    Ok(())
+}
+
+fn read_locks(segment: &Segment, type_id: u32, counters: &mut Counters) -> Result<(), QueryError> {
+    segment.visit_rows(
+        type_id,
+        &["ts", "pid", "blocked_by"],
+        0,
+        usize::MAX,
+        |_ordinal, row| {
+            let (Some(ts), Some(pid), Some(Cell::ListI32(blockers))) = (
+                timestamp(&row, "ts"),
+                integer(&row, "pid"),
+                row.get("blocked_by"),
+            ) else {
+                return true;
+            };
+            let graph = counters.lock_graphs.entry(ts).or_default();
+            if !blockers.is_empty() {
+                graph.waiting.insert(pid);
+            }
+            for blocker in blockers {
+                if *blocker > 0 {
+                    graph.blockers.insert(*blocker);
+                }
+                if *blocker == 0 {
+                    graph.prepared = true;
+                }
+            }
+            true
+        },
+    )?;
     Ok(())
 }
 

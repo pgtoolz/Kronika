@@ -18,12 +18,13 @@ use kronika_query::snapshot::{
     execute_processes, execute_relation,
 };
 use kronika_query::{
-    CatalogRequest, EventsQuery, EventsRepresentation, EventsResult, Filter, FinishedDataset,
-    HeatmapBatchQuery, HeatmapBatchResult, HeatmapItemQuery, HeatmapView, HourPart, HourRequest,
-    HourSeriesRequest, IndexProvider, IndexRequest, MemoryIndexProvider, NormalizedRanking,
-    QueryContext, QueryDataset, QueryRequest, QuerySink, RelationGroup, RelationKind,
-    RowDetailResult, StatementScope, TimeRange, Window, detail_locator, execute, execute_events,
-    execute_heatmap_batch, execute_row_detail, validate_row_detail_ref,
+    CatalogRequest, DatasetSegment, EventsQuery, EventsRepresentation, EventsResult, Filter,
+    FinishedDataset, HeatmapBatchQuery, HeatmapBatchResult, HeatmapItemQuery, HeatmapView,
+    HourPart, HourRequest, HourSeriesRequest, IndexProvider, IndexRequest, IndexResource,
+    MemoryIndexProvider, NormalizedRanking, QueryContext, QueryDataset, QueryError, QueryRequest,
+    QuerySink, RelationGroup, RelationKind, RowDetailResult, StatementScope, TimeRange, Window,
+    detail_locator, execute, execute_events, execute_heatmap_batch, execute_row_detail,
+    validate_row_detail_ref,
 };
 use kronika_reader::Reader;
 use kronika_registry::instance_metadata::{InstanceMetadata, InstanceMetadataV3};
@@ -42,6 +43,42 @@ use kronika_registry::{StrId, Ts};
 use kronika_store::{EmbeddedSource, PosixSource};
 use kronika_writer::{Interner, Journal, JournalConfig, SectionBuffers, dict, write_segment};
 use serde as _;
+
+/// Serves index blocks built from each segment body, as the store and the exporter do.
+#[derive(Debug)]
+struct BuiltIndexProvider(Arc<dyn QueryDataset>);
+
+impl IndexProvider for BuiltIndexProvider {
+    fn load(
+        &self,
+        segment: &DatasetSegment,
+        _logical_name: &str,
+        keys: &[kronika_index::SeriesKey],
+    ) -> Result<IndexResource, QueryError> {
+        let body = self.0.open(segment)?;
+        let unreadable = |error: Box<dyn std::error::Error + Send + Sync>| {
+            QueryError::Unreadable(Box::new(std::io::Error::other(error)))
+        };
+        let bytes = kronika_index::build_selected(&body, keys)
+            .map_err(|error| unreadable(Box::new(error)))?
+            .encode()
+            .map_err(|error| unreadable(Box::new(error)))?;
+        Ok(IndexResource {
+            index: kronika_index::Index::decode_target(&bytes, keys)
+                .map_err(|error| QueryError::Unreadable(Box::new(error)))?,
+        })
+    }
+}
+
+/// A context whose derived index is built from the same dataset.
+fn indexed_context(
+    dataset: Arc<dyn QueryDataset>,
+    sources: u32,
+    synthetic_demo: bool,
+) -> QueryContext {
+    QueryContext::new(Arc::clone(&dataset), sources, synthetic_demo)
+        .with_index_provider(Arc::new(BuiltIndexProvider(dataset)))
+}
 
 const SEGMENT_ID: i64 = 1_709_164_800_000_000;
 const SEGMENT_ID_TEXT: &str = "1709164800000000";
@@ -216,29 +253,24 @@ struct CountingRowDetailDataset {
 }
 
 impl QueryDataset for CountingRowDetailDataset {
-    fn catalog(
-        &self,
-    ) -> Result<Box<dyn kronika_query::CapturedCatalog + '_>, kronika_query::QueryError> {
+    fn catalog(&self) -> Result<Box<dyn kronika_query::CapturedCatalog + '_>, QueryError> {
         self.inner.catalog()
     }
 
-    fn segment(&self, id: i64) -> Result<kronika_query::DatasetListing, kronika_query::QueryError> {
+    fn segment(&self, id: i64) -> Result<kronika_query::DatasetListing, QueryError> {
         self.inner.segment(id)
     }
 
-    fn open(
-        &self,
-        segment: &kronika_query::DatasetSegment,
-    ) -> Result<kronika_reader::Segment, kronika_query::QueryError> {
+    fn open(&self, segment: &DatasetSegment) -> Result<kronika_reader::Segment, QueryError> {
         self.opens.fetch_add(1, Ordering::Relaxed);
         self.inner.open(segment)
     }
 
     fn at_active_position(
         &self,
-        segment: &kronika_query::DatasetSegment,
+        segment: &DatasetSegment,
         position: u64,
-    ) -> Result<kronika_query::DatasetSegment, kronika_query::QueryError> {
+    ) -> Result<DatasetSegment, QueryError> {
         self.inner.at_active_position(segment, position)
     }
 }
@@ -1465,7 +1497,7 @@ fn all_snapshot_finders_are_typed_identical_for_posix_and_embedded_finished_zms(
     let payload = write_heatmap_fixture(directory.path(), segment_id);
 
     let posix = PosixSource::open(directory.path()).expect("POSIX source");
-    let posix_context = QueryContext::new(Arc::new(FinishedDataset::new(posix)), 0b11, false);
+    let posix_context = indexed_context(Arc::new(FinishedDataset::new(posix)), 0b11, false);
 
     let embedded = EmbeddedSource::from_owned(
         segment_id,
@@ -1473,7 +1505,7 @@ fn all_snapshot_finders_are_typed_identical_for_posix_and_embedded_finished_zms(
         u64::try_from(payload.len()).expect("payload length fits u64"),
     )
     .expect("embedded source");
-    let embedded_context = QueryContext::new(Arc::new(FinishedDataset::new(embedded)), 0b11, false);
+    let embedded_context = indexed_context(Arc::new(FinishedDataset::new(embedded)), 0b11, false);
 
     for surface in [
         FinderSurface::Processes,

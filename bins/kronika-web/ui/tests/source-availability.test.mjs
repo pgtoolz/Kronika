@@ -13,13 +13,15 @@ test("PostgreSQL availability follows configuration or selected-hour telemetry",
   assert.equal(hasPostgresTelemetry(data(false, true)), true)
 })
 
-test("unavailable peer routes remain explicit and never redirect into Host", async () => {
+test("the PostgreSQL tab follows recorded telemetry while Events stays an explicit route", async () => {
   const source = await readFile(new URL("../src/app.tsx", import.meta.url), "utf8")
   assert.match(source, /const visibleSource = source/)
-  assert.doesNotMatch(source, /if \(source === "postgresql" && !pgPresent\) setSource\("host"\)/)
+  assert.match(source, /\{pgPresent && <button[\s\S]*?\{t\("nav\.postgresql"\)\}<\/button>\}/)
+  // The loaded hour decides; a still-loading hour never bounces a deep link.
+  assert.match(source, /if \(loading \|\| error !== null \|\| pgPresent \|\| source !== "postgresql"\) return\s+setSource\(osEnabled \? "host" : "events"\)/)
   assert.doesNotMatch(source, /if \(source === "events" && !eventsPresent\) setSource\("host"\)/)
   assert.match(source, /visibleSource === "postgresql" && <PostgresView/)
-  assert.match(source, /title=\{pgPresent \? undefined : t\("nav\.no_data"\)\}/)
+  assert.doesNotMatch(source, /title=\{pgPresent \? undefined : t\("nav\.no_data"\)\}/)
   assert.match(source, /title=\{eventsPresent \? undefined : t\("nav\.no_data"\)\}/)
   const host = source.indexOf('setSource("host")')
   const processes = source.indexOf('data-testid="process-tab"', host)

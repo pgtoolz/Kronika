@@ -129,7 +129,10 @@ test("isolated samples are points and not fake line stubs", () => {
 })
 
 test("semantic scales remain explicit", () => {
-  assert.deepEqual(chart.scaleRange("percent", [-2, 42, 101]), [0, 100])
+  assert.deepEqual(chart.scaleRange("percent", [-2, 3, 42]), [0, 100])
+  // A reading above 100 lifts the ceiling instead of clipping.
+  assert.deepEqual(chart.scaleRange("percent", [-2, 42, 101]), [0, chart.scaleRange("nonnegative", [101])[1]])
+  assert.deepEqual(chart.scaleRange("percent", []), [0, 100])
   assert.deepEqual(chart.scaleRange("nonnegative", [0, 12]), [0, 20])
   assert.deepEqual(chart.scaleRange("signed", [-4, 12]), [-5, 20])
   assert.deepEqual(chart.scaleRange("signed", [-12, -4]), [-20, 0])
@@ -261,5 +264,17 @@ test("full charts live only in the bounded shared Inspector", async () => {
   assert.match(stylesheet, /html \{[^}]*overflow-anchor: none;/)
   assert.match(source, /w-\[max\(1px,calc\(var\(--chart-plot-width,calc\(100%_-_70px\)\)_-_var\(--chart-marker-end-reserve,0px\)\)\)\]/)
   assert.match(relations, /<InspectorChartPortal identity=\{`pg:\$\{row\.logicalName\}/)
-  assert.match(system, /<InspectorChartPortal identity=\{`system:\$\{section\}:\$\{entityRowKey\(selectedRow\)\}:history`\}/)
+  assert.match(system, /<InspectorChartPortal identity=\{`system:\$\{section\}:\$\{selectionIdentity\}:history`\}/)
+})
+
+
+test("MAX hover identifies the recorded winner of each point", () => {
+  const series = [line("Device busy", "%", "percent", [
+    { segmentId: "a", timestamp: 100, value: 60, device: { major: 8, minor: 0, name: "sda", scope: 0 } },
+    { segmentId: "b", timestamp: 200, value: 30, device: { major: 253, minor: 0, name: "dm-0", scope: 0 } },
+  ])]
+  const frame = chart.alignRecordedSeries(series)
+  const time = chart.createDisplayTimeFormatter("en", "utc", "UTC")
+  assert.deepEqual(chart.exactReadings(frame, series, 100, "en", time).values, [{ label: "Device busy · sda 8:0", output: "60", unit: "%" }])
+  assert.deepEqual(chart.exactReadings(frame, series, 200, "en", time).values, [{ label: "Device busy · dm-0 253:0", output: "30", unit: "%" }])
 })

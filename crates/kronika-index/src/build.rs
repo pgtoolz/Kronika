@@ -15,8 +15,8 @@ use kronika_reader::{Reader, SegmentKind, SegmentRef};
 use kronika_reader::{ReaderError, Segment};
 use metadata::{health_metadata, metadata_projection};
 use postgres::{
-    active_backend_points, active_backend_samples, combined_active_points, overall_points,
-    postgres_health_points, transaction_points,
+    active_backend_points, active_backend_samples, combined_active_points, lock_wait_points,
+    overall_points, postgres_health_points, transaction_points,
 };
 use stalls::health_points;
 #[cfg(feature = "posix")]
@@ -27,8 +27,8 @@ use crate::detect::{FindingBuilder, finding_layout};
 use crate::file::Index;
 use crate::health::Stall;
 use crate::series::{
-    ActiveBackendPoint, HealthPoint, SeriesBlock, SeriesKey, SeriesKind, pg_activity_layout,
-    pg_database_layout,
+    ActiveBackendPoint, HealthPoint, LockWaitPoint, SeriesBlock, SeriesKey, SeriesKind,
+    pg_activity_layout, pg_database_layout,
 };
 
 /// Reserved input-free layout for the derived OS health gauge.
@@ -87,6 +87,7 @@ pub(crate) struct ActiveBackendSample {
     pub(crate) timestamp: i64,
     pub(crate) first_active_ordinal: Option<u32>,
     pub(crate) count: u32,
+    pub(crate) lock_waiting: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -258,6 +259,10 @@ pub fn keys(segment: &Segment) -> Vec<SeriesKey> {
         } else if pg_activity_layout(type_id) {
             keys.push(SeriesKey {
                 kind: SeriesKind::PgActiveBackends,
+                type_id,
+            });
+            keys.push(SeriesKey {
+                kind: SeriesKind::PgLockWaiting,
                 type_id,
             });
         }
@@ -444,29 +449,8 @@ fn build_selected_series(
         .unwrap_or_default();
     let needs_pg_health = requested.contains(&SeriesKey::POSTGRES_HEALTH)
         || requested.contains(&SeriesKey::OVERALL_HEALTH);
-    let mut activity = BTreeMap::<u32, Vec<ActiveBackendPoint>>::new();
-    for type_id in segment
-        .type_ids()
-        .filter(|type_id| pg_activity_layout(*type_id))
-    {
-        let raw_requested = requested.contains(&SeriesKey {
-            kind: SeriesKind::PgActiveBackends,
-            type_id,
-        });
-        let finding_requested = requested.contains(&SeriesKey {
-            kind: SeriesKind::Findings,
-            type_id,
-        });
-        if raw_requested || needs_pg_health || finding_requested {
-            let samples = active_backend_samples(segment, type_id)?;
-            if raw_requested || needs_pg_health {
-                activity.insert(type_id, active_backend_points(&samples));
-            }
-            if finding_requested {
-                active_samples.insert(type_id, samples);
-            }
-        }
-    }
+    let (mut activity, mut lock_waits) =
+        activity_series(segment, &requested, needs_pg_health, active_samples)?;
     let combined_active = combined_active_points(&activity);
     let postgres_points = metadata
         .as_ref()
@@ -507,11 +491,58 @@ fn build_selected_series(
                     points: activity.remove(&key.type_id).unwrap_or_default(),
                 });
             }
+            SeriesKind::PgLockWaiting
+                if pg_activity_layout(key.type_id) && segment.rows_of(key.type_id).is_some() =>
+            {
+                blocks.push(SeriesBlock::PgLockWaiting {
+                    type_id: key.type_id,
+                    points: lock_waits.remove(&key.type_id).unwrap_or_default(),
+                });
+            }
             _ => {}
         }
     }
     blocks.sort_by_key(SeriesBlock::key);
     Ok(Index { blocks })
+}
+
+type ActivitySeries = (
+    BTreeMap<u32, Vec<ActiveBackendPoint>>,
+    BTreeMap<u32, Vec<LockWaitPoint>>,
+);
+
+/// Read each activity layout once for every requested series derived from it.
+fn activity_series(
+    segment: &Segment,
+    requested: &[SeriesKey],
+    needs_pg_health: bool,
+    active_samples: &mut BTreeMap<u32, Vec<ActiveBackendSample>>,
+) -> Result<ActivitySeries, BuildError> {
+    let mut activity = BTreeMap::new();
+    let mut lock_waits = BTreeMap::new();
+    for type_id in segment
+        .type_ids()
+        .filter(|type_id| pg_activity_layout(*type_id))
+    {
+        let wants = |kind| requested.contains(&SeriesKey { kind, type_id });
+        let raw_requested = wants(SeriesKind::PgActiveBackends);
+        let locks_requested = wants(SeriesKind::PgLockWaiting);
+        let finding_requested = wants(SeriesKind::Findings);
+        if !(raw_requested || locks_requested || needs_pg_health || finding_requested) {
+            continue;
+        }
+        let samples = active_backend_samples(segment, type_id)?;
+        if raw_requested || needs_pg_health {
+            activity.insert(type_id, active_backend_points(&samples));
+        }
+        if locks_requested {
+            lock_waits.insert(type_id, lock_wait_points(&samples));
+        }
+        if finding_requested {
+            active_samples.insert(type_id, samples);
+        }
+    }
+    Ok((activity, lock_waits))
 }
 
 #[cfg(test)]

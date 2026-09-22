@@ -13,7 +13,8 @@ use super::{
 };
 
 use crate::dataset::{DatasetSegment, QueryDataset, SegmentBounds, SegmentSelection};
-use crate::snapshot::cursor::{pin, snapshot_binding};
+use crate::index_provider::IndexProvider;
+use crate::snapshot::cursor::{bind_lock_observations, pin, snapshot_binding};
 use crate::snapshot::filter::{search_clause_columns, search_columns};
 use crate::snapshot::paging::page_order;
 use crate::snapshot::predecessor::{preceding, relation_preceding};
@@ -28,6 +29,7 @@ use crate::{
 #[derive(Debug)]
 pub struct SnapshotPreparation {
     dataset: Arc<dyn QueryDataset>,
+    indexes: Option<Arc<dyn IndexProvider>>,
     anchor: DatasetSegment,
     segments: Vec<DatasetSegment>,
     request: SnapshotRequest,
@@ -74,6 +76,7 @@ pub fn prepare_snapshot(
     let pin_current = !request.latest || request.row_ordinal.is_some();
     prepare_selected_state_with_inputs(
         Arc::clone(&context.dataset),
+        context.indexes.clone(),
         current,
         segments,
         clean,
@@ -86,6 +89,7 @@ pub fn prepare_snapshot(
 
 pub(crate) fn prepare_selected(
     dataset: Arc<dyn QueryDataset>,
+    indexes: Option<Arc<dyn IndexProvider>>,
     current: DatasetSegment,
     segments: Vec<DatasetSegment>,
     clean: bool,
@@ -94,6 +98,7 @@ pub(crate) fn prepare_selected(
 ) -> Result<PreparedSnapshot, QueryError> {
     prepare_selected_state(
         dataset,
+        indexes,
         current,
         segments,
         clean,
@@ -104,8 +109,13 @@ pub(crate) fn prepare_selected(
     .finish_prepared()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "captured selection and parsed request state meet at this ownership boundary"
+)]
 pub(super) fn prepare_selected_state(
     dataset: Arc<dyn QueryDataset>,
+    indexes: Option<Arc<dyn IndexProvider>>,
     current: DatasetSegment,
     segments: Vec<DatasetSegment>,
     clean: bool,
@@ -116,6 +126,7 @@ pub(super) fn prepare_selected_state(
     let inputs = prepared_snapshot_inputs(&request)?;
     prepare_selected_state_with_inputs(
         dataset,
+        indexes,
         current,
         segments,
         clean,
@@ -137,8 +148,7 @@ fn prepared_snapshot_inputs(
     let search = prepared_search(request, cursor.is_some())?;
     let first_match_query_id = prepared_first_match(request, search.as_deref())?;
     let binding = snapshot_binding(request, search.as_deref());
-    let parsed = cursor
-        .filter(|cursor| cursor.segment_id == request.segment_id && cursor.binding == binding);
+    let parsed = cursor.filter(|cursor| cursor.segment_id == request.segment_id);
     if request.cursor.is_some() && parsed.is_none() {
         return Err(QueryError::BadCursor);
     }
@@ -156,6 +166,7 @@ fn prepared_snapshot_inputs(
 )]
 fn prepare_selected_state_with_inputs(
     dataset: Arc<dyn QueryDataset>,
+    indexes: Option<Arc<dyn IndexProvider>>,
     current: DatasetSegment,
     segments: Vec<DatasetSegment>,
     clean: bool,
@@ -168,20 +179,39 @@ fn prepare_selected_state_with_inputs(
         cursor,
         search,
         first_match_query_id,
-        binding,
+        mut binding,
     } = inputs;
     let anchor = pin(dataset.as_ref(), current, cursor)?;
     let active_position = anchor.active_position().unwrap_or(0);
     if cursor.is_some_and(|cursor| cursor.active_position != active_position) {
         return Err(QueryError::BadCursor);
     }
-    let validator_segments =
-        std::iter::once(&anchor)
-            .chain(segments.iter().filter(|candidate| {
-                candidate.id() < anchor.id() && candidate.min_ts() <= request.at
-            }))
-            .cloned()
-            .collect::<Vec<_>>();
+    let lock_observations = !pin_current
+        && request.row_ordinal.is_none()
+        && request.sections.iter().any(|section| section == "pg_locks");
+    // An active segment created at or before `at` may still receive the activity
+    // sample that supersedes the graph, so it binds a Locks answer before it holds
+    // any rows. One created after `at` cannot, and a finished hour stays cacheable.
+    let binds_lock_observations = |candidate: &DatasetSegment| {
+        lock_observations
+            && (has_activity(candidate) && candidate.min_ts() <= request.at
+                || candidate.kind() == SegmentKind::Active && candidate.id() <= request.at)
+    };
+    let mut validator_segments = std::iter::once(&anchor)
+        .chain(segments.iter().filter(|candidate| {
+            candidate.id() != anchor.id()
+                && (candidate.id() < anchor.id() && candidate.min_ts() <= request.at
+                    || binds_lock_observations(candidate))
+        }))
+        .cloned()
+        .collect::<Vec<_>>();
+    if lock_observations {
+        validator_segments.sort_by_key(DatasetSegment::id);
+        binding = bind_lock_observations(binding, &validator_segments);
+    }
+    if cursor.is_some_and(|cursor| cursor.binding != binding) {
+        return Err(QueryError::BadCursor);
+    }
     let immutable = clean
         && anchor.kind() == SegmentKind::Finished
         && validator_segments
@@ -192,9 +222,14 @@ fn prepare_selected_state_with_inputs(
         SegmentKind::Finished if immutable => QueryStability::Immutable,
         SegmentKind::Finished => QueryStability::Revalidate,
     };
-    let validator_shape = format!("{request:?}");
+    let validator_shape = if lock_observations {
+        format!("locks-observation-v1:{request:?}")
+    } else {
+        format!("{request:?}")
+    };
     Ok(SnapshotPreparation {
         dataset,
+        indexes,
         anchor,
         segments,
         request,
@@ -210,12 +245,30 @@ fn prepare_selected_state_with_inputs(
     })
 }
 
+pub(super) fn has_activity(segment: &DatasetSegment) -> bool {
+    segment
+        .sections()
+        .iter()
+        .any(|section| logical_section_name(section.type_id) == Some("pg_stat_activity"))
+}
+
 impl SnapshotPreparation {
     /// Stability and immutable identity for HTTP cache adaptation.
     #[must_use]
     pub fn metadata(&self) -> QueryMetadata<'_> {
         QueryMetadata {
-            stability: self.stability,
+            stability: if self.stability == QueryStability::Immutable
+                && !self.pin_current
+                && self
+                    .request
+                    .sections
+                    .iter()
+                    .any(|section| section == "pg_locks")
+            {
+                QueryStability::Revalidate
+            } else {
+                self.stability
+            },
             identity: (self.stability == QueryStability::Immutable).then_some(
                 QueryIdentity::SegmentSet {
                     resource: "snapshot",
@@ -245,6 +298,7 @@ impl SnapshotPreparation {
     pub(super) fn finish_prepared(self) -> Result<PreparedSnapshot, QueryError> {
         let Self {
             dataset,
+            indexes,
             anchor,
             segments,
             request,
@@ -318,6 +372,7 @@ impl SnapshotPreparation {
         drop(segment);
         Ok(PreparedSnapshot {
             dataset,
+            indexes,
             anchor,
             latest: request.latest,
             pin_current,

@@ -189,3 +189,13 @@ test("Inspector chart and row-only Detail links are URL-native", () => {
   assert.equal(hostDetail, "/?view=host&metric=cpu_used_cores")
   assert.equal(readAddress(hostDetail.split("?")[1] ?? "").panel, null)
 })
+
+
+test("the global lane is independent of the Host metric and survives navigation addresses", () => {
+  for (const view of ["processes", "host", "pg.locks"] as const) for (const lane of ["disk_busy", "host_disk", "pg_lock_waiting"]) {
+    const state = { ...DEFAULT_ADDRESS, at: 1790014509263343, view, lane, metric: view === "host" ? "device_busy" : null }
+    assert.deepEqual(readAddress(writeAddress(state).slice(1)), state)
+  }
+  assert.equal(readAddress("lane=unknown&view=host&metric=device_busy").lane, null)
+  assert.equal(readAddress("view=host&metric=device_busy").metric, "device_busy")
+})

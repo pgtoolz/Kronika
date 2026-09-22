@@ -66,7 +66,7 @@ export function EventsView({
   readonly scope: readonly Finding[] | null
   readonly pattern: string
   readonly selected: Finding | null
-  readonly selectedLane: string
+  readonly selectedLane: string | null | undefined
   readonly t: Translate
 }) {
   const time = useDisplayTime()

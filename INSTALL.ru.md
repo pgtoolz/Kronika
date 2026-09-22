@@ -9,14 +9,14 @@
 
 ## 1. Скачивание и распаковка
 
-Скачайте [архив 1.2.3](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.3)
+Скачайте [архив 1.2.4](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.4)
 для своей архитектуры. Команды ниже — для x86-64. Для ARM64 задайте
 `target=aarch64-unknown-linux-musl`.
 
 ```sh
 target=x86_64-unknown-linux-musl
-archive="kronika-1.2.3-$target.tar.gz"
-curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.2.3/$archive"
+archive="kronika-1.2.4-$target.tar.gz"
+curl -fLO "https://github.com/pgtoolz/Kronika/releases/download/v1.2.4/$archive"
 tar -xzf "$archive"
 cd "${archive%.tar.gz}"
 ```

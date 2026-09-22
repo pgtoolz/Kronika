@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 
 import { fieldNameForLocator, type DataRow, type Finding, type LanePoint } from "./api"
 import { buildMetricSamples } from "./chart"
@@ -21,6 +21,7 @@ interface SeriesPoint {
   readonly segmentId: string
   readonly timestamp: number
   readonly value: number | null
+  readonly device?: NonNullable<LanePoint["device"]>
 }
 
 export interface GroupedFinding {
@@ -44,6 +45,7 @@ export type FindingShape = "circle" | "diamond" | "triangle"
 export type TimelinePresentation = "preview" | "inspector"
 export type TimelineRequestPhase = "pending" | "ready" | "error"
 export const TimelineRequestContext = createContext<TimelineRequestPhase>("ready")
+export const TimelineActionsContext = createContext<{ readonly disk: (point: LanePoint) => void; readonly locks: (timestamp: number) => void } | null>(null)
 
 export function Timeline({
   cursor,
@@ -79,12 +81,13 @@ export function Timeline({
   readonly onSelectedLane?: ((lane: string) => void) | undefined
   readonly primaryLane?: string | undefined
   readonly presentation?: TimelinePresentation | undefined
-  readonly selectedLane?: string | undefined
+  readonly selectedLane?: string | null | undefined
   readonly t: Translate
 }) {
   const time = useDisplayTime()
   const requestPhase = useContext(TimelineRequestContext)
   const navigation = useCursorNavigation()
+  const actions = useContext(TimelineActionsContext)
   const [previewCursor, setPreviewCursor] = useState<number | null>(null)
   const displayCursor = previewCursor ?? cursor
   const preview = useCallback((timestamp: number | null) => {
@@ -101,7 +104,7 @@ export function Timeline({
   const lanes = useMemo<readonly TimelineLane[]>(() => {
     const of = (name: string) => lanePoints
       .filter((point) => point.lane === name)
-      .map((point) => ({ segmentId: point.segmentId, timestamp: point.timestamp, value: point.value }))
+      .map((point) => ({ segmentId: point.segmentId, timestamp: point.timestamp, value: point.value, ...(point.device === undefined ? {} : { device: point.device }) }))
     const one = (color: TimelineSeries["color"], field: string, points: readonly SeriesPoint[]): readonly [TimelineSeries] => [{ color, field, points }]
     const recorded = (name: string) => of(name).some((point) => point.value !== null)
     const lane = (color: TimelineSeries["color"], key: string): TimelineLane => ({ key, series: one(color, key, of(key)) })
@@ -112,22 +115,23 @@ export function Timeline({
         lane("amber", "cg_cpu_psi"),
         lane("violet", recorded("cg_memory") ? "cg_memory" : "cg_memory_bytes"),
         lane("cyan", "cg_io_psi"),
+        { key: "host_disk", series: one("cyan", "disk_busy", of("disk_busy").filter((point) => point.device?.scope === 0 || point.value === null)) },
       ]
       : environment === "machine"
-        ? [lane("cyan", "cpu_busy"), lane("amber", "cpu_stall"), lane("violet", "memory"), lane("cyan", "io_stall")]
+        ? [lane("cyan", "cpu_busy"), lane("amber", "cpu_stall"), lane("violet", "memory"), lane("cyan", "io_stall"), lane("cyan", "disk_busy")]
         : []
     return [
       { key: "health", series: healthTrack.series, threshold: healthTrack.threshold },
       ...resources,
       lane("cyan", "pg_running"),
       lane("amber", "pg_waiting"),
+      lane("amber", "pg_lock_waiting"),
       { key: "oldest_xact", series: one("violet", "pg_oldest_xact", of("pg_oldest_xact")) },
-    ].filter((candidate) => candidate.key === "health"
-      ? candidate.series.some((line) => line.points.length !== 0)
-      : candidate.series.some((line) => line.points.some((point) => point.value !== null)))
+    ].filter((candidate) => candidate.key === "pg_lock_waiting" && lanePoints.some((point) => point.locks !== undefined)
+      || candidate.series.some((line) => line.points.some((point) => point.value !== null)))
   }, [environment, healthTrack, lanePoints])
   const [localLane, setLocalLane] = useState(primaryLane)
-  const selectedLane = controlledLane ?? localLane
+  const selectedLane = controlledLane === null ? primaryLane : controlledLane ?? localLane
   const setSelectedLane = (lane: string) => {
     if (controlledLane === undefined) setLocalLane(lane)
     onSelectedLane?.(lane)
@@ -136,14 +140,22 @@ export function Timeline({
   useEffect(() => {
     if (previousPrimary.current === primaryLane) return
     previousPrimary.current = primaryLane
-    setSelectedLane(primaryLane)
-  }, [primaryLane])
-  useEffect(() => {
-    if (lanes.some((lane) => lane.key === selectedLane)) return
-    if (controlledLane !== undefined) return
-    setSelectedLane(lanes.find((lane) => lane.key === primaryLane)?.key ?? lanes[0]?.key ?? "health")
-  }, [controlledLane, lanes, primaryLane, selectedLane])
-  const selected = lanes.find((lane) => lane.key === selectedLane) ?? lanes[0]
+    if (controlledLane === undefined) setLocalLane(primaryLane)
+  }, [controlledLane, primaryLane])
+  // An explicit choice and a still-loading automatic lane keep their picker;
+  // an automatic lane this recording never has falls back to the first recorded one.
+  const selected = lanes.find((lane) => lane.key === selectedLane)
+    ?? (typeof controlledLane === "string" || controlledLane === null && requestPhase !== "ready" ? { key: selectedLane, series: [] } : lanes[0])
+  const choices = selected === undefined || lanes.some((lane) => lane.key === selected.key) ? lanes : [selected, ...lanes]
+  // Each lane reserves room for its widest reading of the hour, so pointer
+  // travel changes the numbers but never the strip layout.
+  const widestReadings = useMemo(() => new Map(lanes.map((lane) => {
+    const times = [...new Set(lane.series.flatMap((line) => line.points.map((point) => point.timestamp)))]
+    const widest = (read: (lane: TimelineLane, cursor: number, locale: Locale, t: Translate) => string) =>
+      times.reduce((longest, time) => { const candidate = read(lane, time, locale, t); return candidate.length > longest.length ? candidate : longest }, "")
+    return [lane.key, { full: widest(laneReading), compact: widest(compactLaneReading) }]
+  })), [lanes, locale, t])
+  const selectedEmpty = selected !== undefined && selected.series.every((line) => line.points.length === 0)
   const laneTimes = useMemo(() => timelineNavigationTimes(lanes), [lanes])
   const cursorTimes = useMemo(
     () => navigation !== null
@@ -153,6 +165,7 @@ export function Timeline({
   )
   const [plotWidth, setPlotWidth] = useState(920)
   const markers = useMemo(() => groupFindings(findings, hour, end, plotWidth), [end, findings, hour, plotWidth])
+  const lockMarkers = useMemo(() => groupTimedMarkers(lanePoints.filter((point) => point.locks !== undefined).sort((a, b) => a.timestamp - b.timestamp), hour, end, plotWidth), [end, hour, lanePoints, plotWidth])
   useEffect(() => {
     const move = (event: KeyboardEvent) => {
       if (event.defaultPrevented || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
@@ -171,20 +184,42 @@ export function Timeline({
     return () => window.removeEventListener("keydown", move)
   }, [cursor, cursorTimes, navigation, onCursor, preview])
   const recorded = useMemo(() => selected === undefined ? [] : toRecordedSeries(selected, locale, t), [locale, selected, t])
-  const healthAt = selected?.key === "health" ? healthEvaluationAtOrBefore(selected.series, displayCursor) : null
-  const current = (selected?.series ?? []).map((line) => {
-    const key = selected?.key ?? "health"
-    const number = key === "health" ? healthAt === null ? null : exactValue(line.points, healthAt) : sampleAtOrBefore(line.points, displayCursor)?.value ?? null
-    return `${key === "health" ? `${t(`lane.health.${line.field}`)} ` : ""}${number === null ? "—" : format(number, key, locale)}`
-  }).join(" · ")
   const exportSelection = useExportSelection()
   const decorations = useMemo(() => {
     const drawn = timelineDecorations(lanes, selected?.series ?? [], hour, end)
     return exportSelection === null ? drawn : [...drawn, { from: exportSelection.from, to: exportSelection.to, tone: "selection" as const }]
   }, [exportSelection, end, hour, lanes, selected])
   const threshold = useMemo(() => selected?.threshold === undefined ? undefined : { below: selected.threshold, seriesId: "overall_health" }, [selected])
-  const selectedReading = selected === undefined ? "—" : laneReading(selected, displayCursor, locale, t)
-  const markerLayer = <>{markers.map((marker, index) => {
+  const diskPoints = selected?.key === "disk_busy" || selected?.key === "host_disk"
+    ? lanePoints.filter((point) => point.lane === "disk_busy" && (selected.key !== "host_disk" || point.device?.scope === 0 || point.value === null)) : []
+  const diskPoint = sampleAtOrBefore(diskPoints, displayCursor)
+  // The device button follows the committed cursor: pointer travel must not add or remove it.
+  const diskAction = sampleAtOrBefore(diskPoints, cursor)
+  const queuePoint = sampleAtOrBefore(lanePoints.filter((point) => point.lane === "disk_queue"), displayCursor)
+  const queueReading = diskPoint?.device === undefined ? "" : ` · ${t("use.lane.disk_queue")} ${queuePoint?.timestamp === diskPoint.timestamp && queuePoint.value !== null ? compact(queuePoint.value, locale) : "—"}`
+  const selectedReading = (selected === undefined ? "—" : laneReading(selected, displayCursor, locale, t)) + queueReading
+  const diskTitle = diskPoint?.device === undefined ? "" : `${selectedReading} · ${diskPoint.device.major}:${diskPoint.device.minor}`
+  const laneStrip = useRef<HTMLDivElement>(null)
+  // The strip gives up detail in steps: readings of the other lanes go first,
+  // the picker replaces the strip only when the lane names themselves clip.
+  const [laneDensity, setLaneDensity] = useState<"full" | "names" | "picker">("full")
+  const densityInputs = useRef("")
+  const laneKeys = choices.map((lane) => lane.key).join(" ")
+  useLayoutEffect(() => {
+    if (presentation !== "preview" || previewCursor !== null) return
+    const inputs = JSON.stringify([laneKeys, cursor, locale, plotWidth, selected?.key, selectedReading])
+    const changed = inputs !== densityInputs.current
+    densityInputs.current = inputs
+    if (changed && laneDensity !== "full") {
+      setLaneDensity("full")
+      return
+    }
+    if (laneDensity === "picker") return
+    const labels = laneStrip.current?.querySelectorAll<HTMLElement>(".timeline-lane-name, .timeline-lane-reading") ?? []
+    if ([...labels].some((label) => label.scrollWidth > label.clientWidth + 1)) setLaneDensity(laneDensity === "full" ? "names" : "picker")
+  }, [cursor, laneDensity, laneKeys, locale, plotWidth, presentation, previewCursor, selected?.key, selectedReading])
+  const compactPicker = laneDensity === "picker"
+  const markerLayer = <>{selected?.key === "pg_lock_waiting" && lockMarkers.map((points) => <LockGraphMarker key={points[0]!.timestamp} points={points} onActivate={actions?.locks ?? onCursor} share={shareOf(points[0]!.timestamp, hour, end)} t={t} time={time.timestamp} />)}{selected?.key !== "pg_lock_waiting" && markers.map((marker, index) => {
     const first = marker.findings[0]
     if (first === undefined) return null
     return <FindingMarker
@@ -205,12 +240,12 @@ export function Timeline({
       {navigation !== null && <CursorRow cursor={cursor} cursorTimes={[]} onCursor={onCursor} navigation={navigation} reading="" t={t} />}
     </section>
   }
-  return <section aria-label={t("hour.range", { range: time.hourRange(hour).primary })} className={`timeline-shell mt-2 flex flex-col overflow-hidden border-y border-line2 bg-s1 timeline-${presentation}`} data-export-from={exportSelection?.from} data-export-to={exportSelection?.to} data-presentation={presentation}>
+  return <section aria-busy={requestPhase === "pending"} aria-label={t("hour.range", { range: time.hourRange(hour).primary })} className={`timeline-shell mt-2 flex flex-col overflow-hidden border-y border-line2 bg-s1 timeline-${presentation}`} data-export-from={exportSelection?.from} data-export-to={exportSelection?.to} data-presentation={presentation}>
     <div className="timeline-rail flex h-7 min-w-0 flex-none overflow-hidden border-b border-line2">
       {presentation === "inspector"
-        ? <label className="timeline-metric-picker"><span>{t("inspector.timeline")}</span><select aria-label={t("inspector.timeline")} data-testid="timeline-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{lanes.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select></label>
-        : <><div className="timeline-lanes flex min-w-0 flex-1 gap-0.5 overflow-hidden px-1">
-          {lanes.map((lane) => <LaneLabel
+        ? <label className="timeline-metric-picker"><span>{t("inspector.timeline")}</span><select aria-label={t("inspector.timeline")} data-testid="timeline-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{choices.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select></label>
+        : <div className="timeline-lane-slot relative min-w-0 flex-1" data-compact={compactPicker || undefined} data-density={laneDensity}><div aria-hidden={compactPicker || undefined} inert={compactPicker} ref={laneStrip} className="timeline-lanes flex min-w-0 flex-1 gap-0.5 overflow-hidden px-1">
+          {choices.map((lane) => <LaneLabel
             help={`lane.${lane.key}.help`}
             key={lane.key}
             label={`lane.${lane.key}.label`}
@@ -218,12 +253,14 @@ export function Timeline({
             primary={lane.key === selected.key}
             reading={lane.key === selected.key ? laneReading(lane, displayCursor, locale, t) : compactLaneReading(lane, displayCursor, locale, t)}
             fullReading={laneReading(lane, displayCursor, locale, t)}
+            sizer={widestReadings.get(lane.key)?.[lane.key === selected.key ? "full" : "compact"] ?? ""}
             t={t}
           />)}
         </div><div className="timeline-preview-picker min-w-0 flex-1 items-center gap-1 px-1">
-          <select aria-label={t("inspector.timeline")} data-testid="timeline-preview-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{lanes.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select>
+          <select aria-label={t("inspector.timeline")} data-testid="timeline-preview-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{choices.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select>
           <span className="timeline-preview-reading min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-right text-sm tabular-nums text-fg" data-testid="timeline-preview-reading" title={selectedReading}>{selectedReading}</span>
-        </div></>}
+        </div></div>}
+      {diskAction?.device !== undefined && actions !== null && <button className="max-w-[120px] flex-none cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap border-0 border-l border-line2 bg-s2 px-2 font-mono text-sm text-accent3" data-testid="timeline-disk-detail" onClick={() => actions.disk(diskAction)} title={diskTitle} type="button">{diskAction.device.name ?? `${diskAction.device.major}:${diskAction.device.minor}`} ↗</button>}
       {presentation === "preview" && onOpenChart !== undefined && <button aria-label={t("inspector.open_chart")} className="timeline-open-chart" onClick={onOpenChart} title={t("inspector.open_chart")} type="button"><span aria-hidden="true">↗</span><span>{t("inspector.chart")}</span></button>}
     </div>
     <UPlotChart
@@ -238,9 +275,10 @@ export function Timeline({
       onStep={navigation?.step}
       onPreview={preview}
       onPlotWidth={setPlotWidth}
-      reading={current}
+      reading={selectedReading}
       series={recorded}
       stats={presentation === "inspector"}
+      status={selectedEmpty ? <span role={requestPhase === "error" ? "alert" : "status"}>{t(requestPhase === "pending" ? "status.loading" : requestPhase === "error" ? "status.error" : "status.no_data")}</span> : undefined}
       t={t}
       testId="hour-timeline"
       threshold={threshold}
@@ -288,7 +326,7 @@ export function timelineSeriesHelpKey(lane: string, field: string): string {
   return lane === "health" ? `lane.health.${field}.help` : `lane.${lane}.help`
 }
 
-const PERCENT_LANES: ReadonlySet<string> = new Set(["health", "cpu_busy", "cpu_stall", "memory", "io_stall", "cg_cpu_share", "cg_cpu_psi", "cg_memory", "cg_io_psi"])
+const PERCENT_LANES: ReadonlySet<string> = new Set(["health", "disk_busy", "host_disk", "cpu_busy", "cpu_stall", "memory", "io_stall", "cg_cpu_share", "cg_cpu_psi", "cg_memory", "cg_io_psi"])
 
 function laneUnit(key: string, locale: Locale): string {
   if (PERCENT_LANES.has(key)) return "%"
@@ -307,6 +345,7 @@ function toRecordedSeries(lane: TimelineLane, locale: Locale, t: Translate): rea
     label: lane.key === "health" ? t(`lane.health.${line.field}`) : t(`lane.${lane.key}.label`),
     labelKey: lane.key === "health" ? `lane.health.${line.field}` : `lane.${lane.key}.label`,
     points: line.points,
+    pointsOnly: lane.key === "pg_lock_waiting",
     scale: percent ? "percent" as const : "nonnegative" as const,
     tick: (number: number, place: Locale) => format(number, lane.key, place),
     unit,
@@ -314,12 +353,12 @@ function toRecordedSeries(lane: TimelineLane, locale: Locale, t: Translate): rea
   }))
 }
 
-function LaneLabel({ label, help, fullReading, onSelect, primary, reading, t }: { readonly label: string; readonly help: string; readonly fullReading: string; readonly onSelect: () => void; readonly primary: boolean; readonly reading: string; readonly t: Translate }) {
+function LaneLabel({ label, help, fullReading, onSelect, primary, reading, sizer, t }: { readonly label: string; readonly help: string; readonly fullReading: string; readonly onSelect: () => void; readonly primary: boolean; readonly reading: string; readonly sizer: string; readonly t: Translate }) {
   const accessible = `${t(label)}: ${fullReading}`
   return <div data-primary={primary || undefined} className={`lane-label timeline-lane-label flex h-7 min-w-0 items-center gap-1.5 overflow-hidden rounded-t-[var(--radius-xs)] px-[7px] text-left font-sans text-xs font-medium text-fg3 hover:bg-accent-soft hover:text-accent3${primary ? " bg-s3 text-fg2 shadow-[inset_0_-2px_var(--color-accent)]" : ""}`} title={accessible}>
     <button aria-label={accessible} aria-pressed={primary} className="lane-select flex min-w-0 flex-auto cursor-pointer items-center gap-1.5 self-stretch overflow-hidden border-0 bg-transparent p-0 text-left [font-family:inherit]" onClick={onSelect} type="button">
       <span className="timeline-lane-name min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{t(label)}</span>
-      <span data-testid="lane-reading" className={`timeline-lane-reading ml-auto min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono font-normal tabular-nums ${primary ? "text-md text-accent3" : "text-sm text-fg"}`} title={reading}>{reading}</span>
+      <span className={`timeline-lane-reading ml-auto min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono font-normal tabular-nums ${primary ? "text-md text-accent3" : "text-sm text-fg"}`}><span data-testid="lane-reading" title={reading}>{reading}</span><span aria-hidden="true">{sizer}</span></span>
     </button>
     <LabelHelp helpKey={help} iconOnly labelKey={label} t={t} />
   </div>
@@ -343,7 +382,7 @@ export function healthEvaluationAtOrBefore(
 
 function format(number: number, key: string, locale: Locale): string {
   if (key === "oldest_xact") return humanDuration(number * 1_000, locale)
-  if (key === "pg_running" || key === "pg_waiting") return compact(number, locale)
+  if (key === "pg_running" || key === "pg_waiting" || key === "pg_lock_waiting") return compact(number, locale)
   if (key === "cg_cpu_cores") return humanCores(number, locale)
   if (key === "cg_memory_bytes") return humanBytes(number, locale)
   return humanPercent(number, locale)
@@ -365,9 +404,29 @@ export function laneReading(lane: TimelineLane, cursor: number, locale: Locale, 
   const healthAt = lane.key === "health" ? healthEvaluationAtOrBefore(lane.series, cursor) : null
   return lane.series.map((line) => {
     const number = lane.key === "health" ? healthAt === null ? null : exactValue(line.points, healthAt) : sampleAtOrBefore(line.points, cursor)?.value ?? null
+    const point = sampleAtOrBefore(line.points, cursor)
     const output = number === null ? "—" : format(number, lane.key, locale)
+    if ((lane.key === "disk_busy" || lane.key === "host_disk") && point?.device !== undefined && number !== null) return `${output} · ${point.device.name ?? `${point.device.major}:${point.device.minor}`}`
     return lane.key === "health" ? `${t(`lane.health.${line.field}`)} ${output}` : output
   }).join(" · ")
+}
+
+export function LockGraphMarker({ points, onActivate, share, t, time }: { readonly points: readonly LanePoint[]; readonly onActivate: (timestamp: number) => void; readonly share: number; readonly t: Translate; readonly time: (timestamp: number) => string }) {
+  const first = points[0]
+  if (first === undefined) return null
+  const label = (point: LanePoint) => `${time(point.timestamp)} · ${t("lane.pg_lock_waiting.graph", { waiting: point.locks!.waiting, blockers: point.locks!.blockers })}${point.locks!.prepared ? ` · ${t("lane.pg_lock_waiting.prepared")}` : ""}`
+  const style = { left: `clamp(${MARKER_CLUSTER_PX / 2}px, ${share * 100}%, calc(100% - ${MARKER_CLUSTER_PX / 2}px))` }
+  const className = "marker-button pointer-events-auto absolute top-1/2 z-[3] h-[18px] -translate-x-1/2 -translate-y-1/2 cursor-pointer text-warn focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-cursor"
+  return points.length === 1
+    ? <button aria-label={label(first)} className={`${className} w-[18px] border-0 bg-transparent p-0`} data-testid="lock-graph-marker" onClick={(event) => { event.stopPropagation(); onActivate(first.timestamp) }} onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} style={style} title={label(first)} type="button">◆</button>
+    : <select aria-label={t("lane.pg_lock_waiting.graphs", { count: points.length })} className={`${className} w-16 rounded border border-line3 bg-s2 px-1 text-[10px] tabular-nums`} data-testid="lock-graph-cluster" onChange={(event) => {
+      const timestamp = Number(event.currentTarget.value)
+      event.currentTarget.value = ""
+      onActivate(timestamp)
+    }} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} style={style} value="">
+      <option disabled value="">◆ +{points.length}</option>
+      {points.map((point) => <option key={point.timestamp} value={point.timestamp}>{label(point)}</option>)}
+    </select>
 }
 
 export function FindingMarker({ marker, onActivate, share, t, time = String }: { readonly marker: GroupedFinding; readonly onActivate: () => void; readonly t: Translate; readonly share: number; readonly time?: (timestamp: number) => string }) {
@@ -436,26 +495,30 @@ export function healthTimelineSeries(rows: readonly DataRow[]): { readonly serie
   return { series: shown, ...(shown.some((candidate) => candidate.field === "overall_health") ? { threshold: 50 } : {}) }
 }
 
-export function groupFindings(findings: readonly Finding[], hour: number, end: number, pixelWidth: number, clusterWidth = MARKER_CLUSTER_PX): readonly GroupedFinding[] {
+export function groupTimedMarkers<T extends { readonly timestamp: number }>(ordered: readonly T[], hour: number, end: number, pixelWidth: number, clusterWidth = MARKER_CLUSTER_PX): readonly (readonly T[])[] {
   const duration = Math.max(1, end - hour)
   const width = Math.max(1, pixelWidth)
-  const ordered = findings.slice().sort(findingOrder)
-  const stored: Finding[][] = []
-  let active: Finding[] = []
+  const stored: T[][] = []
+  let active: T[] = []
   let anchor = 0
-  for (const finding of ordered) {
+  for (const point of ordered) {
     const edge = Math.min(width / 2, clusterWidth / 2)
-    const x = Math.max(edge, Math.min(width - edge, (finding.timestamp - hour) / duration * width))
+    const x = Math.max(edge, Math.min(width - edge, (point.timestamp - hour) / duration * width))
     if (active.length === 0 || x - anchor <= clusterWidth) {
       if (active.length === 0) anchor = x
-      active.push(finding)
+      active.push(point)
     } else {
       stored.push(active)
-      active = [finding]
+      active = [point]
       anchor = x
     }
   }
   if (active.length !== 0) stored.push(active)
+  return stored
+}
+
+export function groupFindings(findings: readonly Finding[], hour: number, end: number, pixelWidth: number, clusterWidth = MARKER_CLUSTER_PX): readonly GroupedFinding[] {
+  const stored = groupTimedMarkers(findings.slice().sort(findingOrder), hour, end, pixelWidth, clusterWidth)
   return stored.map((group) => {
     const summary = summarizeFindings(group)
     const counts: Readonly<Record<Finding["kind"], number>> = {

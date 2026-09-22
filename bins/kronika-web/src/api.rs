@@ -4,9 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use hyper::StatusCode;
-use kronika_query::{
-    QueryContext, QueryError, QueryIdentity, QueryRequest, QuerySink, QueryStability,
-};
+use kronika_query::{QueryError, QueryIdentity, QueryRequest, QuerySink, QueryStability};
 use sha2::{Digest as _, Sha256};
 
 use crate::encoding::etag_matches;
@@ -66,14 +64,7 @@ pub(crate) fn prepare(
     };
     let request = route.into_query()?;
     let dataset = Arc::new(NativeDataset::from_root(root)?);
-    let mut context = QueryContext::new(
-        Arc::<NativeDataset>::clone(&dataset),
-        sources,
-        synthetic_demo,
-    );
-    if matches!(request, QueryRequest::Index(_) | QueryRequest::Hour(_)) {
-        context = context.with_index_provider(dataset);
-    }
+    let mut context = query_context(dataset, sources, synthetic_demo);
     let build = env!("KRONIKA_BUILD_COMMIT");
     if !build.is_empty() {
         context = context.with_build(build);
@@ -211,6 +202,21 @@ fn weak_dataset_etag(
         }
     }
     found.then(|| format!("W/\"{:x}\"", digest.finalize()))
+}
+
+/// A query context over one native capture, with the same capture serving
+/// derived index blocks.
+pub(crate) fn query_context(
+    dataset: Arc<NativeDataset>,
+    sources: u32,
+    synthetic_demo: bool,
+) -> kronika_query::QueryContext {
+    kronika_query::QueryContext::new(
+        Arc::<NativeDataset>::clone(&dataset),
+        sources,
+        synthetic_demo,
+    )
+    .with_index_provider(dataset)
 }
 
 #[cfg(test)]

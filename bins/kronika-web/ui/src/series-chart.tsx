@@ -1,4 +1,5 @@
 import { useMemo, useRef } from "react"
+import type { DiskIdentity } from "./api"
 
 import { compact, floorHour, humanPercent, type Locale } from "./model"
 import { LabelHelp, type Translate } from "./help"
@@ -6,6 +7,7 @@ import type { HistoryStatus } from "./history-request"
 import { UPlotChart, type ChartScale as SemanticScale, type RecordedSeries } from "./uplot-chart"
 
 export interface ChartPoint {
+  readonly device?: DiskIdentity
   readonly segmentId: string
   readonly timestamp: number
   readonly value: number | null
@@ -63,7 +65,8 @@ export function SeriesChart({
     second: second === undefined ? undefined : pointsInHour(second, hour),
   }), [hour, points, second])
   const numeric = numericChartPoints(visible.points, visible.second)
-  const reading = readingAt(visible.points, cursor)
+  const sample = sampleAtOrBefore(visible.points, cursor)
+  const reading = sample?.value ?? null
   const hasData = numeric.length !== 0
   const formatValue = format ?? (scale === "percent" ? humanPercent : compact)
   const label = t(labelKey)
@@ -96,7 +99,7 @@ export function SeriesChart({
       hour={hour}
       locale={locale}
       onCursor={onCursor}
-      reading={reading === null ? "—" : formatValue(reading, locale)}
+      reading={reading === null ? "—" : `${formatValue(reading, locale)}${sample?.device === undefined ? "" : ` · ${sample.device.name ?? `${sample.device.major}:${sample.device.minor}`}`}`}
       series={series}
       stats={stats}
       status={status === "ready" ? undefined : statusLine}
@@ -122,8 +125,8 @@ export function readingAt(points: readonly ChartPoint[], cursor: number | undefi
   return sampleAtOrBefore(points, cursor)?.value ?? null
 }
 
-export function sampleAtOrBefore(points: readonly ChartPoint[], cursor: number | undefined): ChartPoint | null {
-  let chosen: ChartPoint | null = null
+export function sampleAtOrBefore<T extends ChartPoint>(points: readonly T[], cursor: number | undefined): T | null {
+  let chosen: T | null = null
   for (const point of points) {
     if (cursor !== undefined && point.timestamp > cursor) continue
     if (chosen === null || point.timestamp >= chosen.timestamp) chosen = point
