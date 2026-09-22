@@ -7101,7 +7101,7 @@ test("forensic workstation keeps exact preview and one responsive Inspector", { 
       await cdp.send("Emulation.setDeviceMetricsOverride", { deviceScaleFactor: 1, height: viewport.height, mobile: viewport.mobile, width: viewport.width })
       await cdp.send("Page.navigate", { url: `${origin}/?at=${AT}&lens=cpu` })
       await cdp.waitFor(`document.querySelector('.process-summary-inline > div:first-child strong')?.textContent === "1.5"`, `${viewport.kind} process summary`, 15_000)
-      await cdp.waitFor(`document.querySelector('[data-testid="hour-timeline"] canvas') !== null && document.querySelectorAll('[data-testid="process-table"] .entity-row').length > 10`, `${viewport.kind} workstation`)
+      await cdp.waitFor(`document.querySelector('[data-testid="hour-timeline"] canvas') !== null && document.querySelectorAll('[data-testid="process-table"] .entity-row').length > 10`, `${viewport.kind} workstation`).catch(async error => { throw new Error(`${error.message}: ${JSON.stringify(await cdp.evaluate(`({ canvas: document.querySelector('[data-testid="hour-timeline"] canvas') !== null, rows: document.querySelectorAll('[data-testid="process-table"] .entity-row').length, timeline: document.querySelector('[data-testid^="timeline-"]')?.dataset.testid, errors: ${JSON.stringify(page.errors)}, url: location.href })`))}`) })
       await settleLayout(cdp)
       const closed = await cdp.evaluate(`(() => {
         const bounds = (node) => { const rect = node.getBoundingClientRect(); return { bottom: rect.bottom, height: rect.height, left: rect.left, right: rect.right, top: rect.top, width: rect.width } }
@@ -9188,6 +9188,8 @@ test("clustered Locks graphs remain exactly selectable and dense metric names us
     }] } : record)
   records.push({ record: "finding", logical_name: "pg_stat_statements", kind: "known_bad", type_id: "1002003", field_ordinal: 11, row_ordinal: "90", ts: String(HOUR + 35_000_000) })
   records.push(...["pg_running", "pg_waiting", "pg_oldest_xact"].map(lane => ({ record: "lane", segment_id: SEGMENT, lane, ts: String(HOUR), value: 128 })))
+  // Enough lane names that they no longer fit an 800 px rail.
+  records.push(...["cpu_busy", "cpu_stall", "memory", "io_stall"].map(lane => ({ record: "lane", segment_id: SEGMENT, lane, ts: String(HOUR), value: 12 })))
   records.push(...times.flatMap((at, index) => [
     { record: "lane", segment_id: SEGMENT, lane: "pg_lock_waiting", ts: String(at), value: index + 1 },
     { record: "lane", segment_id: SEGMENT, lane: "pg_lock_graph", ts: String(at), value: null, locks: { waiting: index + 1, blockers: 1, prepared: false } },
@@ -9228,7 +9230,7 @@ test("clustered Locks graphs remain exactly selectable and dense metric names us
       await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key, code: key, windowsVirtualKeyCode })
       await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, windowsVirtualKeyCode })
     }
-    for (const width of [800, 1280]) for (const locale of ["en", "ru"]) {
+    for (const width of [640, 1280]) for (const locale of ["en", "ru"]) {
       await cdp.send("Emulation.setDeviceMetricsOverride", { deviceScaleFactor: 1, height: 800, mobile: false, width })
       await cdp.send("Page.navigate", { url: `${origin}/?at=${AT}&view=pg.locks&lane=pg_lock_waiting` })
       await cdp.waitFor(`${cluster}?.options.length === 3`, "two exact clustered graphs")
@@ -9251,11 +9253,16 @@ test("clustered Locks graphs remain exactly selectable and dense metric names us
         await key("Enter", 13)
         await cdp.waitFor(`${at} === "${times[index]}" && ${cluster}.value === "" && document.querySelector('.lock-tree-pid')?.textContent === "4241"`, "exact graph cursor and Locks tree").catch(async error => { throw new Error(`${error.message}: ${JSON.stringify(await cdp.evaluate(`({ url: location.href, value: ${cluster}?.value, body: document.body.innerText, errors: ${JSON.stringify(page.errors)} })`))}`) })
       }
-      await cdp.waitFor(`document.querySelector('.timeline-lane-slot')?.dataset.compact === "true"`, "dense rail uses existing picker")
-      const geometry = await cdp.evaluate(`(() => { const picker = document.querySelector('[data-testid="timeline-preview-metric-select"]'), box = picker.getBoundingClientRect(), style = getComputedStyle(picker), canvas = document.createElement('canvas').getContext('2d'); canvas.font = style.font; return { labelWidth: canvas.measureText(picker.selectedOptions[0].textContent).width, width: box.width, stripVisible: getComputedStyle(document.querySelector('.timeline-lanes')).visibility, height: document.querySelector('.timeline-preview').getBoundingClientRect().height }; })()`)
-      assert.ok(geometry.width > geometry.labelWidth + 20, JSON.stringify(geometry))
-      assert.equal(geometry.stripVisible, "hidden")
-      assert.equal(geometry.height, 124)
+      if (width === 640) {
+        await cdp.waitFor(`document.querySelector('.timeline-lane-slot')?.dataset.compact === "true"`, "dense rail uses existing picker").catch(async error => { throw new Error(`${error.message}: ${JSON.stringify(await cdp.evaluate(`({ dataset: { ...document.querySelector('.timeline-lane-slot')?.dataset }, names: [...document.querySelectorAll('.timeline-lane-name')].map(e => e.textContent), rail: document.querySelector('.timeline-rail')?.getBoundingClientRect().width, clipped: [...document.querySelectorAll('.timeline-lane-name, .timeline-lane-reading')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent) })`))}`) })
+        const geometry = await cdp.evaluate(`(() => { const picker = document.querySelector('[data-testid="timeline-preview-metric-select"]'), box = picker.getBoundingClientRect(), style = getComputedStyle(picker), canvas = document.createElement('canvas').getContext('2d'); canvas.font = style.font; return { labelWidth: canvas.measureText(picker.selectedOptions[0].textContent).width, width: box.width, stripVisible: getComputedStyle(document.querySelector('.timeline-lanes')).visibility, height: document.querySelector('.timeline-preview').getBoundingClientRect().height }; })()`)
+        assert.ok(geometry.width > geometry.labelWidth + 20, JSON.stringify(geometry))
+        assert.equal(geometry.stripVisible, "hidden")
+        assert.equal(geometry.height, 124)
+      } else {
+        // Lane names still fit here: readings may hide, the strip itself stays.
+        await cdp.waitFor(`document.querySelector('.timeline-lane-slot')?.dataset.compact !== "true" && getComputedStyle(document.querySelector('.timeline-lanes')).visibility === "visible"`, "laptop rail keeps the lane strip")
+      }
     }
     await cdp.send("Emulation.setDeviceMetricsOverride", { deviceScaleFactor: 1, height: 800, mobile: false, width: 3000 })
     await cdp.waitFor(`document.querySelector('.timeline-lane-slot')?.dataset.compact !== "true"`, "wide rail restores visible tabs")

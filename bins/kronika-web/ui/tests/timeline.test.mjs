@@ -420,7 +420,13 @@ test("timeline controls stay above a full-width plot without a redundant time ti
   assert.doesNotMatch(source, /className="timeline-lanes[^"]*overflow-x-auto/)
   assert.match(source, /data-testid="timeline-preview-metric-select"/)
   assert.match(source, /aria-label=\{accessible\}/)
-  assert.match(styles, /\.timeline-lane-label\[data-primary="true"\] \{[^}]*flex:/s)
+  // Lanes size to their content so a short selected reading does not starve a long one.
+  assert.match(styles, /\.timeline-lane-label \{ flex: 1 1 auto; \}/)
+  assert.doesNotMatch(styles, /data-primary="true"\] \{[^}]*flex:/)
+  // Clipped readings hide before the picker replaces the lane names.
+  assert.match(styles, /\.timeline-lane-slot\[data-density="names"\] \.timeline-lane-label:not\(\[data-primary="true"\]\) \.timeline-lane-reading \{ display: none; \}/)
+  assert.match(source, /setLaneDensity\(laneDensity === "full" \? "names" : "picker"\)/)
+  assert.match(source, /data-compact=\{compactPicker \|\| undefined\} data-density=\{laneDensity\}/)
   assert.match(styles, /\.timeline-open-chart \{[^}]*flex: 0 0 64px;[^}]*width: 64px;/s)
   assert.match(styles, /\.timeline-preview \{[^}]*height: 124px;/s)
   assert.match(chart, /variant === "preview" \? "h-\[94px\]/)

@@ -196,12 +196,25 @@ export function Timeline({
   const selectedReading = (selected === undefined ? "—" : laneReading(selected, displayCursor, locale, t)) + queueReading
   const diskTitle = diskPoint?.device === undefined ? "" : `${selectedReading} · ${diskPoint.device.major}:${diskPoint.device.minor}`
   const laneStrip = useRef<HTMLDivElement>(null)
-  const [compactPicker, setCompactPicker] = useState(false)
+  // The strip gives up detail in steps: readings of the other lanes go first,
+  // the picker replaces the strip only when the lane names themselves clip.
+  const [laneDensity, setLaneDensity] = useState<"full" | "names" | "picker">("full")
+  const densityInputs = useRef("")
+  const laneKeys = choices.map((lane) => lane.key).join(" ")
   useLayoutEffect(() => {
     if (presentation !== "preview" || previewCursor !== null) return
+    const inputs = JSON.stringify([laneKeys, cursor, locale, plotWidth, selected?.key, selectedReading])
+    const changed = inputs !== densityInputs.current
+    densityInputs.current = inputs
+    if (changed && laneDensity !== "full") {
+      setLaneDensity("full")
+      return
+    }
+    if (laneDensity === "picker") return
     const labels = laneStrip.current?.querySelectorAll<HTMLElement>(".timeline-lane-name, .timeline-lane-reading") ?? []
-    setCompactPicker([...labels].some((label) => label.scrollWidth > label.clientWidth + 1))
-  }, [choices, cursor, locale, plotWidth, presentation, previewCursor, selected?.key, selectedReading])
+    if ([...labels].some((label) => label.scrollWidth > label.clientWidth + 1)) setLaneDensity(laneDensity === "full" ? "names" : "picker")
+  }, [cursor, laneDensity, laneKeys, locale, plotWidth, presentation, previewCursor, selected?.key, selectedReading])
+  const compactPicker = laneDensity === "picker"
   const markerLayer = <>{selected?.key === "pg_lock_waiting" && lockMarkers.map((points) => <LockGraphMarker key={points[0]!.timestamp} points={points} onActivate={actions?.locks ?? onCursor} share={shareOf(points[0]!.timestamp, hour, end)} t={t} time={time.timestamp} />)}{selected?.key !== "pg_lock_waiting" && markers.map((marker, index) => {
     const first = marker.findings[0]
     if (first === undefined) return null
@@ -227,7 +240,7 @@ export function Timeline({
     <div className="timeline-rail flex h-7 min-w-0 flex-none overflow-hidden border-b border-line2">
       {presentation === "inspector"
         ? <label className="timeline-metric-picker"><span>{t("inspector.timeline")}</span><select aria-label={t("inspector.timeline")} data-testid="timeline-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{choices.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select></label>
-        : <div className="timeline-lane-slot relative min-w-0 flex-1" data-compact={compactPicker || undefined}><div aria-hidden={compactPicker || undefined} inert={compactPicker} ref={laneStrip} className="timeline-lanes flex min-w-0 flex-1 gap-0.5 overflow-hidden px-1">
+        : <div className="timeline-lane-slot relative min-w-0 flex-1" data-compact={compactPicker || undefined} data-density={laneDensity}><div aria-hidden={compactPicker || undefined} inert={compactPicker} ref={laneStrip} className="timeline-lanes flex min-w-0 flex-1 gap-0.5 overflow-hidden px-1">
           {choices.map((lane) => <LaneLabel
             help={`lane.${lane.key}.help`}
             key={lane.key}
