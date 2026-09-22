@@ -143,8 +143,10 @@ export function Timeline({
     previousPrimary.current = primaryLane
     if (controlledLane === undefined) setLocalLane(primaryLane)
   }, [controlledLane, primaryLane])
+  // An explicit choice and a still-loading automatic lane keep their picker;
+  // an automatic lane this recording never has falls back to the first recorded one.
   const selected = lanes.find((lane) => lane.key === selectedLane)
-    ?? (controlledLane === undefined ? lanes[0] : { key: selectedLane, series: [] })
+    ?? (typeof controlledLane === "string" || controlledLane === null && requestPhase !== "ready" ? { key: selectedLane, series: [] } : lanes[0])
   const choices = selected === undefined || lanes.some((lane) => lane.key === selected.key) ? lanes : [selected, ...lanes]
   const selectedEmpty = selected !== undefined && selected.series.every((line) => line.points.length === 0)
   const laneTimes = useMemo(() => timelineNavigationTimes(lanes), [lanes])

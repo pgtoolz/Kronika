@@ -446,6 +446,17 @@ test("automatic lanes remain automatic while explicit unavailable lanes keep the
   }
 })
 
+test("an unavailable automatic lane falls back to the first recorded lane", () => {
+  const lanePoints = [{ segmentId: "s", lane: "pg_waiting", timestamp: 200, value: 3 }]
+  for (const presentation of ["preview", "inspector"]) {
+    const html = requestTimeline.render("ready", [], presentation, { selectedLane: null, primaryLane: "health", lanePoints })
+    assert.match(html, /value="pg_waiting" selected=""/)
+    assert.doesNotMatch(html, /value="health"|status.no_data/)
+  }
+  const pending = requestTimeline.render("pending", [], "preview", { selectedLane: null, primaryLane: "health" })
+  assert.match(pending, /value="health" selected=""/)
+})
+
 test("Disk and Locks choices expose recorded point identity, same-device queue and graph markers", () => {
   const device = { major: 8, minor: 0, name: "sda", scope: 0 }
   const lanePoints = [
