@@ -1565,6 +1565,94 @@ fn disk_lane_uses_one_device_delta_and_its_queue() {
     assert_eq!(point("disk_queue")["device"], point("disk_busy")["device"]);
 }
 
+#[test]
+fn disk_lane_tie_reads_the_recorded_block_stack() {
+    use kronika_registry::os_block_topology::OsBlockTopology;
+    use kronika_registry::os_diskstats::OsDiskstats;
+    let payload = fixture_payload(|interner, buffers| {
+        // dm-0 sits on partition 259:4, which sits on nvme0n1; the partition has no counters.
+        for (major, minor, parent_major, parent_minor) in [(252, 0, 259, 4), (259, 4, 259, 0)] {
+            buffers
+                .push(OsBlockTopology {
+                    ts: Ts(1_000_000),
+                    major,
+                    minor,
+                    parent_major,
+                    parent_minor,
+                    scope: 0,
+                })
+                .expect("topology row");
+        }
+        for (major, minor, name) in [
+            (252, 0, b"dm-0".as_slice()),
+            (259, 0, b"nvme0n1".as_slice()),
+        ] {
+            let device = StrId(interner.intern(name).expect("device name").get());
+            for (ts, counter) in [(1_000_000, 0), (2_000_000, 1)] {
+                buffers
+                    .push(OsDiskstats {
+                        ts: Ts(ts),
+                        major,
+                        minor,
+                        device,
+                        reads: 0,
+                        r_merged: 0,
+                        read_sectors: 0,
+                        read_time_ms: 0,
+                        writes: 0,
+                        w_merged: 0,
+                        write_sectors: 0,
+                        write_time_ms: 0,
+                        io_in_progress: 0,
+                        io_time_ms: 600 * counter,
+                        io_weighted_time_ms: 800 * counter,
+                        discards: None,
+                        d_merged: None,
+                        discard_sectors: None,
+                        discard_time_ms: None,
+                        flushes: None,
+                        flush_time_ms: None,
+                        scope: 0,
+                    })
+                    .expect("disk row");
+            }
+        }
+    });
+    let source = EmbeddedSource::from_owned(
+        SegmentId::new(SEGMENT_ID).expect("id"),
+        payload.to_vec(),
+        u64::try_from(payload.len()).expect("length"),
+    )
+    .expect("embedded disks");
+    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false);
+    let execution = execute(
+        &context,
+        QueryRequest::Hour(crate::HourRequest {
+            window: crate::Window {
+                from: Some(1_000_000),
+                to: Some(2_000_000),
+            },
+            part: crate::HourPart::Lanes,
+            series: None,
+            segments: Some(vec![SEGMENT_ID]),
+            active: None,
+        }),
+    )
+    .expect("prepare disk lanes");
+    let mut records = SnapshotRecords::default();
+    execution.stream(&mut records).expect("disk lanes");
+    let point = records
+        .0
+        .iter()
+        .find(|row| row["lane"] == "disk_busy" && row["ts"] == "2000000")
+        .expect("disk point");
+    assert_eq!(point["value"], json!(60.0));
+    assert_eq!(
+        point["device"],
+        json!({"major": 259, "minor": 0, "name": "nvme0n1", "scope": 0})
+    );
+}
+
 /// The lock-waiting blocks an exporter builds for this segment.
 fn lock_index(payload: &Arc<[u8]>) -> Vec<u8> {
     let source = EmbeddedSource::from_owned(

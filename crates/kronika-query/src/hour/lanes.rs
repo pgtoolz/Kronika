@@ -73,6 +73,9 @@ struct Counters {
     stall_io: BTreeMap<i64, i64>,
     memory: BTreeMap<i64, f64>,
     disks: BTreeMap<i64, DiskSnapshot>,
+    // Recorded block stack, upper device to the devices beneath it, as an hour-wide union:
+    // major:minor pairs stay put within an hour, and the lane only breaks exact ties with it.
+    disk_parents: BTreeMap<(i64, i64), BTreeSet<(i64, i64)>>,
     lock_graphs: BTreeMap<i64, LockGraphRows>,
     net_rx: BTreeMap<i64, i64>,
     net_tx: BTreeMap<i64, i64>,
@@ -218,6 +221,7 @@ pub(super) fn collect(
             "os_psi" => read_psi(segment, type_id, &mut state.counters)?,
             "os_meminfo" => read_memory(segment, type_id, &mut state.counters)?,
             "os_diskstats" => read_disk(segment, type_id, &mut state.counters)?,
+            "os_block_topology" => read_block_topology(segment, type_id, &mut state.counters)?,
             "os_netdev" => read_network(segment, type_id, &mut state.counters)?,
             "os_vmstat" => read_vmstat(segment, type_id, &mut state.counters)?,
             "os_cgroup_cpu" => read_cgroup_cpu(segment, type_id, &facts, &mut state.counters)?,
@@ -464,6 +468,37 @@ fn read_disk(segment: &Segment, type_id: u32, counters: &mut Counters) -> Result
             },
         );
     }
+    Ok(())
+}
+
+fn read_block_topology(
+    segment: &Segment,
+    type_id: u32,
+    counters: &mut Counters,
+) -> Result<(), QueryError> {
+    let names = with_columns(
+        type_id,
+        &["major", "minor", "parent_major", "parent_minor"],
+        &["scope"],
+    );
+    segment.visit_rows(type_id, &names, 0, usize::MAX, |_ordinal, row| {
+        let (Some(major), Some(minor), Some(parent_major), Some(parent_minor)) = (
+            integer(&row, "major"),
+            integer(&row, "minor"),
+            integer(&row, "parent_major"),
+            integer(&row, "parent_minor"),
+        ) else {
+            return true;
+        };
+        if integer(&row, "scope").is_none_or(|scope| scope == 0) {
+            counters
+                .disk_parents
+                .entry((major, minor))
+                .or_default()
+                .insert((parent_major, parent_minor));
+        }
+        true
+    })?;
     Ok(())
 }
 

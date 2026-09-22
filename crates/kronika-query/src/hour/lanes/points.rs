@@ -1,8 +1,9 @@
 //! Lane values and rates with recorded continuity boundaries.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Counters, DiskSnapshot, LanePoint, LockGraph};
+use super::{Counters, DiskIdentity, DiskSnapshot, LanePoint, LockGraph};
 
 use crate::Window;
 
@@ -111,7 +112,7 @@ const fn lane_point(key: &'static str, ts: i64, value: Option<f64>) -> LanePoint
 fn disk_points(counters: &Counters, out: &mut Vec<LanePoint>) {
     let mut previous: Option<(i64, &DiskSnapshot)> = None;
     for (&ts, devices) in &counters.disks {
-        let mut winner = None;
+        let mut winner: Option<(f64, Option<f64>, DiskIdentity)> = None;
         if let Some((before, preceding)) = previous {
             for (key, current) in devices {
                 let Some(prior) = preceding.get(key) else {
@@ -124,7 +125,21 @@ fn disk_points(counters: &Counters, out: &mut Vec<LanePoint>) {
                     continue;
                 };
                 let busy = busy * 100.0;
-                if winner.as_ref().is_none_or(|(peak, _, _)| busy > *peak) {
+                // One request is counted on every layer it crosses, so a partition, its
+                // disk and a volume above them tie exactly. The tie names the device beneath.
+                let leads =
+                    winner
+                        .as_ref()
+                        .is_none_or(|(peak, _, leader)| match busy.total_cmp(peak) {
+                            Ordering::Greater => true,
+                            Ordering::Equal => sits_beneath(
+                                &counters.disk_parents,
+                                (leader.major, leader.minor),
+                                *key,
+                            ),
+                            Ordering::Less => false,
+                        });
+                if leads {
                     winner = Some((
                         busy,
                         disk_rate(current.weighted, prior.weighted, ts, before),
@@ -150,6 +165,28 @@ fn disk_points(counters: &Counters, out: &mut Vec<LanePoint>) {
         }
         previous = Some((ts, devices));
     }
+}
+
+/// Whether `candidate` lies beneath `upper` in the recorded block stack: the disk
+/// under a partition, or a device an LVM, MD or dm volume lists among its slaves.
+fn sits_beneath(
+    parents: &BTreeMap<(i64, i64), BTreeSet<(i64, i64)>>,
+    upper: (i64, i64),
+    candidate: (i64, i64),
+) -> bool {
+    let mut seen = BTreeSet::from([upper]);
+    let mut pending = vec![upper];
+    while let Some(device) = pending.pop() {
+        for &parent in parents.get(&device).into_iter().flatten() {
+            if parent == candidate {
+                return true;
+            }
+            if seen.insert(parent) {
+                pending.push(parent);
+            }
+        }
+    }
+    false
 }
 
 fn disk_rate(current: Option<i64>, previous: Option<i64>, ts: i64, before: i64) -> Option<f64> {

@@ -682,6 +682,94 @@ fn disk_winners_keep_exact_deltas_queue_identity_and_membership() {
 }
 
 #[test]
+fn disk_tie_names_the_device_beneath_the_others() {
+    use std::collections::BTreeSet;
+
+    use super::{DiskCounters, DiskIdentity};
+    let disk = |major, minor, name: &str, busy| DiskCounters {
+        identity: DiskIdentity {
+            major,
+            minor,
+            name: Some(name.into()),
+            scope: Some(0),
+        },
+        busy: Some(busy),
+        weighted: Some(busy),
+    };
+    let mut counters = Counters::default();
+    // dm-0 sits on partition 259:4 (no diskstats row of its own), which sits on nvme0n1.
+    counters
+        .disk_parents
+        .insert((252, 0), BTreeSet::from([(259, 4)]));
+    counters
+        .disk_parents
+        .insert((259, 4), BTreeSet::from([(259, 0)]));
+    counters.disks.insert(
+        1_000_000,
+        BTreeMap::from([
+            ((8, 0), disk(8, 0, "sda", 0)),
+            ((8, 16), disk(8, 16, "sdb", 0)),
+            ((252, 0), disk(252, 0, "dm-0", 0)),
+            ((259, 0), disk(259, 0, "nvme0n1", 0)),
+        ]),
+    );
+    // The same request on every layer: dm-0 and nvme0n1 tie, and the lower number is dm-0.
+    counters.disks.insert(
+        2_000_000,
+        BTreeMap::from([
+            ((8, 0), disk(8, 0, "sda", 100)),
+            ((8, 16), disk(8, 16, "sdb", 100)),
+            ((252, 0), disk(252, 0, "dm-0", 300)),
+            ((259, 0), disk(259, 0, "nvme0n1", 300)),
+        ]),
+    );
+    // Two disks with no stack between them tie: the lower number stays.
+    counters.disks.insert(
+        3_000_000,
+        BTreeMap::from([
+            ((8, 0), disk(8, 0, "sda", 500)),
+            ((8, 16), disk(8, 16, "sdb", 500)),
+            ((252, 0), disk(252, 0, "dm-0", 400)),
+            ((259, 0), disk(259, 0, "nvme0n1", 400)),
+        ]),
+    );
+    // A volume busier than its disk still wins outright.
+    counters.disks.insert(
+        4_000_000,
+        BTreeMap::from([
+            ((8, 0), disk(8, 0, "sda", 500)),
+            ((8, 16), disk(8, 16, "sdb", 500)),
+            ((252, 0), disk(252, 0, "dm-0", 900)),
+            ((259, 0), disk(259, 0, "nvme0n1", 800)),
+        ]),
+    );
+    let output = points(&counters, 0, 0);
+    let actual: Vec<_> = output
+        .iter()
+        .filter(|point| point.key == "disk_busy")
+        .map(|point| {
+            (
+                point.ts,
+                point.value,
+                point
+                    .device
+                    .as_ref()
+                    .and_then(|device| device.name.as_deref()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        actual,
+        [
+            (1_000_000, None, None),
+            (2_000_000, Some(30.0), Some("nvme0n1")),
+            (3_000_000, Some(40.0), Some("sda")),
+            (4_000_000, Some(50.0), Some("dm-0")),
+        ]
+    );
+}
+
+#[test]
 fn disk_counter_subtraction_precedes_float_conversion() {
     use super::{DiskCounters, DiskIdentity};
     let mut counters = Counters::default();
