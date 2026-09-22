@@ -13,7 +13,7 @@ and how they changed over time.
 [Open the interactive preview](https://pgtoolz.github.io/Kronika/).
 
 A recorded hour, 21 September 2026, 08:59:46–09:59:46 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=host) · [Events](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=events).
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.4.html?at=1789984000000000&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.4.html?at=1789984000000000&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.4.html?at=1789984000000000&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.4.html?at=1789984000000000&view=host) · [Events](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.4.html?at=1789984000000000&view=events).
 
 ## Install and run
 

@@ -13,7 +13,7 @@ Linux либо записывает только данные PostgreSQL с ло
 [Открыть интерактивный пример](https://pgtoolz.github.io/Kronika/).
 
 Запись за 21 сентября 2026 года, 08:59:46–09:59:46 UTC:
-[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=host) · [Events](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.2.html?at=1789984000000000&view=events).
+[Processes](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.4.html?at=1789984000000000&view=processes) · [Statements](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.4.html?at=1789984000000000&view=pg.statements) · [Plans](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.4.html?at=1789984000000000&view=pg.plans) · [Host](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.4.html?at=1789984000000000&view=host) · [Events](https://pgtoolz.github.io/Kronika/reports/kronika-v1.2.4.html?at=1789984000000000&view=events).
 
 ## Установка и запуск
 
