@@ -4,9 +4,9 @@
 
 ## [1.2.4](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.4)
 
-- Fixed sorting across all PostgreSQL Activity columns and restoring the selected order with Back.
-- Added Disk timelines with the busiest device, its queue and selected device history. Host devices appear as Host Disk in containers.
-- Added Locks timelines with lock-wait counts and recorded blocking graphs. Later observations with no lock waits clear stale graphs.
+- Fixed sorting in PostgreSQL Activity.
+- Added a Disk timeline showing the busiest device, its queue depth and history.
+- Added a Locks timeline showing lock waits and blocking graphs.
 
 ## [1.2.3](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.3)
 
