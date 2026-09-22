@@ -180,6 +180,7 @@ const fn index_block_len(block: &kronika_index::SeriesBlock) -> usize {
         | kronika_index::SeriesBlock::PostgresHealth(points) => points.len(),
         kronika_index::SeriesBlock::PgTransactions { points, .. } => points.len(),
         kronika_index::SeriesBlock::PgActiveBackends { points, .. } => points.len(),
+        kronika_index::SeriesBlock::PgLockWaiting { points, .. } => points.len(),
         kronika_index::SeriesBlock::Findings(block) => block.findings.len(),
     }
 }

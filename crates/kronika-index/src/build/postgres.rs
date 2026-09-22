@@ -8,7 +8,7 @@ use super::{ActiveBackendSample, BuildError, HealthMetadata};
 
 use crate::cpu_capacity::RecordedCpuCapacity;
 use crate::health::{SourcePenalty, overall_health, postgres_penalty};
-use crate::series::{ActiveBackendPoint, HealthPoint, TransactionPoint};
+use crate::series::{ActiveBackendPoint, HealthPoint, LockWaitPoint, TransactionPoint};
 
 pub(super) fn combined_active_points(
     activity: &BTreeMap<u32, Vec<ActiveBackendPoint>>,
@@ -202,54 +202,89 @@ pub(super) fn active_backend_points(samples: &[ActiveBackendSample]) -> Vec<Acti
         .collect()
 }
 
+pub(super) fn lock_wait_points(samples: &[ActiveBackendSample]) -> Vec<LockWaitPoint> {
+    samples
+        .iter()
+        .map(|sample| LockWaitPoint {
+            timestamp: sample.timestamp,
+            count: sample.lock_waiting,
+        })
+        .collect()
+}
+
 pub(super) fn active_backend_samples(
     segment: &Segment,
     type_id: u32,
 ) -> Result<Vec<ActiveBackendSample>, BuildError> {
     let mut ids = HashSet::new();
     let mut samples = Vec::new();
-    segment.visit_rows(type_id, &["ts", "state"], 0, usize::MAX, |ordinal, row| {
-        let Some(Cell::Ts(timestamp)) = row.get("ts") else {
-            return true;
-        };
-        let state = match row.get("state") {
-            Some(Cell::StrId(id)) => {
-                ids.insert(*id);
-                Some(*id)
-            }
-            _ => None,
-        };
-        samples.push((*timestamp, state, u32::try_from(ordinal).ok()));
-        true
-    })?;
+    segment.visit_rows(
+        type_id,
+        &["ts", "state", "wait_event_type"],
+        0,
+        usize::MAX,
+        |ordinal, row| {
+            let Some(Cell::Ts(timestamp)) = row.get("ts") else {
+                return true;
+            };
+            let mut string = |name| match row.get(name) {
+                Some(Cell::StrId(id)) => {
+                    ids.insert(*id);
+                    Some(*id)
+                }
+                _ => None,
+            };
+            let state = string("state");
+            let wait_event_type = string("wait_event_type");
+            samples.push((
+                *timestamp,
+                state,
+                wait_event_type,
+                u32::try_from(ordinal).ok(),
+            ));
+            true
+        },
+    )?;
+    let (active_ids, lock_ids) = resolve_marker_ids(segment, ids)?;
+
+    let mut counts = BTreeMap::<i64, ActiveBackendSample>::new();
+    for (timestamp, state, wait_event_type, ordinal) in samples {
+        let sample = counts.entry(timestamp).or_insert(ActiveBackendSample {
+            timestamp,
+            first_active_ordinal: None,
+            count: 0,
+            lock_waiting: 0,
+        });
+        if state.is_some_and(|id| active_ids.contains(&id)) {
+            sample.first_active_ordinal = sample.first_active_ordinal.or(ordinal);
+            sample.count = sample.count.saturating_add(1);
+        }
+        if wait_event_type.is_some_and(|id| lock_ids.contains(&id)) {
+            sample.lock_waiting = sample.lock_waiting.saturating_add(1);
+        }
+    }
+    Ok(counts.into_values().collect())
+}
+
+/// Dictionary ids of the `active` state and the `Lock` wait event type.
+fn resolve_marker_ids(
+    segment: &Segment,
+    ids: HashSet<u64>,
+) -> Result<(HashSet<u64>, HashSet<u64>), BuildError> {
     let dictionary = segment.dictionary_for(&ids)?;
     let mut active_ids = HashSet::new();
+    let mut lock_ids = HashSet::new();
     for id in ids {
         match dictionary.resolve(id) {
             Some(Resolved::Str(b"active")) => {
                 active_ids.insert(id);
             }
+            Some(Resolved::Str(b"Lock")) => {
+                lock_ids.insert(id);
+            }
             Some(Resolved::Str(_) | Resolved::Blob(_)) => {}
             None => return Err(BuildError::UnresolvedState(id)),
         }
     }
-
-    let mut counts = BTreeMap::<i64, (Option<u32>, u32)>::new();
-    for (timestamp, state, ordinal) in samples {
-        let sample = counts.entry(timestamp).or_default();
-        if state.is_some_and(|id| active_ids.contains(&id)) {
-            sample.0 = sample.0.or(ordinal);
-            sample.1 = sample.1.saturating_add(1);
-        }
-    }
-    Ok(counts
-        .into_iter()
-        .map(
-            |(timestamp, (first_active_ordinal, count))| ActiveBackendSample {
-                timestamp,
-                first_active_ordinal,
-                count,
-            },
-        )
-        .collect())
+    Ok((active_ids, lock_ids))
 }

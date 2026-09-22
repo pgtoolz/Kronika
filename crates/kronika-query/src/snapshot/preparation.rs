@@ -13,6 +13,7 @@ use super::{
 };
 
 use crate::dataset::{DatasetSegment, QueryDataset, SegmentBounds, SegmentSelection};
+use crate::index_provider::IndexProvider;
 use crate::snapshot::cursor::{bind_lock_observations, pin, snapshot_binding};
 use crate::snapshot::filter::{search_clause_columns, search_columns};
 use crate::snapshot::paging::page_order;
@@ -28,6 +29,7 @@ use crate::{
 #[derive(Debug)]
 pub struct SnapshotPreparation {
     dataset: Arc<dyn QueryDataset>,
+    indexes: Option<Arc<dyn IndexProvider>>,
     anchor: DatasetSegment,
     segments: Vec<DatasetSegment>,
     request: SnapshotRequest,
@@ -74,6 +76,7 @@ pub fn prepare_snapshot(
     let pin_current = !request.latest || request.row_ordinal.is_some();
     prepare_selected_state_with_inputs(
         Arc::clone(&context.dataset),
+        context.indexes.clone(),
         current,
         segments,
         clean,
@@ -86,6 +89,7 @@ pub fn prepare_snapshot(
 
 pub(crate) fn prepare_selected(
     dataset: Arc<dyn QueryDataset>,
+    indexes: Option<Arc<dyn IndexProvider>>,
     current: DatasetSegment,
     segments: Vec<DatasetSegment>,
     clean: bool,
@@ -94,6 +98,7 @@ pub(crate) fn prepare_selected(
 ) -> Result<PreparedSnapshot, QueryError> {
     prepare_selected_state(
         dataset,
+        indexes,
         current,
         segments,
         clean,
@@ -104,8 +109,13 @@ pub(crate) fn prepare_selected(
     .finish_prepared()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "captured selection and parsed request state meet at this ownership boundary"
+)]
 pub(super) fn prepare_selected_state(
     dataset: Arc<dyn QueryDataset>,
+    indexes: Option<Arc<dyn IndexProvider>>,
     current: DatasetSegment,
     segments: Vec<DatasetSegment>,
     clean: bool,
@@ -116,6 +126,7 @@ pub(super) fn prepare_selected_state(
     let inputs = prepared_snapshot_inputs(&request)?;
     prepare_selected_state_with_inputs(
         dataset,
+        indexes,
         current,
         segments,
         clean,
@@ -155,6 +166,7 @@ fn prepared_snapshot_inputs(
 )]
 fn prepare_selected_state_with_inputs(
     dataset: Arc<dyn QueryDataset>,
+    indexes: Option<Arc<dyn IndexProvider>>,
     current: DatasetSegment,
     segments: Vec<DatasetSegment>,
     clean: bool,
@@ -209,6 +221,7 @@ fn prepare_selected_state_with_inputs(
     };
     Ok(SnapshotPreparation {
         dataset,
+        indexes,
         anchor,
         segments,
         request,
@@ -277,6 +290,7 @@ impl SnapshotPreparation {
     pub(super) fn finish_prepared(self) -> Result<PreparedSnapshot, QueryError> {
         let Self {
             dataset,
+            indexes,
             anchor,
             segments,
             request,
@@ -350,6 +364,7 @@ impl SnapshotPreparation {
         drop(segment);
         Ok(PreparedSnapshot {
             dataset,
+            indexes,
             anchor,
             latest: request.latest,
             pin_current,

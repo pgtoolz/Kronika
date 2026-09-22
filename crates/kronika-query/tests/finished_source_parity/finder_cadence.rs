@@ -14,7 +14,7 @@ fn context_with_cadence_metadata(
     );
     write_cadence_metadata(directory.path(), HEATMAP_TO + 1, metadata);
     let source = PosixSource::open(directory.path()).expect("source");
-    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0b11, false);
+    let context = indexed_context(Arc::new(FinishedDataset::new(source)), 0b11, false);
     (directory, context)
 }
 
@@ -155,7 +155,7 @@ fn newer_legacy_metadata_restores_relation_cadence_after_downgrade() {
         },
     );
     let source = PosixSource::open(directory.path()).expect("source after downgrade");
-    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0b11, false);
+    let context = indexed_context(Arc::new(FinishedDataset::new(source)), 0b11, false);
     for surface in [FinderSurface::Tables, FinderSurface::Indexes] {
         assert_finder_expiry(&context, surface, 750_000_000);
     }

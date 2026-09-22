@@ -147,21 +147,19 @@ pub(crate) fn stream_series(
                     }
                 }
                 SeriesBlock::PgActiveBackends { type_id, points } => {
-                    for point in points.into_iter().filter(|point| {
-                        window.is_none_or(|window| window.contains(point.timestamp))
-                    }) {
-                        if sink.cancelled()
-                            || !sink.record(record(json!({
-                                "record": "point",
-                                "series": "active_backends",
-                                "type_id": type_id.to_string(),
-                                "ts": point.timestamp.to_string(),
-                                "identity": {},
-                                "value": point.count,
-                            }))?)
-                        {
-                            return Ok(false);
-                        }
+                    let counts = points
+                        .into_iter()
+                        .map(|point| (point.timestamp, point.count));
+                    if !stream_counts("active_backends", type_id, counts, window, sink)? {
+                        return Ok(false);
+                    }
+                }
+                SeriesBlock::PgLockWaiting { type_id, points } => {
+                    let counts = points
+                        .into_iter()
+                        .map(|point| (point.timestamp, point.count));
+                    if !stream_counts("lock_waiting", type_id, counts, window, sink)? {
+                        return Ok(false);
                     }
                 }
                 SeriesBlock::Findings(_) => return Err(QueryError::NoSuchSection),
@@ -261,13 +259,40 @@ fn validate_checksum(kind: SegmentKind, checksum: Option<u32>) -> Result<(), Que
     }
 }
 
+fn stream_counts(
+    series: &str,
+    type_id: u32,
+    counts: impl Iterator<Item = (i64, u32)>,
+    window: Option<Window>,
+    sink: &mut dyn QuerySink,
+) -> Result<bool, QueryError> {
+    for (timestamp, count) in
+        counts.filter(|(timestamp, _)| window.is_none_or(|window| window.contains(*timestamp)))
+    {
+        if sink.cancelled()
+            || !sink.record(record(json!({
+                "record": "point",
+                "series": series,
+                "type_id": type_id.to_string(),
+                "ts": timestamp.to_string(),
+                "identity": {},
+                "value": count,
+            }))?)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn block_layout(_logical_name: &str, block: &SeriesBlock) -> Result<Value, QueryError> {
     match block {
         SeriesBlock::OsHealth(_) => Ok(health_layout("os_health")),
         SeriesBlock::OverallHealth(_) => Ok(health_layout("overall_health")),
         SeriesBlock::PostgresHealth(_) => Ok(health_layout("postgres_health")),
         SeriesBlock::PgTransactions { type_id, .. } => section_layout("pg_stat_database", *type_id),
-        SeriesBlock::PgActiveBackends { type_id, .. } => {
+        SeriesBlock::PgActiveBackends { type_id, .. }
+        | SeriesBlock::PgLockWaiting { type_id, .. } => {
             section_layout("pg_stat_activity", *type_id)
         }
         SeriesBlock::Findings(_) => Err(QueryError::NoSuchSection),

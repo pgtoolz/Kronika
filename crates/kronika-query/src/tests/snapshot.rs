@@ -117,6 +117,14 @@ fn snapshot_request(section: &str, fields: &[&str]) -> SnapshotRequest {
 }
 
 fn snapshot_records(payload: &Arc<[u8]>, request: SnapshotRequest) -> Vec<Value> {
+    snapshot_records_indexed(payload, None, request)
+}
+
+fn snapshot_records_indexed(
+    payload: &Arc<[u8]>,
+    index: Option<Vec<u8>>,
+    request: SnapshotRequest,
+) -> Vec<Value> {
     let source = EmbeddedSource::from_owned(
         SegmentId::new(SEGMENT_ID).expect("snapshot segment id"),
         payload.as_ref().to_vec(),
@@ -124,7 +132,13 @@ fn snapshot_records(payload: &Arc<[u8]>, request: SnapshotRequest) -> Vec<Value>
     )
     .expect("embedded snapshot source");
     let dataset: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(source));
-    let context = QueryContext::new(dataset, 0b11, false);
+    let mut context = QueryContext::new(dataset, 0b11, false);
+    if let Some(index) = index {
+        context = context.with_index_provider(Arc::new(
+            crate::MemoryIndexProvider::new(SegmentId::new(SEGMENT_ID).expect("id"), index)
+                .expect("lock index"),
+        ));
+    }
     let execution = execute(&context, QueryRequest::Snapshot(request)).expect("prepare snapshot");
     let mut records = SnapshotRecords::default();
     execution
@@ -1551,6 +1565,48 @@ fn disk_lane_uses_one_device_delta_and_its_queue() {
     assert_eq!(point("disk_queue")["device"], point("disk_busy")["device"]);
 }
 
+/// The lock-waiting blocks an exporter builds for this segment.
+fn lock_index(payload: &Arc<[u8]>) -> Vec<u8> {
+    let source = EmbeddedSource::from_owned(
+        SegmentId::new(SEGMENT_ID).expect("id"),
+        payload.to_vec(),
+        u64::try_from(payload.len()).expect("length"),
+    )
+    .expect("source");
+    let dataset = FinishedDataset::new(source);
+    let descriptor = dataset
+        .segment(SEGMENT_ID)
+        .expect("listing")
+        .segments
+        .into_iter()
+        .next()
+        .expect("segment");
+    let segment = dataset.open(&descriptor).expect("segment body");
+    let keys = kronika_index::lock_wait_keys_for_sections(descriptor.sections());
+    kronika_index::build_selected(&segment, &keys)
+        .expect("lock index")
+        .encode()
+        .expect("encoded lock index")
+}
+
+fn lock_context(payload: &Arc<[u8]>) -> QueryContext {
+    let source = EmbeddedSource::from_owned(
+        SegmentId::new(SEGMENT_ID).expect("id"),
+        payload.to_vec(),
+        u64::try_from(payload.len()).expect("length"),
+    )
+    .expect("source");
+    QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false).with_index_provider(
+        Arc::new(
+            crate::MemoryIndexProvider::new(
+                SegmentId::new(SEGMENT_ID).expect("id"),
+                lock_index(payload),
+            )
+            .expect("lock index"),
+        ),
+    )
+}
+
 fn lock_observations(graphs: &[i64], activity: &[(i64, bool)]) -> Arc<[u8]> {
     use kronika_registry::pg_locks::PgLocksV2;
     use kronika_registry::pg_stat_activity::PgStatActivityV3;
@@ -1651,16 +1707,14 @@ fn lock_observations(graphs: &[i64], activity: &[(i64, bool)]) -> Arc<[u8]> {
 
 #[test]
 fn locks_do_not_revive_after_a_recorded_zero() {
-    let payload = lock_observations(
-        &[100, 130],
-        &[
-            (99, false),
-            (100, false),
-            (110, false),
-            (120, true),
-            (140, false),
-        ],
-    );
+    let activity = [
+        (99, false),
+        (100, false),
+        (110, false),
+        (120, true),
+        (140, false),
+    ];
+    let payload = lock_observations(&[100, 130], &activity);
     for (at, graph) in [
         (100, Some(100)),
         (105, Some(100)),
@@ -1669,8 +1723,9 @@ fn locks_do_not_revive_after_a_recorded_zero() {
         (135, Some(130)),
         (140, None),
     ] {
-        let records = snapshot_records(
+        let records = snapshot_records_indexed(
             &payload,
+            Some(lock_index(&payload)),
             SnapshotRequest {
                 at,
                 latest: true,
@@ -1691,8 +1746,9 @@ fn locks_do_not_revive_after_a_recorded_zero() {
             }));
         }
     }
-    let exact = snapshot_records(
+    let exact = snapshot_records_indexed(
         &payload,
+        Some(lock_index(&payload)),
         SnapshotRequest {
             at: 125,
             ..snapshot_request("pg_locks", &["pid"])
@@ -1706,13 +1762,12 @@ fn locks_do_not_revive_after_a_recorded_zero() {
 
 #[test]
 fn locks_observations_merge_all_rows_before_filters_and_preserve_finder_and_exact_access() {
-    let payload = lock_observations(
-        &[100],
-        &[(110, false), (110, true), (120, false), (125, true)],
-    );
+    let activity = [(110, false), (110, true), (120, false), (125, true)];
+    let payload = lock_observations(&[100], &activity);
     for (at, count) in [(115, 1), (126, 0)] {
-        let records = snapshot_records(
+        let records = snapshot_records_indexed(
             &payload,
+            Some(lock_index(&payload)),
             SnapshotRequest {
                 at,
                 latest: true,
@@ -1729,13 +1784,7 @@ fn locks_observations_merge_all_rows_before_filters_and_preserve_finder_and_exac
             count
         );
     }
-    let source = EmbeddedSource::from_owned(
-        SegmentId::new(SEGMENT_ID).expect("id"),
-        payload.to_vec(),
-        u64::try_from(payload.len()).expect("size"),
-    )
-    .expect("source");
-    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false);
+    let context = lock_context(&payload);
     for (at, expected) in [(115, 1), (126, 0)] {
         let query = super::FinderQuery {
             surface: super::FinderSurface::Locks,
@@ -1752,8 +1801,9 @@ fn locks_observations_merge_all_rows_before_filters_and_preserve_finder_and_exac
             Err(crate::QueryError::Cancelled)
         ));
     }
-    let exact = snapshot_records(
+    let exact = snapshot_records_indexed(
         &payload,
+        Some(lock_index(&payload)),
         SnapshotRequest {
             at: 100,
             latest: true,
@@ -1818,15 +1868,29 @@ fn recorded_lock_markers_count_distinct_waiters_and_blockers_without_inventing_p
 
 #[test]
 fn cancellation_during_lock_observation_rows_is_an_error_not_a_zero() {
-    let activity: Vec<_> = (0..512).map(|_| (110, true)).collect();
+    let activity = [(110, true)];
     let payload = lock_observations(&[100], &activity);
-    let source = EmbeddedSource::from_owned(
-        SegmentId::new(SEGMENT_ID).expect("id"),
-        payload.to_vec(),
-        u64::try_from(payload.len()).expect("length"),
+    let loads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let context = QueryContext::new(
+        Arc::new(FinishedDataset::new(
+            EmbeddedSource::from_owned(
+                SegmentId::new(SEGMENT_ID).expect("id"),
+                payload.to_vec(),
+                u64::try_from(payload.len()).expect("length"),
+            )
+            .expect("source"),
+        )),
+        0,
+        false,
     )
-    .expect("source");
-    let context = QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false);
+    .with_index_provider(Arc::new(CountingIndexProvider {
+        inner: crate::MemoryIndexProvider::new(
+            SegmentId::new(SEGMENT_ID).expect("id"),
+            lock_index(&payload),
+        )
+        .expect("lock index"),
+        loads: Arc::clone(&loads),
+    }));
     let query = super::FinderQuery {
         surface: super::FinderSurface::Locks,
         point: super::SnapshotPoint::At(115),
@@ -1835,16 +1899,14 @@ fn cancellation_during_lock_observation_rows_is_an_error_not_a_zero() {
         group: None,
         limit: 1,
     };
-    let checks = std::cell::Cell::new(0);
-    let cancelled = || {
-        checks.set(checks.get() + 1);
-        checks.get() >= 100
-    };
+    // Cancel right after the observation index is read: the graph must not be
+    // reported either as kept or as superseded.
+    let cancelled = || loads.load(std::sync::atomic::Ordering::SeqCst) >= 1;
     assert!(matches!(
         super::execute_plain(&context, &query, &cancelled),
         Err(crate::QueryError::Cancelled)
     ));
-    assert!(checks.get() >= 100);
+    assert_eq!(loads.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(
         super::execute_plain(&context, &query, &|| false)
             .expect("uncancelled graph")
@@ -1852,4 +1914,22 @@ fn cancellation_during_lock_observation_rows_is_an_error_not_a_zero() {
             .len(),
         1
     );
+}
+
+#[derive(Debug)]
+struct CountingIndexProvider {
+    inner: crate::MemoryIndexProvider,
+    loads: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl crate::IndexProvider for CountingIndexProvider {
+    fn load(
+        &self,
+        segment: &crate::DatasetSegment,
+        logical_name: &str,
+        keys: &[kronika_index::SeriesKey],
+    ) -> Result<crate::IndexResource, crate::QueryError> {
+        self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.load(segment, logical_name, keys)
+    }
 }

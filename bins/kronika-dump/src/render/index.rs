@@ -56,20 +56,12 @@ pub(super) fn write_index(
                     }
                 }
                 SeriesBlock::PgActiveBackends { type_id, points } => {
-                    for point in points {
-                        write_json(
-                            output,
-                            &json!({
-                                "kind": "point",
-                                "path": path,
-                                "series": "active_backends",
-                                "type_id": type_id.to_string(),
-                                "ts": point.timestamp.to_string(),
-                                "identity": {},
-                                "value": point.count,
-                            }),
-                        )?;
-                    }
+                    let counts = points.iter().map(|point| (point.timestamp, point.count));
+                    write_count_points(output, path, "active_backends", *type_id, counts)?;
+                }
+                SeriesBlock::PgLockWaiting { type_id, points } => {
+                    let counts = points.iter().map(|point| (point.timestamp, point.count));
+                    write_count_points(output, path, "lock_waiting", *type_id, counts)?;
                 }
                 SeriesBlock::Findings(block) => {
                     write_json(
@@ -124,6 +116,30 @@ pub(super) fn write_index(
     Ok(())
 }
 
+fn write_count_points(
+    output: &mut impl Write,
+    path: &str,
+    series: &str,
+    type_id: u32,
+    counts: impl Iterator<Item = (i64, u32)>,
+) -> Result<(), DumpError> {
+    for (timestamp, count) in counts {
+        write_json(
+            output,
+            &json!({
+                "kind": "point",
+                "path": path,
+                "series": series,
+                "type_id": type_id.to_string(),
+                "ts": timestamp.to_string(),
+                "identity": {},
+                "value": count,
+            }),
+        )?;
+    }
+    Ok(())
+}
+
 fn write_health_points(
     output: &mut impl Write,
     path: &str,
@@ -155,6 +171,7 @@ const fn index_block_name(block: &SeriesBlock) -> &'static str {
         SeriesBlock::PgTransactions { .. } => "transactions_per_second",
         SeriesBlock::PgActiveBackends { .. } => "active_backends",
         SeriesBlock::Findings(_) => "findings",
+        SeriesBlock::PgLockWaiting { .. } => "lock_waiting",
     }
 }
 
@@ -165,6 +182,7 @@ const fn index_block_len(block: &SeriesBlock) -> usize {
         | SeriesBlock::PostgresHealth(points) => points.len(),
         SeriesBlock::PgTransactions { points, .. } => points.len(),
         SeriesBlock::PgActiveBackends { points, .. } => points.len(),
+        SeriesBlock::PgLockWaiting { points, .. } => points.len(),
         SeriesBlock::Findings(block) => block.findings.len(),
     }
 }

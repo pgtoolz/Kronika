@@ -1,6 +1,6 @@
 use super::*;
 
-use kronika_query::{ActiveCursor, QueryError, SegmentBounds, SegmentSelection};
+use kronika_query::{ActiveCursor, SegmentBounds, SegmentSelection};
 use kronika_registry::os_cgroup_context::OsCgroupContextV2;
 use kronika_registry::os_cgroup_cpu::OsCgroupCpuV3;
 use kronika_registry::os_cgroup_memory::OsCgroupMemoryV3;
@@ -355,7 +355,7 @@ fn encoded_active_prefix_reorders_after_validating_current_catalog_ids() {
         .segments(SegmentSelection::new(SegmentBounds::all()))
         .expect("descriptors")
         .segments;
-    listed.sort_by_key(kronika_query::DatasetSegment::min_ts);
+    listed.sort_by_key(DatasetSegment::min_ts);
     assert_eq!(
         listed
             .iter()

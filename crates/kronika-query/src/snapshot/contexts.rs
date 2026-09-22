@@ -1,10 +1,11 @@
 //! Snapshot row windows and per-partition predecessor contexts.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use kronika_reader::{Cell, Segment};
-use kronika_registry::{ColumnClass, logical_section_name};
+use kronika_index::{SeriesBlock, lock_wait_keys_for_sections};
+use kronika_reader::Segment;
+use kronika_registry::ColumnClass;
 
 use super::{
     CachedFact, IdentityCell, Moments, PageContext, PageFacts, PageOrder, PartitionMoments,
@@ -99,10 +100,13 @@ impl PreparedSnapshot {
         graph_at: i64,
         cancelled: &(impl Fn() -> bool + ?Sized),
     ) -> Result<Option<i64>, QueryError> {
-        // Only the latest zero decides, so read the newest activity first and
-        // stop once every remaining segment ends before it: a database without
-        // lock waits answers from its most recent segment instead of the whole
-        // history since the last recorded graph.
+        let indexes = self
+            .indexes
+            .as_deref()
+            .ok_or_else(crate::hour::missing_index_provider)?;
+        // The index carries every activity sample's lock-waiting count, so no
+        // segment body is decoded. Only the latest zero decides: read the newest
+        // segments first and stop once every remaining one ends before it.
         let mut descriptors: Vec<&DatasetSegment> = self
             .validator_segments
             .iter()
@@ -125,58 +129,17 @@ impl PreparedSnapshot {
             if cancelled() {
                 return Err(QueryError::Cancelled);
             }
-            let source = self.dataset.open(descriptor)?;
-            let mut samples = HashSet::new();
-            let mut ids = HashSet::new();
-            for (type_id, _) in source.sections() {
-                if logical_section_name(type_id) != Some("pg_stat_activity") {
+            let keys = lock_wait_keys_for_sections(descriptor.sections());
+            let resource = indexes.load(descriptor, "pg_stat_activity", &keys)?;
+            for block in resource.index.blocks {
+                let SeriesBlock::PgLockWaiting { points, .. } = block else {
                     continue;
-                }
-                source.visit_rows(
-                    type_id,
-                    &["ts", "wait_event_type"],
-                    0,
-                    usize::MAX,
-                    |_ordinal, row| {
-                        if cancelled() {
-                            return false;
-                        }
-                        let Some(Cell::Ts(ts)) = row.get("ts") else {
-                            return true;
-                        };
-                        if *ts <= graph_at || *ts > self.at {
-                            return true;
-                        }
-                        let id = match row.get("wait_event_type") {
-                            Some(Cell::StrId(id)) => Some(*id),
-                            _ => None,
-                        };
-                        samples.insert((*ts, id));
-                        ids.extend(id);
-                        true
-                    },
-                )?;
-                if cancelled() {
-                    return Err(QueryError::Cancelled);
-                }
-            }
-            let dictionary = source.dictionary_for(&ids)?;
-            for (ts, id) in samples {
-                let waiting = if let Some(id) = id {
-                    dictionary
-                        .resolve(id)
-                        .ok_or_else(|| {
-                            QueryError::Unreadable(Box::new(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                format!("unresolved dictionary id {id}"),
-                            )))
-                        })?
-                        .stored_bytes()
-                        == b"Lock"
-                } else {
-                    false
                 };
-                *observations.entry(ts).or_default() |= waiting;
+                for point in points {
+                    if point.timestamp > graph_at && point.timestamp <= self.at {
+                        *observations.entry(point.timestamp).or_default() |= point.count > 0;
+                    }
+                }
             }
         }
         if cancelled() {

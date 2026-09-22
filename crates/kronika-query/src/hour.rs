@@ -327,7 +327,7 @@ impl PreparedHour {
     }
 }
 
-fn missing_index_provider() -> QueryError {
+pub(crate) fn missing_index_provider() -> QueryError {
     QueryError::Unreadable(Box::new(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "this query context has no derived-index provider",

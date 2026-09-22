@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use kronika_query::{
-    CatalogField, CatalogRequest, CatalogSection, QueryContext, Window, catalog_facts,
-};
+use kronika_query::{CatalogField, CatalogRequest, CatalogSection, Window, catalog_facts};
 use rmcp::model::CallToolResult;
 use serde_json::{Map, Value, json};
 
@@ -32,7 +30,7 @@ pub(crate) fn call(
         Ok(dataset) => Arc::new(dataset),
         Err(error) => return storage_error(&crate::api::ApiError::from(error)),
     };
-    let context = QueryContext::new(dataset, config.sources, config.synthetic_demo);
+    let context = crate::api::query_context(dataset, config.sources, config.synthetic_demo);
     let facts = match catalog_facts(
         &context,
         CatalogRequest {

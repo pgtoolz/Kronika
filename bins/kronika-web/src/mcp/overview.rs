@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use kronika_query::{
     HeatmapBatchQuery, HeatmapBatchResult, HeatmapError, HeatmapItemQuery, HeatmapView, MAX_FIELDS,
-    NormalizedRanking, QueryContext, StatementScope, execute_heatmap_batch,
+    NormalizedRanking, StatementScope, execute_heatmap_batch,
 };
 use rmcp::model::CallToolResult;
 use serde_json::{Map, Value};
@@ -45,7 +45,7 @@ pub(crate) fn call(
             return mcp_error_indexed(format!("rankings[0]: {message}"), 0);
         }
     };
-    let context = QueryContext::new(dataset, config.sources, config.synthetic_demo);
+    let context = crate::api::query_context(dataset, config.sources, config.synthetic_demo);
     let result = match execute_heatmap_batch(
         &context,
         HeatmapBatchQuery { range, items },

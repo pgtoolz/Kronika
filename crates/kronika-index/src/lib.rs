@@ -24,9 +24,12 @@ pub use cpu_capacity::{cgroup_cpu_capacity, observed_cgroup_cpu_capacity};
 pub use file::{ENTRY_LEN, HEADER_LEN, Index, IndexError, MAGIC, TargetedIndex};
 pub use findings::{Finding, FindingBlock, FindingKind, MAX_FINDINGS_PER_BLOCK};
 pub use health::{SourcePenalty, Stall, health, overall_health, postgres_penalty};
-pub use selection::{finding_keys_for_sections, series_keys_for_sections};
+pub use selection::{
+    finding_keys_for_sections, lock_wait_keys_for_sections, series_keys_for_sections,
+};
 pub use series::{
-    ActiveBackendPoint, HealthPoint, SeriesBlock, SeriesKey, SeriesKind, TransactionPoint,
+    ActiveBackendPoint, HealthPoint, LockWaitPoint, SeriesBlock, SeriesKey, SeriesKind,
+    TransactionPoint,
 };
 #[cfg(feature = "posix")]
 pub use store::{EXTENSION, LoadError, ResourceIndex, path_of, read, resource_selected};

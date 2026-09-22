@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kronika_query::{QueryContext, execute_row_detail, validate_row_detail_ref};
+use kronika_query::{execute_row_detail, validate_row_detail_ref};
 use rmcp::model::CallToolResult;
 use serde_json::{Map, Value};
 
@@ -32,7 +32,7 @@ pub(crate) fn call(
         Ok(dataset) => Arc::new(dataset),
         Err(error) => return detail_ref_error(&ApiError::from(error)),
     };
-    let context = QueryContext::new(dataset, config.sources, config.synthetic_demo);
+    let context = crate::api::query_context(dataset, config.sources, config.synthetic_demo);
     let row = match execute_row_detail(&context, request, &CancellationSink::new(cancelled)) {
         Ok(row) => row,
         Err(error) => return detail_ref_error(&error),

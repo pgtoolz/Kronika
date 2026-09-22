@@ -1,6 +1,6 @@
 use super::{
-    ActiveBackendPoint, HealthPoint, SeriesBlock, TransactionPoint, pg_activity_layout,
-    pg_database_layout,
+    ActiveBackendPoint, HealthPoint, LockWaitPoint, SeriesBlock, TransactionPoint,
+    pg_activity_layout, pg_database_layout,
 };
 
 #[test]
@@ -45,6 +45,19 @@ fn each_allowlisted_block_roundtrips() {
                 timestamp: 10,
                 count: 4,
             }],
+        },
+        SeriesBlock::PgLockWaiting {
+            type_id: 1_001_004,
+            points: vec![
+                LockWaitPoint {
+                    timestamp: 10,
+                    count: 0,
+                },
+                LockWaitPoint {
+                    timestamp: 15,
+                    count: 2,
+                },
+            ],
         },
     ];
     for block in blocks {

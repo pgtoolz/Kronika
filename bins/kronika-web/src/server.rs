@@ -128,7 +128,7 @@ pub(crate) async fn instance_label(config: Arc<Config>) -> Response<WebBody> {
 /// Choose the largest database in the newest recorded relation snapshot.
 fn largest_database(config: &Config) -> Result<Option<String>, ApiError> {
     let dataset = Arc::new(query_adapter::NativeDataset::from_root(&config.data_root)?);
-    let context = kronika_query::QueryContext::new(dataset, config.sources, config.synthetic_demo);
+    let context = crate::api::query_context(dataset, config.sources, config.synthetic_demo);
     let query = kronika_query::snapshot::CurrentSnapshotQuery {
         logical_name: "pg_stat_user_tables".to_owned(),
         fields: vec!["displayed_storage_bytes".to_owned()],

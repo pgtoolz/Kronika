@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use kronika_query::{
-    EventsQuery, EventsResult, MAX_EVENTS_WINDOW_MICROS, QueryContext, execute_events,
-};
+use kronika_query::{EventsQuery, EventsResult, MAX_EVENTS_WINDOW_MICROS, execute_events};
 use rmcp::model::CallToolResult;
 use serde_json::{Map, Value};
 
@@ -73,7 +71,7 @@ fn run_query(
     cancelled: &dyn Fn() -> bool,
 ) -> Result<EventsResult, ApiError> {
     let dataset = Arc::new(NativeDataset::from_root(&config.data_root)?);
-    let context = QueryContext::new(dataset, config.sources, config.synthetic_demo);
+    let context = crate::api::query_context(dataset, config.sources, config.synthetic_demo);
     execute_events(&context, query, &CancellationSink::new(cancelled))
 }
 

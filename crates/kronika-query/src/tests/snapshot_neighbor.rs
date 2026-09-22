@@ -146,6 +146,33 @@ struct Fixture {
     context: QueryContext,
 }
 
+/// Exporter-built lock-waiting indexes, one encoded IDX per segment.
+/// Builds each segment's index from its own body, as the store and the exporter do.
+#[derive(Debug)]
+struct BuiltIndexProvider(Arc<dyn QueryDataset>);
+
+impl crate::IndexProvider for BuiltIndexProvider {
+    fn load(
+        &self,
+        segment: &DatasetSegment,
+        _logical_name: &str,
+        keys: &[kronika_index::SeriesKey],
+    ) -> Result<crate::IndexResource, QueryError> {
+        let body = self.0.open(segment)?;
+        let unreadable = |error: Box<dyn std::error::Error + Send + Sync>| {
+            QueryError::Unreadable(Box::new(std::io::Error::other(error)))
+        };
+        let bytes = kronika_index::build_selected(&body, keys)
+            .map_err(|error| unreadable(Box::new(error)))?
+            .encode()
+            .map_err(|error| unreadable(Box::new(error)))?;
+        Ok(crate::IndexResource {
+            index: kronika_index::Index::decode_target(&bytes, keys)
+                .map_err(|error| QueryError::Unreadable(Box::new(error)))?,
+        })
+    }
+}
+
 fn fixture(segments: &[(i64, &[Sample])]) -> Fixture {
     let directory = tempfile::tempdir().expect("neighbor fixture directory");
     let root = DataRoot::open(directory.path()).expect("neighbor data root");
@@ -171,9 +198,11 @@ fn fixture(segments: &[(i64, &[Sample])]) -> Fixture {
     drop(journal);
     drop(owner);
     let source = PosixSource::open(directory.path()).expect("neighbor source");
+    let dataset: Arc<dyn QueryDataset> = Arc::new(FinishedDataset::new(source));
     Fixture {
         _directory: directory,
-        context: QueryContext::new(Arc::new(FinishedDataset::new(source)), 0, false),
+        context: QueryContext::new(Arc::clone(&dataset), 0, false)
+            .with_index_provider(Arc::new(BuiltIndexProvider(dataset))),
     }
 }
 
@@ -658,11 +687,15 @@ fn observed(context: &QueryContext) -> (QueryContext, Arc<Mutex<Vec<i64>>>) {
         inner: Arc::clone(&context.dataset),
         opened: Arc::clone(&opened),
     });
-    (QueryContext::new(dataset, 0, false), opened)
+    let mut observed = QueryContext::new(dataset, 0, false);
+    if let Some(indexes) = context.indexes.clone() {
+        observed = observed.with_index_provider(indexes);
+    }
+    (observed, opened)
 }
 
 #[test]
-fn lock_cutoff_reads_the_newest_activity_first_and_stops_at_its_zero() {
+fn lock_cutoff_comes_from_the_index_without_decoding_activity() {
     let data = fixture(&[
         (BASE, &[Sample::Graph(BASE + 100_000)]),
         (BASE + 1, &[Sample::LockWait(BASE + 1_000_000)]),
@@ -682,19 +715,16 @@ fn lock_cutoff_reads_the_newest_activity_first_and_stops_at_its_zero() {
         (rows, opened)
     };
     // Only waits since the graph: it stays on screen.
-    let (rows, opened) = locks(BASE + 1, BASE + 1_500_000);
+    let (rows, _opened) = locks(BASE + 1, BASE + 1_500_000);
     assert_eq!(rows, 1);
-    assert!(opened.contains(&(BASE + 1)));
-    // The newest segment shows no wait, so older activity is never opened.
+    // Later zeros come from the index: no earlier activity body is decoded.
     let (rows, opened) = locks(BASE + 3, BASE + 3_500_000);
     assert_eq!(rows, 0);
-    assert!(opened.contains(&(BASE + 3)));
     assert!(!opened.contains(&(BASE + 2)) && !opened.contains(&(BASE + 1)));
-    // A waiting newest segment continues to the next older one and stops there.
+    // A waiting newest segment still yields to the older zero, still from the index.
     let (rows, opened) = locks(BASE + 4, BASE + 4_500_000);
     assert_eq!(rows, 0);
-    assert!(opened.contains(&(BASE + 4)) && opened.contains(&(BASE + 3)));
-    assert!(!opened.contains(&(BASE + 2)) && !opened.contains(&(BASE + 1)));
+    assert!(!opened.iter().any(|id| (BASE + 1..=BASE + 3).contains(id)));
 }
 
 #[test]
