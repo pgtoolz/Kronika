@@ -419,7 +419,8 @@ fn read_disk(segment: &Segment, type_id: u32, counters: &mut Counters) -> Result
         rows.push(row);
         true
     })?;
-    let dictionary = segment.dictionary_for(&ids)?;
+    // The device name is presentation only: a damaged dictionary must not cost the hour its lanes.
+    let dictionary = segment.dictionary_for(&ids).unwrap_or_default();
     for row in rows {
         let (Some(ts), Some(major), Some(minor)) = (
             timestamp(&row, "ts"),

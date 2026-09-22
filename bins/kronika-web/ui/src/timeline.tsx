@@ -127,9 +127,8 @@ export function Timeline({
       lane("amber", "pg_waiting"),
       lane("amber", "pg_lock_waiting"),
       { key: "oldest_xact", series: one("violet", "pg_oldest_xact", of("pg_oldest_xact")) },
-    ].filter((candidate) => candidate.key === "health"
-      ? candidate.series.some((line) => line.points.length !== 0)
-      : candidate.key === "pg_lock_waiting" && lanePoints.some((point) => point.locks !== undefined) || candidate.series.some((line) => line.points.length !== 0))
+    ].filter((candidate) => candidate.key === "pg_lock_waiting" && lanePoints.some((point) => point.locks !== undefined)
+      || candidate.series.some((line) => line.points.some((point) => point.value !== null)))
   }, [environment, healthTrack, lanePoints])
   const [localLane, setLocalLane] = useState(primaryLane)
   const selectedLane = controlledLane === null ? primaryLane : controlledLane ?? localLane
@@ -353,7 +352,7 @@ function toRecordedSeries(lane: TimelineLane, locale: Locale, t: Translate): rea
     labelKey: lane.key === "health" ? `lane.health.${line.field}` : `lane.${lane.key}.label`,
     points: line.points,
     pointsOnly: lane.key === "pg_lock_waiting",
-    scale: percent && lane.key !== "disk_busy" && lane.key !== "host_disk" ? "percent" as const : "nonnegative" as const,
+    scale: percent ? "percent" as const : "nonnegative" as const,
     tick: (number: number, place: Locale) => format(number, lane.key, place),
     unit,
     value: (number: number, place: Locale) => format(number, lane.key, place),
@@ -365,7 +364,7 @@ function LaneLabel({ label, help, fullReading, onSelect, primary, reading, sizer
   return <div data-primary={primary || undefined} className={`lane-label timeline-lane-label flex h-7 min-w-0 items-center gap-1.5 overflow-hidden rounded-t-[var(--radius-xs)] px-[7px] text-left font-sans text-xs font-medium text-fg3 hover:bg-accent-soft hover:text-accent3${primary ? " bg-s3 text-fg2 shadow-[inset_0_-2px_var(--color-accent)]" : ""}`} title={accessible}>
     <button aria-label={accessible} aria-pressed={primary} className="lane-select flex min-w-0 flex-auto cursor-pointer items-center gap-1.5 self-stretch overflow-hidden border-0 bg-transparent p-0 text-left [font-family:inherit]" onClick={onSelect} type="button">
       <span className="timeline-lane-name min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{t(label)}</span>
-      <span data-testid="lane-reading" className={`timeline-lane-reading ml-auto min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono font-normal tabular-nums ${primary ? "text-md text-accent3" : "text-sm text-fg"}`} title={reading}><span>{reading}</span><span aria-hidden="true">{sizer}</span></span>
+      <span className={`timeline-lane-reading ml-auto min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono font-normal tabular-nums ${primary ? "text-md text-accent3" : "text-sm text-fg"}`}><span data-testid="lane-reading" title={reading}>{reading}</span><span aria-hidden="true">{sizer}</span></span>
     </button>
     <LabelHelp helpKey={help} iconOnly labelKey={label} t={t} />
   </div>

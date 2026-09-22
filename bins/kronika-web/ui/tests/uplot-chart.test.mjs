@@ -129,7 +129,10 @@ test("isolated samples are points and not fake line stubs", () => {
 })
 
 test("semantic scales remain explicit", () => {
-  assert.deepEqual(chart.scaleRange("percent", [-2, 42, 101]), [0, 100])
+  assert.deepEqual(chart.scaleRange("percent", [-2, 3, 42]), [0, 100])
+  // A reading above 100 lifts the ceiling instead of clipping.
+  assert.deepEqual(chart.scaleRange("percent", [-2, 42, 101]), [0, chart.scaleRange("nonnegative", [101])[1]])
+  assert.deepEqual(chart.scaleRange("percent", []), [0, 100])
   assert.deepEqual(chart.scaleRange("nonnegative", [0, 12]), [0, 20])
   assert.deepEqual(chart.scaleRange("signed", [-4, 12]), [-5, 20])
   assert.deepEqual(chart.scaleRange("signed", [-12, -4]), [-20, 0])

@@ -529,8 +529,9 @@ export function exactReadings(frame: ChartFrame, series: readonly RecordedSeries
 }
 
 export function scaleRange(scale: ChartScale, values: readonly number[]): readonly [number, number] {
-  if (scale === "percent") return [0, 100]
   const finite = values.filter(Number.isFinite)
+  // Percent axes share 0–100; a kernel reading above 100 lifts the ceiling instead of clipping.
+  if (scale === "percent") return [0, Math.max(100, finite.length === 0 ? 0 : niceCeiling(Math.max(...finite)))]
   if (scale === "nonnegative") return [0, niceCeiling(Math.max(0, ...finite))]
   if (finite.length === 0) return [-1, 1]
   const low = Math.min(...finite)

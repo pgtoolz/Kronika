@@ -458,7 +458,17 @@ test("each lane reserves its widest reading of the hour so pointer travel never 
     { segmentId: "s", lane: "pg_waiting", timestamp: 300, value: 1234 },
   ]
   const html = requestTimeline.render("ready", [], "preview", { selectedLane: null, primaryLane: "pg_waiting", lanePoints })
-  assert.match(html, /data-testid="lane-reading"[^>]*><span>3<\/span><span aria-hidden="true">1\.23K<\/span>/)
+  assert.match(html, /<span data-testid="lane-reading" title="3">3<\/span><span aria-hidden="true">1\.23K<\/span>/)
+})
+
+test("a lane whose every value is null is not offered", () => {
+  const lanePoints = [
+    { segmentId: "s", lane: "pg_waiting", timestamp: 200, value: 3 },
+    { segmentId: "s", lane: "disk_busy", timestamp: 200, value: null, device: { major: 8, minor: 0, name: "sda", scope: 0 } },
+  ]
+  const html = requestTimeline.render("ready", [], "preview", { selectedLane: null, primaryLane: "pg_waiting", environment: "machine", lanePoints })
+  assert.doesNotMatch(html, /value="disk_busy"/)
+  assert.match(html, /value="pg_waiting"/)
 })
 
 test("an unavailable automatic lane falls back to the first recorded lane", () => {

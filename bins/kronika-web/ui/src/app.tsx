@@ -1014,7 +1014,7 @@ function App({ locale, onLocale, t }: {
   useEffect(() => {
     if (previousView.current !== baseViewKey) {
       previousView.current = baseViewKey
-      if (order !== null) { setOrder(null); return }
+      if (order !== null || timelineLane !== null) { setOrder(null); setTimelineLane(null); return }
     }
     if (loading) return
     const destination = historyAddress(address, window.location.pathname)
@@ -1024,7 +1024,7 @@ function App({ locale, onLocale, t }: {
     const dragging = steps.current !== null && stepOf(steps.current) === stepOf(destination)
     steps.current = destination
     window["history"][replace || dragging ? "replaceState" : "pushState"]({}, "", destination)
-  }, [address, baseViewKey, loading, order])
+  }, [address, baseViewKey, loading, order, timelineLane])
   useEffect(() => {
     const back = () => {
       const opening = readAddress(window.location.search)

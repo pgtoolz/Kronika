@@ -42,6 +42,8 @@ interface MetricSpec {
     | "mem_file_cache"
     | "mem_other"
     | "filesystem_free_min"
+    | "device_busy"
+    | "device_average_queue"
     | "device_count"
     | "device_active_io"
     | "filesystem_count"
@@ -131,8 +133,8 @@ export const SYSTEM_METRICS: readonly MetricSpec[] = [
   pressureMetric("io_pressure", "storage", "system.metric.io_pressure", 2),
   exactLaneMetric("disk_busy", "storage", "use.lane.disk_busy", "use.lane.disk_busy.help", "%"),
   exactLaneMetric("disk_queue", "storage", "use.lane.disk_queue", "use.lane.disk_queue.help", ""),
-  { ...exactLaneMetric("device_busy", "storage", "system.metric.device_busy.label", "system.metric.device_busy.help", "%"), useOnly: false },
-  { ...exactLaneMetric("device_average_queue", "storage", "system.metric.device_average_queue.label", "system.metric.device_average_queue.help", ""), useOnly: false },
+  derivedMetric("device_busy", "storage", "system.metric.device_busy", "os_device_busy", "device_busy", "%"),
+  derivedMetric("device_average_queue", "storage", "system.metric.device_average_queue", "os_device_average_queue", "device_average_queue", ""),
   derivedMetric("filesystem_free_min", "storage", "system.metric.filesystem_free_min", "os_min_filesystem_free_percent", "filesystem_free_min", "%"),
   derivedMetric("device_count", "storage", "system.metric.device_count", "os_device_count", "device_count", ""),
   derivedMetric("device_active_io", "storage", "system.metric.device_active_io", "os_device_active_io", "device_active_io", ""),
@@ -180,6 +182,8 @@ const DERIVE_INPUTS: Readonly<Record<NonNullable<MetricSpec["derive"]>, readonly
   mem_file_cache: ["os_meminfo", ["cached", "buffers"]],
   mem_other: ["os_meminfo", ["mem_total", "mem_free", "cached", "buffers", "anon_pages", "s_reclaimable", "s_unreclaim"]],
   filesystem_free_min: ["os_mountinfo", ["total_bytes", "free_bytes"]],
+  device_busy: ["os_diskstats", ["io_time_ms", "device"]],
+  device_average_queue: ["os_diskstats", ["io_weighted_time_ms", "device"]],
   device_count: ["os_diskstats", []],
   device_active_io: ["os_diskstats", ["io_in_progress"]],
   filesystem_count: ["os_mountinfo", []],
@@ -1092,7 +1096,7 @@ function SystemEntityPanel({
             locale={locale}
             onCursor={onCursor}
             points={chartPoints}
-            scale={selectedColumn.kind === "percent" && selectedColumn.field !== "device_busy" ? "percent" : "nonnegative"}
+            scale={selectedColumn.kind === "percent" ? "percent" : "nonnegative"}
             status={history.status}
             t={t}
             unit={entityMetricUnit(selectedColumn, locale, chartMetadata, t)}
@@ -1257,8 +1261,6 @@ function normalizedMetricLanes(spec: MetricSpec): readonly (readonly [string, (v
     cpu_busy: [["cpu_busy", (number) => number]],
     cpu_stall: [["cpu_stall", (number) => number]],
     disk_busy: [["disk_busy", (number) => number]],
-    device_busy: [["disk_busy", (number) => number]],
-    device_average_queue: [["disk_queue", (number) => number]],
     disk_queue: [["disk_queue", (number) => number]],
     memory: [["memory", (number) => number]],
     mem_swap: [["mem_swap", (number) => number]],
@@ -1350,6 +1352,8 @@ export function resourceBreakdownSeries(
 ): readonly RecordedSeries[] {
   if (selectedId === "cpu_actual_frequency") return frequencyBreakdownSeries(rows, "actual_frequency_hz", t)
   if (selectedId === "cpu_scaling_frequency") return frequencyBreakdownSeries(rows, "scaling_cur_freq_hz", t)
+  if (selectedId === "device_busy") return deviceBreakdownSeries(rows, "io_time_ms", 0.1, rates, locale)
+  if (selectedId === "device_average_queue") return deviceBreakdownSeries(rows, "io_weighted_time_ms", 0.001, rates, locale)
   const ids: readonly string[] = selectedId === "cpu_busy"
     ? CPU_SHARE_BREAKDOWN_IDS
     : CPU_BREAKDOWN_IDS.includes(selectedId as typeof CPU_BREAKDOWN_IDS[number])
@@ -1460,6 +1464,8 @@ function derivedRowPoints(rows: readonly DataRow[], derive: NonNullable<MetricSp
     if (percentages.some((number) => number === undefined)) return undefined
     return percentages.some((number) => number === null) ? null : Math.min(...percentages as number[])
   })
+  if (derive === "device_busy") return peakDeviceRate(rows, "io_time_ms", rates, 0.1)
+  if (derive === "device_average_queue") return peakDeviceRate(rows, "io_weighted_time_ms", rates, 0.001)
   if (derive === "device_count" || derive === "filesystem_count" || derive === "interface_count") return aggregateRows(rows, (sampleRows) => sampleRows.length)
   if (derive === "device_active_io") return aggregateRows(rows, (sampleRows) => sumFields(sampleRows, ["io_in_progress"]))
   if (derive === "network_rx") return cumulativeRate(aggregateRows(rows, (sampleRows) => sumFields(sampleRows, ["rx_bytes"])))
@@ -1516,6 +1522,87 @@ function frequencyBreakdownSeries(rows: readonly DataRow[], field: string, t: Tr
     unit: "MHz",
     value: (reading: number, place: Locale) => measure(reading, place, " MHz"),
   }))
+}
+
+// Compute counter rates per device before taking the per-instant maximum.
+function peakDeviceRate(rows: readonly DataRow[], field: string, rates: boolean, scale: number): readonly ChartPoint[] {
+  if (rates) return aggregateRows(rows, (sampleRows) => maxField(sampleRows, field, scale))
+  const devices = new Map<string, DataRow[]>()
+  for (const row of rows) {
+    const key = rawText(value(row, "major")) + ":" + rawText(value(row, "minor"))
+    const stored = devices.get(key) ?? []
+    stored.push(row)
+    devices.set(key, stored)
+  }
+  const instants = new Map<string, { readonly segmentId: string; readonly timestamp: number; peak: number | null }>()
+  for (const deviceRows of devices.values()) {
+    for (const point of exactCounterRatePoints(deviceRows, field, scale)) {
+      const key = `${point.segmentId}:${point.timestamp}`
+      const stored = instants.get(key) ?? { segmentId: point.segmentId, timestamp: point.timestamp, peak: null }
+      if (point.value !== null && (stored.peak === null || point.value > stored.peak)) stored.peak = point.value
+      instants.set(key, stored)
+    }
+  }
+  return [...instants.values()]
+    .sort((left, right) => left.timestamp - right.timestamp || left.segmentId.localeCompare(right.segmentId))
+    .map(({ segmentId, timestamp, peak }) => ({ segmentId, timestamp, value: peak }))
+}
+
+// Hide all-hour-zero devices unless every device was idle.
+function deviceBreakdownSeries(
+  rows: readonly DataRow[],
+  field: string,
+  scale: number,
+  rates: boolean,
+  locale: Locale,
+): readonly RecordedSeries[] {
+  const devices = new Map<string, { readonly name: string; readonly rows: DataRow[] }>()
+  for (const row of rows) {
+    const key = `${rawText(value(row, "major"))}:${rawText(value(row, "minor"))}`
+    const stored = devices.get(key) ?? { name: rawText(value(row, "device")) ?? key, rows: [] }
+    stored.rows.push(row)
+    devices.set(key, stored)
+  }
+  const series = [...devices.entries()].map(([key, device]) => {
+    const points = rates
+      ? buildMetricSamples(device.rows, (row) => {
+          const stored = storedNumber(row, field)
+          return stored === undefined ? undefined : stored === null ? null : stored * scale
+        })
+      : exactCounterRatePoints(device.rows, field, scale)
+    const peak = points.reduce((max, point) => point.value !== null && point.value > max ? point.value : max, 0)
+    return { device, key, peak, points }
+  })
+  const active = series.filter(({ points }) => points.some((point) => point.value !== null && point.value > 0))
+  const shown = (active.length === 0 ? series : active).sort((left, right) => right.peak - left.peak || left.key.localeCompare(right.key))
+  const percent = scale === 0.1
+  const format = percent
+    ? (reading: number, place: Locale) => metricChartValue(reading, place, "%")
+    : (reading: number, place: Locale) => measure(reading, place)
+  return shown.map(({ device, key, points }, index) => ({
+    color: BREAKDOWN_COLORS[index % BREAKDOWN_COLORS.length]!,
+    helpKey: percent ? "system.field.device_busy.help" : "system.field.average_queue.help",
+    id: `device_${key}`,
+    label: device.name,
+    labelKey: device.name,
+    points,
+    scale: percent ? "percent" as const : "nonnegative" as const,
+    tick: format,
+    unit: percent ? "%" : locale === "ru" ? "количество" : "count",
+    value: format,
+  }))
+}
+
+// The rollup is the busiest device, not an average.
+function maxField(rows: readonly DataRow[], field: string, scale: number): number | null | undefined {
+  let peak: number | null = null
+  for (const row of rows) {
+    const stored = storedNumber(row, field)
+    if (stored === undefined) return undefined
+    if (stored === null) continue
+    if (peak === null || stored > peak) peak = stored
+  }
+  return peak === null ? null : peak * scale
 }
 
 function aggregateRows(rows: readonly DataRow[], aggregate: (rows: readonly DataRow[]) => number | null | undefined): readonly ChartPoint[] {

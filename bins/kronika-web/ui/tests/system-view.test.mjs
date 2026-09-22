@@ -477,20 +477,27 @@ test("a cumulative metric stays absent until its section announces rate columns"
   assert.equal(cumulative.hasMetric({ points: [], sections: { os_diskstats: [row] }, rateColumns: { os_diskstats: ["reads"] } }, spec), true)
 })
 
-test("storage summary aliases use the shared maximum and same-device queue", () => {
-  const device = { major: 8, minor: 0, name: "sda", scope: 0 }
-  const lanePoints = [
-    { lane: "disk_busy", segmentId: "a", timestamp: 200, value: 60, device },
-    { lane: "disk_queue", segmentId: "a", timestamp: 200, value: 0.8, device },
+test("the storage dock breaks device busy down to the devices that registered activity", () => {
+  const row = (timestamp, major, device, ioTime) => ({
+    logicalName: "os_diskstats", ordinal: `${major}:${timestamp}`, segmentId: "a", timestamp, typeId: "1108001",
+    values: { major, minor: 0, device, io_time_ms: ioTime, io_weighted_time_ms: ioTime },
+  })
+  const rows = [
+    row(1_000_000, 8, "sda", 100), row(2_000_000, 8, "sda", 400),
+    row(1_000_000, 9, "sdb", 50), row(2_000_000, 9, "sdb", 50),
   ]
-  for (const [id, value] of [["device_busy", 60], ["device_average_queue", 0.8]]) {
-    const spec = helpers.SYSTEM_METRICS.find((spec) => spec.id === id)
-    const actual = helpers.metricPoints({ lanePoints, points: [], sections: {}, rateColumns: {} }, spec)
-    assert.equal(actual[0].value, value)
-    assert.deepEqual(actual[0].device, device)
-    assert.equal(helpers.metricHistoryRequest(spec), null)
-    assert.ok(helpers.dockGroupMetrics(helpers.SYSTEM_METRICS.filter((spec) => spec.group === "storage"), "disk_busy").chips.some((spec) => spec.id === id))
-  }
+  const series = helpers.resourceBreakdownSeries("device_busy", rows, false, "en", (key) => key)
+  assert.deepEqual(series.map(({ label }) => label), ["sda"])
+  assert.deepEqual(series[0].points.map(({ value }) => value), [null, 30])
+  assert.equal(series[0].unit, "%")
+  const allIdle = helpers.resourceBreakdownSeries("device_busy", [row(1_000_000, 9, "sdb", 50), row(2_000_000, 9, "sdb", 50)], false, "en", (key) => key)
+  assert.deepEqual(allIdle.map(({ label }) => label), ["sdb"])
+  const rated = helpers.resourceBreakdownSeries("device_busy", [row(1_000_000, 8, "sda", 0.42)], true, "en", (key) => key)
+  assert.deepEqual(rated.map(({ label }) => label), ["sda"])
+  assert.ok(Math.abs((rated[0].points[0]?.value ?? 0) - 0.042) < 1e-9)
+  const queue = helpers.resourceBreakdownSeries("device_average_queue", [row(1_000_000, 8, "sda", 42)], true, "en", (key) => key)
+  assert.deepEqual(queue.map(({ label }) => label), ["sda"])
+  assert.ok(Math.abs((queue[0].points[0]?.value ?? 0) - 0.042) < 1e-9)
 })
 
 test("selected disk history keeps identity across parts and a missing current snapshot", () => {
