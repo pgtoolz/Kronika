@@ -148,6 +148,14 @@ export function Timeline({
   const selected = lanes.find((lane) => lane.key === selectedLane)
     ?? (typeof controlledLane === "string" || controlledLane === null && requestPhase !== "ready" ? { key: selectedLane, series: [] } : lanes[0])
   const choices = selected === undefined || lanes.some((lane) => lane.key === selected.key) ? lanes : [selected, ...lanes]
+  // Each lane reserves room for its widest reading of the hour, so pointer
+  // travel changes the numbers but never the strip layout.
+  const widestReadings = useMemo(() => new Map(lanes.map((lane) => {
+    const times = [...new Set(lane.series.flatMap((line) => line.points.map((point) => point.timestamp)))]
+    const widest = (read: (lane: TimelineLane, cursor: number, locale: Locale, t: Translate) => string) =>
+      times.reduce((longest, time) => { const candidate = read(lane, time, locale, t); return candidate.length > longest.length ? candidate : longest }, "")
+    return [lane.key, { full: widest(laneReading), compact: widest(compactLaneReading) }]
+  })), [lanes, locale, t])
   const selectedEmpty = selected !== undefined && selected.series.every((line) => line.points.length === 0)
   const laneTimes = useMemo(() => timelineNavigationTimes(lanes), [lanes])
   const cursorTimes = useMemo(
@@ -189,8 +197,11 @@ export function Timeline({
     return exportSelection === null ? drawn : [...drawn, { from: exportSelection.from, to: exportSelection.to, tone: "selection" as const }]
   }, [exportSelection, end, hour, lanes, selected])
   const threshold = useMemo(() => selected?.threshold === undefined ? undefined : { below: selected.threshold, seriesId: "overall_health" }, [selected])
-  const diskPoint = selected?.key === "disk_busy" || selected?.key === "host_disk"
-    ? sampleAtOrBefore(lanePoints.filter((point) => point.lane === "disk_busy" && (selected.key !== "host_disk" || point.device?.scope === 0 || point.value === null)), displayCursor) : null
+  const diskPoints = selected?.key === "disk_busy" || selected?.key === "host_disk"
+    ? lanePoints.filter((point) => point.lane === "disk_busy" && (selected.key !== "host_disk" || point.device?.scope === 0 || point.value === null)) : []
+  const diskPoint = sampleAtOrBefore(diskPoints, displayCursor)
+  // The device button follows the committed cursor: pointer travel must not add or remove it.
+  const diskAction = sampleAtOrBefore(diskPoints, cursor)
   const queuePoint = sampleAtOrBefore(lanePoints.filter((point) => point.lane === "disk_queue"), displayCursor)
   const queueReading = diskPoint?.device === undefined ? "" : ` · ${t("use.lane.disk_queue")} ${queuePoint?.timestamp === diskPoint.timestamp && queuePoint.value !== null ? compact(queuePoint.value, locale) : "—"}`
   const selectedReading = (selected === undefined ? "—" : laneReading(selected, displayCursor, locale, t)) + queueReading
@@ -249,13 +260,14 @@ export function Timeline({
             primary={lane.key === selected.key}
             reading={lane.key === selected.key ? laneReading(lane, displayCursor, locale, t) : compactLaneReading(lane, displayCursor, locale, t)}
             fullReading={laneReading(lane, displayCursor, locale, t)}
+            sizer={widestReadings.get(lane.key)?.[lane.key === selected.key ? "full" : "compact"] ?? ""}
             t={t}
           />)}
         </div><div className="timeline-preview-picker min-w-0 flex-1 items-center gap-1 px-1">
           <select aria-label={t("inspector.timeline")} data-testid="timeline-preview-metric-select" onChange={(event) => setSelectedLane(event.currentTarget.value)} value={selected.key}>{choices.map((lane) => <option key={lane.key} value={lane.key}>{t(`lane.${lane.key}.label`)}</option>)}</select>
           <span className="timeline-preview-reading min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-right text-sm tabular-nums text-fg" data-testid="timeline-preview-reading" title={selectedReading}>{selectedReading}</span>
         </div></div>}
-      {diskPoint?.device !== undefined && actions !== null && <button className="max-w-[120px] flex-none cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap border-0 border-l border-line2 bg-s2 px-2 font-mono text-sm text-accent3" data-testid="timeline-disk-detail" onClick={() => actions.disk(diskPoint)} title={diskTitle} type="button">{diskPoint.device.name ?? `${diskPoint.device.major}:${diskPoint.device.minor}`} ↗</button>}
+      {diskAction?.device !== undefined && actions !== null && <button className="max-w-[120px] flex-none cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap border-0 border-l border-line2 bg-s2 px-2 font-mono text-sm text-accent3" data-testid="timeline-disk-detail" onClick={() => actions.disk(diskAction)} title={diskTitle} type="button">{diskAction.device.name ?? `${diskAction.device.major}:${diskAction.device.minor}`} ↗</button>}
       {presentation === "preview" && onOpenChart !== undefined && <button aria-label={t("inspector.open_chart")} className="timeline-open-chart" onClick={onOpenChart} title={t("inspector.open_chart")} type="button"><span aria-hidden="true">↗</span><span>{t("inspector.chart")}</span></button>}
     </div>
     <UPlotChart
@@ -348,12 +360,12 @@ function toRecordedSeries(lane: TimelineLane, locale: Locale, t: Translate): rea
   }))
 }
 
-function LaneLabel({ label, help, fullReading, onSelect, primary, reading, t }: { readonly label: string; readonly help: string; readonly fullReading: string; readonly onSelect: () => void; readonly primary: boolean; readonly reading: string; readonly t: Translate }) {
+function LaneLabel({ label, help, fullReading, onSelect, primary, reading, sizer, t }: { readonly label: string; readonly help: string; readonly fullReading: string; readonly onSelect: () => void; readonly primary: boolean; readonly reading: string; readonly sizer: string; readonly t: Translate }) {
   const accessible = `${t(label)}: ${fullReading}`
   return <div data-primary={primary || undefined} className={`lane-label timeline-lane-label flex h-7 min-w-0 items-center gap-1.5 overflow-hidden rounded-t-[var(--radius-xs)] px-[7px] text-left font-sans text-xs font-medium text-fg3 hover:bg-accent-soft hover:text-accent3${primary ? " bg-s3 text-fg2 shadow-[inset_0_-2px_var(--color-accent)]" : ""}`} title={accessible}>
     <button aria-label={accessible} aria-pressed={primary} className="lane-select flex min-w-0 flex-auto cursor-pointer items-center gap-1.5 self-stretch overflow-hidden border-0 bg-transparent p-0 text-left [font-family:inherit]" onClick={onSelect} type="button">
       <span className="timeline-lane-name min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{t(label)}</span>
-      <span data-testid="lane-reading" className={`timeline-lane-reading ml-auto min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono font-normal tabular-nums ${primary ? "text-md text-accent3" : "text-sm text-fg"}`} title={reading}>{reading}</span>
+      <span data-testid="lane-reading" className={`timeline-lane-reading ml-auto min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono font-normal tabular-nums ${primary ? "text-md text-accent3" : "text-sm text-fg"}`} title={reading}><span>{reading}</span><span aria-hidden="true">{sizer}</span></span>
     </button>
     <LabelHelp helpKey={help} iconOnly labelKey={label} t={t} />
   </div>

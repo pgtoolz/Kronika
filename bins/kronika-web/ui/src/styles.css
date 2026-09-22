@@ -436,7 +436,9 @@
 .timeline-lanes { min-width: 0; overflow: hidden; }
 .timeline-lane-label { flex: 1 1 auto; }
 .timeline-lane-name { flex: 0 1 auto; }
-.timeline-lane-reading { flex: 1 1 auto; }
+.timeline-lane-reading { display: grid; flex: 1 1 auto; }
+.timeline-lane-reading > span { grid-area: 1 / 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-lane-reading > span[aria-hidden="true"] { visibility: hidden; }
 .timeline-lane-slot[data-density="names"] .timeline-lane-label:not([data-primary="true"]) .timeline-lane-reading { display: none; }
 .timeline-lane-slot[data-compact="true"] .timeline-lanes { visibility: hidden; }
 .timeline-preview-picker { display: none; inset: 0; position: absolute; }

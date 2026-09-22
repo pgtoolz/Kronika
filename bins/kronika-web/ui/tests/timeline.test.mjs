@@ -452,6 +452,15 @@ test("automatic lanes remain automatic while explicit unavailable lanes keep the
   }
 })
 
+test("each lane reserves its widest reading of the hour so pointer travel never reflows the strip", () => {
+  const lanePoints = [
+    { segmentId: "s", lane: "pg_waiting", timestamp: 100, value: 3 },
+    { segmentId: "s", lane: "pg_waiting", timestamp: 300, value: 1234 },
+  ]
+  const html = requestTimeline.render("ready", [], "preview", { selectedLane: null, primaryLane: "pg_waiting", lanePoints })
+  assert.match(html, /data-testid="lane-reading"[^>]*><span>3<\/span><span aria-hidden="true">1\.23K<\/span>/)
+})
+
 test("an unavailable automatic lane falls back to the first recorded lane", () => {
   const lanePoints = [{ segmentId: "s", lane: "pg_waiting", timestamp: 200, value: 3 }]
   for (const presentation of ["preview", "inspector"]) {
