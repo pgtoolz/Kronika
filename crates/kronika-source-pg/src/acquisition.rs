@@ -66,6 +66,7 @@ pub struct PgCollector {
     discovered: Vec<databases::Database>,
     capabilities: BTreeMap<String, DatabaseCapabilities>,
     last_discovery: Option<Instant>,
+    discovery_generation: u64,
     settings: Option<CachedSettings>,
     probe: Option<GenerationProbe>,
 }
@@ -93,6 +94,24 @@ impl PgCollector {
             server.close();
         }
         self.close_secondary_connections();
+    }
+
+    /// Names from the last database discovery, empty before the first pass.
+    ///
+    /// The Prometheus exporter reuses this list instead of running its own
+    /// discovery; it refreshes on the collector's normal discovery cadence.
+    #[must_use]
+    pub fn discovered_database_names(&self) -> Vec<String> {
+        self.discovered.iter().map(|db| db.name.clone()).collect()
+    }
+
+    /// Counter bumped every time database discovery reruns.
+    ///
+    /// Callers compare it between passes to notice a discovery cycle; the
+    /// exporter uses that to re-enable metrics disabled for missing objects.
+    #[must_use]
+    pub const fn discovery_generation(&self) -> u64 {
+        self.discovery_generation
     }
 
     /// Read due sections and synchronously admit each bounded batch before the

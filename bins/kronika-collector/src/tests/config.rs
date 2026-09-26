@@ -244,3 +244,95 @@ fn postgres_activity_and_statement_intervals_have_independent_bounds() {
 
 #[path = "config/cli.rs"]
 mod cli;
+
+#[test]
+fn prometheus_settings_require_the_listen_endpoint() {
+    let base = ["kronika-collector", "--storage-dir", "/tmp/kronika"];
+    let with_metrics = match parse_from(base.iter().copied().chain([
+        "--pg-dsn",
+        "host=h",
+        "--prometheus-metrics",
+        "/etc/prom.d",
+    ])) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("metrics without listen must fail"),
+    };
+
+    assert!(
+        with_metrics.contains("require --prometheus-listen"),
+        "{with_metrics}"
+    );
+
+    let with_preset = match parse_from(base.iter().copied().chain([
+        "--pg-dsn",
+        "host=h",
+        "--prometheus-preset",
+        "standard",
+    ])) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("preset without listen must fail"),
+    };
+
+    assert!(
+        with_preset.contains("require --prometheus-listen"),
+        "{with_preset}"
+    );
+
+    // the default preset alone is not a setting
+    parse_from(base.iter().copied().chain(["--pg-dsn", "host=h"]))
+        .expect("no prometheus settings is fine");
+}
+
+#[test]
+fn prometheus_listen_requires_a_dsn() {
+    let error = match parse_from([
+        "kronika-collector",
+        "--storage-dir",
+        "/tmp/kronika",
+        "--prometheus-listen",
+        "127.0.0.1:9187",
+    ]) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("listen without dsn must fail"),
+    };
+
+    assert!(error.contains("requires --pg-dsn"), "{error}");
+}
+
+#[test]
+fn prometheus_listen_parses_a_socket_address() {
+    let config = parse_from([
+        "kronika-collector",
+        "--storage-dir",
+        "/tmp/kronika",
+        "--pg-dsn",
+        "host=h",
+        "--prometheus-listen",
+        "0.0.0.0:9187",
+        "--prometheus-metrics",
+        "/etc/prom.d",
+        "--prometheus-preset",
+        "standard",
+    ])
+    .expect("valid prometheus settings");
+    assert_eq!(
+        config.prometheus_listen.map(|a| a.to_string()),
+        Some("0.0.0.0:9187".to_owned())
+    );
+    assert_eq!(config.prometheus_preset, "standard");
+    assert_eq!(
+        config.prometheus_metrics,
+        [std::path::PathBuf::from("/etc/prom.d")]
+    );
+}
+
+#[test]
+fn prometheus_defaults_leave_the_exporter_off() {
+    let config =
+        parse_from(["kronika-collector", "--storage-dir", "/tmp/kronika"]).expect("plain config");
+    assert!(config.prometheus_listen.is_none());
+    assert!(config.prometheus_metrics.is_empty());
+    assert_eq!(config.prometheus_preset, "basic");
+}
+
+use super::parse_from;

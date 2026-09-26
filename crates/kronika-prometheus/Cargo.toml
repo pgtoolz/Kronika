@@ -1,0 +1,19 @@
+[package]
+name = "kronika-prometheus"
+description = "Metric catalog, scheduling and Prometheus text exposition for the collector /metrics endpoint"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

@@ -4,7 +4,7 @@
 <h1>Kronika third-party licenses</h1>
 <p>This inventory follows the repository dependency inputs recorded in <a href="licenses/dependency-inputs.sha256">licenses/dependency-inputs.sha256</a>. It includes normal Cargo dependency closures for the four native utilities (kronika-collector, kronika-web, kronika-dump, kronika-report) on x86-64 and ARM64 Linux and the browser WebAssembly report engine, production npm lock entries including type support, embedded fonts, and runtime notice reference texts.</p>
 <p>The dependency inventory describes the packaging checkout. It does not establish the source revision or compiler identity of reused executables. Runtime notice source versions identify the retained license texts; they are not build provenance. See BUILDINFO for the package build mode.</p>
-<h2>Rust packages (257)</h2>
+<h2>Rust packages (258)</h2>
 <table><thead><tr><th>Package</th><th>Version</th><th>License expression</th><th>Dependency closure</th></tr></thead><tbody>
 <tr><td>adler2</td><td>2.0.1</td><td>0BSD OR MIT OR Apache-2.0</td><td>kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>ahash</td><td>0.8.12</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
@@ -186,6 +186,7 @@
 <tr><td>serde_derive</td><td>1.0.229</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>serde_derive_internals</td><td>0.30.0</td><td>MIT OR Apache-2.0</td><td>kronika-web</td></tr>
 <tr><td>serde_json</td><td>1.0.150</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
+<tr><td>serde_yaml</td><td>0.9.34+deprecated</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>sha2</td><td>0.10.9</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-dump, kronika-report, kronika-report-wasm, kronika-web</td></tr>
 <tr><td>sha2</td><td>0.11.0</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>signal-hook-registry</td><td>1.4.8</td><td>MIT OR Apache-2.0</td><td>kronika-collector, kronika-web</td></tr>
@@ -218,7 +219,7 @@
 <tr><td>tls_codec_derive</td><td>0.4.2</td><td>Apache-2.0 OR MIT</td><td>kronika-collector</td></tr>
 <tr><td>tokio-macros</td><td>2.7.2</td><td>MIT</td><td>kronika-collector, kronika-web</td></tr>
 <tr><td>tokio-postgres-rustls</td><td>0.14.0</td><td>MIT</td><td>kronika-collector</td></tr>
-<tr><td>tokio-postgres</td><td>0.7.18</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
+<tr><td>tokio-postgres</td><td>0.7.18</td><td>MIT OR Apache-2.0</td><td>kronika-collector (vendored: third_party/tokio-postgres, includes rust-postgres PR #1358)</td></tr>
 <tr><td>tokio-rustls</td><td>0.26.5</td><td>MIT OR Apache-2.0</td><td>kronika-collector</td></tr>
 <tr><td>tokio-stream</td><td>0.1.19</td><td>MIT</td><td>kronika-web</td></tr>
 <tr><td>tokio-util</td><td>0.7.19</td><td>MIT</td><td>kronika-collector, kronika-web</td></tr>
@@ -289,7 +290,38 @@
 </tbody></table>
 <h2>Runtime notice reference components</h2>
 <p>gcc-crt, llvm-libunwind, musl, rust-standard-library</p>
-<h2>License and notice texts (193)</h2>
+<h2>License and notice texts (194)</h2>
+<details id="99af76c98e5a4bd5420840a4edc369dc02c99cafb99cb4bf2f5feddd076617e7"><summary>LICENSE.BSD-3-Clause — <code>99af76c98e5a4bd5</code></summary><p><b>Components:</b> embedded metric catalog crates/kronika-prometheus/src/catalog/pgwatch-metrics-v5.3.0.yaml</p><p><b>Source:</b> pgwatch v5.3.0 internal/metrics/metrics.yaml (BSD-3-Clause)</p><pre>BSD 3-Clause License
+
+Copyright (c) 2022, CYBERTEC PostgreSQL International GmbH
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS &quot;AS IS&quot;
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+</pre></details>
+
 <details id="005fc765ddc5115da796cca915baa9557abae13ff35e0a47c47affc56f6c414d"><summary>LICENSE-BoringSSL — <code>005fc765ddc5115d</code></summary><p><b>Components:</b> cargo:ring@0.17.14</p><p><b>Source:</b> cargo-registry://ring@0.17.14/LICENSE-BoringSSL</p><pre>
                                  Apache License
                            Version 2.0, January 2004
