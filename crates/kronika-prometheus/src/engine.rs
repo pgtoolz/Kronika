@@ -320,7 +320,8 @@ impl<F: ExecutorFactory> Exporter<F> {
             return;
         };
         let started = std::time::Instant::now();
-        let result = sql.execute(sql_text).await;
+        let timeout = metric.def.statement_timeout_seconds;
+        let result = sql.execute(sql_text, timeout).await;
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let key = (dbname.to_owned(), metric.name.clone());
         self.last_fetch_ts_ms.insert(key.clone(), now_ms);
@@ -585,7 +586,11 @@ mod tests {
     }
 
     impl SqlExecutor for MockSql {
-        async fn execute(&mut self, sql: &str) -> Result<QueryResult, MetricError> {
+        async fn execute(
+            &mut self,
+            sql: &str,
+            _statement_timeout_s: Option<u64>,
+        ) -> Result<QueryResult, MetricError> {
             let mut db = self.db.lock().expect("mock");
             db.sql_calls.push(sql.to_owned());
             db.sql_results.pop_front().unwrap_or_else(query_result)

@@ -1,5 +1,6 @@
 //! Prometheus `/metrics` endpoint: catalog startup, executors, HTTP, passes.
 
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -11,7 +12,8 @@ use kronika_prometheus::engine::{Exporter, PresetMetric};
 use kronika_prometheus::executor::{
     ExecutorFactory, MetricError, PingExecutor, PingInfo, SqlExecutor,
 };
-use kronika_prometheus::measurement::QueryResult;
+use kronika_prometheus::measurement::{Column, QueryResult};
+use kronika_prometheus::typing::{Cell, kind_for_oid};
 use kronika_source_pg::{Pool, Transport};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -21,6 +23,10 @@ use crate::clock::unix_now_us;
 use crate::config::Config;
 use crate::logging::{LogLevel, field, log_event};
 
+/// Fallback `statement_timeout` seconds (EXE-2 session default).
+const DEFAULT_STATEMENT_TIMEOUT_S: u64 = 5;
+/// Extra seconds beyond the statement timeout before the socket is dropped.
+const HANG_GUARD_MARGIN_S: u64 = 5;
 /// Session settings applied to every exporter connection (EXE-2).
 const SESSION_SETUP_SQL: &str = "SET application_name = 'kronika-prometheus', \
      statement_timeout = '5s', lock_timeout = '100ms'";
@@ -73,17 +79,22 @@ fn read_overlay(path: &Path) -> Result<Catalog> {
 }
 
 /// Ping executor on the dedicated per-database exporter connection.
+/// One dedicated exporter connection shared by the ping and SQL executors
+/// (EXE-2: one connection per database, separate from ordinary collection).
+type SharedPool = Arc<Mutex<Pool>>;
+
 struct ExporterPing {
-    pool: Pool,
+    pool: SharedPool,
     /// Generation whose session already received the `SET` setup.
     configured_generation: Option<u64>,
 }
 
 impl ExporterPing {
     async fn ping_inner(&mut self) -> Result<PingInfo, MetricError> {
-        let needs_setup = self.pool.generation() != self.configured_generation;
-        let session = self
-            .pool
+        let mut guard = self.pool.lock().await;
+        let pool = &mut *guard;
+        let needs_setup = pool.generation() != self.configured_generation;
+        let session = pool
             .session()
             .await
             .map_err(|e| MetricError::transport(format!("connect: {e}")))?;
@@ -94,10 +105,13 @@ impl ExporterPing {
                 .await
                 .map_err(|e| map_pg_error(&e))?;
             let mut setup = std::pin::pin!(setup);
-            while let Some(message) = setup.try_next().await.map_err(|e| map_pg_error(&e))? {
-                if let tokio_postgres::SimpleQueryMessage::Row(_) = message {
-                    // SET statements return no rows; a row here is ignored
-                }
+            while setup
+                .try_next()
+                .await
+                .map_err(|e| map_pg_error(&e))?
+                .is_some()
+            {
+                // SET statements return no rows; nothing to collect
             }
         }
         let mut stats = kronika_source_pg::query::QueryStats::default();
@@ -129,15 +143,74 @@ impl PingExecutor for ExporterPing {
     }
 }
 
-/// SQL executor: real simple-protocol execution with column kinds from type
-/// OIDs — blocked on the tokio-postgres pin; see TASKMEMORY.
-struct ExporterSql;
+/// SQL executor on the shared exporter connection.
+///
+/// The per-metric `statement_timeout` rides in the same simple-protocol
+/// message as the query (plain `SET`; no transaction machinery), so one round
+/// trip applies it. The hang guard closes the socket when no answer arrives
+/// within the timeout plus five seconds — never a `CancelRequest`.
+struct ExporterSql {
+    pool: SharedPool,
+}
 
 impl SqlExecutor for ExporterSql {
-    async fn execute(&mut self, _sql: &str) -> Result<QueryResult, MetricError> {
-        Err(MetricError::transport(
-            "metric SQL executor awaits the type-OID patch",
-        ))
+    async fn execute(
+        &mut self,
+        sql: &str,
+        statement_timeout_s: Option<u64>,
+    ) -> Result<QueryResult, MetricError> {
+        let timeout_s = statement_timeout_s.unwrap_or(DEFAULT_STATEMENT_TIMEOUT_S);
+        let message = format!("SET statement_timeout = '{timeout_s}s';\n{sql}");
+        let mut guard = self.pool.lock().await;
+        let pool = &mut *guard;
+        let session = pool
+            .session()
+            .await
+            .map_err(|e| MetricError::transport(format!("connect: {e}")))?;
+        let mut stats = kronika_source_pg::query::QueryStats::default();
+        let stream = session
+            .simple_stream(&message, &mut stats)
+            .await
+            .map_err(|e| map_pg_error(&e))?;
+        let mut stream = std::pin::pin!(stream);
+        let deadline = std::time::Duration::from_secs(timeout_s + HANG_GUARD_MARGIN_S);
+        let collect = async {
+            let mut columns: Option<Vec<Column>> = None;
+            let mut rows: Vec<Vec<Cell>> = Vec::new();
+            while let Some(message) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
+                if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
+                    let columns = columns.get_or_insert_with(|| {
+                        row.columns()
+                            .iter()
+                            .map(|c| Column {
+                                name: c.name().to_owned(),
+                                kind: kind_for_oid(u32::from(c.type_oid())),
+                            })
+                            .collect()
+                    });
+                    let cells = (0..columns.len())
+                        .map(|i| row.get(i).map(str::to_owned))
+                        .collect();
+                    rows.push(cells);
+                }
+            }
+            Ok::<QueryResult, MetricError>(QueryResult {
+                columns: columns.unwrap_or_default(),
+                rows,
+            })
+        };
+        match tokio::time::timeout(deadline, collect).await {
+            Ok(result) => result,
+            // No answer within the guard: drop the socket. The server-side
+            // statement_timeout usually ends the query first; this catches a
+            // hung transport. Reconnect happens on the next pass.
+            Err(_elapsed) => {
+                pool.close();
+                Err(MetricError::transport(
+                    "metric query did not answer within statement_timeout + 5s; connection dropped",
+                ))
+            }
+        }
     }
 }
 
@@ -154,7 +227,17 @@ fn map_pg_error(error: &tokio_postgres::Error) -> MetricError {
 /// Opens per-database exporter connections from the collector DSN.
 struct CollectorFactory {
     primary: Pool,
-    sql_enabled: bool,
+    /// One shared pool (one connection) per database.
+    per_db: BTreeMap<String, SharedPool>,
+}
+
+impl CollectorFactory {
+    fn shared_pool(&mut self, dbname: &str) -> SharedPool {
+        self.per_db
+            .entry(dbname.to_owned())
+            .or_insert_with(|| Arc::new(Mutex::new(self.primary.on_database(dbname))))
+            .clone()
+    }
 }
 
 impl ExecutorFactory for CollectorFactory {
@@ -163,13 +246,15 @@ impl ExecutorFactory for CollectorFactory {
 
     async fn open_ping(&mut self, dbname: &str) -> Option<ExporterPing> {
         Some(ExporterPing {
-            pool: self.primary.on_database(dbname),
+            pool: self.shared_pool(dbname),
             configured_generation: None,
         })
     }
 
-    async fn open_sql(&mut self, _dbname: &str) -> Option<ExporterSql> {
-        self.sql_enabled.then_some(ExporterSql)
+    async fn open_sql(&mut self, dbname: &str) -> Option<ExporterSql> {
+        Some(ExporterSql {
+            pool: self.shared_pool(dbname),
+        })
     }
 }
 
@@ -218,7 +303,7 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
     let engine = Exporter::new(
         CollectorFactory {
             primary,
-            sql_enabled: false,
+            per_db: BTreeMap::new(),
         },
         preset,
         env!("CARGO_PKG_VERSION"),

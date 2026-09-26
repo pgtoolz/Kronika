@@ -73,10 +73,12 @@ pub trait PingExecutor {
 
 /// Catalog metric SQL execution with column kinds resolved from type OIDs.
 pub trait SqlExecutor {
-    /// Runs one statement and returns text-protocol rows with typed columns.
+    /// Runs one statement under `statement_timeout_s` (or the 5 s session
+    /// default when `None`) and returns text-protocol rows with typed columns.
     fn execute(
         &mut self,
         sql: &str,
+        statement_timeout_s: Option<u64>,
     ) -> impl Future<Output = Result<QueryResult, MetricError>> + Send;
 }
 
