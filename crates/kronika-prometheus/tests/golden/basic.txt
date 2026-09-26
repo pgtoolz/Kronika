@@ -1,0 +1,185 @@
+# HELP pgwatch_db_size_catalog_size_b db_size
+# TYPE pgwatch_db_size_catalog_size_b gauge
+pgwatch_db_size_catalog_size_b{dbname="<host>_appdb"} <value> <ts>
+pgwatch_db_size_catalog_size_b{dbname="<host>_postgres"} <value> <ts>
+pgwatch_db_size_catalog_size_b{dbname="<host>_seconddb"} <value> <ts>
+# HELP pgwatch_db_size_size_b db_size
+# TYPE pgwatch_db_size_size_b gauge
+pgwatch_db_size_size_b{dbname="<host>_appdb"} <value> <ts>
+pgwatch_db_size_size_b{dbname="<host>_postgres"} <value> <ts>
+pgwatch_db_size_size_b{dbname="<host>_seconddb"} <value> <ts>
+# HELP pgwatch_db_stats_active_time db_stats
+# TYPE pgwatch_db_stats_active_time counter
+pgwatch_db_stats_active_time{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_active_time{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_active_time{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_blk_read_time db_stats
+# TYPE pgwatch_db_stats_blk_read_time counter
+pgwatch_db_stats_blk_read_time{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_blk_read_time{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_blk_read_time{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_blk_write_time db_stats
+# TYPE pgwatch_db_stats_blk_write_time counter
+pgwatch_db_stats_blk_write_time{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_blk_write_time{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_blk_write_time{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_blks_hit db_stats
+# TYPE pgwatch_db_stats_blks_hit counter
+pgwatch_db_stats_blks_hit{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_blks_hit{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_blks_hit{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_blks_read db_stats
+# TYPE pgwatch_db_stats_blks_read counter
+pgwatch_db_stats_blks_read{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_blks_read{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_blks_read{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_conflicts db_stats
+# TYPE pgwatch_db_stats_conflicts counter
+pgwatch_db_stats_conflicts{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_conflicts{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_conflicts{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_deadlocks db_stats
+# TYPE pgwatch_db_stats_deadlocks counter
+pgwatch_db_stats_deadlocks{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_deadlocks{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_deadlocks{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_idle_in_transaction_time db_stats
+# TYPE pgwatch_db_stats_idle_in_transaction_time counter
+pgwatch_db_stats_idle_in_transaction_time{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_idle_in_transaction_time{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_idle_in_transaction_time{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_in_recovery_int db_stats
+# TYPE pgwatch_db_stats_in_recovery_int counter
+pgwatch_db_stats_in_recovery_int{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_in_recovery_int{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_in_recovery_int{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_invalid_indexes db_stats
+# TYPE pgwatch_db_stats_invalid_indexes counter
+pgwatch_db_stats_invalid_indexes{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_invalid_indexes{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_invalid_indexes{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_numbackends db_stats
+# TYPE pgwatch_db_stats_numbackends gauge
+pgwatch_db_stats_numbackends{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_numbackends{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_numbackends{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_postmaster_uptime_s db_stats
+# TYPE pgwatch_db_stats_postmaster_uptime_s gauge
+pgwatch_db_stats_postmaster_uptime_s{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_postmaster_uptime_s{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_postmaster_uptime_s{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_session_time db_stats
+# TYPE pgwatch_db_stats_session_time counter
+pgwatch_db_stats_session_time{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_session_time{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_session_time{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_sessions db_stats
+# TYPE pgwatch_db_stats_sessions counter
+pgwatch_db_stats_sessions{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_sessions{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_sessions{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_sessions_abandoned db_stats
+# TYPE pgwatch_db_stats_sessions_abandoned counter
+pgwatch_db_stats_sessions_abandoned{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_sessions_abandoned{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_sessions_abandoned{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_sessions_fatal db_stats
+# TYPE pgwatch_db_stats_sessions_fatal counter
+pgwatch_db_stats_sessions_fatal{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_sessions_fatal{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_sessions_fatal{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_sessions_killed db_stats
+# TYPE pgwatch_db_stats_sessions_killed counter
+pgwatch_db_stats_sessions_killed{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_sessions_killed{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_sessions_killed{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_temp_bytes db_stats
+# TYPE pgwatch_db_stats_temp_bytes counter
+pgwatch_db_stats_temp_bytes{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_temp_bytes{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_temp_bytes{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_temp_files db_stats
+# TYPE pgwatch_db_stats_temp_files counter
+pgwatch_db_stats_temp_files{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_temp_files{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_temp_files{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_tup_deleted db_stats
+# TYPE pgwatch_db_stats_tup_deleted counter
+pgwatch_db_stats_tup_deleted{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_tup_deleted{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_tup_deleted{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_tup_fetched db_stats
+# TYPE pgwatch_db_stats_tup_fetched counter
+pgwatch_db_stats_tup_fetched{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_tup_fetched{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_tup_fetched{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_tup_inserted db_stats
+# TYPE pgwatch_db_stats_tup_inserted counter
+pgwatch_db_stats_tup_inserted{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_tup_inserted{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_tup_inserted{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_tup_returned db_stats
+# TYPE pgwatch_db_stats_tup_returned counter
+pgwatch_db_stats_tup_returned{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_tup_returned{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_tup_returned{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_tup_updated db_stats
+# TYPE pgwatch_db_stats_tup_updated counter
+pgwatch_db_stats_tup_updated{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_tup_updated{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_tup_updated{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_xact_commit db_stats
+# TYPE pgwatch_db_stats_xact_commit counter
+pgwatch_db_stats_xact_commit{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_xact_commit{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_xact_commit{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_db_stats_xact_rollback db_stats
+# TYPE pgwatch_db_stats_xact_rollback counter
+pgwatch_db_stats_xact_rollback{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_xact_rollback{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_db_stats_xact_rollback{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_instance_up instance_up
+# TYPE pgwatch_instance_up gauge
+pgwatch_instance_up{dbname="<host>_appdb"} <value> <ts>
+pgwatch_instance_up{dbname="<host>_postgres"} <value> <ts>
+pgwatch_instance_up{dbname="<host>_seconddb"} <value> <ts>
+# HELP pgwatch_wal_in_recovery_int wal
+# TYPE pgwatch_wal_in_recovery_int gauge
+pgwatch_wal_in_recovery_int{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_wal_in_recovery_int{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_wal_in_recovery_int{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_wal_postmaster_uptime_s wal
+# TYPE pgwatch_wal_postmaster_uptime_s gauge
+pgwatch_wal_postmaster_uptime_s{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_wal_postmaster_uptime_s{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_wal_postmaster_uptime_s{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_wal_timeline wal
+# TYPE pgwatch_wal_timeline gauge
+pgwatch_wal_timeline{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_wal_timeline{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_wal_timeline{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP pgwatch_wal_xlog_location_b wal
+# TYPE pgwatch_wal_xlog_location_b gauge
+pgwatch_wal_xlog_location_b{dbname="<host>_appdb",sys_id="<sysid>"} <value> <ts>
+pgwatch_wal_xlog_location_b{dbname="<host>_postgres",sys_id="<sysid>"} <value> <ts>
+pgwatch_wal_xlog_location_b{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <ts>
+# HELP kronika_build_info Collector build version and commit.
+# TYPE kronika_build_info gauge
+kronika_build_info{commit="unknown",version="1.2.4"} 1
+# HELP kronika_start_time_seconds Collector start time in seconds.
+# TYPE kronika_start_time_seconds gauge
+kronika_start_time_seconds  <value>
+# HELP kronika_pg_connected Last exporter ping outcome per database.
+# TYPE kronika_pg_connected gauge
+kronika_pg_connected{database="<host>_appdb"} 1
+kronika_pg_connected{database="<host>_postgres"} 1
+kronika_pg_connected{database="<host>_seconddb"} 1
+# HELP pgwatch_exporter_total_scrapes Total scrape attempts.
+# TYPE pgwatch_exporter_total_scrapes counter
+pgwatch_exporter_total_scrapes <n>
+# HELP pgwatch_exporter_last_scrape_errors Last scrape error count for all monitored hosts / metrics.
+# TYPE pgwatch_exporter_last_scrape_errors gauge
+pgwatch_exporter_last_scrape_errors <n>
+# HELP pgwatch_exporter_total_scrape_failures Number of errors while executing metric queries.
+# TYPE pgwatch_exporter_total_scrape_failures counter
+pgwatch_exporter_total_scrape_failures 0

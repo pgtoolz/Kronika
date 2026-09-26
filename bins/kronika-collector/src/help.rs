@@ -42,6 +42,17 @@ Collection:
   result restores the ordinary interval. Queries run sequentially, so a slow
   query can delay activity. --interval-s 0 keeps all collection signal-driven.
 
+Prometheus:
+  --prometheus-listen host:port (KRONIKA_PROMETHEUS_LISTEN) enables the
+  /metrics and /health endpoint for the --pg-dsn server; unset disables it.
+  --prometheus-metrics PATH (KRONIKA_PROMETHEUS_METRICS) overlays catalog
+  entries from a file or directory of .yaml/.yml files; the env form is a
+  semicolon list. --prometheus-preset NAME (KRONIKA_PROMETHEUS_PRESET,
+  default basic) selects metric intervals. Both require --prometheus-listen.
+  Metric SQL runs on one dedicated connection per discovered database with
+  statement_timeout 5 s and lock_timeout 100 ms; scrapes read cached
+  results only.
+
 Signals and output:
   SIGUSR2 collects immediately, preserving the statements/plans cooldown, and
   closes a nonempty segment after appending. SIGTERM and SIGINT stop without

@@ -338,6 +338,38 @@ Discovery requires the [function privileges](#postgresql-role) listed above.
 | Missing or invalid timestamp | Recognized messages use read time. Processing continues with the following records. |
 | Source error | Logged. Collection from other sources continues. |
 
+## Prometheus endpoint
+
+The collector can serve Prometheus metrics for the same PostgreSQL server
+selected by `--pg-dsn`. The endpoint is off unless `--prometheus-listen`
+is set. Every exposed sample carries the collection timestamp of its query
+in milliseconds. Scrape reads cached background results and never runs SQL.
+
+```sh
+kronika-collector --storage-dir /var/lib/kronika \
+  --pg-dsn 'host=localhost user=monitor dbname=postgres' \
+  --prometheus-listen 0.0.0.0:9187
+```
+
+Metrics follow an embedded SQL catalog in the `metrics.yaml` file format.
+Each catalog metric is a named `SELECT` per PostgreSQL major version with a
+collection interval taken from the chosen preset. Overlays in the same
+format extend or replace catalog entries by name. The exporter opens one
+dedicated connection per discovered database, separate from ordinary
+collection, with `statement_timeout` 5 s and `lock_timeout` 100 ms.
+`pgwatch_instance_up` reflects the exporter's own connection check, not
+metric query outcomes.
+
+| Property | Behavior |
+| --- | --- |
+| Endpoint | `GET /metrics` (Prometheus text format) and `GET /health` on the `--prometheus-listen` address. |
+| Preset | `--prometheus-preset` (default `basic`: `instance_up`, `db_stats` at 60 s, `db_size` at 300 s, `wal` at 60 s). |
+| Overlays | `--prometheus-metrics` file or directory of `.yaml`/`.yml` files, merged in name order onto the embedded catalog. |
+| Environment | `KRONIKA_PROMETHEUS_LISTEN`, `KRONIKA_PROMETHEUS_METRICS` (semicolon list), `KRONIKA_PROMETHEUS_PRESET`. |
+| Labels | `dbname` is `<dsn-host>_<database>`, plus `tag_` columns of each query. |
+| Staleness | Results older than the larger of 10 minutes and twice the interval are not exposed. |
+| Errors | `42P01`/`42883` disable the metric until the next database discovery. Other errors are retried each interval and logged once per state change. |
+
 ## Linux collection
 
 Linux collection runs only in `local` mode. Cgroups are collected only in containers
