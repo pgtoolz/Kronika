@@ -17,6 +17,7 @@ members = [
     "crates/kronika-source-os",
     "crates/kronika-source-log",
     "crates/kronika-source-pg",
+    "crates/kronika-prometheus",
     "crates/kronika-bdd",
     "bins/kronika-collector",
     "bins/kronika-dump",
