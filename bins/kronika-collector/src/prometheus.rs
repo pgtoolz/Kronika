@@ -31,6 +31,7 @@ const HANG_GUARD_MARGIN_S: u64 = 5;
 /// Sent on every ping: idempotent, applied to whatever connection the pool
 /// hands out, including reconnects. The final statement's success is the
 /// availability check itself.
+const RECOVERY_SQL: &str = "select pg_is_in_recovery()";
 const PING_SQL: &str = "SET application_name = 'kronika-prometheus';\n\
      SET statement_timeout = '5s';\n\
      SET lock_timeout = '100ms';\n\
@@ -148,6 +149,32 @@ impl ExporterPing {
 impl PingExecutor for ExporterPing {
     async fn ping(&mut self) -> Result<PingInfo, MetricError> {
         self.ping_inner().await
+    }
+
+    #[allow(
+        clippy::significant_drop_tightening,
+        reason = "the guard must outlive the Session, which borrows the pool's client"
+    )]
+    async fn recovery_role(&mut self) -> Result<bool, MetricError> {
+        let mut guard = self.pool.lock().await;
+        let pool = &mut *guard;
+        let session = pool
+            .session()
+            .await
+            .map_err(|e| MetricError::transport(format!("connect: {e}")))?;
+        let mut stats = kronika_source_pg::query::QueryStats::default();
+        let stream = session
+            .simple_stream(RECOVERY_SQL, &mut stats)
+            .await
+            .map_err(|e| map_pg_error(&e))?;
+        let mut stream = std::pin::pin!(stream);
+        let mut role = None;
+        while let Some(message) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
+            if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
+                role = row.get(0).map(str::to_owned);
+            }
+        }
+        Ok(role.is_some_and(|r| r == "t"))
     }
 }
 
@@ -332,7 +359,7 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
         &[field("address", addr.to_string())],
     );
     let prefix = dbname_prefix(dsn);
-    let engine = Exporter::new(
+    let mut engine = Exporter::new(
         CollectorFactory {
             primary,
             per_db: BTreeMap::new(),
@@ -343,6 +370,18 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
         "unknown",
         unix_now_us().unwrap_or_default() / 1000,
     );
+    // EXE-9: one line per error state change, never per tick.
+    engine.on_error(|database, metric, error| {
+        log_event(
+            LogLevel::Warn,
+            "prometheus_metric_error",
+            &[
+                field("database", database),
+                field("metric", metric),
+                field("error", error),
+            ],
+        );
+    });
     Ok(Arc::new(PrometheusExporter {
         engine: Arc::new(Mutex::new(engine)),
         listener,

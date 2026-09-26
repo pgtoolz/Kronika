@@ -15,6 +15,9 @@ use crate::executor::{ExecutorFactory, MetricError, PingExecutor, PingInfo, SqlE
 use crate::measurement::{INSTANCE_UP_METRIC, SampleSet, instance_up_sample_set, to_sample_set};
 use crate::schedule::due;
 
+/// EXE-9 reporting hook: (database, metric, error text or "cleared").
+type ErrorCallback = Box<dyn Fn(&str, &str, &str) + Send + Sync>;
+
 /// One resolved preset metric.
 #[derive(Debug, Clone)]
 pub struct PresetMetric {
@@ -74,6 +77,11 @@ pub struct Exporter<F: ExecutorFactory> {
     fetch_errors: BTreeMap<(String, String), u64>,
     fetch_durations_ms: BTreeMap<(String, String), u64>,
     last_fetch_ts_ms: BTreeMap<(String, String), i64>,
+    /// EXE-9: called when a database/metric error appears, changes, or
+    /// clears — bounded by state change, never per tick.
+    on_error: Option<ErrorCallback>,
+    /// Last logged error signature per database/metric.
+    error_signatures: BTreeMap<(String, String), Option<String>>,
     scrape_count: u64,
     scrape_errors: u64,
     fetch_failure_count: u64,
@@ -98,6 +106,8 @@ impl<F: ExecutorFactory> Exporter<F> {
             instance_last_start_ms: BTreeMap::new(),
             instance_sets: BTreeMap::new(),
             per_db: BTreeMap::new(),
+            on_error: None,
+            error_signatures: BTreeMap::new(),
             fetch_errors: BTreeMap::new(),
             fetch_durations_ms: BTreeMap::new(),
             last_fetch_ts_ms: BTreeMap::new(),
@@ -107,6 +117,34 @@ impl<F: ExecutorFactory> Exporter<F> {
             build_version: build_version.into(),
             build_commit: build_commit.into(),
             start_time_ms,
+        }
+    }
+
+    /// Installs the EXE-9 error-state callback.
+    pub fn on_error(&mut self, callback: impl Fn(&str, &str, &str) + Send + Sync + 'static) {
+        self.on_error = Some(Box::new(callback));
+    }
+
+    /// Reports an error state change; `None` text means the error cleared.
+    #[allow(
+        clippy::option_if_let_else,
+        reason = "map_or with a unit closure trips the companion unused-return lint"
+    )]
+    fn report_error_state(&mut self, dbname: &str, metric: &str, signature: Option<String>) {
+        let key = (dbname.to_owned(), metric.to_owned());
+        // unchanged state, or a first success for a metric that never
+        // errored: nothing to report
+        let unchanged = match self.error_signatures.get(&key) {
+            Some(prev) => prev == &signature,
+            None => signature.is_none(),
+        };
+        if unchanged {
+            return;
+        }
+        let text = signature.as_deref().unwrap_or("cleared").to_owned();
+        self.error_signatures.insert(key, signature);
+        if let Some(callback) = &self.on_error {
+            callback(dbname, metric, &text);
         }
     }
 
@@ -176,9 +214,24 @@ impl<F: ExecutorFactory> Exporter<F> {
         // Metric SQL needs server facts from a successful ping and a SQL
         // executor (type-OID patch); without either, this pass stops here
         // with instance_up and self metrics only.
-        let Some(info) = self.per_db.get(dbname).and_then(|s| s.info) else {
+        let Some(mut info) = self.per_db.get(dbname).and_then(|s| s.info) else {
             return;
         };
+        // CAT-8: re-read the recovery role every pass it matters, instead of
+        // relying on the last ping handshake.
+        if self.preset.iter().any(|m| m.def.node_status.is_some()) {
+            let role = if let Some(state) = self.per_db.get_mut(dbname)
+                && let Some(ping) = state.ping.as_mut()
+            {
+                ping.recovery_role().await
+            } else {
+                Ok(info.in_recovery)
+            };
+            match role {
+                Ok(in_recovery) => info.in_recovery = in_recovery,
+                Err(error) => self.handle_error(dbname, "instance_up", &error),
+            }
+        }
         if self.per_db.get(dbname).is_some_and(|s| s.sql.is_none())
             && let Some(sql) = self.factory.open_sql(dbname).await
             && let Some(state) = self.per_db.get_mut(dbname)
@@ -195,7 +248,7 @@ impl<F: ExecutorFactory> Exporter<F> {
             {
                 continue;
             }
-            // CAT-8: role restriction against the last handshake value.
+            // CAT-8: role restriction against the fresh recovery role.
             match metric.def.node_status {
                 Some(NodeStatus::Primary) if info.in_recovery => continue,
                 Some(NodeStatus::Standby) if !info.in_recovery => continue,
@@ -328,6 +381,7 @@ impl<F: ExecutorFactory> Exporter<F> {
         self.fetch_durations_ms.insert(key.clone(), duration_ms);
         match result {
             Ok(result) => {
+                self.report_error_state(dbname, &metric.name, None);
                 let set = to_sample_set(
                     &result,
                     &metric.name,
@@ -372,6 +426,7 @@ impl<F: ExecutorFactory> Exporter<F> {
     /// EXE-8: missing objects disable the metric until discovery refresh;
     /// a lost connection drops the SQL executor for a fresh open next pass.
     fn handle_error(&mut self, dbname: &str, metric: &str, error: &MetricError) {
+        self.report_error_state(dbname, metric, Some(error.to_string()));
         if error.missing_object()
             && let Some(state) = self.per_db.get_mut(dbname)
             && !state.disabled.iter().any(|m| m == metric)
@@ -564,6 +619,7 @@ mod tests {
 
     struct MockDb {
         ping_result: Result<PingInfo, MetricError>,
+        recovery_result: Result<bool, MetricError>,
         ping_calls: usize,
         sql_results: VecDeque<Result<QueryResult, MetricError>>,
         sql_calls: Vec<String>,
@@ -578,6 +634,10 @@ mod tests {
             let mut db = self.db.lock().expect("mock");
             db.ping_calls += 1;
             db.ping_result.clone()
+        }
+
+        async fn recovery_role(&mut self) -> Result<bool, MetricError> {
+            self.db.lock().expect("mock").recovery_result.clone()
         }
     }
 
@@ -688,6 +748,7 @@ mod tests {
             } else {
                 Err(MetricError::transport("connect refused"))
             },
+            recovery_result: Ok(false),
             ping_calls: 0,
             sql_calls: Vec::new(),
             sql_results,
@@ -966,6 +1027,8 @@ mod tests {
             server_major_version: 16,
             in_recovery: true,
         });
+        // the fresh per-pass role agrees with the handshake
+        mock.lock().expect("mock").recovery_result = Ok(true);
         e.preset = preset;
         run(&mut e, &["h_standby"], 0).await;
         let sqls = e
@@ -982,6 +1045,91 @@ mod tests {
         assert!(
             sqls.iter().any(|s| s.contains("pg_stat_database")),
             "unrestricted metric still ran: {sqls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fresh_recovery_role_overrides_the_handshake() {
+        let mut factory = MockFactory {
+            with_sql: true,
+            ..MockFactory::default()
+        };
+        factory
+            .dbs
+            .insert("h_db".to_owned(), db(true, vec![query_result()]));
+        let mut e = exporter(factory);
+        // the handshake says primary and the fresh per-pass read says
+        // standby: a primary-only metric must be skipped anyway
+        let mut preset: Vec<PresetMetric> = basic_preset()
+            .into_iter()
+            .filter(|m| m.name == "instance_up" || m.name == "db_stats")
+            .collect();
+        preset.push(PresetMetric {
+            name: "primary_only".to_owned(),
+            def: MetricDef {
+                description: String::new(),
+                sqls: BTreeMap::from([(14_u32, Sql::Select("select 1 as x".to_owned()))]),
+                gauges: Gauges::All,
+                is_instance_level: false,
+                node_status: Some(NodeStatus::Primary),
+                statement_timeout_seconds: None,
+                storage_name: None,
+            },
+            interval_s: 60,
+        });
+        let mock = e.factory.db("h_db");
+        mock.lock().expect("mock").recovery_result = Ok(true);
+        e.preset = preset;
+        run(&mut e, &["h_db"], 0).await;
+        let sqls = e.factory.db("h_db").lock().expect("mock").sql_calls.clone();
+        assert!(
+            !sqls.iter().any(|s| s.contains("select 1 as x")),
+            "fresh standby role skips the primary-only metric: {sqls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn error_states_reported_once_per_change() {
+        let transport = || MetricError::transport("hung");
+        let mut factory = MockFactory {
+            with_sql: true,
+            ..MockFactory::default()
+        };
+        factory
+            .dbs
+            .insert("h_app".to_owned(), db(true, vec![query_result()]));
+        let mut e = exporter(factory);
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&reports);
+        e.on_error(move |db, metric, error| {
+            sink.lock()
+                .expect("sink")
+                .push((db.to_owned(), metric.to_owned(), error.to_owned()));
+        });
+        // pass 1: db_stats fails (FIFO order: db_size ok, db_stats error, wal ok)
+        let mock = e.factory.db("h_app");
+        mock.lock().expect("mock").sql_results =
+            VecDeque::from([query_result(), Err(transport()), query_result()]);
+        run(&mut e, &["h_app"], 0).await;
+        // pass 2: the same failure again — no new report (db_size is not
+        // due at 61s, so only db_stats and wal consume results)
+        let mock = e.factory.db("h_app");
+        mock.lock().expect("mock").sql_results = VecDeque::from([Err(transport()), query_result()]);
+        run(&mut e, &["h_app"], 61_000).await;
+        // pass 3: healthy — one cleared report
+        run(&mut e, &["h_app"], 122_000).await;
+        let reports = reports.lock().expect("sink").clone();
+        assert_eq!(
+            reports,
+            vec![
+                ("h_app".to_owned(), "db_stats".to_owned(), "hung".to_owned()),
+                (
+                    "h_app".to_owned(),
+                    "db_stats".to_owned(),
+                    "cleared".to_owned()
+                ),
+            ],
+            "EXE-9 reports state changes only"
         );
     }
 

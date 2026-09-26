@@ -69,6 +69,9 @@ impl std::error::Error for MetricError {}
 pub trait PingExecutor {
     /// Runs `SELECT 1`-equivalent work and reports server facts.
     fn ping(&mut self) -> impl Future<Output = Result<PingInfo, MetricError>> + Send;
+
+    /// Fresh `pg_is_in_recovery()` for `node_status` filtering (CAT-8).
+    fn recovery_role(&mut self) -> impl Future<Output = Result<bool, MetricError>> + Send;
 }
 
 /// Catalog metric SQL execution with column kinds resolved from type OIDs.
