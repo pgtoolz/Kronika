@@ -27,12 +27,26 @@ use crate::logging::{LogLevel, field, log_event};
 const DEFAULT_STATEMENT_TIMEOUT_S: u64 = 5;
 /// Extra seconds beyond the statement timeout before the socket is dropped.
 const HANG_GUARD_MARGIN_S: u64 = 5;
-/// Session settings applied to every exporter connection (EXE-2).
-const SESSION_SETUP_SQL: &str = "SET application_name = 'kronika-prometheus', \
-     statement_timeout = '5s', lock_timeout = '100ms'";
-/// One simple-protocol statement returning the server major version and
-/// recovery role; its success is the availability check itself.
-const PING_SQL: &str = "select current_setting('server_version_num')::int4, pg_is_in_recovery()";
+/// Session settings plus the ping in one simple-protocol message (EXE-2).
+/// Sent on every ping: idempotent, applied to whatever connection the pool
+/// hands out, including reconnects. The final statement's success is the
+/// availability check itself.
+const PING_SQL: &str = "SET application_name = 'kronika-prometheus';\n\
+     SET statement_timeout = '5s';\n\
+     SET lock_timeout = '100ms';\n\
+     select current_setting('server_version_num')::int4, pg_is_in_recovery()";
+
+/// Exposition `dbname` label prefix: the DSN host, or the machine name for
+/// Unix sockets and missing hosts (EXP-3).
+fn dbname_prefix(dsn: &str) -> String {
+    let config: tokio_postgres::Config = dsn.parse().expect("the DSN was validated at startup");
+    match config.get_hosts().first() {
+        Some(tokio_postgres::config::Host::Tcp(host)) => host.clone(),
+        _ => std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .map(|h| h.trim().to_owned())
+            .unwrap_or_default(),
+    }
+}
 
 /// Loads the embedded catalog with overlays and resolves the preset.
 pub(crate) fn load_catalog(config: &Config) -> Result<Catalog> {
@@ -85,35 +99,25 @@ type SharedPool = Arc<Mutex<Pool>>;
 
 struct ExporterPing {
     pool: SharedPool,
-    /// Generation whose session already received the `SET` setup.
-    configured_generation: Option<u64>,
 }
 
 impl ExporterPing {
-    async fn ping_inner(&mut self) -> Result<PingInfo, MetricError> {
+    #[allow(
+        clippy::significant_drop_tightening,
+        reason = "the guard must outlive the Session, which borrows the pool's client"
+    )]
+    async fn ping_inner(&self) -> Result<PingInfo, MetricError> {
         let mut guard = self.pool.lock().await;
         let pool = &mut *guard;
-        let needs_setup = pool.generation() != self.configured_generation;
-        let session = pool
-            .session()
-            .await
-            .map_err(|e| MetricError::transport(format!("connect: {e}")))?;
-        if needs_setup {
-            let mut stats = kronika_source_pg::query::QueryStats::default();
-            let setup = session
-                .simple_stream(SESSION_SETUP_SQL, &mut stats)
-                .await
-                .map_err(|e| map_pg_error(&e))?;
-            let mut setup = std::pin::pin!(setup);
-            while setup
-                .try_next()
-                .await
-                .map_err(|e| map_pg_error(&e))?
-                .is_some()
-            {
-                // SET statements return no rows; nothing to collect
+        let session = pool.session().await.map_err(|e| {
+            let mut chain = format!("connect: {e}");
+            let mut source = std::error::Error::source(&e);
+            while let Some(s) = source {
+                chain.push_str(&format!("; caused by: {s}"));
+                source = s.source();
             }
-        }
+            MetricError::transport(chain)
+        })?;
         let mut stats = kronika_source_pg::query::QueryStats::default();
         let stream = session
             .simple_stream(PING_SQL, &mut stats)
@@ -130,8 +134,12 @@ impl ExporterPing {
         }
         let version = version.ok_or_else(|| MetricError::transport("ping returned no rows"))?;
         let in_recovery = in_recovery.unwrap_or_else(|| "f".to_owned());
+        // server_version_num is e.g. 160015; the catalog keys on the major
+        let version_num: u32 = version
+            .parse()
+            .map_err(|_| MetricError::transport(format!("bad server_version_num {version:?}")))?;
         Ok(PingInfo {
-            server_major_version: version.parse().unwrap_or(0),
+            server_major_version: version_num / 10_000,
             in_recovery: in_recovery == "t",
         })
     }
@@ -154,6 +162,10 @@ struct ExporterSql {
 }
 
 impl SqlExecutor for ExporterSql {
+    #[allow(
+        clippy::significant_drop_tightening,
+        reason = "the guard must outlive the Session, which borrows the pool's client"
+    )]
     async fn execute(
         &mut self,
         sql: &str,
@@ -163,10 +175,15 @@ impl SqlExecutor for ExporterSql {
         let message = format!("SET statement_timeout = '{timeout_s}s';\n{sql}");
         let mut guard = self.pool.lock().await;
         let pool = &mut *guard;
-        let session = pool
-            .session()
-            .await
-            .map_err(|e| MetricError::transport(format!("connect: {e}")))?;
+        let session = pool.session().await.map_err(|e| {
+            let mut chain = format!("connect: {e}");
+            let mut source = std::error::Error::source(&e);
+            while let Some(s) = source {
+                chain.push_str(&format!("; caused by: {s}"));
+                source = s.source();
+            }
+            MetricError::transport(chain)
+        })?;
         let mut stats = kronika_source_pg::query::QueryStats::default();
         let stream = session
             .simple_stream(&message, &mut stats)
@@ -184,7 +201,7 @@ impl SqlExecutor for ExporterSql {
                             .iter()
                             .map(|c| Column {
                                 name: c.name().to_owned(),
-                                kind: kind_for_oid(u32::from(c.type_oid())),
+                                kind: kind_for_oid(c.type_oid()),
                             })
                             .collect()
                     });
@@ -205,7 +222,7 @@ impl SqlExecutor for ExporterSql {
             // statement_timeout usually ends the query first; this catches a
             // hung transport. Reconnect happens on the next pass.
             Err(_elapsed) => {
-                pool.close();
+                self.pool.lock().await.close();
                 Err(MetricError::transport(
                     "metric query did not answer within statement_timeout + 5s; connection dropped",
                 ))
@@ -227,16 +244,29 @@ fn map_pg_error(error: &tokio_postgres::Error) -> MetricError {
 /// Opens per-database exporter connections from the collector DSN.
 struct CollectorFactory {
     primary: Pool,
-    /// One shared pool (one connection) per database.
+    /// One shared pool (one connection) per database, keyed by label.
     per_db: BTreeMap<String, SharedPool>,
+    /// `dbname` label prefix; labels are `<prefix>_<database>` (EXP-3).
+    dbname_prefix: String,
 }
 
 impl CollectorFactory {
-    fn shared_pool(&mut self, dbname: &str) -> SharedPool {
-        self.per_db
-            .entry(dbname.to_owned())
-            .or_insert_with(|| Arc::new(Mutex::new(self.primary.on_database(dbname))))
-            .clone()
+    /// The engine keys databases by exposition label; connections need the
+    /// real database name. The prefix includes its trailing underscore, so
+    /// stripping it once recovers the name.
+    fn database_of<'a>(&'a self, label: &'a str) -> &'a str {
+        label.strip_prefix(&self.dbname_prefix).unwrap_or(label)
+    }
+}
+
+impl CollectorFactory {
+    fn shared_pool(&mut self, label: &str) -> SharedPool {
+        let database = self.database_of(label).to_owned();
+        Arc::clone(
+            self.per_db
+                .entry(label.to_owned())
+                .or_insert_with(|| Arc::new(Mutex::new(self.primary.on_database(&database)))),
+        )
     }
 }
 
@@ -247,7 +277,6 @@ impl ExecutorFactory for CollectorFactory {
     async fn open_ping(&mut self, dbname: &str) -> Option<ExporterPing> {
         Some(ExporterPing {
             pool: self.shared_pool(dbname),
-            configured_generation: None,
         })
     }
 
@@ -262,6 +291,8 @@ impl ExecutorFactory for CollectorFactory {
 pub(crate) struct PrometheusExporter {
     engine: Arc<Mutex<Exporter<CollectorFactory>>>,
     listener: TcpListener,
+    /// `dbname` label prefix for discovered databases (EXP-3).
+    dbname_prefix: String,
 }
 
 pub(crate) const fn enabled(config: &Config) -> bool {
@@ -300,10 +331,12 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
         "prometheus_listening",
         &[field("address", addr.to_string())],
     );
+    let prefix = dbname_prefix(dsn);
     let engine = Exporter::new(
         CollectorFactory {
             primary,
             per_db: BTreeMap::new(),
+            dbname_prefix: format!("{prefix}_"),
         },
         preset,
         env!("CARGO_PKG_VERSION"),
@@ -313,17 +346,23 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
     Ok(Arc::new(PrometheusExporter {
         engine: Arc::new(Mutex::new(engine)),
         listener,
+        dbname_prefix: prefix,
     }))
 }
 
 impl PrometheusExporter {
     /// One background pass on the collector tick.
     pub(crate) async fn run_pass(&self, databases: &[String], discovery_refreshed: bool) {
+        // Discovery names become exposition dbname labels: <host>_<datname>.
+        let labels: Vec<String> = databases
+            .iter()
+            .map(|db| format!("{}_{}", self.dbname_prefix, db))
+            .collect();
         let now_ms = unix_now_us().map(|us| us / 1000).unwrap_or_default();
         self.engine
             .lock()
             .await
-            .run_pass(databases, discovery_refreshed, now_ms)
+            .run_pass(&labels, discovery_refreshed, now_ms)
             .await;
     }
 
