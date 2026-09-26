@@ -33,7 +33,7 @@ done
 docker exec "$name" psql -U monitor -d appdb -c "create database seconddb;" >/dev/null
 
 export PATH="$HOME/.cargo/bin:$PATH"
-(cd "$repo" && cargo build --quiet --bin kronika-collector)
+(cd "$repo" && cargo build --quiet --bin kronika-collector --target x86_64-unknown-linux-musl)
 collector="$repo/target/x86_64-unknown-linux-musl/debug/kronika-collector"
 
 setsid nohup "$collector" \

@@ -71,8 +71,9 @@ pub struct Exporter<F: ExecutorFactory> {
     preset: Vec<PresetMetric>,
     /// Start of the last run of each instance-level metric, epoch ms.
     instance_last_start_ms: BTreeMap<String, i64>,
-    /// Last instance-level fetch per metric, relabeled per database.
-    instance_sets: BTreeMap<String, SampleSet>,
+    /// Last instance-level fetch per storage-resolved metric with the
+    /// database that produced it, relabeled per database on publish.
+    instance_sets: BTreeMap<String, (String, SampleSet)>,
     per_db: BTreeMap<String, DbState<F>>,
     fetch_errors: BTreeMap<(String, String), u64>,
     fetch_durations_ms: BTreeMap<(String, String), u64>,
@@ -84,6 +85,8 @@ pub struct Exporter<F: ExecutorFactory> {
     error_signatures: BTreeMap<(String, String), Option<String>>,
     scrape_count: u64,
     scrape_errors: u64,
+    /// Pre-rendered exposition served to scrapes (A3).
+    exposition: String,
     fetch_failure_count: u64,
     build_version: String,
     build_commit: String,
@@ -113,6 +116,7 @@ impl<F: ExecutorFactory> Exporter<F> {
             last_fetch_ts_ms: BTreeMap::new(),
             scrape_count: 0,
             scrape_errors: 0,
+            exposition: String::new(),
             fetch_failure_count: 0,
             build_version: build_version.into(),
             build_commit: build_commit.into(),
@@ -165,8 +169,20 @@ impl<F: ExecutorFactory> Exporter<F> {
         discovery_refreshed: bool,
         now_ms: i64,
     ) {
-        // EXE-10: databases gone from discovery drop results and connections.
+        // EXE-10: databases gone from discovery drop results, connections,
+        // self-metric rows (EXE-10/D4) and instance-level fetches whose
+        // owning database disappeared (D5).
         self.per_db.retain(|name, _| discovered.contains(name));
+        self.fetch_errors
+            .retain(|(db, _), _| discovered.contains(db));
+        self.fetch_durations_ms
+            .retain(|(db, _), _| discovered.contains(db));
+        self.last_fetch_ts_ms
+            .retain(|(db, _), _| discovered.contains(db));
+        self.error_signatures
+            .retain(|(db, _), _| discovered.contains(db));
+        self.instance_sets
+            .retain(|_, (owner, _)| discovered.contains(owner));
         if discovery_refreshed {
             for state in self.per_db.values_mut() {
                 state.disabled.clear();
@@ -181,16 +197,20 @@ impl<F: ExecutorFactory> Exporter<F> {
             self.pass_database(dbname, now_ms).await;
         }
         let names: Vec<String> = self.per_db.keys().cloned().collect();
-        for (metric, set) in &self.instance_sets {
+        // Upstream keys its cache by the storage-resolved metric name, so
+        // storage_name twins (e.g. db_size and db_size_approx) overwrite
+        // each other instead of emitting duplicate series (prometheus.go
+        // AddCacheEntry); both twins still fetch, last write wins.
+        for (family, (_, set)) in &self.instance_sets {
             for dbname in &names {
                 if let Some(state) = self.per_db.get_mut(dbname) {
                     let interval_s = self
                         .preset
                         .iter()
-                        .find(|m| &m.name == metric)
+                        .find(|m| m.def.exposed_name(&m.name) == family)
                         .map_or(INSTANCE_UP_INTERVAL_S, |m| m.interval_s);
                     state.cache.store(
-                        metric,
+                        family,
                         Entry {
                             interval_s,
                             set: relabel_dbname(set, dbname),
@@ -199,6 +219,25 @@ impl<F: ExecutorFactory> Exporter<F> {
                 }
             }
         }
+        // A3: scrapes serve this pre-rendered body and never wait for SQL;
+        // counters and freshness lag at most one collector tick.
+        self.render(now_ms);
+    }
+
+    /// Rebuilds the stored exposition body from the cache and self metrics.
+    fn render(&mut self, now_ms: i64) {
+        let mut sets: Vec<SampleSet> = Vec::new();
+        let mut scrape_errors = 0_usize;
+        for state in self.per_db.values() {
+            for row in state.cache.snapshot(now_ms) {
+                scrape_errors += row.entry.set.errors;
+                sets.push(row.entry.set);
+            }
+        }
+        self.scrape_errors += u64::try_from(scrape_errors).unwrap_or(u64::MAX);
+        let mut out = crate::expose::expose_samples(sets.iter());
+        out.push_str(&self.self_metrics_text());
+        self.exposition = out;
     }
 
     async fn pass_database(&mut self, dbname: &str, now_ms: i64) {
@@ -229,7 +268,16 @@ impl<F: ExecutorFactory> Exporter<F> {
             };
             match role {
                 Ok(in_recovery) => info.in_recovery = in_recovery,
-                Err(error) => self.handle_error(dbname, "instance_up", &error),
+                Err(error) => {
+                    // reported under its own name; never disables a metric
+                    // and never touches instance_up
+                    self.report_error_state(dbname, "recovery_role", Some(error.to_string()));
+                    if error.connection_lost
+                        && let Some(state) = self.per_db.get_mut(dbname)
+                    {
+                        state.ping = None;
+                    }
+                }
             }
         }
         if self.per_db.get(dbname).is_some_and(|s| s.sql.is_none())
@@ -390,11 +438,12 @@ impl<F: ExecutorFactory> Exporter<F> {
                     dbname,
                     now_ms,
                 );
+                let family = metric.def.exposed_name(&metric.name).to_owned();
                 if instance_level {
-                    self.instance_sets.insert(metric.name.clone(), set);
+                    self.instance_sets.insert(family, (dbname.to_owned(), set));
                 } else if let Some(state) = self.per_db.get_mut(dbname) {
                     state.cache.store(
-                        &metric.name,
+                        &family,
                         Entry {
                             interval_s: metric.interval_s,
                             set,
@@ -440,25 +489,14 @@ impl<F: ExecutorFactory> Exporter<F> {
         }
     }
 
-    /// Exposition text for one scrape at `now_ms`: cached catalog samples,
-    /// `kronika_` self metrics and the `pgwatch_exporter_*` rows.
-    ///
-    /// Scrape never runs SQL; stale cache entries are filtered inside.
+    /// Exposition text for one scrape: the body rendered at the end of the
+    /// last pass, so scrapes never wait for SQL. Catalog samples, `kronika_`
+    /// self metrics and the `pgwatch_exporter_*` rows; the render already
+    /// filtered stale cache entries. Counters lag at most one tick.
     #[must_use]
-    pub fn scrape(&mut self, now_ms: i64) -> String {
+    pub fn scrape(&mut self) -> String {
         self.scrape_count += 1;
-        let mut sets: Vec<SampleSet> = Vec::new();
-        let mut scrape_errors = 0_usize;
-        for state in self.per_db.values() {
-            for row in state.cache.snapshot(now_ms) {
-                scrape_errors += row.entry.set.errors;
-                sets.push(row.entry.set);
-            }
-        }
-        self.scrape_errors += u64::try_from(scrape_errors).unwrap_or(u64::MAX);
-        let mut out = crate::expose::expose_samples(sets.iter());
-        out.push_str(&self.self_metrics_text());
-        out
+        self.exposition.clone()
     }
 
     #[allow(
@@ -499,7 +537,8 @@ impl<F: ExecutorFactory> Exporter<F> {
         for (db, state) in &self.per_db {
             let _ = writeln!(
                 out,
-                "kronika_pg_connected{{database=\"{db}\"}} {}",
+                "kronika_pg_connected{{database=\"{}\"}} {}",
+                crate::expose::escape_label_value(db),
                 u8::from(state.ping_up)
             );
         }
@@ -555,7 +594,9 @@ impl<F: ExecutorFactory> Exporter<F> {
         for ((db, metric), count) in &self.fetch_errors {
             let _ = writeln!(
                 out,
-                "kronika_prometheus_fetch_errors_total{{database=\"{db}\",metric=\"{metric}\"}} {count}"
+                "kronika_prometheus_fetch_errors_total{{database=\"{}\",metric=\"{}\"}} {count}",
+                crate::expose::escape_label_value(db),
+                crate::expose::escape_label_value(metric)
             );
         }
         family(
@@ -567,7 +608,9 @@ impl<F: ExecutorFactory> Exporter<F> {
         for ((db, metric), ts) in &self.last_fetch_ts_ms {
             let _ = writeln!(
                 out,
-                "kronika_prometheus_last_fetch_timestamp_seconds{{database=\"{db}\",metric=\"{metric}\"}} {}",
+                "kronika_prometheus_last_fetch_timestamp_seconds{{database=\"{}\",metric=\"{}\"}} {}",
+                crate::expose::escape_label_value(db),
+                crate::expose::escape_label_value(metric),
                 ts / 1000
             );
         }
@@ -580,7 +623,9 @@ impl<F: ExecutorFactory> Exporter<F> {
         for ((db, metric), ms) in &self.fetch_durations_ms {
             let _ = writeln!(
                 out,
-                "kronika_prometheus_fetch_duration_seconds{{database=\"{db}\",metric=\"{metric}\"}} {}",
+                "kronika_prometheus_fetch_duration_seconds{{database=\"{}\",metric=\"{}\"}} {}",
+                crate::expose::escape_label_value(db),
+                crate::expose::escape_label_value(metric),
                 (*ms as f64) / 1000.0
             );
         }
@@ -766,7 +811,7 @@ mod tests {
         factory.dbs.insert("h_app".to_owned(), db(true, vec![]));
         let mut e = exporter(factory);
         run(&mut e, &["h_app"], 0).await;
-        let text = e.scrape(0);
+        let text = e.scrape();
         assert!(
             text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
             "{text}"
@@ -780,7 +825,7 @@ mod tests {
         let mock = e.factory.db("h_app");
         mock.lock().expect("mock").ping_result = Err(MetricError::transport("refused"));
         run(&mut e, &["h_app"], 61_000).await;
-        let text = e.scrape(61_000);
+        let text = e.scrape();
         assert!(
             text.contains("pgwatch_instance_up{dbname=\"h_app\"} 0"),
             "{text}"
@@ -814,7 +859,7 @@ mod tests {
         );
         let mut e = exporter(factory);
         run(&mut e, &["h_app"], 0).await;
-        let text = e.scrape(0);
+        let text = e.scrape();
         assert!(
             text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
             "{text}"
@@ -937,10 +982,10 @@ mod tests {
             .insert("h_gone".to_owned(), db(true, vec![query_result()]));
         let mut e = exporter(factory);
         run(&mut e, &["h_app", "h_gone"], 0).await;
-        let text = e.scrape(0);
+        let text = e.scrape();
         assert!(text.contains("dbname=\"h_gone\""), "{text}");
         run(&mut e, &["h_app"], 1).await;
-        let text = e.scrape(1);
+        let text = e.scrape();
         assert!(!text.contains("dbname=\"h_gone\""), "{text}");
         assert!(text.contains("dbname=\"h_app\""), "{text}");
     }
@@ -958,9 +1003,10 @@ mod tests {
             .dbs
             .insert("h_b".to_owned(), db(true, vec![query_result()]));
         let mut e = exporter(factory);
-        run(&mut e, &["h_a", "h_b"], 0).await;
-        // scrape after the scripted epoch so staleness does not filter rows
-        let text = e.scrape(1_700_000_000_500);
+        // the pass runs at the scripted epoch so the pre-rendered body
+        // carries fresh (non-stale) rows
+        run(&mut e, &["h_a", "h_b"], 1_700_000_000_500).await;
+        let text = e.scrape();
         // wal is instance-level in the embedded catalog: one execution on the
         // first database, rows under both dbname labels
         assert!(
@@ -1134,19 +1180,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn storage_name_twins_share_one_family_last_write_wins() {
+        // upstream keys its cache by the storage-resolved name: db_size and
+        // db_size_approx both land on db_size and the later pass wins
+        let mut factory = MockFactory {
+            with_sql: true,
+            ..MockFactory::default()
+        };
+        factory.dbs.insert("h_app".to_owned(), db(true, vec![]));
+        let mut e = exporter(factory);
+        let mut preset: Vec<PresetMetric> = basic_preset()
+            .into_iter()
+            .filter(|m| m.name == "instance_up")
+            .collect();
+        for (name, size) in [("db_size", "11"), ("db_size_approx", "22")] {
+            preset.push(PresetMetric {
+                name: name.to_owned(),
+                def: MetricDef {
+                    description: String::new(),
+                    sqls: BTreeMap::from([(
+                        14_u32,
+                        Sql::Select(format!("select 1 as size_b where '{size}' = v")),
+                    )]),
+                    gauges: Gauges::All,
+                    is_instance_level: false,
+                    node_status: None,
+                    statement_timeout_seconds: None,
+                    storage_name: Some("db_size".to_owned()),
+                },
+                interval_s: 60,
+            });
+        }
+        e.preset = preset;
+        // pass at the scripted epoch so the rendered body carries fresh rows
+        run(&mut e, &["h_app"], 1_700_000_000_500).await;
+        let text = e.scrape();
+        let rows = text
+            .lines()
+            .filter(|l| l.starts_with("pgwatch_db_size_xact_commit"))
+            .count();
+        assert_eq!(rows, 1, "one series, not duplicated: {text}");
+    }
+
+    #[tokio::test]
+    async fn disappearing_database_prunes_self_metrics() {
+        let mut factory = MockFactory {
+            with_sql: true,
+            ..MockFactory::default()
+        };
+        factory.dbs.insert(
+            "h_app".to_owned(),
+            db(true, vec![query_result(), query_result(), query_result()]),
+        );
+        let mock_db = factory.dbs.get("h_app").cloned().unwrap();
+        mock_db.lock().expect("mock").sql_results = VecDeque::from([
+            query_result(),
+            Err(MetricError::transport("boom")),
+            query_result(),
+        ]);
+        let mut e = exporter(factory);
+        run(&mut e, &["h_app"], 0).await;
+        let text = e.scrape();
+        assert!(
+            text.contains("kronika_prometheus_fetch_errors_total"),
+            "{text}"
+        );
+        run(&mut e, &[], 61_000).await;
+        let text = e.scrape();
+        assert!(
+            !text.contains("kronika_prometheus_"),
+            "dead rows pruned with the database: {text}"
+        );
+    }
+
+    #[tokio::test]
     async fn without_sql_executor_only_ping_and_self_metrics() {
         let mut factory = MockFactory::default();
         factory.dbs.insert("h_app".to_owned(), db(true, vec![]));
         let mut e = exporter(factory);
         run(&mut e, &["h_app"], 0).await;
-        let text = e.scrape(0);
+        let text = e.scrape();
         assert!(
             text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
             "{text}"
         );
         assert!(!text.contains("pgwatch_wal_"), "{text}");
         assert!(!text.contains("pgwatch_db_stats_"), "{text}");
-        assert!(text.contains("pgwatch_exporter_total_scrapes 1"), "{text}");
+        // the scrape count in the pre-rendered body lags one tick (A3)
+        assert!(text.contains("pgwatch_exporter_total_scrapes 0"), "{text}");
         assert!(
             text.contains("kronika_build_info{commit=\"abc123\",version=\"1.2.4\"} 1"),
             "{text}"

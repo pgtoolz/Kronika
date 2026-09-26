@@ -7,16 +7,21 @@
 //! patch.
 
 /// Result column classification.
+///
+/// The value-column type set mirrors what upstream's pgx decode loop
+/// exposes: `int4`, `int8`, `float4`, `float8` and `bool` (prometheus.go
+/// switch in `WritePromMetrics`). `int2`, `xid`, `cid` and `numeric` hit the
+/// default DROP there, so they classify as [`ColumnKind::Text`] — dropped
+/// as value columns, still fine as `tag_` labels, which upstream
+/// stringifies before the switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnKind {
     /// `bool`: exposed as 0/1.
     Bool,
-    /// Integer OIDs (`int2`/`int4`/`int8`/`oid`/`xid`/`cid`).
+    /// Integer OIDs with an upstream value path (`int4`/`int8`).
     Int,
     /// `float4`/`float8`.
     Float,
-    /// `numeric`: decimal text parsed to f64.
-    Numeric,
     /// Known textual OIDs: label-only, never a value column.
     Text,
     /// Unrecognized OID: treated like [`ColumnKind::Text`].
@@ -31,13 +36,13 @@ pub type Cell = Option<String>;
 pub const fn kind_for_oid(oid: u32) -> ColumnKind {
     match oid {
         16 => ColumnKind::Bool,
-        20 | 21 | 23 | 26 | 28 | 29 => ColumnKind::Int,
+        // int8 and int4 are the only integers with an upstream value path
+        20 | 23 => ColumnKind::Int,
         700 | 701 => ColumnKind::Float,
-        1700 => ColumnKind::Numeric,
-        // text, name, char, bpchar, varchar, bytea, date, time, timestamp,
-        // timestamptz, interval, uuid, json, jsonb, xml, inet, cidr, macaddr
-        17 | 18 | 19 | 25 | 142 | 1042 | 1043 | 114 | 3802 | 1082 | 1083 | 1114 | 1184 | 1186
-        | 2950 | 869 | 650 | 829 => ColumnKind::Text,
+        // dropped by the upstream default: int2 (21), xid (28), cid (29),
+        // numeric (1700), plus the textual family
+        17 | 18 | 19 | 21 | 25 | 28 | 29 | 142 | 1042 | 1043 | 114 | 1700 | 3802 | 1082 | 1083
+        | 1114 | 1184 | 1186 | 2950 | 869 | 650 | 829 => ColumnKind::Text,
         _ => ColumnKind::Unknown,
     }
 }
@@ -45,8 +50,7 @@ pub const fn kind_for_oid(oid: u32) -> ColumnKind {
 /// Parses one non-NULL cell into an exposed value.
 ///
 /// `None` means the cell is not exposable as a number: wrong shape for the
-/// kind, or a non-finite float (skipped like pgwatch's `sanitizeValue`, which
-/// turns NaN/Infinity into NULL before the sink).
+/// kind, or a type upstream drops.
 #[must_use]
 pub fn parse_value(kind: ColumnKind, text: &str) -> Option<f64> {
     match kind {
@@ -62,10 +66,9 @@ pub fn parse_value(kind: ColumnKind, text: &str) -> Option<f64> {
             reason = "pgwatch converts int64 to float64 on its Go side"
         )]
         ColumnKind::Int => text.parse::<i64>().ok().map(|v| v as f64),
-        ColumnKind::Float | ColumnKind::Numeric => {
-            let v = text.parse::<f64>().ok()?;
-            v.is_finite().then_some(v)
-        }
+        // upstream v5.3.0 exposes non-finite floats (NaN, +Inf, -Inf) — no
+        // sanitizeValue on its Prometheus path; the exposition renders them
+        ColumnKind::Float => text.parse::<f64>().ok(),
         // Text and unknown OIDs never produce values, only tag_ labels.
         ColumnKind::Text | ColumnKind::Unknown => None,
     }
@@ -78,14 +81,16 @@ mod tests {
     #[test]
     fn oid_classification() {
         assert_eq!(kind_for_oid(16), ColumnKind::Bool);
-        for oid in [20, 21, 23, 26, 28, 29] {
+        // only int8/int4 have an upstream value path
+        for oid in [20, 23] {
             assert_eq!(kind_for_oid(oid), ColumnKind::Int, "oid {oid}");
         }
         for oid in [700, 701] {
             assert_eq!(kind_for_oid(oid), ColumnKind::Float, "oid {oid}");
         }
-        assert_eq!(kind_for_oid(1700), ColumnKind::Numeric);
-        for oid in [19, 25, 1043, 1042, 114, 3802, 1184, 2950] {
+        // int2, xid, cid and numeric drop exactly like text (upstream
+        // default branch); a stock example is table_bloat fillfactor ::smallint
+        for oid in [21, 28, 29, 1700, 19, 25, 1043, 1042, 114, 3802, 1184, 2950] {
             assert_eq!(kind_for_oid(oid), ColumnKind::Text, "oid {oid}");
         }
         assert_eq!(kind_for_oid(999_999), ColumnKind::Unknown);
@@ -104,16 +109,21 @@ mod tests {
             Some(9_223_372_036_854_776_000.0)
         );
         assert_eq!(parse_value(ColumnKind::Float, "1.5"), Some(1.5));
-        assert_eq!(parse_value(ColumnKind::Numeric, "1.5"), Some(1.5));
-        assert_eq!(parse_value(ColumnKind::Numeric, "-0.001"), Some(-0.001));
+        // numeric columns drop like text (upstream default branch)
+        assert_eq!(parse_value(ColumnKind::Text, "1.5"), None);
     }
 
     #[test]
-    fn non_finite_floats_are_skipped() {
-        for kind in [ColumnKind::Float, ColumnKind::Numeric] {
-            assert_eq!(parse_value(kind, "NaN"), None);
-            assert_eq!(parse_value(kind, "Infinity"), None);
-            assert_eq!(parse_value(kind, "-Infinity"), None);
+    fn non_finite_floats_are_exposed() {
+        // upstream v5.3.0 has no sanitizeValue on the Prometheus path
+        for (text, value) in [
+            ("NaN", f64::NAN),
+            ("inf", f64::INFINITY),
+            ("infinity", f64::INFINITY),
+            ("-inf", f64::NEG_INFINITY),
+        ] {
+            let parsed = parse_value(ColumnKind::Float, text);
+            assert_eq!(parsed.map(f64::to_bits), Some(value.to_bits()), "{text}");
         }
         assert_eq!(parse_value(ColumnKind::Int, "NaN"), None);
     }

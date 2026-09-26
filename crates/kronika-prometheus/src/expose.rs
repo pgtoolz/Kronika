@@ -87,6 +87,15 @@ pub fn expose_samples<'a>(sets: impl IntoIterator<Item = &'a SampleSet>) -> Stri
     out
 }
 
+/// Escapes a label value per the text format: backslash, double quote,
+/// newline. Shared by catalog samples and self-metric lines.
+#[must_use]
+pub fn escape_label_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    escape_label_value_into(&mut out, value);
+    out
+}
+
 /// Escapes a label value per the text format: backslash, double quote, newline.
 fn escape_label_value_into(out: &mut String, value: &str) {
     for c in value.chars() {
@@ -103,30 +112,46 @@ fn escape_help(help: &str) -> String {
     help.replace('\\', "\\\\").replace('\n', "\\n")
 }
 
-/// Formats a finite f64 like Go's `strconv.FormatFloat(f, 'g', -1, 64)`.
+/// Formats an f64 like Go's `strconv.FormatFloat(f, 'g', -1, 64)`.
 ///
-/// Shortest round-trip digits; plain decimal for exponents in `-4..21`,
-/// scientific `e+NN`/`e-NN` outside.
+/// Shortest round-trip digits; plain decimal while the decimal exponent
+/// stays in `-4..6`, scientific `e+NN`/`e-NN` outside; zero prints `0` and
+/// non-finite values print `NaN`/`+Inf`/`-Inf` as expfmt does.
+///
+/// # Panics
+///
+/// Panics only if Rust's `{:e}` formatting changes shape (no `e` separator
+/// or a non-decimal exponent), which cannot happen for finite `f64`.
 #[must_use]
 pub fn format_value(value: f64) -> String {
-    debug_assert!(value.is_finite(), "non-finite values are dropped upstream");
-    let abs = value.abs();
-    if value != 0.0 && !(1e-4..1e21).contains(&abs) {
-        // shortest round-trip in scientific form via Rust Debug, reshaped to
-        // Go's signed, at least two-digit exponent
-        return format!("{value:?}")
-            .split_once('e')
-            .map_or_else(|| format!("{value:?}"), format_exponent);
+    // the text-format spellings Go's expfmt writes for non-finite values
+    if value.is_nan() {
+        return "NaN".to_owned();
     }
-    format!("{value}")
-}
-
-/// Reshapes Rust Debug's `1e21` into Go's `1e+21` with two exponent digits.
-fn format_exponent((mantissa, exp): (&str, &str)) -> String {
-    let (sign, digits) = exp
-        .strip_prefix('-')
-        .map_or(('+', exp), |digits| ('-', digits));
-    format!("{mantissa}e{sign}{digits:0>2}")
+    if value.is_infinite() {
+        return if value > 0.0 { "+Inf" } else { "-Inf" }.to_owned();
+    }
+    // Go prints zero (both signs) as "0", never "-0"
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+    // Go 'g' with shortest digits picks %e when the decimal exponent is
+    // < -4 or >= 6 (ftoa sets eprec=6 for shortest) — so 1e6 renders as
+    // "1e+06". Rust's {:e} carries the same shortest digits plus that
+    // exponent; plain rendering below uses Display, which never goes
+    // scientific.
+    let sci = format!("{value:e}");
+    let (mantissa, exp) = sci
+        .split_once('e')
+        .expect("lowercase-exponential output keeps the 'e' separator");
+    let exp: i32 = exp.parse().expect("the exponent part is plain decimal");
+    if (-4..6).contains(&exp) {
+        format!("{value}")
+    } else {
+        let sign = if exp < 0 { '-' } else { '+' };
+        let digits = exp.unsigned_abs();
+        format!("{mantissa}e{sign}{digits:02}")
+    }
 }
 
 #[cfg(test)]
@@ -212,21 +237,32 @@ mod tests {
     #[test]
     fn value_formats_match_go_g_shortest() {
         assert_eq!(format_value(0.0), "0");
+        assert_eq!(format_value(-0.0), "0");
         assert_eq!(format_value(1.0), "1");
         assert_eq!(format_value(1.5), "1.5");
         assert_eq!(format_value(-7.0), "-7");
         assert_eq!(format_value(1024.0), "1024");
-        assert_eq!(format_value(0.001), "0.001");
-        assert_eq!(format_value(1e-4), "0.0001");
-        assert_eq!(format_value(1e-5), "1e-05");
-        assert_eq!(format_value(1e20), "100000000000000000000");
+        assert_eq!(format_value(999_999.0), "999999");
+        // Go switches to %e at decimal exponent 6 (eprec=6 for shortest)
+        assert_eq!(format_value(1e6), "1e+06");
+        assert_eq!(format_value(1_234_567.0), "1.234567e+06");
+        assert_eq!(format_value(1e20), "1e+20");
         assert_eq!(
             format_value(1.234_567_890_123_456_8e20),
-            "123456789012345680000"
+            "1.2345678901234568e+20"
         );
         assert_eq!(format_value(1e21), "1e+21");
         assert_eq!(format_value(1.5e22), "1.5e+22");
         assert_eq!(format_value(-1e21), "-1e+21");
+        // small side: %e below decimal exponent -4
+        assert_eq!(format_value(0.001), "0.001");
+        assert_eq!(format_value(1e-4), "0.0001");
+        assert_eq!(format_value(1e-5), "1e-05");
+        assert_eq!(format_value(-1.2e-7), "-1.2e-07");
+        // expfmt spellings for non-finite values
+        assert_eq!(format_value(f64::NAN), "NaN");
+        assert_eq!(format_value(f64::INFINITY), "+Inf");
+        assert_eq!(format_value(f64::NEG_INFINITY), "-Inf");
     }
 
     #[test]

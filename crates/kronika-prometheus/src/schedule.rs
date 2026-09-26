@@ -12,14 +12,15 @@ pub fn due(last_start_ms: i64, interval_s: u64, now_ms: i64) -> bool {
     if last_start_ms == i64::MIN {
         return true; // never ran
     }
-    u64::try_from(now_ms - last_start_ms).is_ok_and(|elapsed| elapsed >= interval_s * 1000)
+    let bound_ms = interval_s.saturating_mul(1000);
+    u64::try_from(now_ms - last_start_ms).is_ok_and(|elapsed| elapsed >= bound_ms)
 }
 
 /// Exposition staleness threshold: `max(10 min, 2 × interval)`.
 #[must_use]
 pub const fn stale_threshold_ms(interval_s: u64) -> u64 {
     // Ord::max is not const-stable yet
-    let twice = 2 * interval_s * 1000;
+    let twice = interval_s.saturating_mul(1000).saturating_mul(2);
     if twice > 600_000 { twice } else { 600_000 }
 }
 

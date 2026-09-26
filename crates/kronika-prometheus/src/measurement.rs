@@ -8,8 +8,9 @@
 //!   label then stays absent rather than empty;
 //! * `epoch_ns` sets the fetch timestamp and is never a value; all rows of
 //!   one fetch share the first row's `epoch_ns`;
-//! * bool columns give 0/1, non-finite floats are dropped, textual columns
-//!   are never values (only tags);
+//! * bool columns give 0/1, non-finite floats are exposed as rendered by
+//!   the text format, textual and dropped-type columns are never values
+//!   (only tags);
 //! * the second row with an identical family-and-label-set is dropped and
 //!   counted as an error.
 
@@ -92,15 +93,19 @@ pub fn to_sample_set(
         };
     }
 
+    // Upstream stamps ALL rows with the FIRST row's epoch_ns; when it is
+    // absent or not an int64, the fetch time is used — later rows are never
+    // scanned (Measurements.GetEpoch, types.go).
     let timestamp_ms = result
         .rows
-        .iter()
-        .find_map(|row| epoch_ms(result, row))
+        .first()
+        .and_then(|row| epoch_ms(result, row))
         .unwrap_or(fallback_ms);
 
     let mut samples = Vec::new();
     let mut errors = 0_usize;
-    let mut seen: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, Vec<(String, String)>)> =
+        std::collections::HashSet::new();
 
     for row in &result.rows {
         // dbname first: a tag_dbname column overrides it (upstream writes
@@ -132,7 +137,13 @@ pub fn to_sample_set(
                 continue;
             }
             if let Some(value) = parse_value(col.kind, text) {
-                fields.push((col.name.clone(), value));
+                // Upstream decodes into a map, so duplicate column names
+                // keep the LAST value with no error (types.go ScanRow).
+                if let Some(slot) = fields.iter_mut().find(|(n, _)| n == &col.name) {
+                    slot.1 = value;
+                } else {
+                    fields.push((col.name.clone(), value));
+                }
             }
         }
         if row_invalid {
@@ -152,11 +163,10 @@ pub fn to_sample_set(
                 continue;
             };
             let identity = (family.clone(), labels.clone());
-            if seen.contains(&identity) {
+            if !seen.insert(identity) {
                 errors += 1;
                 continue;
             }
-            seen.push(identity);
             samples.push(Sample {
                 family,
                 help: exposed_name.to_owned(),
@@ -225,7 +235,7 @@ mod tests {
             col("epoch_ns", ColumnKind::Int),
             col("tag_schema", ColumnKind::Text),
             col("size_b", ColumnKind::Int),
-            col("ratio", ColumnKind::Numeric),
+            col("ratio", ColumnKind::Float),
             col("active", ColumnKind::Bool),
             col("note", ColumnKind::Text),
         ]
@@ -399,6 +409,44 @@ mod tests {
     }
 
     #[test]
+    fn later_row_epoch_is_never_scanned() {
+        // upstream GetEpoch reads strictly the first row: a NULL epoch there
+        // falls back to fetch time even when a later row carries one
+        let result = QueryResult {
+            columns: vec![col("epoch_ns", ColumnKind::Int), col("v", ColumnKind::Int)],
+            rows: vec![
+                row(&[None, Some("1")]),
+                row(&[Some("1800000000000000000"), Some("2")]),
+            ],
+        };
+        let set = convert(&result, "m", &Gauges::Columns(vec![]), "db");
+        assert_eq!(
+            set.timestamp_ms, 1_700_000_000_000,
+            "fallback, not the later epoch"
+        );
+    }
+
+    #[test]
+    fn duplicate_column_names_keep_the_last_value() {
+        // upstream decodes rows into a map: the last column wins, no error
+        let result = QueryResult {
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int),
+                col("v", ColumnKind::Int),
+                col("v", ColumnKind::Int),
+            ],
+            rows: vec![row(&[Some("1700000000000000000"), Some("1"), Some("2")])],
+        };
+        let set = convert(&result, "m", &Gauges::Columns(vec![]), "db");
+        assert_eq!(set.errors, 0, "duplicate names are not errors");
+        assert_eq!(set.samples.len(), 1);
+        assert!(
+            (set.samples[0].value - 2.0).abs() < f64::EPSILON,
+            "last value wins"
+        );
+    }
+
+    #[test]
     fn first_row_epoch_wins_for_all_rows() {
         let result = QueryResult {
             columns: vec![col("epoch_ns", ColumnKind::Int), col("v", ColumnKind::Int)],
@@ -520,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn non_finite_and_malformed_values_drop() {
+    fn non_finite_exposed_and_malformed_drop() {
         let result = QueryResult {
             columns: vec![
                 col("epoch_ns", ColumnKind::Int),
@@ -530,7 +578,9 @@ mod tests {
             rows: vec![row(&[Some("1700000000000000000"), Some("NaN"), Some("xx")])],
         };
         let set = convert(&result, "m", &Gauges::Columns(vec![]), "db");
-        assert!(set.samples.is_empty());
+        // upstream v5.3.0 exposes NaN; only the malformed int drops
+        assert_eq!(set.samples.len(), 1);
+        assert!(set.samples[0].value.is_nan());
     }
 
     #[test]

@@ -20,6 +20,9 @@ pub const EMBEDDED_METRIC_COUNT: usize = 74;
 /// Preset count half of the pinned shape check.
 pub const EMBEDDED_PRESET_COUNT: usize = 15;
 
+/// Largest accepted preset interval in seconds (~285 years).
+pub const MAX_INTERVAL_S: u64 = 9_000_000_000_000;
+
 /// Name of the default preset applied when none is configured.
 pub const DEFAULT_PRESET: &str = "basic";
 
@@ -44,10 +47,9 @@ pub enum Gauges {
 
 impl Gauges {
     fn from_list(list: Vec<String>) -> Result<Self, CatalogError> {
-        if list.iter().any(|g| g == "*") {
-            if list.len() != 1 {
-                return Err(CatalogError::invalid("gauges: '*' must be the only entry"));
-            }
+        // Upstream only special-cases gauges[0] == '*' (prometheus.go); a
+        // '*' anywhere else is an ordinary, never-matching column name.
+        if list.first().is_some_and(|g| g == "*") {
             return Ok(Self::All);
         }
         if list.iter().any(String::is_empty) {
@@ -238,13 +240,13 @@ impl Catalog {
 
         let mut metrics = BTreeMap::new();
         for (name, m) in raw.metrics {
+            // Upstream parses a free string; only primary/standby restrict,
+            // anything else behaves unrestricted (types.go), so unknown
+            // values load instead of failing.
             let node_status = match m.node_status.as_deref() {
-                None => None,
                 Some("primary") => Some(NodeStatus::Primary),
                 Some("standby") => Some(NodeStatus::Standby),
-                Some(other) => {
-                    return Err(err(format!("metric {name}: unknown node_status {other:?}")));
-                }
+                _ => None,
             };
             if m.statement_timeout_seconds == Some(0) {
                 return Err(err(format!(
@@ -287,6 +289,16 @@ impl Catalog {
 
         let mut presets = BTreeMap::new();
         for (name, p) in raw.presets {
+            // bounds the interval arithmetic (seconds times 1000, doubled
+            // for staleness) inside u64 for any sane schedule
+            if p.metrics
+                .values()
+                .any(|interval| *interval > MAX_INTERVAL_S)
+            {
+                return Err(err(format!(
+                    "preset {name}: interval exceeds {MAX_INTERVAL_S} seconds"
+                )));
+            }
             presets.insert(
                 name.clone(),
                 PresetDef {
@@ -352,7 +364,22 @@ impl Catalog {
             let metric = self.metrics.get(name).ok_or_else(|| {
                 CatalogError::invalid(format!("preset {preset}: unknown metric {name:?}"))
             })?;
-            resolved.push((name.clone(), metric.clone(), *interval));
+            // Upstream builds its gauges map keyed by the ORIGINAL metric
+            // name (DefineMetrics) but looks it up with the storage-resolved
+            // name of the running metric (reaper.go MetricName,
+            // prometheus.go WritePromMetrics). Net effect, mirrored here: a
+            // metric with storage_name=X gets the gauges of the metric
+            // literally named X — usually none, so all its columns are
+            // counters (e.g. reco_drop_index under storage_name
+            // recommendations). This quirk is intentional for parity.
+            let mut metric = metric.clone();
+            if let Some(storage) = metric.storage_name.as_deref() {
+                metric.gauges = self
+                    .metrics
+                    .get(storage)
+                    .map_or(Gauges::Columns(Vec::new()), |owner| owner.gauges.clone());
+            }
+            resolved.push((name.clone(), metric, *interval));
         }
         Ok(resolved)
     }
@@ -408,13 +435,19 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
                 .get(i + 1)
                 .is_some_and(|&n| n == '$' || n.is_ascii_alphanumeric() || n == '_') =>
             {
-                // dollar-quoted tag: $tag$ body $tag$ ($$ allowed)
+                // dollar-quoted tag: $tag$ body $tag$ ($$ allowed). A '$'
+                // whose tag runs to the end of input (no closing '$') is an
+                // ordinary character, not an unterminated quote.
                 let mut j = i + 1;
                 while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
                     j += 1;
                 }
-                let tag = &chars[i..=j];
-                i = find_tag(j + 1, tag).map_or(chars.len(), |k| k + tag.len());
+                if j < chars.len() && chars[j] == '$' {
+                    let tag = &chars[i..=j];
+                    i = find_tag(j + 1, tag).map_or(chars.len(), |k| k + tag.len());
+                } else {
+                    i += 1;
+                }
                 statement_text = true;
             }
             '-' if chars.get(i + 1) == Some(&'-') => {
@@ -638,14 +671,19 @@ mod tests {
         assert!(classify_sql("explain select 1").is_err());
         // dollar-quoted bodies may contain anything
         assert!(classify_sql("select foo($$ x ; y $$) as v").is_ok());
+        // a '$' whose tag runs to the end of input is ordinary text, not a
+        // panic and not an unterminated quote
+        assert!(classify_sql("select 1 where a = b$c").is_ok());
+        assert!(classify_sql("select $abc").is_ok());
         assert!(classify_sql("select foo($tag$ a ; b $tag$) as v").is_ok());
     }
 
     #[test]
     fn node_status_and_timeout_validation() {
-        let err = load("metrics:\n  m:\n    sqls: {14: 'select 1'}\n    node_status: replica\n")
-            .unwrap_err();
-        assert!(err.message.contains("node_status"), "{err}");
+        // unknown values load as unrestricted (upstream free-string parse)
+        let ok =
+            load("metrics:\n  m:\n    sqls: {14: 'select 1'}\n    node_status: replica\n").unwrap();
+        assert_eq!(ok.metrics["m"].node_status, None);
         let ok =
             load("metrics:\n  m:\n    sqls: {14: 'select 1'}\n    node_status: standby\n").unwrap();
         assert_eq!(ok.metrics["m"].node_status, Some(NodeStatus::Standby));
@@ -665,9 +703,40 @@ mod tests {
         );
         assert!(catalog.metrics["n"].gauges.contains("b"));
         assert!(!catalog.metrics["n"].gauges.contains("c"));
-        let err =
-            load("metrics:\n  m:\n    sqls: {14: 'select 1'}\n    gauges: ['*', a]\n").unwrap_err();
-        assert!(err.message.contains("'*'"), "{err}");
+        // a '*' after position 0 is an ordinary entry: it stays in the list
+        // and only ever matches a column literally named that way
+        let ok =
+            load("metrics:\n  m:\n    sqls: {14: 'select 1'}\n    gauges: [a, '*']\n").unwrap();
+        assert_eq!(
+            ok.metrics["m"].gauges,
+            Gauges::Columns(vec!["a".to_owned(), "*".to_owned()])
+        );
+        assert!(ok.metrics["m"].gauges.contains("a"));
+        assert!(!ok.metrics["m"].gauges.contains("b"));
+    }
+
+    #[test]
+    fn storage_name_resolves_gauges_by_exposed_name() {
+        // upstream looks gauges up by the storage-resolved name: a metric
+        // with storage_name X gets the gauges of the metric named X
+        let catalog = load(
+            "metrics:\n  a:\n    sqls: {14: 'select 1 as x'}\n    gauges: [x]\n    storage_name: b\n  b:\n    sqls: {14: 'select 1 as x'}\n  c:\n    sqls: {14: 'select 1 as y'}\n    storage_name: d\n  d:\n    sqls: {14: 'select 1 as y'}\n    gauges: [y]\npresets:\n  p:\n    metrics: {a: 60, c: 60, b: 60, d: 60}\n",
+        )
+        .unwrap();
+        let resolved = catalog.resolve_preset("p").unwrap();
+        let gauges_of = |name: &str| {
+            resolved
+                .iter()
+                .find(|(n, _, _)| n == name)
+                .map(|(_, def, _)| def.gauges.clone())
+                .unwrap()
+        };
+        // a exposes as b, whose own gauges are empty: all counters
+        assert_eq!(gauges_of("a"), Gauges::Columns(Vec::new()));
+        // c exposes as d and inherits d's gauge list
+        assert_eq!(gauges_of("c"), Gauges::Columns(vec!["y".to_owned()]));
+        // metrics without storage_name keep their own list
+        assert_eq!(gauges_of("d"), Gauges::Columns(vec!["y".to_owned()]));
     }
 
     #[test]

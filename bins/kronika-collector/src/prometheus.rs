@@ -147,33 +147,94 @@ impl ExporterPing {
             }
             MetricError::transport(chain)
         })?;
-        for setup in SESSION_SETUP_STATEMENTS {
-            run_statement(session, setup).await?;
-        }
-        let mut stats = kronika_source_pg::query::QueryStats::default();
-        let stream = session
-            .simple_stream(PING_SQL, &mut stats)
-            .await
-            .map_err(|e| map_pg_error(&e))?;
-        let mut stream = std::pin::pin!(stream);
-        let mut version = None;
-        let mut in_recovery = None;
-        while let Some(message) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
-            if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
-                version = row.get(0).map(str::to_owned);
-                in_recovery = row.get(1).map(str::to_owned);
+        let parse = async {
+            for setup in SESSION_SETUP_STATEMENTS {
+                run_statement(session, setup).await?;
+            }
+            let mut stats = kronika_source_pg::query::QueryStats::default();
+            let stream = session
+                .simple_stream(PING_SQL, &mut stats)
+                .await
+                .map_err(|e| map_pg_error(&e))?;
+            let mut stream = std::pin::pin!(stream);
+            let mut version = None;
+            let mut in_recovery = None;
+            while let Some(message) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
+                if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
+                    version = row.get(0).map(str::to_owned);
+                    in_recovery = row.get(1).map(str::to_owned);
+                }
+            }
+            let version = version.ok_or_else(|| MetricError::transport("ping returned no rows"))?;
+            let in_recovery = in_recovery.unwrap_or_else(|| "f".to_owned());
+            // server_version_num is e.g. 160015; the catalog keys on the major
+            let version_num: u32 = version.parse().map_err(|_| {
+                MetricError::transport(format!("bad server_version_num {version:?}"))
+            })?;
+            Ok(PingInfo {
+                server_major_version: version_num / 10_000,
+                in_recovery: in_recovery == "t",
+            })
+        };
+        // A2: a hung transport must not stall the pass (and with it every
+        // scrape). The ALREADY-HELD pool closes the socket on overrun —
+        // never a second lock, the guard is still held here.
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_S + HANG_GUARD_MARGIN_S),
+            parse,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => {
+                pool.close();
+                Err(MetricError::transport(
+                    "ping did not answer within statement_timeout + 5s; connection dropped",
+                ))
             }
         }
-        let version = version.ok_or_else(|| MetricError::transport("ping returned no rows"))?;
-        let in_recovery = in_recovery.unwrap_or_else(|| "f".to_owned());
-        // server_version_num is e.g. 160015; the catalog keys on the major
-        let version_num: u32 = version
-            .parse()
-            .map_err(|_| MetricError::transport(format!("bad server_version_num {version:?}")))?;
-        Ok(PingInfo {
-            server_major_version: version_num / 10_000,
-            in_recovery: in_recovery == "t",
-        })
+    }
+    #[allow(
+        clippy::significant_drop_tightening,
+        reason = "the guard must outlive the Session, which borrows the pool's client"
+    )]
+    async fn recovery_inner(&self) -> Result<bool, MetricError> {
+        let mut guard = self.pool.lock().await;
+        let pool = &mut *guard;
+        let session = pool
+            .session()
+            .await
+            .map_err(|e| MetricError::transport(format!("connect: {e}")))?;
+        let read = async {
+            let mut stats = kronika_source_pg::query::QueryStats::default();
+            let stream = session
+                .simple_stream(RECOVERY_SQL, &mut stats)
+                .await
+                .map_err(|e| map_pg_error(&e))?;
+            let mut stream = std::pin::pin!(stream);
+            let mut role = None;
+            while let Some(message) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
+                if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
+                    role = row.get(0).map(str::to_owned);
+                }
+            }
+            Ok(role.is_some_and(|r| r == "t"))
+        };
+        // A2: same hang guard as the ping; the held pool closes on overrun
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_S + HANG_GUARD_MARGIN_S),
+            read,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => {
+                pool.close();
+                Err(MetricError::transport(
+                    "recovery role read did not answer within statement_timeout + 5s; connection dropped",
+                ))
+            }
+        }
     }
 }
 
@@ -187,25 +248,7 @@ impl PingExecutor for ExporterPing {
         reason = "the guard must outlive the Session, which borrows the pool's client"
     )]
     async fn recovery_role(&mut self) -> Result<bool, MetricError> {
-        let mut guard = self.pool.lock().await;
-        let pool = &mut *guard;
-        let session = pool
-            .session()
-            .await
-            .map_err(|e| MetricError::transport(format!("connect: {e}")))?;
-        let mut stats = kronika_source_pg::query::QueryStats::default();
-        let stream = session
-            .simple_stream(RECOVERY_SQL, &mut stats)
-            .await
-            .map_err(|e| map_pg_error(&e))?;
-        let mut stream = std::pin::pin!(stream);
-        let mut role = None;
-        while let Some(message) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
-            if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
-                role = row.get(0).map(str::to_owned);
-            }
-        }
-        Ok(role.is_some_and(|r| r == "t"))
+        self.recovery_inner().await
     }
 }
 
@@ -281,7 +324,12 @@ impl SqlExecutor for ExporterSql {
             // statement_timeout usually ends the query first; this catches a
             // hung transport. Reconnect happens on the next pass.
             Err(_elapsed) => {
-                self.pool.lock().await.close();
+                // the collect future (and its stream) is dropped by the
+                // the collect future (and its stream) is dropped by the
+                // timeout; the already-held pool closes the socket. Never
+                // re-lock: the guard is still held here and tokio mutexes
+                // do not recurse, so a second lock would deadlock.
+                pool.close();
                 Err(MetricError::transport(
                     "metric query did not answer within statement_timeout + 5s; connection dropped",
                 ))
@@ -464,8 +512,9 @@ impl PrometheusExporter {
                     .unwrap_or_default();
                 let (status, content_type, body) = match path {
                     "/metrics" => {
-                        let now_ms = unix_now_us().unwrap_or_default() / 1000;
-                        let body = engine.lock().await.scrape(now_ms);
+                        // serves the body pre-rendered at the last pass end;
+                        // the short lock never waits for SQL
+                        let body = engine.lock().await.scrape();
                         ("200 OK", "text/plain; version=0.0.4; charset=utf-8", body)
                     }
                     "/health" => (
