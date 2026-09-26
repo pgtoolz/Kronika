@@ -27,15 +27,21 @@ use crate::logging::{LogLevel, field, log_event};
 const DEFAULT_STATEMENT_TIMEOUT_S: u64 = 5;
 /// Extra seconds beyond the statement timeout before the socket is dropped.
 const HANG_GUARD_MARGIN_S: u64 = 5;
-/// Session settings plus the ping in one simple-protocol message (EXE-2).
-/// Sent on every ping: idempotent, applied to whatever connection the pool
-/// hands out, including reconnects. The final statement's success is the
-/// availability check itself.
+/// Session settings for exporter connections (EXE-2). Each is sent as its
+/// own simple-protocol message: poolers such as `PgBouncer` reject
+/// multi-statement packets, so nothing here may be packed together. They
+/// ride every ping — idempotent, and they reattach to whatever connection
+/// the pool hands out, including reconnects.
+const SESSION_SETUP_STATEMENTS: [&str; 3] = [
+    "SET application_name = 'kronika-prometheus'",
+    "SET statement_timeout = '5s'",
+    "SET lock_timeout = '100ms'",
+];
+/// The ping: one standalone statement whose success is the availability
+/// check itself.
+const PING_SQL: &str = "select current_setting('server_version_num')::int4, pg_is_in_recovery()";
+/// Fresh recovery role for `node_status` filtering (CAT-8), one statement.
 const RECOVERY_SQL: &str = "select pg_is_in_recovery()";
-const PING_SQL: &str = "SET application_name = 'kronika-prometheus';\n\
-     SET statement_timeout = '5s';\n\
-     SET lock_timeout = '100ms';\n\
-     select current_setting('server_version_num')::int4, pg_is_in_recovery()";
 
 /// Exposition `dbname` label prefix: the DSN host, or the machine name for
 /// Unix sockets and missing hosts (EXP-3).
@@ -93,6 +99,28 @@ fn read_overlay(path: &Path) -> Result<Catalog> {
     Ok(merged)
 }
 
+/// Runs one single-statement simple-protocol message and drains it.
+async fn run_statement(
+    session: kronika_source_pg::Session<'_>,
+    sql: &str,
+) -> Result<(), MetricError> {
+    let mut stats = kronika_source_pg::query::QueryStats::default();
+    let stream = session
+        .simple_stream(sql, &mut stats)
+        .await
+        .map_err(|e| map_pg_error(&e))?;
+    let mut stream = std::pin::pin!(stream);
+    while stream
+        .try_next()
+        .await
+        .map_err(|e| map_pg_error(&e))?
+        .is_some()
+    {
+        // single statements return no rows here; nothing to collect
+    }
+    Ok(())
+}
+
 /// Ping executor on the dedicated per-database exporter connection.
 /// One dedicated exporter connection shared by the ping and SQL executors
 /// (EXE-2: one connection per database, separate from ordinary collection).
@@ -119,6 +147,9 @@ impl ExporterPing {
             }
             MetricError::transport(chain)
         })?;
+        for setup in SESSION_SETUP_STATEMENTS {
+            run_statement(session, setup).await?;
+        }
         let mut stats = kronika_source_pg::query::QueryStats::default();
         let stream = session
             .simple_stream(PING_SQL, &mut stats)
@@ -180,10 +211,10 @@ impl PingExecutor for ExporterPing {
 
 /// SQL executor on the shared exporter connection.
 ///
-/// The per-metric `statement_timeout` rides in the same simple-protocol
-/// message as the query (plain `SET`; no transaction machinery), so one round
-/// trip applies it. The hang guard closes the socket when no answer arrives
-/// within the timeout plus five seconds — never a `CancelRequest`.
+/// The per-metric `statement_timeout` is a plain `SET` in its own message
+/// before the query (no transaction machinery, one statement per packet for
+/// pooler compatibility). The hang guard closes the socket when no answer
+/// arrives within the timeout plus five seconds — never a `CancelRequest`.
 struct ExporterSql {
     pool: SharedPool,
 }
@@ -199,7 +230,6 @@ impl SqlExecutor for ExporterSql {
         statement_timeout_s: Option<u64>,
     ) -> Result<QueryResult, MetricError> {
         let timeout_s = statement_timeout_s.unwrap_or(DEFAULT_STATEMENT_TIMEOUT_S);
-        let message = format!("SET statement_timeout = '{timeout_s}s';\n{sql}");
         let mut guard = self.pool.lock().await;
         let pool = &mut *guard;
         let session = pool.session().await.map_err(|e| {
@@ -211,9 +241,11 @@ impl SqlExecutor for ExporterSql {
             }
             MetricError::transport(chain)
         })?;
+        // one statement per message: poolers reject multi-statement packets
+        run_statement(session, &format!("SET statement_timeout = '{timeout_s}s'")).await?;
         let mut stats = kronika_source_pg::query::QueryStats::default();
         let stream = session
-            .simple_stream(&message, &mut stats)
+            .simple_stream(sql, &mut stats)
             .await
             .map_err(|e| map_pg_error(&e))?;
         let mut stream = std::pin::pin!(stream);
