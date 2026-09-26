@@ -38,6 +38,7 @@ mod log_sources;
 mod logging;
 mod os_sources;
 mod pg_sources;
+mod prometheus;
 mod rotation;
 mod scheduler;
 mod segments;

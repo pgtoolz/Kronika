@@ -9,6 +9,9 @@
 /// run started. A clock step backwards leaves the metric not due.
 #[must_use]
 pub fn due(last_start_ms: i64, interval_s: u64, now_ms: i64) -> bool {
+    if last_start_ms == i64::MIN {
+        return true; // never ran
+    }
     u64::try_from(now_ms - last_start_ms).is_ok_and(|elapsed| elapsed >= interval_s * 1000)
 }
 

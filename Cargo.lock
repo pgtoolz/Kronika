@@ -1530,9 +1530,11 @@ dependencies = [
  "anyhow",
  "bsize",
  "clap",
+ "futures-util",
  "kronika-format",
  "kronika-index",
  "kronika-layout",
+ "kronika-prometheus",
  "kronika-query",
  "kronika-reader",
  "kronika-registry",
@@ -1630,6 +1632,7 @@ version = "1.2.4"
 dependencies = [
  "serde",
  "serde_yaml",
+ "tokio",
 ]
 
 [[package]]

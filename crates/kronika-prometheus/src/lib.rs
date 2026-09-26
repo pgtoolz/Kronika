@@ -14,6 +14,8 @@
 
 pub mod cache;
 pub mod catalog;
+pub mod engine;
+pub mod executor;
 pub mod expose;
 pub mod measurement;
 pub mod schedule;

@@ -32,6 +32,7 @@ impl PgCollector {
         observe: &mut (dyn FnMut(PgObservation) + Send),
     ) -> bool {
         self.last_discovery = Some(now);
+        self.discovery_generation = self.discovery_generation.wrapping_add(1);
         let Some(server) = self.server.as_mut() else {
             return false;
         };
