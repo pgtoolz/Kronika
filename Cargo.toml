@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["third_party/tokio-postgres"]
 members = [
     "crates/kronika-layout",
     "crates/kronika-format",
@@ -131,3 +132,9 @@ unseparated_literal_suffix = "warn"
 unwrap_in_result = "warn"
 unwrap_used = "warn"
 verbose_file_reads = "warn"
+
+# Vendored 0.7.18 with rust-postgres PR #1358 (SimpleColumn type OID/modifier)
+# ported: the Prometheus exporter needs exact column types from simple queries.
+# See third_party/tokio-postgres/README.md; drop both when upstream releases it.
+[patch.crates-io]
+tokio-postgres = { path = "third_party/tokio-postgres" }
