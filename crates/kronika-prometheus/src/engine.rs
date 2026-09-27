@@ -804,11 +804,11 @@ mod tests {
             columns: vec![
                 Column {
                     name: "epoch_ns".to_owned(),
-                    kind: ColumnKind::Int,
+                    kind: ColumnKind::Int8,
                 },
                 Column {
                     name: "xact_commit".to_owned(),
-                    kind: ColumnKind::Int,
+                    kind: ColumnKind::Int8,
                 },
             ],
             rows: vec![vec![
@@ -1268,11 +1268,11 @@ mod tests {
             columns: vec![
                 Column {
                     name: "epoch_ns".to_owned(),
-                    kind: ColumnKind::Int,
+                    kind: ColumnKind::Int8,
                 },
                 Column {
                     name: "xact_commit".to_owned(),
-                    kind: ColumnKind::Int,
+                    kind: ColumnKind::Int8,
                 },
             ],
             rows: vec![vec![
@@ -1341,11 +1341,11 @@ mod tests {
             columns: vec![
                 Column {
                     name: "epoch_ns".to_owned(),
-                    kind: ColumnKind::Int,
+                    kind: ColumnKind::Int8,
                 },
                 Column {
                     name: "v".to_owned(),
-                    kind: ColumnKind::Int,
+                    kind: ColumnKind::Int8,
                 },
             ],
             rows: vec![vec![
@@ -1364,11 +1364,11 @@ mod tests {
                 columns: vec![
                     Column {
                         name: "epoch_ns".to_owned(),
-                        kind: ColumnKind::Int,
+                        kind: ColumnKind::Int8,
                     },
                     Column {
                         name: "v".to_owned(),
-                        kind: ColumnKind::Int,
+                        kind: ColumnKind::Int8,
                     },
                 ],
                 rows: vec![

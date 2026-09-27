@@ -282,7 +282,7 @@ impl Catalog {
                     is_instance_level: m.is_instance_level,
                     node_status,
                     statement_timeout_seconds: m.statement_timeout_seconds,
-                    storage_name: m.storage_name,
+                    storage_name: normalize_storage_name(m.storage_name),
                 },
             );
         }
@@ -385,6 +385,12 @@ impl Catalog {
     }
 }
 
+/// Upstream `cmp.Or(storageName, metricName)` treats an empty override as
+/// the original name (`reaper.go`); normalize it once at load.
+fn normalize_storage_name(raw: Option<String>) -> Option<String> {
+    raw.filter(|name| !name.is_empty())
+}
+
 /// Classifies one SQL variant: runnable single SELECT, or an explicit skip.
 ///
 /// A single trailing `;` is stripped (upstream `archiver_pending_count`
@@ -405,15 +411,25 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
     let mut word_done = false;
     let mut statement_text = false; // any non-comment, non-string content
     let mut semicolon = false;
+    // raw previous char, for the E'' prefix and dollar-quote token rules
+    let mut prev: Option<char> = None;
     while i < chars.len() {
         let c = chars[i];
         match c {
             '\'' => {
-                // string literal: step over backslash and doubled-quote escapes
+                // string literal. E'' strings treat backslash as an escape;
+                // ordinary strings (standard_conforming_strings on) treat
+                // backslash as text and only double the quote
+                let escaped = prev.is_some_and(|p| {
+                    (p == 'e' || p == 'E')
+                        && chars
+                            .get(i.wrapping_sub(2))
+                            .is_none_or(|&g| !(g.is_ascii_alphanumeric() || g == '_' || g == '$'))
+                });
                 i += 1;
                 while i < chars.len() {
                     match chars[i] {
-                        '\\' => i += 2,
+                        '\\' if escaped => i += 2,
                         '\'' => {
                             i += 1;
                             break;
@@ -422,6 +438,7 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
                     }
                 }
                 statement_text = true;
+                prev = Some('\'');
             }
             '"' => {
                 i += 1;
@@ -430,13 +447,17 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
                 }
                 i += 1;
                 statement_text = true;
+                prev = Some('"');
             }
-            '$' if chars
-                .get(i + 1)
-                .is_some_and(|&n| n == '$' || n.is_ascii_alphanumeric() || n == '_') =>
+            '$'
+                if !prev.is_some_and(|p| p.is_ascii_alphanumeric() || p == '_' || p == '$')
+                    && chars
+                        .get(i + 1)
+                        .is_some_and(|&n| n == '$' || n.is_ascii_alphanumeric() || n == '_') =>
             {
-                // dollar-quoted tag: $tag$ body $tag$ ($$ allowed). A '$'
-                // whose tag runs to the end of input (no closing '$') is an
+                // dollar-quoted tag: $tag$ body $tag$ ($$ allowed). A quote
+                // only starts a token: `x$$` keeps the dollars inside the
+                // identifier, and a tag running to the end of input is an
                 // ordinary character, not an unterminated quote.
                 let mut j = i + 1;
                 while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
@@ -445,8 +466,10 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
                 if j < chars.len() && chars[j] == '$' {
                     let tag = &chars[i..=j];
                     i = find_tag(j + 1, tag).map_or(chars.len(), |k| k + tag.len());
+                    prev = Some('$');
                 } else {
                     i += 1;
+                    prev = Some('$');
                 }
                 statement_text = true;
             }
@@ -454,6 +477,7 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
                 while i < chars.len() && chars[i] != '\n' {
                     i += 1;
                 }
+                prev = None;
             }
             '/' if chars.get(i + 1) == Some(&'*') => {
                 i += 2;
@@ -461,16 +485,19 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
                     i += 1;
                 }
                 i = (i + 2).min(chars.len());
+                prev = None;
             }
             ';' => {
                 semicolon = true;
                 i += 1;
+                prev = None;
             }
             c if c.is_whitespace() => {
                 if !first_word.is_empty() {
                     word_done = true;
                 }
                 i += 1;
+                prev = None;
             }
             c => {
                 statement_text = true;
@@ -478,6 +505,7 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
                     first_word.push(c.to_ascii_lowercase());
                 }
                 i += 1;
+                prev = Some(c);
             }
         }
     }
@@ -675,6 +703,14 @@ mod tests {
         // panic and not an unterminated quote
         assert!(classify_sql("select 1 where a = b$c").is_ok());
         assert!(classify_sql("select $abc").is_ok());
+        // dollars inside identifiers do not open quotes: these are two
+        // statements and must be rejected
+        assert!(classify_sql("select 1 as a, 2 as x$$; select 3 as y$$").is_err());
+        assert!(classify_sql("select 1 AS x$$; select 2 AS y$$").is_err());
+        // ordinary strings treat backslash as text: the semicolon is real
+        assert!(classify_sql("select '\\'; select 2 -- '").is_err());
+        // E-strings escape the quote: the semicolon is inside the literal
+        assert!(classify_sql("select E'\\'; ok' as v").is_ok());
         assert!(classify_sql("select foo($tag$ a ; b $tag$) as v").is_ok());
     }
 

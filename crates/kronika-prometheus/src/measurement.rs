@@ -106,13 +106,25 @@ pub fn to_sample_set(
         std::collections::HashSet::new();
 
     for row in &result.rows {
+        // Upstream decodes each row into a map keyed by column name
+        // (types.go ScanRow): duplicate names keep only the LAST column,
+        // before any NULL/type filtering, for fields, tags and epoch alike.
+        let mut cells: Vec<(&Column, &Cell)> = Vec::with_capacity(result.columns.len());
+        for (index, col) in result.columns.iter().enumerate() {
+            let cell = &row[index];
+            match cells.iter().position(|(kept, _)| kept.name == col.name) {
+                Some(slot) => cells[slot] = (col, cell),
+                None => cells.push((col, cell)),
+            }
+        }
+
         // dbname first: a tag_dbname column overrides it (upstream writes
         // the map in this order), later tag columns override earlier ones.
         let mut labels: Vec<(String, String)> = vec![("dbname".to_owned(), dbname.to_owned())];
         let mut fields: Vec<(String, f64)> = Vec::new();
         let mut row_invalid = false;
 
-        for (col, cell) in result.columns.iter().zip(row) {
+        for (col, cell) in cells {
             if col.name == "epoch_ns" {
                 continue;
             }
@@ -127,21 +139,25 @@ pub fn to_sample_set(
                     row_invalid = true;
                     continue;
                 }
-                if let Some(slot) = labels.iter_mut().find(|(k, _)| k == tag) {
-                    slot.1.clone_from(text);
+                // upstream stringifies tags with %v: bools render true/false
+                let value = if col.kind == ColumnKind::Bool {
+                    match text.as_str() {
+                        "t" => "true".to_owned(),
+                        "f" => "false".to_owned(),
+                        other => other.to_owned(),
+                    }
                 } else {
-                    labels.push((tag.to_owned(), text.clone()));
+                    text.clone()
+                };
+                if let Some(slot) = labels.iter_mut().find(|(k, _)| k == tag) {
+                    slot.1 = value;
+                } else {
+                    labels.push((tag.to_owned(), value));
                 }
                 continue;
             }
             if let Some(value) = parse_value(col.kind, text) {
-                // Upstream decodes into a map, so duplicate column names
-                // keep the LAST value with no error (types.go ScanRow).
-                if let Some(slot) = fields.iter_mut().find(|(n, _)| n == &col.name) {
-                    slot.1 = value;
-                } else {
-                    fields.push((col.name.clone(), value));
-                }
+                fields.push((col.name.clone(), value));
             }
         }
         if row_invalid {
@@ -182,9 +198,14 @@ pub fn to_sample_set(
     }
 }
 
-/// `epoch_ns` cell of a row as milliseconds, when present and parseable.
+/// `epoch_ns` cell of the first row as milliseconds, when its column is
+/// `int8` and parseable. Upstream GetEpoch accepts only int64; any other
+/// type falls back to fetch time (types.go).
 fn epoch_ms(result: &QueryResult, row: &[Cell]) -> Option<i64> {
-    let idx = result.columns.iter().position(|c| c.name == "epoch_ns")?;
+    let idx = result
+        .columns
+        .iter()
+        .position(|c| c.name == "epoch_ns" && c.kind == ColumnKind::Int8)?;
     let ns = row.get(idx)?.as_deref()?.parse::<i64>().ok()?;
     Some(ns.div_euclid(1_000_000))
 }
@@ -230,9 +251,9 @@ mod tests {
 
     fn columns() -> Vec<Column> {
         vec![
-            col("epoch_ns", ColumnKind::Int),
+            col("epoch_ns", ColumnKind::Int8),
             col("tag_schema", ColumnKind::Text),
-            col("size_b", ColumnKind::Int),
+            col("size_b", ColumnKind::Int8),
             col("ratio", ColumnKind::Float),
             col("active", ColumnKind::Bool),
             col("note", ColumnKind::Text),
@@ -304,9 +325,9 @@ mod tests {
     fn counter_by_default_gauge_when_listed() {
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
-                col("x", ColumnKind::Int),
-                col("y", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
+                col("x", ColumnKind::Int8),
+                col("y", ColumnKind::Int8),
             ],
             rows: vec![row(&[Some("1700000000000000000"), Some("1"), Some("2")])],
         };
@@ -336,7 +357,7 @@ mod tests {
     fn bool_false_is_zero() {
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
                 col("active", ColumnKind::Bool),
             ],
             rows: vec![row(&[Some("1700000000000000000"), Some("f")])],
@@ -352,10 +373,10 @@ mod tests {
     fn null_and_empty_cells_drop_including_tags() {
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
                 col("tag_state", ColumnKind::Text),
-                col("v", ColumnKind::Int),
-                col("w", ColumnKind::Int),
+                col("v", ColumnKind::Int8),
+                col("w", ColumnKind::Int8),
             ],
             rows: vec![row(&[
                 Some("1700000000000000000"),
@@ -378,7 +399,7 @@ mod tests {
     #[test]
     fn missing_or_bad_epoch_falls_back_to_completion_time() {
         let no_epoch = QueryResult {
-            columns: vec![col("v", ColumnKind::Int)],
+            columns: vec![col("v", ColumnKind::Int8)],
             rows: vec![row(&[Some("1")])],
         };
         let set = to_sample_set(
@@ -392,7 +413,7 @@ mod tests {
         assert_eq!(set.timestamp_ms, 1_234_000);
 
         let null_epoch = QueryResult {
-            columns: vec![col("epoch_ns", ColumnKind::Int), col("v", ColumnKind::Int)],
+            columns: vec![col("epoch_ns", ColumnKind::Int8), col("v", ColumnKind::Int8)],
             rows: vec![row(&[None, Some("1")])],
         };
         let set = to_sample_set(
@@ -411,7 +432,7 @@ mod tests {
         // upstream GetEpoch reads strictly the first row: a NULL epoch there
         // falls back to fetch time even when a later row carries one
         let result = QueryResult {
-            columns: vec![col("epoch_ns", ColumnKind::Int), col("v", ColumnKind::Int)],
+            columns: vec![col("epoch_ns", ColumnKind::Int8), col("v", ColumnKind::Int8)],
             rows: vec![
                 row(&[None, Some("1")]),
                 row(&[Some("1800000000000000000"), Some("2")]),
@@ -429,9 +450,9 @@ mod tests {
         // upstream decodes rows into a map: the last column wins, no error
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
-                col("v", ColumnKind::Int),
-                col("v", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
             ],
             rows: vec![row(&[Some("1700000000000000000"), Some("1"), Some("2")])],
         };
@@ -445,9 +466,93 @@ mod tests {
     }
 
     #[test]
+    fn non_int8_epoch_falls_back_to_completion_time() {
+        // upstream GetEpoch honors only int64: a text or int4 epoch_ns uses
+        // the fetch time instead of parsing the column
+        for kind in [ColumnKind::Text, ColumnKind::Int4] {
+            let result = QueryResult {
+                columns: vec![
+                    col("epoch_ns", kind),
+                    col("v", ColumnKind::Int8),
+                ],
+                rows: vec![row(&[Some("1700000000000000000"), Some("1")])],
+            };
+            let set = to_sample_set(&result, "m", "m", &Gauges::Columns(vec![]), "db", 1_234_000);
+            assert_eq!(set.timestamp_ms, 1_234_000, "kind {kind:?}");
+        }
+    }
+
+    #[test]
+    fn bool_tags_render_true_false() {
+        let result = QueryResult {
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("tag_enabled", ColumnKind::Bool),
+                col("v", ColumnKind::Int8),
+            ],
+            rows: vec![row(&[Some("1700000000000000000"), Some("t"), Some("1")])],
+        };
+        let set = convert(&result, "m", &Gauges::Columns(vec![]), "db");
+        // upstream stringifies bool tags with %v: true/false, not t/f
+        assert!(
+            set.samples[0]
+                .labels
+                .iter()
+                .any(|(k, v)| k == "enabled" && v == "true"),
+            "{:?}",
+            set.samples[0].labels
+        );
+    }
+
+    #[test]
+    fn duplicate_names_resolve_last_before_null_and_type_filters() {
+        // SELECT 1::int AS v, NULL::int AS v: the NULL replaces the first
+        // value, so no v metric survives — matching upstream's map decode
+        let result = QueryResult {
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
+            ],
+            rows: vec![row(&[Some("1700000000000000000"), Some("1"), None])],
+        };
+        let set = convert(&result, "m", &Gauges::Columns(vec![]), "db");
+        assert!(set.samples.is_empty(), "last NULL wins and drops the field");
+
+        // the same for a text duplicate and for a tag duplicate
+        let result = QueryResult {
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
+                col("v", ColumnKind::Text),
+            ],
+            rows: vec![row(&[Some("1700000000000000000"), Some("1"), Some("x")])],
+        };
+        let set = convert(&result, "m", &Gauges::Columns(vec![]), "db");
+        assert!(set.samples.is_empty(), "last text wins and drops the field");
+
+        let result = QueryResult {
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("tag_s", ColumnKind::Text),
+                col("tag_s", ColumnKind::Text),
+            ],
+            rows: vec![row(&[
+                Some("1700000000000000000"),
+                Some("first"),
+                None,
+            ])],
+        };
+        let set = convert(&result, "m", &Gauges::Columns(vec![]), "db");
+        // no value columns: nothing to assert on samples, but the tag must
+        // not survive as "first"
+        assert!(set.samples.is_empty());
+    }
+
+    #[test]
     fn first_row_epoch_wins_for_all_rows() {
         let result = QueryResult {
-            columns: vec![col("epoch_ns", ColumnKind::Int), col("v", ColumnKind::Int)],
+            columns: vec![col("epoch_ns", ColumnKind::Int8), col("v", ColumnKind::Int8)],
             rows: vec![
                 row(&[Some("1700000000000000000"), Some("1")]),
                 row(&[Some("1800000000000000000"), Some("2")]),
@@ -460,7 +565,7 @@ mod tests {
     #[test]
     fn duplicate_identity_dropped_and_counted() {
         let result = QueryResult {
-            columns: vec![col("epoch_ns", ColumnKind::Int), col("v", ColumnKind::Int)],
+            columns: vec![col("epoch_ns", ColumnKind::Int8), col("v", ColumnKind::Int8)],
             rows: vec![
                 row(&[Some("1700000000000000000"), Some("1")]),
                 row(&[Some("1700000000000000000"), Some("2")]),
@@ -479,9 +584,9 @@ mod tests {
     fn distinct_labels_are_not_duplicates() {
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
                 col("tag_n", ColumnKind::Text),
-                col("v", ColumnKind::Int),
+                col("v", ColumnKind::Int8),
             ],
             rows: vec![
                 row(&[Some("1700000000000000000"), Some("a"), Some("1")]),
@@ -497,10 +602,10 @@ mod tests {
     fn tag_overrides_dbname_and_later_tags_win() {
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
                 col("tag_dbname", ColumnKind::Text),
                 col("tag_dbname", ColumnKind::Text),
-                col("v", ColumnKind::Int),
+                col("v", ColumnKind::Int8),
             ],
             rows: vec![row(&[
                 Some("1700000000000000000"),
@@ -520,8 +625,8 @@ mod tests {
     fn instance_up_family_has_no_column_suffix() {
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
-                col("is_up", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
+                col("is_up", ColumnKind::Int8),
             ],
             rows: vec![row(&[Some("1700000000000000000"), Some("1")])],
         };
@@ -548,8 +653,8 @@ mod tests {
     fn storage_name_replaces_families_and_help() {
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
-                col("calls", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
+                col("calls", ColumnKind::Int8),
             ],
             rows: vec![row(&[Some("1700000000000000000"), Some("5")])],
         };
@@ -569,9 +674,9 @@ mod tests {
     fn non_finite_exposed_and_malformed_drop() {
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
                 col("a", ColumnKind::Float),
-                col("b", ColumnKind::Int),
+                col("b", ColumnKind::Int8),
             ],
             rows: vec![row(&[Some("1700000000000000000"), Some("NaN"), Some("xx")])],
         };
@@ -584,7 +689,7 @@ mod tests {
     #[test]
     fn not_exposed_metrics_yield_nothing() {
         let result = QueryResult {
-            columns: vec![col("epoch_ns", ColumnKind::Int), col("v", ColumnKind::Int)],
+            columns: vec![col("epoch_ns", ColumnKind::Int8), col("v", ColumnKind::Int8)],
             rows: vec![row(&[Some("1700000000000000000"), Some("1")])],
         };
         for metric in NOT_EXPOSED_METRICS {
@@ -598,8 +703,8 @@ mod tests {
         // a quoted column alias with spaces cannot form a valid family
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
-                col("bad name", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
+                col("bad name", ColumnKind::Int8),
             ],
             rows: vec![row(&[Some("1700000000000000000"), Some("1")])],
         };
@@ -610,9 +715,9 @@ mod tests {
         // tag with an invalid label name drops the sample entirely
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
                 col("tag_b@d", ColumnKind::Text),
-                col("v", ColumnKind::Int),
+                col("v", ColumnKind::Int8),
             ],
             rows: vec![row(&[Some("1700000000000000000"), Some("x"), Some("1")])],
         };
@@ -637,9 +742,9 @@ mod tests {
     fn converted_output_exposes_clean_text() {
         let result = QueryResult {
             columns: vec![
-                col("epoch_ns", ColumnKind::Int),
+                col("epoch_ns", ColumnKind::Int8),
                 col("tag_path", ColumnKind::Text),
-                col("v", ColumnKind::Int),
+                col("v", ColumnKind::Int8),
             ],
             rows: vec![row(&[
                 Some("1700000000123456789"),

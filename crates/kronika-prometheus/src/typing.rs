@@ -18,8 +18,10 @@
 pub enum ColumnKind {
     /// `bool`: exposed as 0/1.
     Bool,
-    /// Integer OIDs with an upstream value path (`int4`/`int8`).
-    Int,
+    /// `int8` (`bigint`), also the only epoch_ns type upstream honors.
+    Int8,
+    /// `int4` (`integer`).
+    Int4,
     /// `float4`/`float8`.
     Float,
     /// Known textual OIDs: label-only, never a value column.
@@ -37,7 +39,8 @@ pub const fn kind_for_oid(oid: u32) -> ColumnKind {
     match oid {
         16 => ColumnKind::Bool,
         // int8 and int4 are the only integers with an upstream value path
-        20 | 23 => ColumnKind::Int,
+        20 => ColumnKind::Int8,
+        23 => ColumnKind::Int4,
         700 | 701 => ColumnKind::Float,
         // dropped by the upstream default: int2 (21), xid (28), cid (29),
         // numeric (1700), plus the textual family
@@ -65,7 +68,7 @@ pub fn parse_value(kind: ColumnKind, text: &str) -> Option<f64> {
             clippy::cast_precision_loss,
             reason = "pgwatch converts int64 to float64 on its Go side"
         )]
-        ColumnKind::Int => text.parse::<i64>().ok().map(|v| v as f64),
+        ColumnKind::Int8 | ColumnKind::Int4 => text.parse::<i64>().ok().map(|v| v as f64),
         // upstream v5.3.0 exposes non-finite floats (NaN, +Inf, -Inf) — no
         // sanitizeValue on its Prometheus path; the exposition renders them
         ColumnKind::Float => text.parse::<f64>().ok(),
@@ -82,9 +85,8 @@ mod tests {
     fn oid_classification() {
         assert_eq!(kind_for_oid(16), ColumnKind::Bool);
         // only int8/int4 have an upstream value path
-        for oid in [20, 23] {
-            assert_eq!(kind_for_oid(oid), ColumnKind::Int, "oid {oid}");
-        }
+        assert_eq!(kind_for_oid(20), ColumnKind::Int8);
+        assert_eq!(kind_for_oid(23), ColumnKind::Int4);
         for oid in [700, 701] {
             assert_eq!(kind_for_oid(oid), ColumnKind::Float, "oid {oid}");
         }
@@ -101,11 +103,11 @@ mod tests {
         assert_eq!(parse_value(ColumnKind::Bool, "t"), Some(1.0));
         assert_eq!(parse_value(ColumnKind::Bool, "f"), Some(0.0));
         assert_eq!(parse_value(ColumnKind::Bool, "x"), None);
-        assert_eq!(parse_value(ColumnKind::Int, "42"), Some(42.0));
-        assert_eq!(parse_value(ColumnKind::Int, "-7"), Some(-7.0));
-        assert_eq!(parse_value(ColumnKind::Int, "1.5"), None);
+        assert_eq!(parse_value(ColumnKind::Int8, "42"), Some(42.0));
+        assert_eq!(parse_value(ColumnKind::Int4, "-7"), Some(-7.0));
+        assert_eq!(parse_value(ColumnKind::Int4, "1.5"), None);
         assert_eq!(
-            parse_value(ColumnKind::Int, "9223372036854775807"),
+            parse_value(ColumnKind::Int8, "9223372036854775807"),
             Some(9_223_372_036_854_776_000.0)
         );
         assert_eq!(parse_value(ColumnKind::Float, "1.5"), Some(1.5));
@@ -125,7 +127,7 @@ mod tests {
             let parsed = parse_value(ColumnKind::Float, text);
             assert_eq!(parsed.map(f64::to_bits), Some(value.to_bits()), "{text}");
         }
-        assert_eq!(parse_value(ColumnKind::Int, "NaN"), None);
+        assert_eq!(parse_value(ColumnKind::Int4, "NaN"), None);
     }
 
     #[test]
