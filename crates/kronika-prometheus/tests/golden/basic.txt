@@ -168,8 +168,8 @@ pgwatch_wal_xlog_location_b{dbname="<host>_seconddb",sys_id="<sysid>"} <value> <
 kronika_build_info{commit="unknown",version="1.2.4"} 1
 # HELP kronika_start_time_seconds Collector start time in seconds.
 # TYPE kronika_start_time_seconds gauge
-kronika_start_time_seconds  <value>
-# HELP kronika_pg_connected Last exporter ping outcome per database.
+kronika_start_time_seconds <value>
+# HELP kronika_pg_connected Last exporter connection verdict per database.
 # TYPE kronika_pg_connected gauge
 kronika_pg_connected{database="<host>_appdb"} 1
 kronika_pg_connected{database="<host>_postgres"} 1
@@ -183,3 +183,23 @@ pgwatch_exporter_last_scrape_errors <n>
 # HELP pgwatch_exporter_total_scrape_failures Number of errors while executing metric queries.
 # TYPE pgwatch_exporter_total_scrape_failures counter
 pgwatch_exporter_total_scrape_failures 0
+# HELP kronika_prometheus_fetch_errors_total Metric fetch errors per database and metric.
+# TYPE kronika_prometheus_fetch_errors_total counter
+# HELP kronika_prometheus_last_fetch_timestamp_seconds Last metric fetch completion time per database and metric.
+# TYPE kronika_prometheus_last_fetch_timestamp_seconds gauge
+kronika_prometheus_last_fetch_timestamp_seconds{database="<host>_appdb",metric="db_size"} <value>
+kronika_prometheus_last_fetch_timestamp_seconds{database="<host>_appdb",metric="db_stats"} <value>
+kronika_prometheus_last_fetch_timestamp_seconds{database="<host>_appdb",metric="wal"} <value>
+kronika_prometheus_last_fetch_timestamp_seconds{database="<host>_postgres",metric="db_size"} <value>
+kronika_prometheus_last_fetch_timestamp_seconds{database="<host>_postgres",metric="db_stats"} <value>
+kronika_prometheus_last_fetch_timestamp_seconds{database="<host>_seconddb",metric="db_size"} <value>
+kronika_prometheus_last_fetch_timestamp_seconds{database="<host>_seconddb",metric="db_stats"} <value>
+# HELP kronika_prometheus_fetch_duration_seconds Last metric fetch duration per database and metric.
+# TYPE kronika_prometheus_fetch_duration_seconds gauge
+kronika_prometheus_fetch_duration_seconds{database="<host>_appdb",metric="db_size"} <value>
+kronika_prometheus_fetch_duration_seconds{database="<host>_appdb",metric="db_stats"} <value>
+kronika_prometheus_fetch_duration_seconds{database="<host>_appdb",metric="wal"} <value>
+kronika_prometheus_fetch_duration_seconds{database="<host>_postgres",metric="db_size"} <value>
+kronika_prometheus_fetch_duration_seconds{database="<host>_postgres",metric="db_stats"} <value>
+kronika_prometheus_fetch_duration_seconds{database="<host>_seconddb",metric="db_size"} <value>
+kronika_prometheus_fetch_duration_seconds{database="<host>_seconddb",metric="db_stats"} <value>
