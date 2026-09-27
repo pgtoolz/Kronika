@@ -35,6 +35,8 @@ COPY crates/kronika-report/Cargo.toml crates/kronika-report/
 COPY crates/kronika-report-wasm/Cargo.toml crates/kronika-report-wasm/
 COPY crates/kronika-slice/Cargo.toml crates/kronika-slice/
 COPY crates/kronika-bdd/Cargo.toml crates/kronika-bdd/
+COPY crates/kronika-prometheus/Cargo.toml crates/kronika-prometheus/
+COPY third_party/tokio-postgres/Cargo.toml third_party/tokio-postgres/
 COPY bins/kronika-collector/Cargo.toml bins/kronika-collector/
 COPY bins/kronika-dump/Cargo.toml bins/kronika-dump/
 COPY bins/kronika-demo/Cargo.toml bins/kronika-demo/
@@ -49,8 +51,9 @@ RUN set -eu; \
         grep -q 'proc-macro = true' "$crate/Cargo.toml" \
             || echo 'fn main() {}' > "$crate/src/main.rs"; \
     done; \
+    : > third_party/tokio-postgres/src/lib.rs; \
     cargo build --workspace --locked --release; \
-    rm -rf crates/*/src bins/*/src; \
+    rm -rf crates/*/src bins/*/src third_party/tokio-postgres/src; \
     find target -name 'kronika*' -o -name 'libkronika*' | xargs -r rm -rf
 
 FROM deps AS bdd

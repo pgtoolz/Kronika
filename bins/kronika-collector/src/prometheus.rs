@@ -99,6 +99,18 @@ fn read_overlay(path: &Path) -> Result<Catalog> {
     Ok(merged)
 }
 
+/// Formats a connect failure with its full cause chain as one message.
+fn connect_error<E: std::fmt::Display + std::error::Error>(error: E) -> MetricError {
+    use std::fmt::Write as _;
+    let mut chain = format!("connect: {error}");
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let _ = write!(chain, "; caused by: {cause}");
+        source = cause.source();
+    }
+    MetricError::transport(chain)
+}
+
 /// Runs one single-statement simple-protocol message and drains it.
 async fn run_statement(
     session: kronika_source_pg::Session<'_>,
@@ -138,15 +150,7 @@ impl ExporterPing {
     async fn ping_inner(&self) -> Result<PingInfo, MetricError> {
         let mut guard = self.pool.lock().await;
         let pool = &mut *guard;
-        let session = pool.session().await.map_err(|e| {
-            let mut chain = format!("connect: {e}");
-            let mut source = std::error::Error::source(&e);
-            while let Some(s) = source {
-                chain.push_str(&format!("; caused by: {s}"));
-                source = s.source();
-            }
-            MetricError::transport(chain)
-        })?;
+        let session = pool.session().await.map_err(|e| connect_error(&e))?;
         let parse = async {
             for setup in SESSION_SETUP_STATEMENTS {
                 run_statement(session, setup).await?;
@@ -168,8 +172,8 @@ impl ExporterPing {
             let version = version.ok_or_else(|| MetricError::transport("ping returned no rows"))?;
             let in_recovery = in_recovery.unwrap_or_else(|| "f".to_owned());
             // server_version_num is e.g. 160015; the catalog keys on the major
-            let version_num: u32 = version.parse().map_err(|_| {
-                MetricError::transport(format!("bad server_version_num {version:?}"))
+            let version_num: u32 = version.parse().map_err(|error| {
+                MetricError::transport(format!("bad server_version_num {version:?}: {error}"))
             })?;
             Ok(PingInfo {
                 server_major_version: version_num / 10_000,
@@ -275,15 +279,7 @@ impl SqlExecutor for ExporterSql {
         let timeout_s = statement_timeout_s.unwrap_or(DEFAULT_STATEMENT_TIMEOUT_S);
         let mut guard = self.pool.lock().await;
         let pool = &mut *guard;
-        let session = pool.session().await.map_err(|e| {
-            let mut chain = format!("connect: {e}");
-            let mut source = std::error::Error::source(&e);
-            while let Some(s) = source {
-                chain.push_str(&format!("; caused by: {s}"));
-                source = s.source();
-            }
-            MetricError::transport(chain)
-        })?;
+        let session = pool.session().await.map_err(|e| connect_error(&e))?;
         // one statement per message: poolers reject multi-statement packets
         run_statement(session, &format!("SET statement_timeout = '{timeout_s}s'")).await?;
         let mut stats = kronika_source_pg::query::QueryStats::default();
