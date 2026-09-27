@@ -114,6 +114,16 @@ impl PgCollector {
         self.discovery_generation
     }
 
+    /// Whether the last discovery is still authoritative: the primary
+    /// connection is open, so an empty database list means the server
+    /// really serves none of the configured databases. While the primary
+    /// is down the list was cleared by the reconnect path, and callers
+    /// reporting availability should hold the last known list instead.
+    #[must_use]
+    pub fn discovery_intact(&self) -> bool {
+        self.server.as_ref().and_then(Pool::generation).is_some()
+    }
+
     /// Read due sections and synchronously admit each bounded batch before the
     /// query stream fetches another row.
     ///
