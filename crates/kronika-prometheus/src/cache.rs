@@ -6,7 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::measurement::{INSTANCE_UP_METRIC, SampleSet};
+use crate::executor::INSTANCE_UP_METRIC;
+use crate::measurement::SampleSet;
 use crate::schedule::stale_threshold_ms;
 
 /// Default `instance_up` interval when the preset omits it; the row is
@@ -19,7 +20,6 @@ pub const INSTANCE_UP_INTERVAL_S: u64 = 60;
 /// scheduling and the staleness threshold.
 #[derive(Debug, Default, PartialEq)]
 pub struct DbCache {
-    dbname: String,
     instance_up: Option<Entry>,
     metrics: BTreeMap<String, Entry>,
 }
@@ -43,23 +43,8 @@ pub struct SnapshotRow {
 }
 
 impl DbCache {
-    /// Cache for the database exposed as `dbname`.
-    pub fn new(dbname: impl Into<String>) -> Self {
-        Self {
-            dbname: dbname.into(),
-            instance_up: None,
-            metrics: BTreeMap::new(),
-        }
-    }
-
-    /// The database name.
-    #[must_use]
-    pub fn dbname(&self) -> &str {
-        &self.dbname
-    }
-
-    /// Replaces the `instance_up` state (engine ping result). `interval_s` is
-    /// the preset interval or the default.
+    /// Replaces the `instance_up` state (derived connection verdict).
+    /// `interval_s` is the preset interval or the default.
     pub fn store_instance_up(&mut self, set: SampleSet, interval_s: u64) {
         self.instance_up = Some(Entry { interval_s, set });
     }
@@ -69,18 +54,11 @@ impl DbCache {
         self.metrics.insert(metric.to_owned(), entry);
     }
 
-    /// Drops a metric's cache (metric disabled for this database).
-    pub fn remove(&mut self, metric: &str) {
-        if metric == INSTANCE_UP_METRIC {
-            self.instance_up = None;
-        } else {
-            self.metrics.remove(metric);
-        }
-    }
-
     /// Non-stale entries for exposition: `instance_up` first, then metrics in
-    /// name order. `now_ms` is the scrape time; a future timestamp is stale
-    /// (clock stepped back) rather than exposed forever.
+    /// name order. `now_ms` is the render time, captured after the SQL of
+    /// its pass. A timestamp later than that (an epoch slightly ahead of
+    /// the pass start) stays fresh: it is a real execution timestamp, not a
+    /// clock step, and dropping it would hide a just-fetched metric.
     #[must_use]
     pub fn snapshot(&self, now_ms: i64) -> Vec<SnapshotRow> {
         let fresh =
@@ -107,8 +85,8 @@ impl DbCache {
 }
 
 fn stale(now_ms: i64, fetched_ms: i64, threshold_ms: u64) -> bool {
-    // a future fetch time means the clock stepped back: treat as stale
-    u64::try_from(now_ms - fetched_ms).map_or(true, |age| age > threshold_ms)
+    // a fetch at or after the render time is fresh (real execution stamp)
+    u64::try_from(now_ms.saturating_sub(fetched_ms)).is_ok_and(|age| age > threshold_ms)
 }
 
 #[cfg(test)]
@@ -132,7 +110,7 @@ mod tests {
 
     #[test]
     fn instance_up_is_always_first_and_fresh_by_ping() {
-        let mut cache = DbCache::new("db");
+        let mut cache = DbCache::default();
         cache.store_instance_up(
             instance_up_sample_set("db", true, 1_000),
             INSTANCE_UP_INTERVAL_S,
@@ -150,7 +128,7 @@ mod tests {
 
     #[test]
     fn slow_metrics_survive_past_ten_minutes() {
-        let mut cache = DbCache::new("db");
+        let mut cache = DbCache::default();
         // db_size at 300s: threshold stays max(10min, 600s) = 10min
         cache.store("db_size", entry(300, 0));
         assert_eq!(cache.snapshot(TEN_MINUTES).len(), 1);
@@ -164,33 +142,30 @@ mod tests {
     }
 
     #[test]
-    fn future_timestamp_is_stale() {
-        let mut cache = DbCache::new("db");
+    fn future_timestamp_stays_fresh() {
+        // an epoch later than the render time is a real execution stamp,
+        // not a clock step: a just-fetched metric must not disappear
+        let mut cache = DbCache::default();
         cache.store("m", entry(60, 5_000));
-        assert!(cache.snapshot(1_000).is_empty());
+        assert_eq!(cache.snapshot(1_000).len(), 1);
+        assert!(cache.snapshot(5_000 + 10 * 60_000 + 1).is_empty());
     }
 
     #[test]
-    fn store_replaces_wholly_and_remove_works() {
-        let mut cache = DbCache::new("db");
+    fn store_replaces_wholly() {
+        let mut cache = DbCache::default();
         cache.store("a", entry(60, 10));
         cache.store("a", entry(60, 20));
         cache.store("b", entry(60, 10));
-        assert_eq!(cache.snapshot(30).len(), 2);
-        cache.remove("a");
         let rows = cache.snapshot(30);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].metric, "b");
-        cache.remove("instance_up"); // not stored: no-op
-        assert_eq!(cache.snapshot(30).len(), 1);
-        cache.store_instance_up(instance_up_sample_set("db", false, 30), 60);
-        cache.remove("instance_up");
-        assert_eq!(cache.snapshot(30).len(), 1);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].metric, "a");
+        assert_eq!(rows[0].entry.set.timestamp_ms, 20);
     }
 
     #[test]
     fn snapshot_orders_instance_up_then_names() {
-        let mut cache = DbCache::new("db");
+        let mut cache = DbCache::default();
         cache.store_instance_up(instance_up_sample_set("db", true, 0), 60);
         for m in ["wal", "db_size", "db_stats"] {
             cache.store(m, entry(60, 0));

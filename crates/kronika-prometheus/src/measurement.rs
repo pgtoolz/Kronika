@@ -15,6 +15,7 @@
 //!   counted as an error.
 
 use crate::catalog::{Gauges, NOT_EXPOSED_METRICS};
+use crate::executor::INSTANCE_UP_METRIC;
 
 use crate::expose::Sample;
 use crate::typing::{Cell, ColumnKind, parse_value};
@@ -47,9 +48,6 @@ pub struct SampleSet {
     /// Rows dropped for duplicate identity or invalid names.
     pub errors: usize,
 }
-
-/// Special metric name whose value column is exposed without a suffix.
-pub const INSTANCE_UP_METRIC: &str = "instance_up";
 
 /// Builds the `pgwatch_instance_up` sample for a connection check.
 ///

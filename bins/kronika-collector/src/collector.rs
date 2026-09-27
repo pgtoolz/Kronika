@@ -200,9 +200,8 @@ pub(crate) async fn run() -> Result<()> {
                 let generation = pg.discovery_generation();
                 let refreshed = last_discovery_generation.is_some_and(|last| last != generation);
                 last_discovery_generation = Some(generation);
-                exporter
-                    .run_pass(&pg.discovered_database_names(), refreshed)
-                    .await;
+                // hands the pass to the exporter task; never awaits SQL
+                exporter.run_pass(&pg.discovered_database_names(), refreshed);
             }
             let opening_settings = pg.last_settings();
             let collection_due = if pg_outcome.opening_os_collected && !writer.segment.is_empty() {

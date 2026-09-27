@@ -1,47 +1,36 @@
 //! Prometheus `/metrics` endpoint: catalog startup, executors, HTTP, passes.
 
-use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures_util::TryStreamExt as _;
 use kronika_prometheus::catalog::Catalog;
 use kronika_prometheus::engine::{Exporter, PresetMetric};
-use kronika_prometheus::executor::{
-    ExecutorFactory, MetricError, PingExecutor, PingInfo, SqlExecutor,
-};
+use kronika_prometheus::executor::{ExecutorFactory, MetricError, ServerFacts, SqlExecutor};
 use kronika_prometheus::measurement::{Column, QueryResult};
 use kronika_prometheus::typing::{Cell, kind_for_oid};
 use kronika_source_pg::{Pool, Transport};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
 use crate::clock::unix_now_us;
 use crate::config::Config;
 use crate::logging::{LogLevel, field, log_event};
 
-/// Fallback `statement_timeout` seconds (EXE-2 session default).
+/// Fallback client deadline seconds when a metric sets no override.
 const DEFAULT_STATEMENT_TIMEOUT_S: u64 = 5;
 /// Extra seconds beyond the statement timeout before the socket is dropped.
 const HANG_GUARD_MARGIN_S: u64 = 5;
-/// Session settings for exporter connections (EXE-2). Each is sent as its
-/// own simple-protocol message: poolers such as `PgBouncer` reject
-/// multi-statement packets, so nothing here may be packed together. They
-/// ride every ping — idempotent, and they reattach to whatever connection
-/// the pool hands out, including reconnects.
-const SESSION_SETUP_STATEMENTS: [&str; 3] = [
-    "SET application_name = 'kronika-prometheus'",
-    "SET statement_timeout = '5s'",
-    "SET lock_timeout = '100ms'",
-];
-/// The ping: one standalone statement whose success is the availability
-/// check itself.
-const PING_SQL: &str = "select current_setting('server_version_num')::int4, pg_is_in_recovery()";
-/// Fresh recovery role for `node_status` filtering (CAT-8), one statement.
-const RECOVERY_SQL: &str = "select pg_is_in_recovery()";
+/// The setup probe: one standalone statement run once per connection.
+const SETUP_PROBE_SQL: &str =
+    "select current_setting('server_version_num')::int4, pg_is_in_recovery()";
+/// Startup `application_name` for exporter connections.
+const EXPORTER_APPLICATION_NAME: &str = "kronika-prometheus";
 
 /// Exposition `dbname` label prefix: the DSN host, or the machine name for
 /// Unix sockets and missing hosts (EXP-3).
@@ -55,17 +44,13 @@ fn dbname_prefix(dsn: &str) -> String {
     }
 }
 
-/// Loads the embedded catalog with overlays and resolves the preset.
+/// Loads the embedded catalog with overlays.
 pub(crate) fn load_catalog(config: &Config) -> Result<Catalog> {
     let mut catalog = Catalog::embedded().map_err(|e| anyhow::anyhow!("{e}"))?;
     for path in &config.prometheus_metrics {
         let overlay = read_overlay(path)?;
         catalog.overlay(overlay);
     }
-    // Resolving validates preset and metric names up front (CFG-2).
-    catalog
-        .resolve_preset(&config.prometheus_preset)
-        .map_err(|e| anyhow::anyhow!("--prometheus-preset: {e}"))?;
     Ok(catalog)
 }
 
@@ -111,53 +96,41 @@ fn connect_error<E: std::fmt::Display + std::error::Error>(error: E) -> MetricEr
     MetricError::transport(chain)
 }
 
-/// Runs one single-statement simple-protocol message and drains it.
-async fn run_statement(
-    session: kronika_source_pg::Session<'_>,
-    sql: &str,
-) -> Result<(), MetricError> {
-    let mut stats = kronika_source_pg::query::QueryStats::default();
-    let stream = session
-        .simple_stream(sql, &mut stats)
-        .await
-        .map_err(|e| map_pg_error(&e))?;
-    let mut stream = std::pin::pin!(stream);
-    while stream
-        .try_next()
-        .await
-        .map_err(|e| map_pg_error(&e))?
-        .is_some()
-    {
-        // single statements return no rows here; nothing to collect
+/// Maps a session-level error; the pool reopens dead connections itself, so
+/// only the deadline expiry and closed transports mark the connection lost.
+fn map_pg_error(error: &tokio_postgres::Error) -> MetricError {
+    MetricError {
+        sqlstate: error.code().map(|state| state.code().to_owned()),
+        connection_lost: false,
+        message: error.to_string(),
     }
-    Ok(())
 }
 
-/// Ping executor on the dedicated per-database exporter connection.
-/// One dedicated exporter connection shared by the ping and SQL executors
-/// (EXE-2: one connection per database, separate from ordinary collection).
-type SharedPool = Arc<Mutex<Pool>>;
-
-struct ExporterPing {
-    pool: SharedPool,
+/// The SQL executor: one per database, owning its dedicated connection.
+///
+/// Session configuration (`application_name`, `statement_timeout`,
+/// `lock_timeout`) rides the startup packet, so the connection sends nothing
+/// before its first real statement. Each exchange — the setup probe or one
+/// metric SELECT — runs under a single client deadline; expiry closes the
+/// socket through the held pool guard. No `CancelRequest` is ever sent.
+struct ExporterSql {
+    pool: Pool,
+    facts: Option<ServerFacts>,
 }
 
-impl ExporterPing {
-    #[allow(
-        clippy::significant_drop_tightening,
-        reason = "the guard must outlive the Session, which borrows the pool's client"
-    )]
-    async fn ping_inner(&self) -> Result<PingInfo, MetricError> {
-        let mut guard = self.pool.lock().await;
-        let pool = &mut *guard;
-        let session = pool.session().await.map_err(|e| connect_error(&e))?;
-        let parse = async {
-            for setup in SESSION_SETUP_STATEMENTS {
-                run_statement(session, setup).await?;
-            }
+impl ExporterSql {
+    const PROBE_DEADLINE: Duration =
+        Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_S + HANG_GUARD_MARGIN_S);
+}
+
+impl SqlExecutor for ExporterSql {
+    async fn server_facts(&mut self) -> Result<ServerFacts, MetricError> {
+        // one deadline covers connect, the statement and the drain
+        let probe = async {
+            let session = self.pool.session().await.map_err(connect_error)?;
             let mut stats = kronika_source_pg::query::QueryStats::default();
             let stream = session
-                .simple_stream(PING_SQL, &mut stats)
+                .simple_stream(SETUP_PROBE_SQL, &mut stats)
                 .await
                 .map_err(|e| map_pg_error(&e))?;
             let mut stream = std::pin::pin!(stream);
@@ -169,132 +142,52 @@ impl ExporterPing {
                     in_recovery = row.get(1).map(str::to_owned);
                 }
             }
-            let version = version.ok_or_else(|| MetricError::transport("ping returned no rows"))?;
+            let version =
+                version.ok_or_else(|| MetricError::transport("probe returned no rows"))?;
             let in_recovery = in_recovery.unwrap_or_else(|| "f".to_owned());
             // server_version_num is e.g. 160015; the catalog keys on the major
             let version_num: u32 = version.parse().map_err(|error| {
                 MetricError::transport(format!("bad server_version_num {version:?}: {error}"))
             })?;
-            Ok(PingInfo {
+            Ok(ServerFacts {
                 server_major_version: version_num / 10_000,
                 in_recovery: in_recovery == "t",
             })
         };
-        // A2: a hung transport must not stall the pass (and with it every
-        // scrape). The ALREADY-HELD pool closes the socket on overrun —
-        // never a second lock, the guard is still held here.
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_S + HANG_GUARD_MARGIN_S),
-            parse,
-        )
-        .await
-        {
-            Ok(result) => result,
+        match tokio::time::timeout(Self::PROBE_DEADLINE, probe).await {
+            Ok(result) => result.inspect(|facts| self.facts = Some(*facts)),
             Err(_elapsed) => {
-                pool.close();
+                // the cancelled future dropped the session; close the socket
+                // through the pool this executor owns
+                self.pool.close();
                 Err(MetricError::transport(
-                    "ping did not answer within statement_timeout + 5s; connection dropped",
+                    "setup probe did not answer within the deadline; connection dropped",
                 ))
             }
         }
     }
-    #[allow(
-        clippy::significant_drop_tightening,
-        reason = "the guard must outlive the Session, which borrows the pool's client"
-    )]
-    async fn recovery_inner(&self) -> Result<bool, MetricError> {
-        let mut guard = self.pool.lock().await;
-        let pool = &mut *guard;
-        let session = pool
-            .session()
-            .await
-            .map_err(|e| MetricError::transport(format!("connect: {e}")))?;
-        let read = async {
-            let mut stats = kronika_source_pg::query::QueryStats::default();
-            let stream = session
-                .simple_stream(RECOVERY_SQL, &mut stats)
-                .await
-                .map_err(|e| map_pg_error(&e))?;
-            let mut stream = std::pin::pin!(stream);
-            let mut role = None;
-            while let Some(message) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
-                if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
-                    role = row.get(0).map(str::to_owned);
-                }
-            }
-            Ok(role.is_some_and(|r| r == "t"))
-        };
-        // A2: same hang guard as the ping; the held pool closes on overrun
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_S + HANG_GUARD_MARGIN_S),
-            read,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_elapsed) => {
-                pool.close();
-                Err(MetricError::transport(
-                    "recovery role read did not answer within statement_timeout + 5s; connection dropped",
-                ))
-            }
-        }
-    }
-}
 
-impl PingExecutor for ExporterPing {
-    async fn ping(&mut self) -> Result<PingInfo, MetricError> {
-        self.ping_inner().await
-    }
-
-    #[allow(
-        clippy::significant_drop_tightening,
-        reason = "the guard must outlive the Session, which borrows the pool's client"
-    )]
-    async fn recovery_role(&mut self) -> Result<bool, MetricError> {
-        self.recovery_inner().await
-    }
-}
-
-/// SQL executor on the shared exporter connection.
-///
-/// The per-metric `statement_timeout` is a plain `SET` in its own message
-/// before the query (no transaction machinery, one statement per packet for
-/// pooler compatibility). The hang guard closes the socket when no answer
-/// arrives within the timeout plus five seconds — never a `CancelRequest`.
-struct ExporterSql {
-    pool: SharedPool,
-}
-
-impl SqlExecutor for ExporterSql {
-    #[allow(
-        clippy::significant_drop_tightening,
-        reason = "the guard must outlive the Session, which borrows the pool's client"
-    )]
     async fn execute(
         &mut self,
         sql: &str,
         statement_timeout_s: Option<u64>,
     ) -> Result<QueryResult, MetricError> {
         let timeout_s = statement_timeout_s.unwrap_or(DEFAULT_STATEMENT_TIMEOUT_S);
-        let mut guard = self.pool.lock().await;
-        let pool = &mut *guard;
-        let session = pool.session().await.map_err(|e| connect_error(&e))?;
-        // one statement per message: poolers reject multi-statement packets
-        run_statement(session, &format!("SET statement_timeout = '{timeout_s}s'")).await?;
-        let mut stats = kronika_source_pg::query::QueryStats::default();
-        let stream = session
-            .simple_stream(sql, &mut stats)
-            .await
-            .map_err(|e| map_pg_error(&e))?;
-        let mut stream = std::pin::pin!(stream);
-        let deadline = std::time::Duration::from_secs(timeout_s + HANG_GUARD_MARGIN_S);
+        // one deadline covers connect, the statement and the drain
         let collect = async {
+            let session = self.pool.session().await.map_err(connect_error)?;
+            let mut stats = kronika_source_pg::query::QueryStats::default();
+            let stream = session
+                .simple_stream(sql, &mut stats)
+                .await
+                .map_err(|e| map_pg_error(&e))?;
+            let mut stream = std::pin::pin!(stream);
             let mut columns: Option<Vec<Column>> = None;
             let mut rows: Vec<Vec<Cell>> = Vec::new();
             while let Some(message) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
                 if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
-                    let columns = columns.get_or_insert_with(|| {
+                    let width = row.len();
+                    let expected = columns.get_or_insert_with(|| {
                         row.columns()
                             .iter()
                             .map(|c| Column {
@@ -303,29 +196,33 @@ impl SqlExecutor for ExporterSql {
                             })
                             .collect()
                     });
-                    let cells = (0..columns.len())
-                        .map(|i| row.get(i).map(str::to_owned))
-                        .collect();
-                    rows.push(cells);
+                    // a shape change inside one result set is a contract
+                    // violation, not a panic: report it as an error
+                    if width != expected.len() {
+                        return Err(MetricError::transport(format!(
+                            "unexpected row width {width} for {} columns",
+                            expected.len()
+                        )));
+                    }
+                    rows.push((0..width).map(|i| row.get(i).map(str::to_owned)).collect());
                 }
             }
-            Ok::<QueryResult, MetricError>(QueryResult {
+            Ok(QueryResult {
                 columns: columns.unwrap_or_default(),
                 rows,
             })
         };
-        match tokio::time::timeout(deadline, collect).await {
+        match tokio::time::timeout(
+            Duration::from_secs(timeout_s + HANG_GUARD_MARGIN_S),
+            collect,
+        )
+        .await
+        {
             Ok(result) => result,
-            // No answer within the guard: drop the socket. The server-side
-            // statement_timeout usually ends the query first; this catches a
-            // hung transport. Reconnect happens on the next pass.
             Err(_elapsed) => {
-                // the collect future (and its stream) is dropped by the
-                // the collect future (and its stream) is dropped by the
-                // timeout; the already-held pool closes the socket. Never
-                // re-lock: the guard is still held here and tokio mutexes
-                // do not recurse, so a second lock would deadlock.
-                pool.close();
+                // the cancelled future dropped the session; close the socket
+                // through the pool this executor owns
+                self.pool.close();
                 Err(MetricError::transport(
                     "metric query did not answer within statement_timeout + 5s; connection dropped",
                 ))
@@ -334,21 +231,9 @@ impl SqlExecutor for ExporterSql {
     }
 }
 
-/// Maps a session-level error; the pool reopens dead connections itself, so
-/// only connect failures mark the connection lost for the engine.
-fn map_pg_error(error: &tokio_postgres::Error) -> MetricError {
-    MetricError {
-        sqlstate: error.code().map(|state| state.code().to_owned()),
-        connection_lost: false,
-        message: error.to_string(),
-    }
-}
-
 /// Opens per-database exporter connections from the collector DSN.
 struct CollectorFactory {
     primary: Pool,
-    /// One shared pool (one connection) per database, keyed by label.
-    per_db: BTreeMap<String, SharedPool>,
     /// `dbname` label prefix; labels are `<prefix>_<database>` (EXP-3).
     dbname_prefix: String,
 }
@@ -357,58 +242,53 @@ impl CollectorFactory {
     /// The engine keys databases by exposition label; connections need the
     /// real database name. The prefix includes its trailing underscore, so
     /// stripping it once recovers the name.
-    fn database_of<'a>(&'a self, label: &'a str) -> &'a str {
-        label.strip_prefix(&self.dbname_prefix).unwrap_or(label)
-    }
-}
-
-impl CollectorFactory {
-    fn shared_pool(&mut self, label: &str) -> SharedPool {
-        let database = self.database_of(label).to_owned();
-        Arc::clone(
-            self.per_db
-                .entry(label.to_owned())
-                .or_insert_with(|| Arc::new(Mutex::new(self.primary.on_database(&database)))),
-        )
+    fn database_of<'a>(&self, label: &'a str) -> Option<&'a str> {
+        label.strip_prefix(&self.dbname_prefix)
     }
 }
 
 impl ExecutorFactory for CollectorFactory {
-    type Ping = ExporterPing;
     type Sql = ExporterSql;
 
-    async fn open_ping(&mut self, dbname: &str) -> Option<ExporterPing> {
-        Some(ExporterPing {
-            pool: self.shared_pool(dbname),
-        })
-    }
-
     async fn open_sql(&mut self, dbname: &str) -> Option<ExporterSql> {
+        let database = self.database_of(dbname)?;
         Some(ExporterSql {
-            pool: self.shared_pool(dbname),
+            pool: self.primary.on_database(database),
+            facts: None,
         })
     }
 }
 
-/// The exporter plus its shared scrape snapshot.
+/// Message the collector tick sends to the exporter task.
+struct PassMessage {
+    databases: Vec<String>,
+    discovery_refreshed: bool,
+    now_ms: i64,
+}
+
+/// The exporter endpoint: listener, pass channel, published snapshot.
 pub(crate) struct PrometheusExporter {
-    engine: Arc<Mutex<Exporter<CollectorFactory>>>,
+    snapshot: Arc<std::sync::Mutex<String>>,
+    scrapes: Arc<AtomicU64>,
+    passes: mpsc::UnboundedSender<PassMessage>,
     listener: TcpListener,
-    /// `dbname` label prefix for discovered databases (EXP-3).
-    dbname_prefix: String,
 }
 
 pub(crate) const fn enabled(config: &Config) -> bool {
     config.prometheus_listen.is_some()
 }
 
-/// Starts the exporter: catalog, listener task, and the shared engine.
+/// Starts the exporter: catalog, engine task, listener.
+///
+/// The engine lives in its own task. The collector tick sends discovery
+/// results over an unbounded channel and never awaits exporter SQL; the
+/// HTTP side serves the snapshot published at the end of each pass.
 pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
     let catalog = load_catalog(config)?;
     let resolved = catalog
         .resolve_preset(&config.prometheus_preset)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let preset = resolved
+        .map_err(|e| anyhow::anyhow!("--prometheus-preset: {e}"))?;
+    let preset: Vec<PresetMetric> = resolved
         .into_iter()
         .map(|(name, def, interval_s)| PresetMetric {
             name,
@@ -421,30 +301,36 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
         .pg_dsn
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("--prometheus-listen requires --pg-dsn"))?;
-    let primary = Pool::with_transport(dsn, transport)
-        .map_err(|_e| anyhow::anyhow!("KRONIKA_PG_DSN is not a valid connection string"))?;
-    let addr: SocketAddr = config
-        .prometheus_listen
-        .expect("checked by config validation");
-    let listener = TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("bind the Prometheus endpoint {addr}"))?;
-    log_event(
-        LogLevel::Info,
-        "prometheus_listening",
-        &[field("address", addr.to_string())],
-    );
+    // The startup packet carries the largest timeout in the preset so the
+    // server never kills a long metric early; tighter per-metric bounds are
+    // the client deadlines of each exchange.
+    let startup_timeout = preset
+        .iter()
+        .map(|m| {
+            m.def
+                .statement_timeout_seconds
+                .unwrap_or(DEFAULT_STATEMENT_TIMEOUT_S)
+        })
+        .max()
+        .unwrap_or(DEFAULT_STATEMENT_TIMEOUT_S);
+    let primary = Pool::with_startup(
+        dsn,
+        transport,
+        EXPORTER_APPLICATION_NAME,
+        &format!("-c statement_timeout={startup_timeout}s -c lock_timeout=100ms"),
+    )
+    .map_err(|_e| anyhow::anyhow!("KRONIKA_PG_DSN is not a valid connection string"))?;
     let prefix = dbname_prefix(dsn);
     let mut engine = Exporter::new(
         CollectorFactory {
             primary,
-            per_db: BTreeMap::new(),
             dbname_prefix: format!("{prefix}_"),
         },
         preset,
         env!("CARGO_PKG_VERSION"),
         "unknown",
         unix_now_us().unwrap_or_default() / 1000,
+        Arc::new(AtomicU64::new(0)),
     );
     // EXE-9: one line per error state change, never per tick.
     engine.on_error(|database, metric, error| {
@@ -458,30 +344,60 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
             ],
         );
     });
+    let scrapes = engine.scrape_counter();
+    let snapshot = Arc::new(std::sync::Mutex::new(String::new()));
+    let published = Arc::clone(&snapshot);
+    let (passes, mut inbox) = mpsc::unbounded_channel::<PassMessage>();
+    tokio::spawn(async move {
+        while let Some(message) = inbox.recv().await {
+            engine
+                .run_pass(
+                    &message.databases,
+                    message.discovery_refreshed,
+                    message.now_ms,
+                )
+                .await;
+            let mut published = published.lock().expect("snapshot lock");
+            published.clear();
+            published.push_str(engine.snapshot());
+            drop(published);
+        }
+    });
+    let addr: SocketAddr = config
+        .prometheus_listen
+        .expect("checked by config validation");
+    let listener = TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("bind the Prometheus endpoint {addr}"))?;
+    log_event(
+        LogLevel::Info,
+        "prometheus_listening",
+        &[field("address", addr.to_string())],
+    );
     Ok(Arc::new(PrometheusExporter {
-        engine: Arc::new(Mutex::new(engine)),
+        snapshot,
+        scrapes,
+        passes,
         listener,
-        dbname_prefix: prefix,
     }))
 }
 
 impl PrometheusExporter {
-    /// One background pass on the collector tick.
-    pub(crate) async fn run_pass(&self, databases: &[String], discovery_refreshed: bool) {
-        // Discovery names become exposition dbname labels: <host>_<datname>.
-        let labels: Vec<String> = databases
-            .iter()
-            .map(|db| format!("{}_{}", self.dbname_prefix, db))
-            .collect();
+    /// Hands one pass to the exporter task; never blocks on SQL.
+    pub(crate) fn run_pass(&self, databases: &[String], discovery_refreshed: bool) {
         let now_ms = unix_now_us().map(|us| us / 1000).unwrap_or_default();
-        self.engine
-            .lock()
-            .await
-            .run_pass(&labels, discovery_refreshed, now_ms)
-            .await;
+        drop(self.passes.send(PassMessage {
+            // Discovery names become exposition dbname labels: <host>_<db>.
+            databases: databases.to_vec(),
+            discovery_refreshed,
+            now_ms,
+        }));
     }
 
     /// Serves `/metrics` and `/health` until the process ends.
+    ///
+    /// `/metrics` increments the scrape counter and reads the published
+    /// snapshot under a short lock; it never waits for SQL.
     #[allow(
         clippy::infinite_loop,
         reason = "the accept loop runs until the process exits"
@@ -491,7 +407,7 @@ impl PrometheusExporter {
             let Ok((mut socket, _peer)) = self.listener.accept().await else {
                 continue;
             };
-            let engine = Arc::clone(&self.engine);
+            let exporter = Arc::clone(&self);
             tokio::spawn(async move {
                 let mut buffer = [0_u8; 2048];
                 let read = match socket.read(&mut buffer).await {
@@ -508,9 +424,8 @@ impl PrometheusExporter {
                     .unwrap_or_default();
                 let (status, content_type, body) = match path {
                     "/metrics" => {
-                        // serves the body pre-rendered at the last pass end;
-                        // the short lock never waits for SQL
-                        let body = engine.lock().await.scrape();
+                        exporter.scrapes.fetch_add(1, Ordering::Relaxed);
+                        let body = exporter.snapshot.lock().expect("snapshot lock").clone();
                         ("200 OK", "text/plain; version=0.0.4; charset=utf-8", body)
                     }
                     "/health" => (
