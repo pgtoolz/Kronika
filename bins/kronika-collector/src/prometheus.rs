@@ -272,6 +272,8 @@ pub(crate) struct PrometheusExporter {
     scrapes: Arc<AtomicU64>,
     passes: mpsc::UnboundedSender<PassMessage>,
     listener: TcpListener,
+    /// `dbname` label prefix; labels are `<prefix>_<database>` (EXP-3).
+    dbname_prefix: String,
 }
 
 pub(crate) const fn enabled(config: &Config) -> bool {
@@ -379,6 +381,7 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
         scrapes,
         passes,
         listener,
+        dbname_prefix: prefix,
     }))
 }
 
@@ -386,9 +389,13 @@ impl PrometheusExporter {
     /// Hands one pass to the exporter task; never blocks on SQL.
     pub(crate) fn run_pass(&self, databases: &[String], discovery_refreshed: bool) {
         let now_ms = unix_now_us().map(|us| us / 1000).unwrap_or_default();
+        // Discovery names become exposition dbname labels: <host>_<db>.
+        let labels: Vec<String> = databases
+            .iter()
+            .map(|db| format!("{}_{}", self.dbname_prefix, db))
+            .collect();
         drop(self.passes.send(PassMessage {
-            // Discovery names become exposition dbname labels: <host>_<db>.
-            databases: databases.to_vec(),
+            databases: labels,
             discovery_refreshed,
             now_ms,
         }));
