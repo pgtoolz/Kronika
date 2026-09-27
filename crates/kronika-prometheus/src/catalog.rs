@@ -580,6 +580,16 @@ mod tests {
     }
 
     #[test]
+    fn empty_storage_name_loads_as_none() {
+        // upstream cmp.Or(storageName, metricName): an empty override is
+        // the original name, not a family called ""
+        let catalog =
+            load("metrics:\n  m:\n    sqls: {14: 'select 1'}\n    storage_name: ''\n").unwrap();
+        assert_eq!(catalog.metrics["m"].storage_name, None);
+        assert_eq!(catalog.metrics["m"].exposed_name("m"), "m");
+    }
+
+    #[test]
     fn version_selection_picks_newest_not_above_server() {
         let catalog = Catalog::embedded().unwrap();
         let db_stats = &catalog.metrics["db_stats"];
