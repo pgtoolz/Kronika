@@ -39,8 +39,8 @@ pub const SERVER_STATEMENT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const QUERY_FETCH_TIMEOUT: Duration = Duration::from_secs(35);
 
 /// Startup `options` value carrying the server-side deadline and lock-wait
-/// limit for ordinary monitoring sessions. Poolers that reject startup
-/// options are not on this path; the `PgBouncer` log-discovery connection
+/// limit for ordinary monitoring sessions. Applied by the metric pools and
+/// the `PostgreSQL` log-discovery connection; the `PgBouncer` connection
 /// sends no session configuration.
 pub(crate) const SESSION_STARTUP_OPTIONS: &str = "-c statement_timeout=30s -c lock_timeout=100ms";
 

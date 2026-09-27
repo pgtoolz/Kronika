@@ -260,7 +260,7 @@ impl Pool {
     }
 }
 
-fn collector_application_name() -> &'static str {
+pub(crate) fn collector_application_name() -> &'static str {
     APPLICATION_NAME.get_or_init(|| {
         application_name(
             std::process::id(),
