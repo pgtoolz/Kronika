@@ -38,29 +38,14 @@ pub const SERVER_STATEMENT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Client-side backstop for opening and consuming one bounded row stream.
 pub const QUERY_FETCH_TIMEOUT: Duration = Duration::from_secs(35);
 
-pub(crate) const SESSION_SETUP_SQL: &str = concat!(
-    marked!("SET statement_timeout = '30s'"),
-    "; ",
-    marked!("SET lock_timeout = '100ms'"),
-);
+/// Startup `options` value carrying the server-side deadline and lock-wait
+/// limit for ordinary monitoring sessions. Poolers that reject startup
+/// options are not on this path; the `PgBouncer` log-discovery connection
+/// sends no session configuration.
+pub(crate) const SESSION_STARTUP_OPTIONS: &str = "-c statement_timeout=30s -c lock_timeout=100ms";
 
 /// Maximum time spent sending a best-effort `PostgreSQL` `CancelRequest`.
 pub const CANCEL_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
-
-/// Install the query deadline and lock-wait limit on a new monitoring session.
-///
-/// The 100 ms limit bounds each lock acquisition wait, not how long an acquired
-/// lock is held.
-///
-/// This uses one Simple Query message and waits for `ReadyForQuery` before the
-/// session can be exposed to a caller.
-///
-/// # Errors
-///
-/// Returns the server, transport, or protocol error from the `SET` command.
-pub async fn configure_session(client: &Client) -> Result<(), tokio_postgres::Error> {
-    client.batch_execute(SESSION_SETUP_SQL).await
-}
 
 /// Whether `PostgreSQL` cancelled the statement, including `statement_timeout`.
 #[must_use]

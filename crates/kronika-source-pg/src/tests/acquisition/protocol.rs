@@ -38,30 +38,15 @@ pub(super) fn accept_startup(stream: &mut TcpStream) {
         .expect("the startup body length fits usize");
     let mut body = vec![0_u8; body_len];
     stream.read_exact(&mut body).expect("read startup body");
+    let startup = String::from_utf8_lossy(&body);
+    assert!(
+        startup.contains("options\0-c statement_timeout=30s -c lock_timeout=100ms"),
+        "session config rides the startup packet: {startup:?}"
+    );
     stream
         .write_all(&[b'R', 0, 0, 0, 8, 0, 0, 0, 0, b'Z', 0, 0, 0, 5, b'I'])
         .expect("write authentication and ready messages");
     stream.flush().expect("flush startup response");
-
-    let mut tag = [0_u8; 1];
-    stream.read_exact(&mut tag).expect("read setup tag");
-    assert_eq!(tag[0], b'Q');
-    stream.read_exact(&mut len).expect("read setup length");
-    let body_len = usize::try_from(u32::from_be_bytes(len).saturating_sub(4))
-        .expect("the setup body length fits usize");
-    let mut body = vec![0_u8; body_len];
-    stream.read_exact(&mut body).expect("read setup body");
-    let sql = body.strip_suffix(&[0]).expect("setup SQL is terminated");
-    let sql = std::str::from_utf8(sql).expect("setup SQL is UTF-8");
-    assert!(sql.contains("SET statement_timeout = '30s'"));
-    assert!(sql.contains("SET lock_timeout = '100ms'"));
-    stream
-        .write_all(&[
-            b'C', 0, 0, 0, 8, b'S', b'E', b'T', 0, b'C', 0, 0, 0, 8, b'S', b'E', b'T', 0, b'Z', 0,
-            0, 0, 5, b'I',
-        ])
-        .expect("write setup completion and ready messages");
-    stream.flush().expect("flush setup response");
 }
 
 pub(super) fn serve_enumeration_denied(listener: &TcpListener) {

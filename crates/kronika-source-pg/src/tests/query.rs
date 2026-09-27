@@ -7,7 +7,7 @@ use tokio_postgres::{Config, NoTls};
 
 use super::{
     BATCH_LOGICAL_BYTES, BatchError, BatchWrite, CANCEL_REQUEST_TIMEOUT, ColumnLookup,
-    QUERY_FETCH_TIMEOUT, QueryStats, SERVER_STATEMENT_TIMEOUT, SESSION_SETUP_SQL, Session,
+    QUERY_FETCH_TIMEOUT, QueryStats, SERVER_STATEMENT_TIMEOUT, SESSION_STARTUP_OPTIONS, Session,
     TEXT_PREFIX_CHARS, is_query_cancelled, read_batched,
 };
 
@@ -80,7 +80,7 @@ fn server_timeout_precedes_the_client_backstop() {
     assert_eq!(QUERY_FETCH_TIMEOUT, Duration::from_secs(35));
     assert!(QUERY_FETCH_TIMEOUT > SERVER_STATEMENT_TIMEOUT);
     assert_eq!(CANCEL_REQUEST_TIMEOUT, Duration::from_secs(1));
-    assert!(SESSION_SETUP_SQL.contains("SET statement_timeout = '30s'"));
+    assert!(SESSION_STARTUP_OPTIONS.contains("statement_timeout=30s"));
 }
 
 #[tokio::test(start_paused = true)]

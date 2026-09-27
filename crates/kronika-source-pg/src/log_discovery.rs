@@ -183,7 +183,6 @@ pub async fn postgres<T>(
             Err(failure) => {
                 let context = match failure.stage {
                     ConnectStage::Connect => "connect to PostgreSQL",
-                    ConnectStage::Configure => "configure PostgreSQL monitoring session",
                 };
                 let (timeout, message, error) = match failure.error {
                     ConnectionFailure::PostgreSql(error) => (

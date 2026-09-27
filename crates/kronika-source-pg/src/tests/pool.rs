@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_postgres::{Config, NoTls};
 
-use crate::query::{QueryStats, SESSION_SETUP_SQL};
+use crate::query::QueryStats;
 
 use super::{
     CONNECT_TIMEOUT, ConnectError, MAX_AGE, Open, Pool, application_name,
@@ -86,59 +86,37 @@ fn another_database_keeps_server_configuration_without_an_open_session() {
 }
 
 #[tokio::test]
-async fn session_setup_precedes_the_first_query_and_uses_only_simple_protocol() {
+async fn startup_packet_carries_session_config_and_queries_stay_single() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind the protocol probe");
     let port = listener
         .local_addr()
         .expect("read the probe address")
         .port();
-    let (first_set_tx, first_set_rx) = tokio::sync::oneshot::channel();
-    let (finish_setup_tx, finish_setup_rx) = mpsc::channel();
+    let (first_query_tx, first_query_rx) = tokio::sync::oneshot::channel();
     let server = std::thread::spawn(move || {
         let (mut stream, _peer) = listener.accept().expect("accept the frontend session");
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .expect("bound the cleanup check");
-        accept_startup(&mut stream);
-        let setup = read_frontend(&mut stream);
-        write_backend(&mut stream, b'C', b"SET\0");
-        stream.flush().expect("flush the first SET completion");
-        first_set_tx
-            .send(())
-            .expect("report the first SET completion");
-        finish_setup_rx.recv().expect("release the remaining setup");
-        write_command_ready(&mut stream, "SET");
+        let startup = accept_startup(&mut stream);
         let first_query = read_frontend(&mut stream);
         write_command_ready(&mut stream, "SELECT 0");
+        first_query_tx
+            .send(first_query.clone())
+            .expect("report the first query");
         let reused_query = read_frontend(&mut stream);
         write_command_ready(&mut stream, "SELECT 0");
-        [setup, first_query, reused_query]
+        (startup, first_query, reused_query)
     });
     let mut pool = Pool::new(&format!(
         "host=127.0.0.1 port={port} user=monitor dbname=metrics"
     ))
     .expect("the probe DSN parses");
 
-    let mut opening = tokio::spawn(async move {
-        let generation = pool
-            .session()
-            .await
-            .expect("configure the session")
-            .generation();
-        (pool, generation)
-    });
-    first_set_rx.await.expect("the first SET completed");
-    assert!(
-        tokio::time::timeout(Duration::from_millis(20), &mut opening)
-            .await
-            .is_err(),
-        "one completed SET must not expose the session"
-    );
-    finish_setup_tx.send(()).expect("finish both SET commands");
-    let (mut pool, generation) = opening.await.expect("the setup task exits");
+    let generation = pool.session().await.expect("open the session").generation();
     assert_eq!(generation, 1);
     for _ in 0..2 {
-        let session = pool.session().await.expect("reuse the configured session");
+        let session = pool.session().await.expect("reuse the session");
         assert_eq!(session.generation(), generation);
         let mut stats = QueryStats::default();
         crate::query::read_simple_rows(session, "SELECT 1", &mut stats, |_row| Ok(()))
@@ -147,125 +125,20 @@ async fn session_setup_precedes_the_first_query_and_uses_only_simple_protocol() 
     }
     pool.close();
 
-    let messages = server.join().expect("the protocol probe exits");
-    assert_eq!(messages[0].0, b'Q');
-    assert_eq!(frontend_sql(&messages[0].1), SESSION_SETUP_SQL);
-    let statements: Vec<_> = SESSION_SETUP_SQL.split("; ").collect();
-    assert_eq!(statements.len(), 2);
-    assert!(statements.iter().all(|sql| sql.starts_with("/* kronika:")));
-    assert!(statements[0].ends_with("SET statement_timeout = '30s'"));
-    assert!(statements[1].ends_with("SET lock_timeout = '100ms'"));
-    assert_eq!(messages[1].0, b'Q');
-    assert_eq!(frontend_sql(&messages[1].1), "SELECT 1");
-    assert_eq!(frontend_sql(&messages[2].1), "SELECT 1");
-    assert!(messages.iter().all(|(tag, _body)| *tag != b'P'));
-    assert!(messages.iter().all(|(tag, _body)| *tag != b'C'));
-}
-
-#[tokio::test]
-async fn rejected_session_setup_is_never_exposed_and_closes_its_driver() {
-    for completed_sets in 0..2 {
-        rejected_setup(completed_sets).await;
-    }
-}
-
-async fn rejected_setup(completed_sets: usize) {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind the protocol probe");
-    let port = listener
-        .local_addr()
-        .expect("read the probe address")
-        .port();
-    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _peer) = listener.accept().expect("accept the frontend session");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .expect("bound the cleanup check");
-        accept_startup(&mut stream);
-        let setup = read_frontend(&mut stream);
-        for _ in 0..completed_sets {
-            write_backend(&mut stream, b'C', b"SET\0");
-        }
-        write_backend(
-            &mut stream,
-            b'E',
-            b"SERROR\0C42501\0Mmonitoring timeout rejected\0\0",
-        );
-        write_backend(&mut stream, b'Z', b"I");
-        stream.flush().expect("flush the setup error");
-        expect_closed(&mut stream);
-        closed_tx.send(()).expect("report frontend cleanup");
-        setup.0 == b'Q'
-    });
-    let mut pool = Pool::new(&format!(
-        "host=127.0.0.1 port={port} user=monitor dbname=metrics"
-    ))
-    .expect("the probe DSN parses");
-
-    let error = pool
-        .session()
-        .await
-        .expect_err("the SET must fail the session");
-    assert!(!error.is_timeout());
-    assert!(pool.open.is_none());
-    assert_eq!(pool.next_generation, 1);
-    drop(pool);
-    closed_rx
-        .await
-        .expect("the driver cleanup reached the server");
-    assert!(server.join().expect("the protocol probe exits"));
-}
-
-#[tokio::test]
-async fn stalled_session_setup_hits_its_deadline_without_exposing_a_generation() {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind the protocol probe");
-    let port = listener
-        .local_addr()
-        .expect("read the probe address")
-        .port();
-    let (setup_seen_tx, setup_seen_rx) = tokio::sync::oneshot::channel();
-    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _peer) = listener.accept().expect("accept the frontend session");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .expect("bound the cleanup check");
-        accept_startup(&mut stream);
-        let setup = read_frontend(&mut stream);
-        write_backend(&mut stream, b'C', b"SET\0");
-        stream.flush().expect("flush the first SET completion");
-        setup_seen_tx.send(()).expect("report the setup request");
-        expect_closed(&mut stream);
-        closed_tx.send(()).expect("report frontend cleanup");
-        setup.0 == b'Q' && frontend_sql(&setup.1) == SESSION_SETUP_SQL
-    });
-    let mut pool = Pool::new(&format!(
-        "host=127.0.0.1 port={port} user=monitor dbname=metrics"
-    ))
-    .expect("the probe DSN parses");
-    let opening = tokio::spawn(async move {
-        let result = pool
-            .session()
-            .await
-            .map(crate::Session::generation)
-            .map_err(|error| error.is_timeout());
-        (pool, result)
-    });
-
-    setup_seen_rx.await.expect("the SET reached the server");
-    tokio::time::pause();
-    tokio::time::advance(CONNECT_TIMEOUT).await;
-    let (pool, result) = opening.await.expect("the opening task exits");
-    tokio::time::resume();
-
-    assert_eq!(result, Err(true));
-    assert!(pool.open.is_none());
-    assert_eq!(pool.next_generation, 1);
-    drop(pool);
-    closed_rx
-        .await
-        .expect("the driver cleanup reached the server");
-    assert!(server.join().expect("the protocol probe exits"));
+    let first_query = first_query_rx.await.expect("the probe saw the first query");
+    assert_eq!(first_query.0, b'Q');
+    assert_eq!(frontend_sql(&first_query.1), "SELECT 1");
+    let (startup, _first, reused) = server.join().expect("the protocol probe exits");
+    let startup = String::from_utf8_lossy(&startup);
+    assert!(
+        startup.contains("options\0-c statement_timeout=30s -c lock_timeout=100ms"),
+        "startup options carry the session timeouts: {startup:?}"
+    );
+    assert!(
+        startup.contains("application_name\0kronika-collector-"),
+        "startup names the collector: {startup:?}"
+    );
+    assert_eq!(frontend_sql(&reused.1), "SELECT 1");
 }
 
 #[tokio::test]
@@ -277,7 +150,6 @@ async fn secondary_rotates_at_the_age_boundary_and_increments_generation() {
         .port();
     let (release_tx, release_rx) = mpsc::channel();
     let server = std::thread::spawn(move || {
-        let mut setup_sql = Vec::new();
         let (mut first, _peer) = listener.accept().expect("accept the first session");
         let startup = accept_startup(&mut first);
         assert!(
@@ -285,10 +157,6 @@ async fn secondary_rotates_at_the_age_boundary_and_increments_generation() {
                 .windows(b"database\0payments\0".len())
                 .any(|field| field == b"database\0payments\0")
         );
-        let first_setup = read_frontend(&mut first);
-        setup_sql.push(frontend_sql(&first_setup.1).to_owned());
-        write_backend(&mut first, b'C', b"SET\0");
-        write_command_ready(&mut first, "SET");
         expect_closed(&mut first);
 
         let (mut second, _peer) = listener.accept().expect("accept the replacement session");
@@ -298,12 +166,8 @@ async fn secondary_rotates_at_the_age_boundary_and_increments_generation() {
                 .windows(b"database\0payments\0".len())
                 .any(|field| field == b"database\0payments\0")
         );
-        let second_setup = read_frontend(&mut second);
-        setup_sql.push(frontend_sql(&second_setup.1).to_owned());
-        write_backend(&mut second, b'C', b"SET\0");
-        write_command_ready(&mut second, "SET");
         release_rx.recv().expect("the test releases the session");
-        setup_sql
+        String::from_utf8_lossy(&startup).into_owned()
     });
     let primary = Pool::new(&format!(
         "host=127.0.0.1 port={port} user=monitor dbname=postgres"
@@ -365,8 +229,11 @@ async fn secondary_rotates_at_the_age_boundary_and_increments_generation() {
 
     release_tx.send(()).expect("release the protocol probe");
     secondary.close();
-    let setup_sql = server.join().expect("the protocol probe exits");
-    assert_eq!(setup_sql, [SESSION_SETUP_SQL, SESSION_SETUP_SQL]);
+    let startup = server.join().expect("the protocol probe exits");
+    assert!(
+        startup.contains("options\0-c statement_timeout=30s -c lock_timeout=100ms"),
+        "the replacement session carries its config in the startup packet: {startup:?}"
+    );
 }
 
 #[test]
