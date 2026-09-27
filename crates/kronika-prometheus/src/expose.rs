@@ -28,10 +28,6 @@ pub struct Sample {
 type Family<'a> = (String, bool, Vec<(&'a SampleSet, &'a Sample)>);
 
 /// Renders sample sets as Prometheus text format.
-///
-/// An empty result still ends with a trailing newline on the last line, as
-/// the format requires one line per sample and the collector's HTTP layer
-/// appends nothing.
 #[allow(
     single_use_lifetimes,
     reason = "anonymous lifetimes in impl Trait are not stable; the iterator bound needs a named one"
@@ -43,9 +39,7 @@ pub fn expose_samples<'a>(sets: impl IntoIterator<Item = &'a SampleSet>) -> Stri
             let entry = families
                 .entry(sample.family.as_str())
                 .or_insert_with(|| (sample.help.clone(), sample.is_gauge, Vec::new()));
-            // a family keeps one HELP/TYPE pair; conflicting declarations
-            // cannot occur because gauge-ness and help derive from the
-            // metric definition shared by all its samples
+            // a family keeps its first HELP/TYPE pair (first-wins)
             entry.2.push((set, sample));
         }
     }

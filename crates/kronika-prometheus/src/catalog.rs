@@ -20,7 +20,7 @@ pub const EMBEDDED_METRIC_COUNT: usize = 74;
 /// Preset count half of the pinned shape check.
 pub const EMBEDDED_PRESET_COUNT: usize = 15;
 
-/// Largest accepted preset interval in seconds (~285 years).
+/// Largest accepted preset interval in seconds.
 pub const MAX_INTERVAL_S: u64 = 9_000_000_000_000;
 
 /// Name of the default preset applied when none is configured.
@@ -80,7 +80,7 @@ pub enum NodeStatus {
 /// One catalog metric definition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetricDef {
-    /// Human-readable text; used as the exposition HELP line.
+    /// Human-readable text; upstream does not expose it in the sink.
     pub description: String,
     /// SQL per minimal `PostgreSQL` major version.
     pub sqls: BTreeMap<u32, Sql>,
@@ -336,12 +336,8 @@ impl Catalog {
     /// Overlays another catalog: definitions replace same-named ones wholly,
     /// unknown names are added (both metrics and presets).
     pub fn overlay(&mut self, overlay: Self) {
-        for (name, metric) in overlay.metrics {
-            self.metrics.insert(name, metric);
-        }
-        for (name, preset) in overlay.presets {
-            self.presets.insert(name, preset);
-        }
+        self.metrics.extend(overlay.metrics);
+        self.presets.extend(overlay.presets);
     }
 
     /// Resolves a preset against the catalog, preserving the preset's metric
@@ -399,6 +395,30 @@ fn normalize_storage_name(raw: Option<String>) -> Option<String> {
 /// simple-protocol message, so an embedded `;` would add statements. A
 /// variant consisting only of semicolons and comments is a skip, not an
 /// error (upstream `checkpointer` on v14 ships `"; -- covered by bgwriter"`).
+/// Advances `i` past one quoted section. Single quotes honor the E''
+/// escape rules; double quotes never treat backslash specially.
+fn scan_quoted(chars: &[char], i: &mut usize, single: bool, prev: Option<char>) {
+    let escaped = single
+        && prev.is_some_and(|p| {
+            (p == 'e' || p == 'E')
+                && chars
+                    .get(i.wrapping_sub(2))
+                    .is_none_or(|&g| !(g.is_ascii_alphanumeric() || g == '_' || g == '$'))
+        });
+    let quote = if single { '\'' } else { '"' };
+    *i += 1;
+    while *i < chars.len() {
+        match chars[*i] {
+            '\\' if escaped => *i += 2,
+            c if c == quote => {
+                *i += 1;
+                return;
+            }
+            _ => *i += 1,
+        }
+    }
+}
+
 fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
     let trimmed = sql.trim_end();
     let stripped = trimmed.strip_suffix(';').unwrap_or(trimmed);
@@ -417,43 +437,15 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
         let c = chars[i];
         match c {
             '\'' => {
-                // string literal. E'' strings treat backslash as an escape;
-                // ordinary strings (standard_conforming_strings on) treat
-                // backslash as text and only double the quote
-                let escaped = prev.is_some_and(|p| {
-                    (p == 'e' || p == 'E')
-                        && chars
-                            .get(i.wrapping_sub(2))
-                            .is_none_or(|&g| !(g.is_ascii_alphanumeric() || g == '_' || g == '$'))
-                });
-                i += 1;
-                while i < chars.len() {
-                    match chars[i] {
-                        '\\' if escaped => i += 2,
-                        '\'' => {
-                            i += 1;
-                            break;
-                        }
-                        _ => i += 1,
-                    }
-                }
+                scan_quoted(&chars, &mut i, true, prev);
                 statement_text = true;
                 prev = Some('\'');
             }
-            '"' => {
-                i += 1;
-                while i < chars.len() && chars[i] != '"' {
-                    i += 1;
-                }
-                i += 1;
-                statement_text = true;
-                prev = Some('"');
-            }
-            '$'
-                if !prev.is_some_and(|p| p.is_ascii_alphanumeric() || p == '_' || p == '$')
-                    && chars
-                        .get(i + 1)
-                        .is_some_and(|&n| n == '$' || n.is_ascii_alphanumeric() || n == '_') =>
+            '"' => scan_quoted(&chars, &mut i, false, None),
+            '$' if !prev.is_some_and(|p| p.is_ascii_alphanumeric() || p == '_' || p == '$')
+                && chars
+                    .get(i + 1)
+                    .is_some_and(|&n| n == '$' || n.is_ascii_alphanumeric() || n == '_') =>
             {
                 // dollar-quoted tag: $tag$ body $tag$ ($$ allowed). A quote
                 // only starts a token: `x$$` keeps the dollars inside the
@@ -466,11 +458,10 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
                 if j < chars.len() && chars[j] == '$' {
                     let tag = &chars[i..=j];
                     i = find_tag(j + 1, tag).map_or(chars.len(), |k| k + tag.len());
-                    prev = Some('$');
                 } else {
                     i += 1;
-                    prev = Some('$');
                 }
+                prev = Some('$');
                 statement_text = true;
             }
             '-' if chars.get(i + 1) == Some(&'-') => {

@@ -18,7 +18,7 @@
 pub enum ColumnKind {
     /// `bool`: exposed as 0/1.
     Bool,
-    /// `int8` (`bigint`), also the only epoch_ns type upstream honors.
+    /// `int8` (`bigint`), also the only `epoch_ns` type upstream honors.
     Int8,
     /// `int4` (`integer`).
     Int4,

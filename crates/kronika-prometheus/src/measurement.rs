@@ -199,8 +199,8 @@ pub fn to_sample_set(
 }
 
 /// `epoch_ns` cell of the first row as milliseconds, when its column is
-/// `int8` and parseable. Upstream GetEpoch accepts only int64; any other
-/// type falls back to fetch time (types.go).
+/// `int8` and parseable. Upstream `GetEpoch` accepts only `int64`; any
+/// other type falls back to fetch time (types.go).
 fn epoch_ms(result: &QueryResult, row: &[Cell]) -> Option<i64> {
     let idx = result
         .columns
@@ -413,7 +413,10 @@ mod tests {
         assert_eq!(set.timestamp_ms, 1_234_000);
 
         let null_epoch = QueryResult {
-            columns: vec![col("epoch_ns", ColumnKind::Int8), col("v", ColumnKind::Int8)],
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
+            ],
             rows: vec![row(&[None, Some("1")])],
         };
         let set = to_sample_set(
@@ -432,7 +435,10 @@ mod tests {
         // upstream GetEpoch reads strictly the first row: a NULL epoch there
         // falls back to fetch time even when a later row carries one
         let result = QueryResult {
-            columns: vec![col("epoch_ns", ColumnKind::Int8), col("v", ColumnKind::Int8)],
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
+            ],
             rows: vec![
                 row(&[None, Some("1")]),
                 row(&[Some("1800000000000000000"), Some("2")]),
@@ -471,10 +477,7 @@ mod tests {
         // the fetch time instead of parsing the column
         for kind in [ColumnKind::Text, ColumnKind::Int4] {
             let result = QueryResult {
-                columns: vec![
-                    col("epoch_ns", kind),
-                    col("v", ColumnKind::Int8),
-                ],
+                columns: vec![col("epoch_ns", kind), col("v", ColumnKind::Int8)],
                 rows: vec![row(&[Some("1700000000000000000"), Some("1")])],
             };
             let set = to_sample_set(&result, "m", "m", &Gauges::Columns(vec![]), "db", 1_234_000);
@@ -537,11 +540,7 @@ mod tests {
                 col("tag_s", ColumnKind::Text),
                 col("tag_s", ColumnKind::Text),
             ],
-            rows: vec![row(&[
-                Some("1700000000000000000"),
-                Some("first"),
-                None,
-            ])],
+            rows: vec![row(&[Some("1700000000000000000"), Some("first"), None])],
         };
         let set = convert(&result, "m", &Gauges::Columns(vec![]), "db");
         // no value columns: nothing to assert on samples, but the tag must
@@ -552,7 +551,10 @@ mod tests {
     #[test]
     fn first_row_epoch_wins_for_all_rows() {
         let result = QueryResult {
-            columns: vec![col("epoch_ns", ColumnKind::Int8), col("v", ColumnKind::Int8)],
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
+            ],
             rows: vec![
                 row(&[Some("1700000000000000000"), Some("1")]),
                 row(&[Some("1800000000000000000"), Some("2")]),
@@ -565,7 +567,10 @@ mod tests {
     #[test]
     fn duplicate_identity_dropped_and_counted() {
         let result = QueryResult {
-            columns: vec![col("epoch_ns", ColumnKind::Int8), col("v", ColumnKind::Int8)],
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
+            ],
             rows: vec![
                 row(&[Some("1700000000000000000"), Some("1")]),
                 row(&[Some("1700000000000000000"), Some("2")]),
@@ -689,7 +694,10 @@ mod tests {
     #[test]
     fn not_exposed_metrics_yield_nothing() {
         let result = QueryResult {
-            columns: vec![col("epoch_ns", ColumnKind::Int8), col("v", ColumnKind::Int8)],
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
+            ],
             rows: vec![row(&[Some("1700000000000000000"), Some("1")])],
         };
         for metric in NOT_EXPOSED_METRICS {

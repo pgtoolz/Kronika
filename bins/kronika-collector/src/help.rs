@@ -49,9 +49,11 @@ Prometheus:
   entries from a file or directory of .yaml/.yml files; the env form is a
   semicolon list. --prometheus-preset NAME (KRONIKA_PROMETHEUS_PRESET,
   default basic) selects metric intervals. Both require --prometheus-listen.
-  Metric SQL runs on one dedicated connection per discovered database with
-  statement_timeout 5 s and lock_timeout 100 ms; scrapes read cached
-  results only.
+  Metric SQL runs on one dedicated connection per discovered database;
+  the startup packet carries application_name kronika-prometheus,
+  statement_timeout (default 5 s, raised to the largest preset override)
+  and lock_timeout 100 ms. Scrapes read the snapshot published after each
+  background pass.
 
 Signals and output:
   SIGUSR2 collects immediately, preserving the statements/plans cooldown, and

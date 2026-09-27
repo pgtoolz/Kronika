@@ -342,8 +342,8 @@ Discovery requires the [function privileges](#postgresql-role) listed above.
 
 The collector can serve Prometheus metrics for the same PostgreSQL server
 selected by `--pg-dsn`. The endpoint is off unless `--prometheus-listen`
-is set. Every exposed sample carries the collection timestamp of its query
-in milliseconds. Scrape reads cached background results and never runs SQL.
+is set. Catalog samples carry a collection timestamp in Unix milliseconds.
+Scrape reads the snapshot published after each background pass.
 
 ```sh
 kronika-collector --storage-dir /var/lib/kronika \
@@ -356,9 +356,10 @@ Each catalog metric is a named `SELECT` per PostgreSQL major version with a
 collection interval taken from the chosen preset. Overlays in the same
 format extend or replace catalog entries by name. The exporter opens one
 dedicated connection per discovered database, separate from ordinary
-collection, with `statement_timeout` 5 s and `lock_timeout` 100 ms.
-`pgwatch_instance_up` reflects the exporter's own connection check, not
-metric query outcomes.
+collection; the connection's startup packet carries `application_name
+kronika-prometheus`, `statement_timeout` (default 5 s, raised to the
+largest preset override) and `lock_timeout` 100 ms. `pgwatch_instance_up`
+reflects the exporter's own connection health, not metric query outcomes.
 
 | Property | Behavior |
 | --- | --- |
@@ -366,8 +367,8 @@ metric query outcomes.
 | Preset | `--prometheus-preset` (default `basic`: `instance_up`, `db_stats` at 60 s, `db_size` at 300 s, `wal` at 60 s). |
 | Overlays | `--prometheus-metrics` file or directory of `.yaml`/`.yml` files, merged in name order onto the embedded catalog. |
 | Environment | `KRONIKA_PROMETHEUS_LISTEN`, `KRONIKA_PROMETHEUS_METRICS` (semicolon list), `KRONIKA_PROMETHEUS_PRESET`. |
-| Labels | `dbname` is `<dsn-host>_<database>`, plus `tag_` columns of each query. |
-| Staleness | Results older than the larger of 10 minutes and twice the interval are not exposed. |
+| Labels | `dbname` is `<dsn-host>_<database>` (machine hostname for Unix-socket or hostless DSNs), plus `tag_` columns of each query. |
+| Staleness | Results older than the larger of 10 minutes and twice the interval are not served. |
 | Errors | `42P01`/`42883` disable the metric until the next database discovery. Other errors are retried each interval and logged once per state change. |
 
 ## Linux collection
