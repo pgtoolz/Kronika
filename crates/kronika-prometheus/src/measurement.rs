@@ -200,12 +200,13 @@ pub fn to_sample_set(
 
 /// `epoch_ns` cell of the first row as milliseconds, when its column is
 /// `int8` and parseable. Upstream `GetEpoch` accepts only `int64`; any
-/// other type falls back to fetch time (types.go).
+/// other type falls back to fetch time (types.go). Duplicate column names
+/// resolve last-wins before that type check, like the row decode.
 fn epoch_ms(result: &QueryResult, row: &[Cell]) -> Option<i64> {
-    let idx = result
-        .columns
-        .iter()
-        .position(|c| c.name == "epoch_ns" && c.kind == ColumnKind::Int8)?;
+    let idx = result.columns.iter().rposition(|c| c.name == "epoch_ns")?;
+    if result.columns[idx].kind != ColumnKind::Int8 {
+        return None;
+    }
     let ns = row.get(idx)?.as_deref()?.parse::<i64>().ok()?;
     Some(ns.div_euclid(1_000_000))
 }
@@ -546,6 +547,35 @@ mod tests {
         // no value columns: nothing to assert on samples, but the tag must
         // not survive as "first"
         assert!(set.samples.is_empty());
+
+        // the same for epoch: a later non-int8 epoch_ns replaces the usable
+        // one, so the fetch time is used
+        let result = QueryResult {
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("epoch_ns", ColumnKind::Text),
+                col("v", ColumnKind::Int8),
+            ],
+            rows: vec![row(&[Some("1700000000000000000"), Some("x"), Some("1")])],
+        };
+        let set = to_sample_set(&result, "m", "m", &Gauges::Columns(vec![]), "db", 1_234_000);
+        assert_eq!(set.timestamp_ms, 1_234_000, "last non-int8 epoch wins");
+
+        // two int8 epoch_ns columns: the last value is the timestamp
+        let result = QueryResult {
+            columns: vec![
+                col("epoch_ns", ColumnKind::Int8),
+                col("epoch_ns", ColumnKind::Int8),
+                col("v", ColumnKind::Int8),
+            ],
+            rows: vec![row(&[
+                Some("1700000000000000000"),
+                Some("1800000000000000000"),
+                Some("1"),
+            ])],
+        };
+        let set = convert(&result, "m", &Gauges::Columns(vec![]), "db");
+        assert_eq!(set.timestamp_ms, 1_800_000_000_000, "last epoch wins");
     }
 
     #[test]
