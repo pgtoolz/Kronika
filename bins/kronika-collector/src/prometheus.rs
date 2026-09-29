@@ -18,7 +18,6 @@ use kronika_prometheus::typing::{Cell, kind_for_oid};
 use kronika_source_pg::{Pool, Session, Transport};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
 
 use crate::clock::unix_now_us;
 use crate::config::Config;
@@ -298,18 +297,21 @@ impl ExecutorFactory for CollectorFactory {
     }
 }
 
-/// Message the collector tick sends to the exporter task.
+/// Message the collector tick leaves for the exporter task. Only the
+/// latest pending message survives: a pass slower than the tick coalesces
+/// the backlog into one run instead of queueing obsolete work, while the
+/// discovery-refresh flag of every dropped message is preserved.
 struct PassMessage {
     databases: Vec<String>,
     discovery_refreshed: bool,
-    now_ms: i64,
 }
 
-/// The exporter endpoint: listener, pass channel, published snapshot.
+/// The exporter endpoint: listener, pending pass, published snapshot.
 pub(crate) struct PrometheusExporter {
     snapshot: Arc<std::sync::Mutex<String>>,
     scrapes: Arc<AtomicU64>,
-    passes: mpsc::UnboundedSender<PassMessage>,
+    pending: Arc<std::sync::Mutex<Option<PassMessage>>>,
+    wakes: Arc<tokio::sync::Notify>,
     listener: TcpListener,
     /// `dbname` label prefix; labels are `<prefix>_<database>` (EXP-3).
     dbname_prefix: String,
@@ -321,8 +323,8 @@ pub(crate) const fn enabled(config: &Config) -> bool {
 
 /// Starts the exporter: catalog, engine task, listener.
 ///
-/// The engine lives in its own task. The collector tick sends discovery
-/// results over an unbounded channel and never awaits exporter SQL; the
+/// The engine lives in its own task. The collector tick leaves discovery
+/// results in a single coalescing slot and never awaits exporter SQL; the
 /// HTTP side serves the snapshot published at the end of each pass.
 pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
     let catalog = load_catalog(config)?;
@@ -388,20 +390,28 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
     let scrapes = engine.scrape_counter();
     let snapshot = Arc::new(std::sync::Mutex::new(String::new()));
     let published = Arc::clone(&snapshot);
-    let (passes, mut inbox) = mpsc::unbounded_channel::<PassMessage>();
+    let pending = Arc::new(std::sync::Mutex::new(None::<PassMessage>));
+    let wakes = Arc::new(tokio::sync::Notify::new());
+    let task_pending = Arc::clone(&pending);
+    let task_wakes = Arc::clone(&wakes);
     tokio::spawn(async move {
-        while let Some(message) = inbox.recv().await {
-            engine
-                .run_pass(
-                    &message.databases,
-                    message.discovery_refreshed,
-                    message.now_ms,
-                )
-                .await;
-            let mut published = published.lock().expect("snapshot lock");
-            published.clear();
-            published.push_str(engine.snapshot());
-            drop(published);
+        loop {
+            task_wakes.notified().await;
+            // drain what accumulated during the previous pass, coalescing
+            // again: only the latest database list ever runs
+            loop {
+                let message = { task_pending.lock().expect("pass slot").take() };
+                let Some(message) = message else { break; };
+                // the pass clock is read at execution, not at enqueue
+                let now_ms = unix_now_us().map(|us| us / 1000).unwrap_or_default();
+                engine
+                    .run_pass(&message.databases, message.discovery_refreshed, now_ms)
+                    .await;
+                let mut published = published.lock().expect("snapshot lock");
+                published.clear();
+                published.push_str(engine.snapshot());
+                drop(published);
+            }
         }
     });
     let addr: SocketAddr = config
@@ -418,26 +428,44 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
     Ok(Arc::new(PrometheusExporter {
         snapshot,
         scrapes,
-        passes,
+        pending,
+        wakes,
         listener,
         dbname_prefix: prefix,
     }))
 }
 
+/// Leaves one pass in the slot: an existing pending message is replaced
+/// (its database list is obsolete), but a discovery refresh it flagged is
+/// preserved so EXE-8 re-enables cannot be lost to coalescing.
+fn coalesce_pass(slot: &mut Option<PassMessage>, message: PassMessage) {
+    match slot {
+        Some(pending) => {
+            pending.discovery_refreshed |= message.discovery_refreshed;
+            pending.databases = message.databases;
+        }
+        None => *slot = Some(message),
+    }
+}
+
 impl PrometheusExporter {
-    /// Hands one pass to the exporter task; never blocks on SQL.
+    /// Hands one pass to the exporter task; never blocks on SQL. A pass
+    /// still pending is replaced, keeping its discovery-refresh signal:
+    /// slow passes must not pile up obsolete database lists.
     pub(crate) fn run_pass(&self, databases: &[String], discovery_refreshed: bool) {
-        let now_ms = unix_now_us().map(|us| us / 1000).unwrap_or_default();
         // Discovery names become exposition dbname labels: <host>_<db>.
         let labels: Vec<String> = databases
             .iter()
             .map(|db| format!("{}_{}", self.dbname_prefix, db))
             .collect();
-        drop(self.passes.send(PassMessage {
-            databases: labels,
-            discovery_refreshed,
-            now_ms,
-        }));
+        coalesce_pass(
+            &mut self.pending.lock().expect("pass slot"),
+            PassMessage {
+                databases: labels,
+                discovery_refreshed,
+            },
+        );
+        self.wakes.notify_one();
     }
 
     /// Serves `/metrics` and `/health` until the process ends.
@@ -494,5 +522,40 @@ impl PrometheusExporter {
                 drop(socket.flush().await);
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(databases: &[&str], refreshed: bool) -> PassMessage {
+        PassMessage {
+            databases: databases.iter().map(|s| (*s).to_owned()).collect(),
+            discovery_refreshed: refreshed,
+        }
+    }
+
+    #[test]
+    fn slow_passes_coalesce_into_the_latest_message() {
+        let mut slot = None;
+        coalesce_pass(&mut slot, msg(&["h_a", "h_b"], false));
+        coalesce_pass(&mut slot, msg(&["h_a"], false));
+        coalesce_pass(&mut slot, msg(&["h_c"], false));
+        let pending = slot.expect("a message stays pending");
+        assert_eq!(pending.databases, vec!["h_c".to_owned()]);
+        assert!(!pending.discovery_refreshed);
+    }
+
+    #[test]
+    fn coalescing_never_drops_a_discovery_refresh() {
+        let mut slot = None;
+        coalesce_pass(&mut slot, msg(&["h_a"], true));
+        coalesce_pass(&mut slot, msg(&["h_a"], false));
+        let pending = slot.expect("a message stays pending");
+        assert!(
+            pending.discovery_refreshed,
+            "the flag of a replaced message survives"
+        );
     }
 }
