@@ -381,11 +381,13 @@ impl<F: ExecutorFactory> Exporter<F> {
     }
 
     /// Drops the executor (and with it the connection) after a
-    /// connection-level failure.
+    /// connection-level failure. The facts die with the connection: the
+    /// next executor must probe its own server.
     fn drop_connection(&mut self, dbname: &str) {
         if let Some(state) = self.per_db.get_mut(dbname) {
             state.sql = None;
             state.connected = false;
+            state.facts = None;
         }
     }
 
@@ -422,7 +424,7 @@ impl<F: ExecutorFactory> Exporter<F> {
     ) {
         let timeout = metric.def.statement_timeout_seconds;
         let started = std::time::Instant::now();
-        let result = self.query_with_retry(dbname, sql_text, timeout).await;
+        let result = self.query_with_retry(dbname, metric, sql_text, timeout).await;
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.record_fetch(dbname, &metric.name, now_ms, duration_ms, &result);
         match result {
@@ -454,10 +456,13 @@ impl<F: ExecutorFactory> Exporter<F> {
     }
 
     /// One query exchange; on a connection-level failure, drops the
-    /// connection, reconnects with the full setup, and retries once.
+    /// connection, reconnects with the full setup, and retries once. The
+    /// retry re-selects the SQL for the new connection's facts: a failover
+    /// may have landed on another server version.
     async fn query_with_retry(
         &mut self,
         dbname: &str,
+        metric: &PresetMetric,
         sql_text: &str,
         timeout: Option<u64>,
     ) -> Result<crate::measurement::QueryResult, MetricError> {
@@ -480,7 +485,10 @@ impl<F: ExecutorFactory> Exporter<F> {
                     state.connected = true;
                     state.facts = Some(facts);
                 }
-                self.query_once(dbname, sql_text, timeout).await
+                let retry_sql = self
+                    .sql_for(dbname, metric)
+                    .unwrap_or_else(|| sql_text.to_owned());
+                self.query_once(dbname, &retry_sql, timeout).await
             }
             Err(error) => {
                 self.report_error_state(dbname, INSTANCE_UP_METRIC, Some(error.to_string()));
@@ -501,11 +509,15 @@ impl<F: ExecutorFactory> Exporter<F> {
         let Some(sql) = state.sql.as_mut() else {
             return Err(MetricError::transport("no exporter connection"));
         };
-        let result = sql.execute(sql_text, timeout).await;
-        match &result {
-            Ok(_) => {
+        let outcome = sql.execute(sql_text, timeout).await;
+        match &outcome {
+            Ok(outcome) => {
                 if let Some(state) = self.per_db.get_mut(dbname) {
                     state.connected = true;
+                    // the exchange replaced the connection: adopt its facts
+                    if let Some(facts) = outcome.refreshed_facts {
+                        state.facts = Some(facts);
+                    }
                 }
             }
             Err(error) if error.connection_lost => {
@@ -515,7 +527,7 @@ impl<F: ExecutorFactory> Exporter<F> {
             }
             Err(_) => {}
         }
-        result
+        outcome.map(|outcome| outcome.result)
     }
 
     fn record_fetch(
@@ -738,6 +750,7 @@ fn relabel_dbname(set: &SampleSet, dbname: &str) -> SampleSet {
 mod tests {
     use super::*;
     use crate::catalog::{Catalog, Gauges, Sql};
+    use crate::executor::QueryOutcome;
     use crate::measurement::{Column, QueryResult};
     use crate::typing::ColumnKind;
     use std::collections::{HashSet, VecDeque};
@@ -747,6 +760,12 @@ mod tests {
 
     struct MockDb {
         facts_result: Result<ServerFacts, MetricError>,
+        /// Facts per setup probe in order (failover simulation); the base
+        /// result repeats once the queue is empty.
+        facts_queue: VecDeque<Result<ServerFacts, MetricError>>,
+        /// Facts an exchange reports because the pool silently replaced the
+        /// connection; consumed once by `execute`.
+        execute_refreshes_facts: Option<ServerFacts>,
         sql_results: VecDeque<Result<QueryResult, MetricError>>,
         facts_calls: usize,
         sql_calls: Vec<String>,
@@ -760,19 +779,27 @@ mod tests {
         async fn server_facts(&mut self) -> Result<ServerFacts, MetricError> {
             let mut db = self.db.lock().expect("mock");
             db.facts_calls += 1;
-            db.facts_result.clone()
+            db.facts_queue
+                .pop_front()
+                .unwrap_or_else(|| db.facts_result.clone())
         }
 
         async fn execute(
             &mut self,
             sql: &str,
             _statement_timeout_s: Option<u64>,
-        ) -> Result<QueryResult, MetricError> {
+        ) -> Result<QueryOutcome, MetricError> {
             let mut db = self.db.lock().expect("mock");
             db.sql_calls.push(sql.to_owned());
-            db.sql_results
+            let refreshed_facts = db.execute_refreshes_facts.take();
+            let result = db
+                .sql_results
                 .pop_front()
-                .unwrap_or_else(|| Ok(query_result()))
+                .unwrap_or_else(|| Ok(query_result()));
+            result.map(|result| QueryOutcome {
+                result,
+                refreshed_facts,
+            })
         }
     }
 
@@ -859,6 +886,8 @@ mod tests {
     ) -> SharedDb {
         Arc::new(Mutex::new(MockDb {
             facts_result: facts,
+            facts_queue: VecDeque::new(),
+            execute_refreshes_facts: None,
             sql_results: VecDeque::from(sql_results),
             facts_calls: 0,
             sql_calls: Vec::new(),
@@ -906,12 +935,18 @@ mod tests {
             "{text}"
         );
 
-        // recovery: the connection and queries work again
+        // recovery: the connection and queries work again. The outage pass
+        // returned before any metric SQL (no facts), so the queued refusals
+        // are replaced with successes for the recovery pass.
         let mock = e.factory.db("h_app");
-        mock.lock().expect("mock").facts_result = Ok(ServerFacts {
-            server_major_version: 16,
-            in_recovery: false,
-        });
+        {
+            let mut guard = mock.lock().expect("mock");
+            guard.facts_result = Ok(ServerFacts {
+                server_major_version: 16,
+                in_recovery: false,
+            });
+            guard.sql_results.clear();
+        }
         run(&mut e, &["h_app"], 1_700_000_200_500).await;
         let text = e.snapshot().to_owned();
         assert!(
@@ -1443,5 +1478,160 @@ mod tests {
             ],
             "EXE-9 reports state changes only"
         );
+    }
+
+    /// A preset whose only SQL metric selects its statement by server major
+    /// version, so a facts change must change the SQL sent.
+    fn versioned_preset() -> Vec<PresetMetric> {
+        Catalog::from_yaml_str(
+            "metrics:\n  ver:\n    sqls:\n      16: 'select 16 as v'\n      18: 'select 18 as v'\npresets:\n  p:\n    metrics:\n      ver: 60\n",
+            "test.yaml",
+        )
+        .expect("catalog")
+        .resolve_preset("p")
+        .expect("preset")
+        .into_iter()
+        .map(|(name, def, interval_s)| PresetMetric {
+            name,
+            def,
+            interval_s,
+        })
+        .collect()
+    }
+
+    fn facts_for(major: u32, in_recovery: bool) -> Result<ServerFacts, MetricError> {
+        Ok(ServerFacts {
+            server_major_version: major,
+            in_recovery,
+        })
+    }
+
+    #[tokio::test]
+    async fn transport_error_reconnects_and_retries_once() {
+        // the first exchange dies at the transport level; the reconnect
+        // setup succeeds and the same metric runs again in this pass
+        let mut factory = MockFactory::default();
+        factory.dbs.insert(
+            "h_app".to_owned(),
+            db(vec![
+                Err(MetricError::transport("connection reset by peer")),
+                Ok(query_result()),
+            ]),
+        );
+        let mut e = exporter(factory);
+        e.preset = versioned_preset();
+        run(&mut e, &["h_app"], 1_700_000_000_500).await;
+        let text = e.snapshot().to_owned();
+        let mock = e.factory.db("h_app");
+        let guard = mock.lock().expect("mock");
+        assert_eq!(
+            guard.sql_calls,
+            vec!["select 16 as v".to_owned(), "select 16 as v".to_owned()],
+            "exactly one retry of the same metric"
+        );
+        assert!(
+            text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
+            "the retry succeeded, the database is up: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sql_error_does_not_retry_or_drop_the_connection() {
+        let mut factory = MockFactory::default();
+        factory.dbs.insert(
+            "h_app".to_owned(),
+            db(vec![Err(MetricError {
+                sqlstate: Some("22012".to_owned()),
+                connection_lost: false,
+                message: "division by zero".to_owned(),
+            })]),
+        );
+        let mut e = exporter(factory);
+        e.preset = versioned_preset();
+        run(&mut e, &["h_app"], 1_700_000_000_500).await;
+        let text = e.snapshot().to_owned();
+        let mock = e.factory.db("h_app");
+        let guard = mock.lock().expect("mock");
+        assert_eq!(
+            guard.sql_calls,
+            vec!["select 16 as v".to_owned()],
+            "no retry for a SQL error"
+        );
+        assert_eq!(guard.facts_calls, 1, "no reconnect setup either");
+        assert!(
+            text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
+            "SQL errors never zero availability: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_reads_its_own_facts_and_reselects_sql() {
+        // primary PG16 answers the setup; the metric dies at the transport
+        // level; the reconnect lands on a PG18 standby whose facts must
+        // drive both the engine state and the retried SQL
+        let mut factory = MockFactory::default();
+        let mock = db_with_facts(
+            vec![
+                Err(MetricError::transport("connection reset by peer")),
+                Ok(query_result()),
+            ],
+            facts_for(16, false),
+        );
+        {
+            let mut guard = mock.lock().expect("mock");
+            guard.facts_queue = VecDeque::from([facts_for(16, false), facts_for(18, true)]);
+        }
+        factory.dbs.insert("h_app".to_owned(), mock);
+        let mut e = exporter(factory);
+        e.preset = versioned_preset();
+        run(&mut e, &["h_app"], 1_700_000_000_500).await;
+        let mock = e.factory.db("h_app");
+        let sql = {
+            let mut guard = mock.lock().expect("mock");
+            std::mem::take(&mut guard.sql_calls)
+        };
+        assert_eq!(
+            sql,
+            vec!["select 16 as v".to_owned(), "select 18 as v".to_owned()],
+            "the retry selects SQL for the new connection's major"
+        );
+        let facts_calls = mock.lock().expect("mock").facts_calls;
+        assert_eq!(facts_calls, 2, "initial setup + reconnect setup");
+    }
+
+    #[tokio::test]
+    async fn silent_pool_rotation_refreshes_facts_through_the_exchange() {
+        // the pool replaces the connection behind the engine's back; the
+        // exchange reports the fresh facts and the next pass selects the
+        // new server's SQL without any extra probe
+        let mut factory = MockFactory::default();
+        let mock = db_with_facts(vec![], facts_for(16, false));
+        factory.dbs.insert("h_app".to_owned(), mock);
+        let mut e = exporter(factory);
+        e.preset = versioned_preset();
+        run(&mut e, &["h_app"], 1_700_000_000_500).await;
+        {
+            let mock = e.factory.db("h_app");
+            let mut guard = mock.lock().expect("mock");
+            guard.execute_refreshes_facts =
+                Some(facts_for(18, false).expect("facts fixture in a test"));
+        }
+        run(&mut e, &["h_app"], 1_700_000_061_500).await;
+        run(&mut e, &["h_app"], 1_700_000_122_500).await;
+        let mock = e.factory.db("h_app");
+        let (sql, facts_calls) = {
+            let mut guard = mock.lock().expect("mock");
+            (std::mem::take(&mut guard.sql_calls), guard.facts_calls)
+        };
+        assert_eq!(
+            sql,
+            vec![
+                "select 16 as v".to_owned(),
+                "select 16 as v".to_owned(),
+                "select 18 as v".to_owned(),
+            ],
+            "rotation facts drive SQL selection from the next fetch on"
+        );
+        assert_eq!(facts_calls, 1, "no extra probe: facts rode the exchange");
     }
 }

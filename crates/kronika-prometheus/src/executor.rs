@@ -61,22 +61,35 @@ impl fmt::Display for MetricError {
 
 impl std::error::Error for MetricError {}
 
+/// The result of one metric query exchange.
+#[derive(Debug)]
+pub struct QueryOutcome {
+    /// Text-protocol rows with typed columns.
+    pub result: QueryResult,
+    /// Facts read during the exchange because the underlying connection
+    /// was replaced since they were last read; `None` while the connection
+    /// is the one the facts belong to.
+    pub refreshed_facts: Option<ServerFacts>,
+}
+
 /// The one executor per database: setup probe and metric SQL.
 pub trait SqlExecutor {
     /// Connects when needed and runs the setup probe, returning the server
-    /// facts. Also serves as the availability probe when `instance_up` is
-    /// due and no metric SQL ran this pass.
+    /// facts. Serves as the availability probe when a database's facts are
+    /// not yet known (fresh executor or dropped connection).
     fn server_facts(&mut self) -> impl Future<Output = Result<ServerFacts, MetricError>> + Send;
 
     /// Runs one single-statement simple-protocol message under the client
     /// deadline (`statement_timeout_s`, or the 5 s default when `None`,
     /// plus the guard margin) and returns text-protocol rows with typed
-    /// columns.
+    /// columns. When the exchange had to open a replacement connection, the
+    /// setup probe runs first under the same deadline and the fresh facts
+    /// ride the outcome.
     fn execute(
         &mut self,
         sql: &str,
         statement_timeout_s: Option<u64>,
-    ) -> impl Future<Output = Result<QueryResult, MetricError>> + Send;
+    ) -> impl Future<Output = Result<QueryOutcome, MetricError>> + Send;
 }
 
 /// Creates the per-database executor when a database appears in discovery.

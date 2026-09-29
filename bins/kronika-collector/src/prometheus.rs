@@ -10,10 +10,12 @@ use anyhow::{Context, Result};
 use futures_util::TryStreamExt as _;
 use kronika_prometheus::catalog::Catalog;
 use kronika_prometheus::engine::{Exporter, PresetMetric};
-use kronika_prometheus::executor::{ExecutorFactory, MetricError, ServerFacts, SqlExecutor};
+use kronika_prometheus::executor::{
+    ExecutorFactory, MetricError, QueryOutcome, ServerFacts, SqlExecutor,
+};
 use kronika_prometheus::measurement::{Column, QueryResult};
 use kronika_prometheus::typing::{Cell, kind_for_oid};
-use kronika_source_pg::{Pool, Transport};
+use kronika_source_pg::{Pool, Session, Transport};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -96,12 +98,15 @@ fn connect_error<E: std::fmt::Display + std::error::Error>(error: E) -> MetricEr
     MetricError::transport(chain)
 }
 
-/// Maps a session-level error; the pool reopens dead connections itself, so
-/// only the deadline expiry and closed transports mark the connection lost.
+/// Maps a session-level error. A `PostgreSQL` error with a SQLSTATE is a
+/// healthy server rejecting the statement; everything else — transport
+/// reset, EOF, protocol breakage — means the connection is gone and the
+/// engine must reconnect and retry (same criterion as the ordinary
+/// collector's acquisition path).
 fn map_pg_error(error: &tokio_postgres::Error) -> MetricError {
     MetricError {
         sqlstate: error.code().map(|state| state.code().to_owned()),
-        connection_lost: false,
+        connection_lost: error.as_db_error().is_none() || error.is_closed(),
         message: error.to_string(),
     }
 }
@@ -112,15 +117,50 @@ fn map_pg_error(error: &tokio_postgres::Error) -> MetricError {
 /// `lock_timeout`) rides the startup packet, so the connection sends nothing
 /// before its first real statement. Each exchange — the setup probe or one
 /// metric SELECT — runs under a single client deadline; expiry closes the
-/// socket through the held pool guard. No `CancelRequest` is ever sent.
+/// socket through the owned pool. No `CancelRequest` is ever sent.
+///
+/// Facts are bound to the connection generation they were read on: the pool
+/// replaces a closed or aged connection without telling the engine, so every
+/// exchange re-checks the generation and reruns the setup probe when the
+/// socket actually changed. A failover to another server version or recovery
+/// role can never answer with the previous connection's facts.
 struct ExporterSql {
     pool: Pool,
-    facts: Option<ServerFacts>,
+    facts: Option<(ServerFacts, u64)>,
 }
 
 impl ExporterSql {
     const PROBE_DEADLINE: Duration =
         Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_S + HANG_GUARD_MARGIN_S);
+
+    /// Runs the setup probe on the session's connection and binds the facts
+    /// to its generation.
+    async fn probe_facts(session: &Session<'_>) -> Result<ServerFacts, MetricError> {
+        let mut stats = kronika_source_pg::query::QueryStats::default();
+        let stream = session
+            .simple_stream(SETUP_PROBE_SQL, &mut stats)
+            .await
+            .map_err(|e| map_pg_error(&e))?;
+        let mut stream = std::pin::pin!(stream);
+        let mut version = None;
+        let mut in_recovery = None;
+        while let Some(message) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
+            if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
+                version = row.get(0).map(str::to_owned);
+                in_recovery = row.get(1).map(str::to_owned);
+            }
+        }
+        let version = version.ok_or_else(|| MetricError::transport("probe returned no rows"))?;
+        let in_recovery = in_recovery.unwrap_or_else(|| "f".to_owned());
+        // server_version_num is e.g. 160015; the catalog keys on the major
+        let version_num: u32 = version.parse().map_err(|error| {
+            MetricError::transport(format!("bad server_version_num {version:?}: {error}"))
+        })?;
+        Ok(ServerFacts {
+            server_major_version: version_num / 10_000,
+            in_recovery: in_recovery == "t",
+        })
+    }
 }
 
 impl SqlExecutor for ExporterSql {
@@ -128,34 +168,18 @@ impl SqlExecutor for ExporterSql {
         // one deadline covers connect, the statement and the drain
         let probe = async {
             let session = self.pool.session().await.map_err(connect_error)?;
-            let mut stats = kronika_source_pg::query::QueryStats::default();
-            let stream = session
-                .simple_stream(SETUP_PROBE_SQL, &mut stats)
-                .await
-                .map_err(|e| map_pg_error(&e))?;
-            let mut stream = std::pin::pin!(stream);
-            let mut version = None;
-            let mut in_recovery = None;
-            while let Some(message) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
-                if let tokio_postgres::SimpleQueryMessage::Row(row) = message {
-                    version = row.get(0).map(str::to_owned);
-                    in_recovery = row.get(1).map(str::to_owned);
-                }
+            let generation = session.generation();
+            if let Some((facts, seen_on)) = self.facts
+                && seen_on == generation
+            {
+                return Ok(facts);
             }
-            let version =
-                version.ok_or_else(|| MetricError::transport("probe returned no rows"))?;
-            let in_recovery = in_recovery.unwrap_or_else(|| "f".to_owned());
-            // server_version_num is e.g. 160015; the catalog keys on the major
-            let version_num: u32 = version.parse().map_err(|error| {
-                MetricError::transport(format!("bad server_version_num {version:?}: {error}"))
-            })?;
-            Ok(ServerFacts {
-                server_major_version: version_num / 10_000,
-                in_recovery: in_recovery == "t",
-            })
+            let facts = Self::probe_facts(&session).await?;
+            self.facts = Some((facts, generation));
+            Ok(facts)
         };
         match tokio::time::timeout(Self::PROBE_DEADLINE, probe).await {
-            Ok(result) => result.inspect(|facts| self.facts = Some(*facts)),
+            Ok(result) => result,
             Err(_elapsed) => {
                 // the cancelled future dropped the session; close the socket
                 // through the pool this executor owns
@@ -171,11 +195,23 @@ impl SqlExecutor for ExporterSql {
         &mut self,
         sql: &str,
         statement_timeout_s: Option<u64>,
-    ) -> Result<QueryResult, MetricError> {
+    ) -> Result<QueryOutcome, MetricError> {
         let timeout_s = statement_timeout_s.unwrap_or(DEFAULT_STATEMENT_TIMEOUT_S);
-        // one deadline covers connect, the statement and the drain
+        // one deadline covers connect, a replacement setup probe when the
+        // connection changed, the statement and the drain
         let collect = async {
             let session = self.pool.session().await.map_err(connect_error)?;
+            let generation = session.generation();
+            let mut refreshed_facts = None;
+            if !self
+                .facts
+                .as_ref()
+                .is_some_and(|(_, seen_on)| *seen_on == generation)
+            {
+                let facts = Self::probe_facts(&session).await?;
+                self.facts = Some((facts, generation));
+                refreshed_facts = Some(facts);
+            }
             let mut stats = kronika_source_pg::query::QueryStats::default();
             let stream = session
                 .simple_stream(sql, &mut stats)
@@ -207,9 +243,12 @@ impl SqlExecutor for ExporterSql {
                     rows.push((0..width).map(|i| row.get(i).map(str::to_owned)).collect());
                 }
             }
-            Ok(QueryResult {
-                columns: columns.unwrap_or_default(),
-                rows,
+            Ok(QueryOutcome {
+                result: QueryResult {
+                    columns: columns.unwrap_or_default(),
+                    rows,
+                },
+                refreshed_facts,
             })
         };
         match tokio::time::timeout(
