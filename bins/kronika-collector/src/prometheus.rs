@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures_util::TryStreamExt as _;
 use kronika_prometheus::catalog::Catalog;
-use kronika_prometheus::engine::{Exporter, PresetMetric};
+use kronika_prometheus::engine::{Exporter, PresetMetric, Published};
 use kronika_prometheus::executor::{
     ExecutorFactory, MetricError, QueryOutcome, ServerFacts, SqlExecutor,
 };
@@ -201,16 +201,17 @@ impl SqlExecutor for ExporterSql {
         let collect = async {
             let session = self.pool.session().await.map_err(connect_error)?;
             let generation = session.generation();
-            let mut refreshed_facts = None;
-            if !self
+            let facts_current = self
                 .facts
                 .as_ref()
-                .is_some_and(|(_, seen_on)| *seen_on == generation)
-            {
+                .is_some_and(|(_, seen_on)| *seen_on == generation);
+            let refreshed_facts = if facts_current {
+                None
+            } else {
                 let facts = Self::probe_facts(&session).await?;
                 self.facts = Some((facts, generation));
-                refreshed_facts = Some(facts);
-            }
+                Some(facts)
+            };
             let mut stats = kronika_source_pg::query::QueryStats::default();
             let stream = session
                 .simple_stream(sql, &mut stats)
@@ -308,7 +309,9 @@ struct PassMessage {
 
 /// The exporter endpoint: listener, pending pass, published snapshot.
 pub(crate) struct PrometheusExporter {
-    snapshot: Arc<std::sync::Mutex<String>>,
+    /// State captured after each pass; every scrape renders it against
+    /// the current clock, so entries expire without a new pass.
+    snapshot: Arc<std::sync::Mutex<Arc<Published>>>,
     scrapes: Arc<AtomicU64>,
     pending: Arc<std::sync::Mutex<Option<PassMessage>>>,
     wakes: Arc<tokio::sync::Notify>,
@@ -388,7 +391,7 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
         );
     });
     let scrapes = engine.scrape_counter();
-    let snapshot = Arc::new(std::sync::Mutex::new(String::new()));
+    let snapshot = Arc::new(std::sync::Mutex::new(engine.published_snapshot()));
     let published = Arc::clone(&snapshot);
     let pending = Arc::new(std::sync::Mutex::new(None::<PassMessage>));
     let wakes = Arc::new(tokio::sync::Notify::new());
@@ -401,16 +404,15 @@ pub(crate) async fn start(config: &Config) -> Result<Arc<PrometheusExporter>> {
             // again: only the latest database list ever runs
             loop {
                 let message = { task_pending.lock().expect("pass slot").take() };
-                let Some(message) = message else { break; };
+                let Some(message) = message else {
+                    break;
+                };
                 // the pass clock is read at execution, not at enqueue
                 let now_ms = unix_now_us().map(|us| us / 1000).unwrap_or_default();
                 engine
                     .run_pass(&message.databases, message.discovery_refreshed, now_ms)
                     .await;
-                let mut published = published.lock().expect("snapshot lock");
-                published.clear();
-                published.push_str(engine.snapshot());
-                drop(published);
+                *published.lock().expect("snapshot lock") = engine.published_snapshot();
             }
         }
     });
@@ -499,7 +501,12 @@ impl PrometheusExporter {
                 let (status, content_type, body) = match path {
                     "/metrics" => {
                         exporter.scrapes.fetch_add(1, Ordering::Relaxed);
-                        let body = exporter.snapshot.lock().expect("snapshot lock").clone();
+                        // clone the Arc under a short lock, render outside
+                        // it: per-entry expiry against the scrape clock
+                        let published =
+                            Arc::clone(&exporter.snapshot.lock().expect("snapshot lock"));
+                        let now_ms = unix_now_us().map(|us| us / 1000).unwrap_or_default();
+                        let body = published.render(now_ms);
                         ("200 OK", "text/plain; version=0.0.4; charset=utf-8", body)
                     }
                     "/health" => (

@@ -54,26 +54,20 @@ impl DbCache {
         self.metrics.insert(metric.to_owned(), entry);
     }
 
-    /// Non-stale entries for exposition: `instance_up` first, then metrics in
-    /// name order. `now_ms` is the render time, captured after the SQL of
-    /// its pass. A timestamp later than that (an epoch slightly ahead of
-    /// the pass start) stays fresh: it is a real execution timestamp, not a
-    /// clock step, and dropping it would hide a just-fetched metric.
+    /// All entries in exposition order — `instance_up` first, then metrics
+    /// in name order — without any staleness filtering; the scrape applies
+    /// [`fresh`] per entry against the clocks it actually serves at.
     #[must_use]
-    pub fn snapshot(&self, now_ms: i64) -> Vec<SnapshotRow> {
-        let fresh =
-            |e: &Entry| !stale(now_ms, e.set.timestamp_ms, stale_threshold_ms(e.interval_s));
+    pub fn all_rows(&self) -> Vec<SnapshotRow> {
         let mut rows = Vec::with_capacity(self.metrics.len() + 1);
-        if let Some(entry) = &self.instance_up
-            && fresh(entry)
-        {
+        if let Some(entry) = &self.instance_up {
             rows.push(SnapshotRow {
                 metric: INSTANCE_UP_METRIC.to_owned(),
                 entry: entry.clone(),
             });
         }
         for (metric, entry) in &self.metrics {
-            if metric != INSTANCE_UP_METRIC && fresh(entry) {
+            if metric != INSTANCE_UP_METRIC {
                 rows.push(SnapshotRow {
                     metric: metric.clone(),
                     entry: entry.clone(),
@@ -82,6 +76,33 @@ impl DbCache {
         }
         rows
     }
+
+    /// Non-stale entries for exposition: `instance_up` first, then metrics in
+    /// name order. `now_ms` is the render time, captured after the SQL of
+    /// its pass. A timestamp later than that (an epoch slightly ahead of
+    /// the pass start) stays fresh: it is a real execution timestamp, not a
+    /// clock step, and dropping it would hide a just-fetched metric.
+    #[must_use]
+    pub fn snapshot(&self, now_ms: i64) -> Vec<SnapshotRow> {
+        self.all_rows()
+            .into_iter()
+            .filter(|row| fresh(&row.entry, now_ms))
+            .collect()
+    }
+}
+
+/// Whether one entry is still worth serving at `now_ms`.
+///
+/// Older than `max(10 min, 2 × interval)` is stale; a fetch stamped at or
+/// after the clock reading stays fresh (real execution stamp, not a clock
+/// step).
+#[must_use]
+pub fn fresh(entry: &Entry, now_ms: i64) -> bool {
+    !stale(
+        now_ms,
+        entry.set.timestamp_ms,
+        stale_threshold_ms(entry.interval_s),
+    )
 }
 
 fn stale(now_ms: i64, fetched_ms: i64, threshold_ms: u64) -> bool {

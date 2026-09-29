@@ -117,17 +117,197 @@ pub struct Exporter<F: ExecutorFactory> {
     on_error: Option<ErrorCallback>,
     /// Last logged error signature per database/metric.
     error_signatures: BTreeMap<(String, String), Option<String>>,
-    /// Scrape counter incremented by the HTTP side, read here at render.
+    /// Scrape counter incremented by the HTTP side, read at render.
     scrapes: Arc<AtomicU64>,
-    /// Current count of dropped rows in the last render (assigned, not
-    /// accumulated: it clears when the errors disappear).
-    scrape_errors: u64,
     fetch_failure_count: u64,
     build_version: String,
     build_commit: String,
     start_time_ms: i64,
-    /// Pre-rendered exposition served to scrapes.
-    exposition: String,
+    /// State captured after each pass; scrapes render it against the
+    /// clock they actually serve at.
+    published: Arc<Published>,
+}
+
+#[expect(
+    missing_debug_implementations,
+    reason = "internal snapshot state; debug printing adds nothing"
+)]
+/// Everything a scrape needs, captured after a pass.
+///
+/// The scrape filters each entry by its own staleness against the current
+/// clock: expiry must not wait for the next pass to happen, and must not
+/// kill still-fresh slow metrics through one common per-line deadline.
+pub struct Published {
+    /// All cache rows in pass order: database by database, `instance_up`
+    /// first. Filtering happens per entry at render time.
+    rows: Vec<crate::cache::SnapshotRow>,
+    /// Last exporter connection verdict per database.
+    connected: Vec<(String, bool)>,
+    fetch_errors: BTreeMap<(String, String), u64>,
+    fetch_durations_ms: BTreeMap<(String, String), u64>,
+    last_fetch_ts_ms: BTreeMap<(String, String), i64>,
+    fetch_failure_count: u64,
+    build_version: String,
+    build_commit: String,
+    start_time_ms: i64,
+    /// Scrape counter incremented by the HTTP side, read at render.
+    scrapes: Arc<AtomicU64>,
+}
+
+impl Published {
+    /// The exposition body for a scrape at `now_ms`.
+    #[must_use]
+    pub fn render(&self, now_ms: i64) -> String {
+        let fresh_rows: Vec<&crate::cache::SnapshotRow> = self
+            .rows
+            .iter()
+            .filter(|row| crate::cache::fresh(&row.entry, now_ms))
+            .collect();
+        // the gauge holds the current dropped-row count of the served
+        // entries and clears when the errors disappear
+        let scrape_errors: u64 = fresh_rows
+            .iter()
+            .map(|row| row.entry.set.errors as u64)
+            .sum();
+        let mut out = crate::expose::expose_samples(fresh_rows.iter().map(|row| &row.entry.set));
+        self.write_core_self_metrics(&mut out, scrape_errors);
+        self.write_fetch_self_metrics(&mut out);
+        out
+    }
+
+    /// Build info, start time, connection verdicts and the exporter
+    /// compatibility trio.
+    fn write_core_self_metrics(&self, out: &mut String, scrape_errors: u64) {
+        use std::fmt::Write as _;
+        let family = |out: &mut String, name: &str, help: &str, kind: &str| {
+            let _ = writeln!(out, "# HELP {name} {help}");
+            let _ = writeln!(out, "# TYPE {name} {kind}");
+        };
+        family(
+            out,
+            "kronika_build_info",
+            "Collector build version and commit.",
+            "gauge",
+        );
+        let _ = writeln!(
+            out,
+            "kronika_build_info{{commit=\"{}\",version=\"{}\"}} 1",
+            self.build_commit, self.build_version
+        );
+        family(
+            out,
+            "kronika_start_time_seconds",
+            "Collector start time in seconds.",
+            "gauge",
+        );
+        let _ = writeln!(
+            out,
+            "kronika_start_time_seconds {}",
+            self.start_time_ms / 1000
+        );
+        family(
+            out,
+            "kronika_pg_connected",
+            "Last exporter connection verdict per database.",
+            "gauge",
+        );
+        for (db, connected) in &self.connected {
+            let _ = writeln!(
+                out,
+                "kronika_pg_connected{{database=\"{}\"}} {}",
+                crate::expose::escape_label_value(db),
+                u8::from(*connected)
+            );
+        }
+        family(
+            out,
+            "pgwatch_exporter_total_scrapes",
+            "Total scrape attempts.",
+            "counter",
+        );
+        let _ = writeln!(
+            out,
+            "pgwatch_exporter_total_scrapes {}",
+            self.scrapes.load(Ordering::Relaxed)
+        );
+        family(
+            out,
+            "pgwatch_exporter_last_scrape_errors",
+            "Last scrape error count for all monitored hosts / metrics.",
+            "gauge",
+        );
+        let _ = writeln!(out, "pgwatch_exporter_last_scrape_errors {scrape_errors}");
+        family(
+            out,
+            "pgwatch_exporter_total_scrape_failures",
+            "Number of errors while executing metric queries.",
+            "counter",
+        );
+        let _ = writeln!(
+            out,
+            "pgwatch_exporter_total_scrape_failures {}",
+            self.fetch_failure_count
+        );
+    }
+
+    /// Duration/timestamp/error rows per database and metric. They render
+    /// even when the maps are empty: a healthy exporter still carries
+    /// durations and timestamps.
+    fn write_fetch_self_metrics(&self, out: &mut String) {
+        use std::fmt::Write as _;
+        let family = |out: &mut String, name: &str, help: &str, kind: &str| {
+            let _ = writeln!(out, "# HELP {name} {help}");
+            let _ = writeln!(out, "# TYPE {name} {kind}");
+        };
+        family(
+            out,
+            "kronika_prometheus_fetch_errors_total",
+            "Metric fetch errors per database and metric.",
+            "counter",
+        );
+        for ((db, metric), count) in &self.fetch_errors {
+            let _ = writeln!(
+                out,
+                "kronika_prometheus_fetch_errors_total{{database=\"{}\",metric=\"{}\"}} {count}",
+                crate::expose::escape_label_value(db),
+                crate::expose::escape_label_value(metric)
+            );
+        }
+        family(
+            out,
+            "kronika_prometheus_last_fetch_timestamp_seconds",
+            "Last metric fetch completion time per database and metric.",
+            "gauge",
+        );
+        for ((db, metric), ts) in &self.last_fetch_ts_ms {
+            let _ = writeln!(
+                out,
+                "kronika_prometheus_last_fetch_timestamp_seconds{{database=\"{}\",metric=\"{}\"}} {}",
+                crate::expose::escape_label_value(db),
+                crate::expose::escape_label_value(metric),
+                ts / 1000
+            );
+        }
+        family(
+            out,
+            "kronika_prometheus_fetch_duration_seconds",
+            "Last metric fetch duration per database and metric.",
+            "gauge",
+        );
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "millisecond durations as fractional seconds lose nothing at these magnitudes"
+        )]
+        for ((db, metric), ms) in &self.fetch_durations_ms {
+            let _ = writeln!(
+                out,
+                "kronika_prometheus_fetch_duration_seconds{{database=\"{}\",metric=\"{}\"}} {}",
+                crate::expose::escape_label_value(db),
+                crate::expose::escape_label_value(metric),
+                (*ms as f64) / 1000.0
+            );
+        }
+    }
 }
 
 impl<F: ExecutorFactory> Exporter<F> {
@@ -142,6 +322,8 @@ impl<F: ExecutorFactory> Exporter<F> {
         start_time_ms: i64,
         scrapes: Arc<AtomicU64>,
     ) -> Self {
+        let build_version = build_version.into();
+        let build_commit = build_commit.into();
         Self {
             factory,
             preset,
@@ -153,13 +335,23 @@ impl<F: ExecutorFactory> Exporter<F> {
             fetch_errors: BTreeMap::new(),
             fetch_durations_ms: BTreeMap::new(),
             last_fetch_ts_ms: BTreeMap::new(),
-            scrapes,
-            scrape_errors: 0,
+            scrapes: Arc::clone(&scrapes),
             fetch_failure_count: 0,
-            build_version: build_version.into(),
-            build_commit: build_commit.into(),
+            build_version: build_version.clone(),
+            build_commit: build_commit.clone(),
             start_time_ms,
-            exposition: String::new(),
+            published: Arc::new(Published {
+                rows: Vec::new(),
+                connected: Vec::new(),
+                fetch_errors: BTreeMap::new(),
+                fetch_durations_ms: BTreeMap::new(),
+                last_fetch_ts_ms: BTreeMap::new(),
+                fetch_failure_count: 0,
+                build_version,
+                build_commit,
+                start_time_ms,
+                scrapes,
+            }),
         }
     }
 
@@ -169,10 +361,18 @@ impl<F: ExecutorFactory> Exporter<F> {
         Arc::clone(&self.scrapes)
     }
 
-    /// The pre-rendered exposition body for scrapes.
+    /// The published state for the HTTP side; rendering happens per scrape.
     #[must_use]
-    pub fn snapshot(&self) -> &str {
-        &self.exposition
+    pub fn published_snapshot(&self) -> Arc<Published> {
+        Arc::clone(&self.published)
+    }
+
+    /// The exposition body a scrape at `now_ms` serves: every entry is
+    /// checked against the scrape clock, so results expire without a new
+    /// pass and slow metrics survive next to expired fast ones.
+    #[must_use]
+    pub fn scrape_body(&self, now_ms: i64) -> String {
+        self.published.render(now_ms)
     }
 
     /// Installs the EXE-9 error-state callback.
@@ -274,7 +474,7 @@ impl<F: ExecutorFactory> Exporter<F> {
         }
         let pass_end_ms = clock.now_ms();
         self.store_derived_instance_up(pass_end_ms);
-        self.render(pass_end_ms);
+        self.publish();
     }
 
     /// Publishes the derived `instance_up` for every database.
@@ -332,11 +532,11 @@ impl<F: ExecutorFactory> Exporter<F> {
                 Some(NodeStatus::Standby) if !facts.in_recovery => continue,
                 _ => {}
             }
+            // CAT-9 instance-level runs once per interval on the first
+            // database able to run it; the due check stays open until some
+            // database succeeds. The stamp is this query's own start.
+            let start_ms = clock.now_ms();
             if metric.def.is_instance_level {
-                // CAT-9: once per interval on the first database able to run
-                // it; the due check stays open until some database succeeds.
-                // The stamp is this query's own start, not the pass start.
-                let start_ms = clock.now_ms();
                 let last = self
                     .instance_last_start_ms
                     .get(&metric.name)
@@ -350,7 +550,6 @@ impl<F: ExecutorFactory> Exporter<F> {
                         .insert(metric.name.clone(), start_ms);
                 }
             } else {
-                let start_ms = clock.now_ms();
                 let state_last = self
                     .per_db
                     .get(dbname)
@@ -451,7 +650,9 @@ impl<F: ExecutorFactory> Exporter<F> {
     ) {
         let timeout = metric.def.statement_timeout_seconds;
         let started = std::time::Instant::now();
-        let result = self.query_with_retry(dbname, metric, sql_text, timeout).await;
+        let result = self
+            .query_with_retry(dbname, metric, sql_text, timeout)
+            .await;
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         // completion time: the fetch timestamp and the fallback sample
         // stamp describe when the data arrived, not when the pass began
@@ -605,165 +806,31 @@ impl<F: ExecutorFactory> Exporter<F> {
         }
     }
 
-    /// Rebuilds the stored exposition body from the cache and self metrics.
-    fn render(&mut self, now_ms: i64) {
-        let mut sets: Vec<SampleSet> = Vec::new();
-        // the gauge holds the current dropped-row count and clears when
-        // the errors disappear
-        let mut scrape_errors = 0_usize;
+    /// Captures the post-pass state for scrapes.
+    fn publish(&mut self) {
+        let mut rows = Vec::new();
         for state in self.per_db.values() {
-            for row in state.cache.snapshot(now_ms) {
-                scrape_errors += row.entry.set.errors;
-                sets.push(row.entry.set);
-            }
+            rows.extend(state.cache.all_rows());
         }
-        self.scrape_errors = u64::try_from(scrape_errors).unwrap_or(u64::MAX);
-        let mut out = crate::expose::expose_samples(sets.iter());
-        out.push_str(&self.self_metrics_text());
-        self.exposition = out;
-    }
-
-    fn self_metrics_text(&self) -> String {
-        use std::fmt::Write as _;
-        let mut out = String::new();
-        let family = |out: &mut String, name: &str, help: &str, kind: &str| {
-            let _ = writeln!(out, "# HELP {name} {help}");
-            let _ = writeln!(out, "# TYPE {name} {kind}");
-        };
-        family(
-            &mut out,
-            "kronika_build_info",
-            "Collector build version and commit.",
-            "gauge",
-        );
-        let _ = writeln!(
-            out,
-            "kronika_build_info{{commit=\"{}\",version=\"{}\"}} 1",
-            self.build_commit, self.build_version
-        );
-        family(
-            &mut out,
-            "kronika_start_time_seconds",
-            "Collector start time in seconds.",
-            "gauge",
-        );
-        let _ = writeln!(
-            out,
-            "kronika_start_time_seconds {}",
-            self.start_time_ms / 1000
-        );
-        family(
-            &mut out,
-            "kronika_pg_connected",
-            "Last exporter connection verdict per database.",
-            "gauge",
-        );
-        for (db, state) in &self.per_db {
-            let _ = writeln!(
-                out,
-                "kronika_pg_connected{{database=\"{}\"}} {}",
-                crate::expose::escape_label_value(db),
-                u8::from(state.connected)
-            );
-        }
-        family(
-            &mut out,
-            "pgwatch_exporter_total_scrapes",
-            "Total scrape attempts.",
-            "counter",
-        );
-        let _ = writeln!(
-            out,
-            "pgwatch_exporter_total_scrapes {}",
-            self.scrapes.load(Ordering::Relaxed)
-        );
-        family(
-            &mut out,
-            "pgwatch_exporter_last_scrape_errors",
-            "Last scrape error count for all monitored hosts / metrics.",
-            "gauge",
-        );
-        let _ = writeln!(
-            out,
-            "pgwatch_exporter_last_scrape_errors {}",
-            self.scrape_errors
-        );
-        family(
-            &mut out,
-            "pgwatch_exporter_total_scrape_failures",
-            "Number of errors while executing metric queries.",
-            "counter",
-        );
-        let _ = writeln!(
-            out,
-            "pgwatch_exporter_total_scrape_failures {}",
-            self.fetch_failure_count
-        );
-        out.push_str(&self.fetch_self_metrics());
-        out
-    }
-
-    /// Duration/timestamp/error rows per database and metric. They render
-    /// even when the error map is empty: a healthy exporter still carries
-    /// durations and timestamps.
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "millisecond durations as fractional seconds lose nothing at these magnitudes"
-    )]
-    fn fetch_self_metrics(&self) -> String {
-        use std::fmt::Write as _;
-        let mut out = String::new();
-        let family = |out: &mut String, name: &str, help: &str, kind: &str| {
-            let _ = writeln!(out, "# HELP {name} {help}");
-            let _ = writeln!(out, "# TYPE {name} {kind}");
-        };
-        family(
-            &mut out,
-            "kronika_prometheus_fetch_errors_total",
-            "Metric fetch errors per database and metric.",
-            "counter",
-        );
-        for ((db, metric), count) in &self.fetch_errors {
-            let _ = writeln!(
-                out,
-                "kronika_prometheus_fetch_errors_total{{database=\"{}\",metric=\"{}\"}} {count}",
-                crate::expose::escape_label_value(db),
-                crate::expose::escape_label_value(metric)
-            );
-        }
-        family(
-            &mut out,
-            "kronika_prometheus_last_fetch_timestamp_seconds",
-            "Last metric fetch completion time per database and metric.",
-            "gauge",
-        );
-        for ((db, metric), ts) in &self.last_fetch_ts_ms {
-            let _ = writeln!(
-                out,
-                "kronika_prometheus_last_fetch_timestamp_seconds{{database=\"{}\",metric=\"{}\"}} {}",
-                crate::expose::escape_label_value(db),
-                crate::expose::escape_label_value(metric),
-                ts / 1000
-            );
-        }
-        family(
-            &mut out,
-            "kronika_prometheus_fetch_duration_seconds",
-            "Last metric fetch duration per database and metric.",
-            "gauge",
-        );
-        for ((db, metric), ms) in &self.fetch_durations_ms {
-            let _ = writeln!(
-                out,
-                "kronika_prometheus_fetch_duration_seconds{{database=\"{}\",metric=\"{}\"}} {}",
-                crate::expose::escape_label_value(db),
-                crate::expose::escape_label_value(metric),
-                (*ms as f64) / 1000.0
-            );
-        }
-        out
+        self.published = Arc::new(Published {
+            rows,
+            connected: self
+                .per_db
+                .iter()
+                .map(|(db, state)| (db.clone(), state.connected))
+                .collect(),
+            fetch_errors: self.fetch_errors.clone(),
+            fetch_durations_ms: self.fetch_durations_ms.clone(),
+            last_fetch_ts_ms: self.last_fetch_ts_ms.clone(),
+            fetch_failure_count: self.fetch_failure_count,
+            build_version: self.build_version.clone(),
+            build_commit: self.build_commit.clone(),
+            start_time_ms: self.start_time_ms,
+            scrapes: Arc::clone(&self.scrapes),
+        });
     }
 }
+
 /// Rebuilds `dbname` labels of an instance-level set for one database.
 fn relabel_dbname(set: &SampleSet, dbname: &str) -> SampleSet {
     let mut set = set.clone();
@@ -816,15 +883,23 @@ mod tests {
                 .unwrap_or_else(|| db.facts_result.clone())
         }
 
+        #[allow(
+            clippy::significant_drop_tightening,
+            reason = "test mock: the guard drops at the end of the statement, before the sleep await"
+        )]
         async fn execute(
             &mut self,
             sql: &str,
             _statement_timeout_s: Option<u64>,
         ) -> Result<QueryOutcome, MetricError> {
-            let delay_ms = {
-                let db = self.db.lock().expect("mock");
-                db.delays_ms.get(sql).copied().unwrap_or(0)
-            };
+            let delay_ms = self
+                .db
+                .lock()
+                .expect("mock")
+                .delays_ms
+                .get(sql)
+                .copied()
+                .unwrap_or(0);
             if delay_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
             }
@@ -945,7 +1020,7 @@ mod tests {
         factory.dbs.insert("h_app".to_owned(), db(vec![]));
         let mut e = exporter(factory);
         run(&mut e, &["h_app"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         assert!(
             text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
             "{text}"
@@ -965,7 +1040,7 @@ mod tests {
             db.sql_results = VecDeque::from([Err(refused()), Err(refused()), Err(refused())]);
         }
         run(&mut e, &["h_app"], 1_700_000_100_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_100_500);
         assert!(
             text.contains("pgwatch_instance_up{dbname=\"h_app\"} 0"),
             "{text}"
@@ -988,7 +1063,7 @@ mod tests {
             guard.sql_results.clear();
         }
         run(&mut e, &["h_app"], 1_700_000_200_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_200_500);
         assert!(
             text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
             "{text}"
@@ -1012,7 +1087,7 @@ mod tests {
         );
         let mut e = exporter(factory);
         run(&mut e, &["h_app"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         assert!(
             text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
             "{text}"
@@ -1045,7 +1120,7 @@ mod tests {
         );
         let mut e = exporter(factory);
         run(&mut e, &["h_app"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         // the retry stored db_stats and the connection verdict stayed up
         assert!(
             text.contains("pgwatch_db_stats_xact_commit{dbname=\"h_app\"} 7"),
@@ -1211,10 +1286,10 @@ mod tests {
             .insert("h_gone".to_owned(), db(vec![Ok(query_result())]));
         let mut e = exporter(factory);
         run(&mut e, &["h_app", "h_gone"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         assert!(text.contains("dbname=\"h_gone\""), "{text}");
         run(&mut e, &["h_app"], 1_700_000_001_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_001_500);
         assert!(!text.contains("dbname=\"h_gone\""), "{text}");
         assert!(text.contains("dbname=\"h_app\""), "{text}");
     }
@@ -1236,13 +1311,13 @@ mod tests {
         );
         let mut e = exporter(factory);
         run(&mut e, &["h_app"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         assert!(
             text.contains("kronika_prometheus_fetch_errors_total"),
             "{text}"
         );
         run(&mut e, &[], 1_700_000_061_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_061_500);
         assert!(
             !text.contains("database=\"h_app\""),
             "dead sample rows pruned with the database: {text}"
@@ -1260,7 +1335,7 @@ mod tests {
             .insert("h_b".to_owned(), db(vec![Ok(query_result())]));
         let mut e = exporter(factory);
         run(&mut e, &["h_a", "h_b"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         // wal is instance-level in the embedded catalog: one execution on the
         // first database, rows under both dbname labels
         assert!(
@@ -1325,7 +1400,7 @@ mod tests {
         e.preset = preset;
         run(&mut e, &["h_app"], 1_700_000_000_500).await;
         let rows = e
-            .snapshot()
+            .scrape_body(1_700_000_000_500)
             .lines()
             .filter(|l| l.starts_with("pgwatch_db_size_xact_commit"))
             .count();
@@ -1359,7 +1434,7 @@ mod tests {
         mock.lock().expect("mock").sql_results =
             VecDeque::from([Ok(query_result()), Ok(ahead), Ok(query_result())]);
         run(&mut e, &["h_app"], 1_700_000_000_400).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_400);
         assert!(
             text.contains("pgwatch_db_stats_xact_commit{dbname=\"h_app\"} 7"),
             "{text}"
@@ -1376,7 +1451,7 @@ mod tests {
         // only instance_up in the preset: no metric SQL ever runs
         e.preset.retain(|m| m.name == INSTANCE_UP_METRIC);
         run(&mut e, &["h_app"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         assert!(
             text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
             "{text}"
@@ -1400,7 +1475,7 @@ mod tests {
         );
         let mut e = exporter(factory);
         run(&mut e, &["h_app"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         assert!(
             text.contains("kronika_prometheus_fetch_duration_seconds{database=\"h_app\""),
             "{text}"
@@ -1460,13 +1535,13 @@ mod tests {
         e.preset
             .retain(|m| m.name == INSTANCE_UP_METRIC || m.name == "db_stats");
         run(&mut e, &["h_app"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         assert!(
             text.contains("pgwatch_exporter_last_scrape_errors 1"),
             "{text}"
         );
         run(&mut e, &["h_app"], 1_700_000_061_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_061_500);
         assert!(
             text.contains("pgwatch_exporter_last_scrape_errors 0"),
             "the gauge holds the current count and clears: {text}"
@@ -1539,11 +1614,11 @@ mod tests {
         .collect()
     }
 
-    fn facts_for(major: u32, in_recovery: bool) -> Result<ServerFacts, MetricError> {
-        Ok(ServerFacts {
+    fn facts_for(major: u32, in_recovery: bool) -> ServerFacts {
+        ServerFacts {
             server_major_version: major,
             in_recovery,
-        })
+        }
     }
 
     #[tokio::test]
@@ -1561,11 +1636,14 @@ mod tests {
         let mut e = exporter(factory);
         e.preset = versioned_preset();
         run(&mut e, &["h_app"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         let mock = e.factory.db("h_app");
-        let guard = mock.lock().expect("mock");
+        let sql_calls = {
+            let mut guard = mock.lock().expect("mock");
+            std::mem::take(&mut guard.sql_calls)
+        };
         assert_eq!(
-            guard.sql_calls,
+            sql_calls,
             vec!["select 16 as v".to_owned(), "select 16 as v".to_owned()],
             "exactly one retry of the same metric"
         );
@@ -1589,15 +1667,22 @@ mod tests {
         let mut e = exporter(factory);
         e.preset = versioned_preset();
         run(&mut e, &["h_app"], 1_700_000_000_500).await;
-        let text = e.snapshot().to_owned();
+        let text = e.scrape_body(1_700_000_000_500);
         let mock = e.factory.db("h_app");
-        let guard = mock.lock().expect("mock");
+        let sql_calls = {
+            let mut guard = mock.lock().expect("mock");
+            std::mem::take(&mut guard.sql_calls)
+        };
         assert_eq!(
-            guard.sql_calls,
+            sql_calls,
             vec!["select 16 as v".to_owned()],
             "no retry for a SQL error"
         );
-        assert_eq!(guard.facts_calls, 1, "no reconnect setup either");
+        assert_eq!(
+            mock.lock().expect("mock").facts_calls,
+            1,
+            "no reconnect setup either"
+        );
         assert!(
             text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
             "SQL errors never zero availability: {text}"
@@ -1615,11 +1700,11 @@ mod tests {
                 Err(MetricError::transport("connection reset by peer")),
                 Ok(query_result()),
             ],
-            facts_for(16, false),
+            Ok(facts_for(16, false)),
         );
         {
             let mut guard = mock.lock().expect("mock");
-            guard.facts_queue = VecDeque::from([facts_for(16, false), facts_for(18, true)]);
+            guard.facts_queue = VecDeque::from([Ok(facts_for(16, false)), Ok(facts_for(18, true))]);
         }
         factory.dbs.insert("h_app".to_owned(), mock);
         let mut e = exporter(factory);
@@ -1645,7 +1730,7 @@ mod tests {
         // exchange reports the fresh facts and the next pass selects the
         // new server's SQL without any extra probe
         let mut factory = MockFactory::default();
-        let mock = db_with_facts(vec![], facts_for(16, false));
+        let mock = db_with_facts(vec![], Ok(facts_for(16, false)));
         factory.dbs.insert("h_app".to_owned(), mock);
         let mut e = exporter(factory);
         e.preset = versioned_preset();
@@ -1653,8 +1738,7 @@ mod tests {
         {
             let mock = e.factory.db("h_app");
             let mut guard = mock.lock().expect("mock");
-            guard.execute_refreshes_facts =
-                Some(facts_for(18, false).expect("facts fixture in a test"));
+            guard.execute_refreshes_facts = Some(facts_for(18, false));
         }
         run(&mut e, &["h_app"], 1_700_000_061_500).await;
         run(&mut e, &["h_app"], 1_700_000_122_500).await;
@@ -1673,6 +1757,38 @@ mod tests {
             "rotation facts drive SQL selection from the next fetch on"
         );
         assert_eq!(facts_calls, 1, "no extra probe: facts rode the exchange");
+    }
+
+    #[tokio::test]
+    async fn entries_expire_at_scrape_time_without_a_new_pass() {
+        // one pass, then the clock moves past the 10-minute threshold of
+        // the fast metric but not past the 2-hour threshold of the slow
+        // one: the scrape itself must drop exactly the expired entry
+        let mut factory = MockFactory::default();
+        factory.dbs.insert("h_app".to_owned(), db(vec![]));
+        let mut e = exporter(factory);
+        e.preset = Catalog::from_yaml_str(
+            "metrics:\n  fast:\n    sqls: {16: 'select 1 as v'}\n  slow:\n    sqls: {16: 'select 2 as v'}\npresets:\n  p:\n    metrics: {fast: 60, slow: 3600}\n",
+            "test.yaml",
+        )
+        .expect("catalog")
+        .resolve_preset("p")
+        .expect("preset")
+        .into_iter()
+        .map(|(name, def, interval_s)| PresetMetric {
+            name,
+            def,
+            interval_s,
+        })
+        .collect();
+        run(&mut e, &["h_app"], 1_700_000_000_000).await;
+        let fresh = e.scrape_body(1_700_000_000_000);
+        assert!(fresh.contains("pgwatch_fast_xact_commit{"), "{fresh}");
+        assert!(fresh.contains("pgwatch_slow_xact_commit{"), "{fresh}");
+        // 11 minutes later, no pass in between
+        let stale = e.scrape_body(1_700_000_000_000 + 11 * 60_000);
+        assert!(!stale.contains("pgwatch_fast_xact_commit{"), "{stale}");
+        assert!(stale.contains("pgwatch_slow_xact_commit{"), "{stale}");
     }
 
     #[tokio::test]
