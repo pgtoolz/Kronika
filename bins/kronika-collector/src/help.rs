@@ -34,8 +34,8 @@ Collection:
   and remote files are not downloaded through the database connection.
   Mode is never inferred from the DSN. PgBouncer logs require local mode.
   TLS verifies certificates and hostnames; --pg-ssl-root-cert replaces the CA
-  roots. Direct PostgreSQL and PgBouncer session pooling are supported.
-  Transaction/statement pooling and sslmode=verify-full are unsupported.
+  roots. Use --pg-dsn for PostgreSQL. --pgbouncer-dsn targets the PgBouncer console.
+  PostgreSQL settings are sent in the startup packet. sslmode=verify-full is unsupported.
   Intervals are whole seconds. A source interval of 0 reads every timer cycle;
   it does not disable that source. Statements/plans always wait at least 300s.
   A nonempty lock-wait result enables the faster activity interval; an empty

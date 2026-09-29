@@ -449,27 +449,24 @@ impl<F: ExecutorFactory> Exporter<F> {
             }
             self.pass_database(dbname, &clock).await;
         }
-        let names: Vec<String> = self.per_db.keys().cloned().collect();
         // Upstream keys its cache by the storage-resolved metric name, so
         // storage_name twins (e.g. db_size and db_size_approx) overwrite
         // each other instead of emitting duplicate series (prometheus.go
         // AddCacheEntry); both twins still fetch, last write wins.
         for (family, (_, set)) in &self.instance_sets {
-            for dbname in &names {
-                if let Some(state) = self.per_db.get_mut(dbname) {
-                    let interval_s = self
-                        .preset
-                        .iter()
-                        .find(|m| m.def.exposed_name(&m.name) == family)
-                        .map_or(INSTANCE_UP_INTERVAL_S, |m| m.interval_s);
-                    state.cache.store(
-                        family,
-                        Entry {
-                            interval_s,
-                            set: relabel_dbname(set, dbname),
-                        },
-                    );
-                }
+            let interval_s = self
+                .preset
+                .iter()
+                .find(|m| m.def.exposed_name(&m.name) == family)
+                .map_or(INSTANCE_UP_INTERVAL_S, |m| m.interval_s);
+            for (dbname, state) in &mut self.per_db {
+                state.cache.store(
+                    family,
+                    Entry {
+                        interval_s,
+                        set: relabel_dbname(set, dbname),
+                    },
+                );
             }
         }
         let pass_end_ms = clock.now_ms();
@@ -569,7 +566,7 @@ impl<F: ExecutorFactory> Exporter<F> {
 
     /// Runs the setup select once for a database whose facts are unknown;
     /// success also marks the connection working. Never called on a
-    /// schedule: instance_up is derived from real exchanges only.
+    /// schedule: `instance_up` is derived from real exchanges only.
     async fn probe(&mut self, dbname: &str) {
         let result = if let Some(state) = self.per_db.get_mut(dbname)
             && let Some(sql) = state.sql.as_mut()
@@ -731,19 +728,13 @@ impl<F: ExecutorFactory> Exporter<F> {
         let outcome = sql.execute(sql_text, timeout).await;
         match &outcome {
             Ok(outcome) => {
-                if let Some(state) = self.per_db.get_mut(dbname) {
-                    state.connected = true;
-                    // the exchange replaced the connection: adopt its facts
-                    if let Some(facts) = outcome.refreshed_facts {
-                        state.facts = Some(facts);
-                    }
+                state.connected = true;
+                // the exchange replaced the connection: adopt its facts
+                if let Some(facts) = outcome.refreshed_facts {
+                    state.facts = Some(facts);
                 }
             }
-            Err(error) if error.connection_lost => {
-                if let Some(state) = self.per_db.get_mut(dbname) {
-                    state.connected = false;
-                }
-            }
+            Err(error) if error.connection_lost => state.connected = false,
             Err(_) => {}
         }
         outcome.map(|outcome| outcome.result)

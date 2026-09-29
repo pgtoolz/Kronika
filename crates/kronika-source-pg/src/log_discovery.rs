@@ -19,7 +19,7 @@ use crate::acquisition::{ConnectionObservation, PgObservation, QueryObservation,
 
 use crate::CONNECT_TIMEOUT;
 use crate::acquisition::execution::postgres_query_cancelled;
-use crate::connection::{self, ConnectStage, ConnectionFailure, connection_label};
+use crate::connection::{self, ConnectionFailure, connection_label};
 const QUERY_TIMEOUT: Duration = query::QUERY_FETCH_TIMEOUT;
 
 // Retain the original source markers so the module move does not change emitted
@@ -187,10 +187,8 @@ pub async fn postgres<T>(
         match connection::connect_monitoring(&config, transport).await {
             Ok(connected) => connected,
             Err(failure) => {
-                let context = match failure.stage {
-                    ConnectStage::Connect => "connect to PostgreSQL",
-                };
-                let (timeout, message, error) = match failure.error {
+                let context = "connect to PostgreSQL";
+                let (timeout, message, error) = match failure {
                     ConnectionFailure::PostgreSql(error) => (
                         false,
                         error.to_string(),

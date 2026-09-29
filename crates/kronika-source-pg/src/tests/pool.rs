@@ -92,7 +92,6 @@ async fn startup_packet_carries_session_config_and_queries_stay_single() {
         .local_addr()
         .expect("read the probe address")
         .port();
-    let (first_query_tx, first_query_rx) = tokio::sync::oneshot::channel();
     let server = std::thread::spawn(move || {
         let (mut stream, _peer) = listener.accept().expect("accept the frontend session");
         stream
@@ -101,9 +100,6 @@ async fn startup_packet_carries_session_config_and_queries_stay_single() {
         let startup = accept_startup(&mut stream);
         let first_query = read_frontend(&mut stream);
         write_command_ready(&mut stream, "SELECT 0");
-        first_query_tx
-            .send(first_query.clone())
-            .expect("report the first query");
         let reused_query = read_frontend(&mut stream);
         write_command_ready(&mut stream, "SELECT 0");
         (startup, first_query, reused_query)
@@ -125,10 +121,9 @@ async fn startup_packet_carries_session_config_and_queries_stay_single() {
     }
     pool.close();
 
-    let first_query = first_query_rx.await.expect("the probe saw the first query");
+    let (startup, first_query, reused) = server.join().expect("the protocol probe exits");
     assert_eq!(first_query.0, b'Q');
     assert_eq!(frontend_sql(&first_query.1), "SELECT 1");
-    let (startup, _first, reused) = server.join().expect("the protocol probe exits");
     let startup = String::from_utf8_lossy(&startup);
     assert!(
         startup.contains("options\0-c statement_timeout=30s -c lock_timeout=100ms"),

@@ -90,7 +90,7 @@ pub struct MetricDef {
     pub is_instance_level: bool,
     /// Recovery-role restriction.
     pub node_status: Option<NodeStatus>,
-    /// Per-metric server-side `statement_timeout` override in seconds.
+    /// Metric timeout seconds. Bounds the client deadline and preset startup maximum.
     pub statement_timeout_seconds: Option<u64>,
     /// Exposition name override; see [`MetricDef::exposed_name`].
     pub storage_name: Option<String>,
@@ -223,9 +223,8 @@ impl Catalog {
     ///
     /// # Errors
     ///
-    /// Returns a [`CatalogError`] with the file and YAML line for parse and
-    /// validation failures (unknown keys, invalid SQL shape, unknown
-    /// `node_status`, zero timeout).
+    /// Returns a [`CatalogError`] for invalid YAML or catalog definitions.
+    /// YAML parse errors include the line number.
     pub fn from_yaml_str(yaml: &str, source: &str) -> Result<Self, CatalogError> {
         let err = |message: String| CatalogError {
             source: source.to_owned(),

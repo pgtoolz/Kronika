@@ -139,8 +139,7 @@ mod tests {
         let rows = cache.snapshot(1_000 + 9 * MINUTE);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].metric, "instance_up");
-        // a ping that keeps failing refreshes the timestamp, so a reachable
-        // 10-minute staleness never fires for it; at the boundary it holds
+        // The entry remains fresh at the staleness boundary.
         let rows = cache.snapshot(1_000 + TEN_MINUTES);
         assert_eq!(rows.len(), 1);
         let rows = cache.snapshot(1_000 + TEN_MINUTES + 1);

@@ -43,9 +43,7 @@ const REQUEST_HEAD_LIMIT: usize = 8 * 1024;
 /// without `rics HTTP/1.1\r\n...`. Bytes accumulate until the head's
 /// terminating blank line, the size limit, or EOF; a connection that never
 /// finishes its head is dropped at the deadline.
-async fn read_request_path<R: tokio::io::AsyncRead + Unpin>(
-    socket: &mut R,
-) -> Option<String> {
+async fn read_request_path<R: tokio::io::AsyncRead + Unpin>(socket: &mut R) -> Option<String> {
     let mut buffer: Vec<u8> = Vec::with_capacity(512);
     let mut chunk = [0_u8; 1024];
     loop {
@@ -595,7 +593,7 @@ mod tests {
             .expect("request");
         let path = read_request_path(&mut server).await.expect("parsed");
         assert_eq!(path, "/health");
-        let (mut client, mut server) = tokio::io::duplex(256);
+        let (client, mut server) = tokio::io::duplex(256);
         drop(client); // EOF with nothing sent
         assert!(read_request_path(&mut server).await.is_none());
     }

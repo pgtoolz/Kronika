@@ -11,35 +11,19 @@ pub(crate) struct MonitoringConnection {
     pub(crate) driver: tokio::task::JoinHandle<()>,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum ConnectStage {
-    Connect,
-}
-
 pub(crate) enum ConnectionFailure {
     PostgreSql(tokio_postgres::Error),
     Timeout(tokio::time::error::Elapsed),
 }
 
-pub(crate) struct FailedConnection {
-    pub(crate) stage: ConnectStage,
-    pub(crate) error: ConnectionFailure,
-}
-
 pub(crate) async fn connect_monitoring(
     config: &Config,
     transport: &Transport,
-) -> Result<MonitoringConnection, FailedConnection> {
+) -> Result<MonitoringConnection, ConnectionFailure> {
     let (client, connection) = tokio::time::timeout(CONNECT_TIMEOUT, transport.connect(config))
         .await
-        .map_err(|error| FailedConnection {
-            stage: ConnectStage::Connect,
-            error: ConnectionFailure::Timeout(error),
-        })?
-        .map_err(|error| FailedConnection {
-            stage: ConnectStage::Connect,
-            error: ConnectionFailure::PostgreSql(error),
-        })?;
+        .map_err(ConnectionFailure::Timeout)?
+        .map_err(ConnectionFailure::PostgreSql)?;
     let driver = tokio::spawn(async move {
         let _ended = connection.await;
     });

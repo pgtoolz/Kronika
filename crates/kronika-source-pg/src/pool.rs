@@ -244,7 +244,7 @@ impl Pool {
         let connection::MonitoringConnection { client, driver } =
             connection::connect_monitoring(&self.config, &self.transport)
                 .await
-                .map_err(|failure| match failure.error {
+                .map_err(|failure| match failure {
                     ConnectionFailure::PostgreSql(error) => ConnectError::PostgreSql(error),
                     ConnectionFailure::Timeout(_) => ConnectError::Timeout,
                 })?;

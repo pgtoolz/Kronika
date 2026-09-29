@@ -49,10 +49,7 @@ pub struct SampleSet {
     pub errors: usize,
 }
 
-/// Builds the `pgwatch_instance_up` sample for a connection check.
-///
-/// This is the only catalog metric not produced by SQL: the engine connects
-/// and runs its ping; a failed SQL fetch of another metric never zeroes it.
+/// Builds `pgwatch_instance_up` from the engine's connection verdict.
 #[must_use]
 pub fn instance_up_sample_set(dbname: &str, up: bool, timestamp_ms: i64) -> SampleSet {
     SampleSet {

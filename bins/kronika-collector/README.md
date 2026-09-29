@@ -285,9 +285,9 @@ role. The explicit `pg_current_logfile()` grant is needed on PostgreSQL 10–16.
 
 ### Query execution
 
-Connect directly to PostgreSQL or through PgBouncer in session pooling mode.
-Transaction/statement pooling does not preserve the session settings needed
-by the collector.
+Use `--pg-dsn` for PostgreSQL and `--pgbouncer-dsn` for the PgBouncer
+administrative console. PostgreSQL connections send monitoring settings in
+the startup packet.
 
 | Item | Value or behavior |
 | --- | --- |
