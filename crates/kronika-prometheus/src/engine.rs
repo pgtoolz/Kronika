@@ -25,6 +25,33 @@ use crate::schedule::due;
 /// EXE-9 reporting hook: (database, metric, error text or "cleared").
 type ErrorCallback = Box<dyn Fn(&str, &str, &str) + Send + Sync>;
 
+/// Pass clock: the caller's `now_ms` plus the real time elapsed in the
+/// pass. Sequential queries of one pass see the moment they actually start
+/// and complete, not the common pass-start stamp — a metric that became due
+/// only because a previous query was slow must still wait its full interval.
+#[derive(Debug, Clone, Copy)]
+struct PassClock {
+    base_ms: i64,
+    started: std::time::Instant,
+}
+
+impl PassClock {
+    fn new(base_ms: i64) -> Self {
+        Self {
+            base_ms,
+            started: std::time::Instant::now(),
+        }
+    }
+
+    fn now_ms(&self) -> i64 {
+        self.base_ms.saturating_add(
+            u64::try_from(self.started.elapsed().as_millis())
+                .unwrap_or(u64::MAX)
+                .cast_signed(),
+        )
+    }
+}
+
 /// One resolved preset metric.
 #[derive(Debug, Clone)]
 pub struct PresetMetric {
@@ -196,7 +223,7 @@ impl<F: ExecutorFactory> Exporter<F> {
         discovery_refreshed: bool,
         now_ms: i64,
     ) {
-        let started = std::time::Instant::now();
+        let clock = PassClock::new(now_ms);
         // EXE-10: databases gone from discovery drop results, connections,
         // self-metric rows and instance-level fetches whose owning database
         // disappeared.
@@ -220,7 +247,7 @@ impl<F: ExecutorFactory> Exporter<F> {
             if !self.per_db.contains_key(dbname) {
                 self.per_db.insert(dbname.to_owned(), DbState::new());
             }
-            self.pass_database(dbname, now_ms).await;
+            self.pass_database(dbname, &clock).await;
         }
         let names: Vec<String> = self.per_db.keys().cloned().collect();
         // Upstream keys its cache by the storage-resolved metric name, so
@@ -245,10 +272,7 @@ impl<F: ExecutorFactory> Exporter<F> {
                 }
             }
         }
-        let elapsed_ms = u64::try_from(started.elapsed().as_millis())
-            .unwrap_or(u64::MAX)
-            .cast_signed();
-        let pass_end_ms = now_ms.saturating_add(elapsed_ms);
+        let pass_end_ms = clock.now_ms();
         self.store_derived_instance_up(pass_end_ms);
         self.render(pass_end_ms);
     }
@@ -271,7 +295,7 @@ impl<F: ExecutorFactory> Exporter<F> {
         }
     }
 
-    async fn pass_database(&mut self, dbname: &str, now_ms: i64) {
+    async fn pass_database(&mut self, dbname: &str, clock: &PassClock) {
         // Open the executor when missing; a failed open is a
         // connection-level failure.
         if self.per_db.get(dbname).is_some_and(|s| s.sql.is_none()) {
@@ -311,35 +335,38 @@ impl<F: ExecutorFactory> Exporter<F> {
             if metric.def.is_instance_level {
                 // CAT-9: once per interval on the first database able to run
                 // it; the due check stays open until some database succeeds.
+                // The stamp is this query's own start, not the pass start.
+                let start_ms = clock.now_ms();
                 let last = self
                     .instance_last_start_ms
                     .get(&metric.name)
                     .copied()
                     .unwrap_or(i64::MIN);
-                if !due(last, metric.interval_s, now_ms) {
+                if !due(last, metric.interval_s, start_ms) {
                     continue;
                 }
-                if self.try_run_instance_metric(dbname, &metric, now_ms).await {
+                if self.try_run_instance_metric(dbname, &metric, clock).await {
                     self.instance_last_start_ms
-                        .insert(metric.name.clone(), now_ms);
+                        .insert(metric.name.clone(), start_ms);
                 }
             } else {
+                let start_ms = clock.now_ms();
                 let state_last = self
                     .per_db
                     .get(dbname)
                     .and_then(|s| s.last_metric_start_ms.get(&metric.name))
                     .copied()
                     .unwrap_or(i64::MIN);
-                if !due(state_last, metric.interval_s, now_ms) {
+                if !due(state_last, metric.interval_s, start_ms) {
                     continue;
                 }
                 if let Some(state) = self.per_db.get_mut(dbname) {
                     state
                         .last_metric_start_ms
-                        .insert(metric.name.clone(), now_ms);
+                        .insert(metric.name.clone(), start_ms);
                 }
                 ran_query = true;
-                self.run_db_metric(dbname, &metric, now_ms).await;
+                self.run_db_metric(dbname, &metric, clock).await;
             }
         }
 
@@ -348,7 +375,7 @@ impl<F: ExecutorFactory> Exporter<F> {
         let interval = self.instance_up_interval();
         let probe_due = self.per_db.get(dbname).is_some_and(|s| {
             s.stored_up
-                .is_none_or(|(_, stored_ms)| due(stored_ms, interval, now_ms))
+                .is_none_or(|(_, stored_ms)| due(stored_ms, interval, clock.now_ms()))
         });
         if !ran_query && probe_due {
             self.probe(dbname).await;
@@ -396,21 +423,21 @@ impl<F: ExecutorFactory> Exporter<F> {
         &mut self,
         dbname: &str,
         metric: &PresetMetric,
-        now_ms: i64,
+        clock: &PassClock,
     ) -> bool {
         let Some(sql_text) = self.sql_for(dbname, metric) else {
             return false;
         };
-        self.execute_and_store(dbname, metric, &sql_text, now_ms, true)
+        self.execute_and_store(dbname, metric, &sql_text, clock, true)
             .await;
         true
     }
 
-    async fn run_db_metric(&mut self, dbname: &str, metric: &PresetMetric, now_ms: i64) {
+    async fn run_db_metric(&mut self, dbname: &str, metric: &PresetMetric, clock: &PassClock) {
         let Some(sql_text) = self.sql_for(dbname, metric) else {
             return;
         };
-        self.execute_and_store(dbname, metric, &sql_text, now_ms, false)
+        self.execute_and_store(dbname, metric, &sql_text, clock, false)
             .await;
     }
 
@@ -419,14 +446,17 @@ impl<F: ExecutorFactory> Exporter<F> {
         dbname: &str,
         metric: &PresetMetric,
         sql_text: &str,
-        now_ms: i64,
+        clock: &PassClock,
         instance_level: bool,
     ) {
         let timeout = metric.def.statement_timeout_seconds;
         let started = std::time::Instant::now();
         let result = self.query_with_retry(dbname, metric, sql_text, timeout).await;
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.record_fetch(dbname, &metric.name, now_ms, duration_ms, &result);
+        // completion time: the fetch timestamp and the fallback sample
+        // stamp describe when the data arrived, not when the pass began
+        let completed_ms = clock.now_ms();
+        self.record_fetch(dbname, &metric.name, completed_ms, duration_ms, &result);
         match result {
             Ok(result) => {
                 self.report_error_state(dbname, &metric.name, None);
@@ -436,7 +466,7 @@ impl<F: ExecutorFactory> Exporter<F> {
                     metric.def.exposed_name(&metric.name),
                     &metric.def.gauges,
                     dbname,
-                    now_ms,
+                    completed_ms,
                 );
                 let family = metric.def.exposed_name(&metric.name).to_owned();
                 if instance_level {
@@ -767,6 +797,8 @@ mod tests {
         /// connection; consumed once by `execute`.
         execute_refreshes_facts: Option<ServerFacts>,
         sql_results: VecDeque<Result<QueryResult, MetricError>>,
+        /// Real await time per exact SQL text, simulating slow queries.
+        delays_ms: BTreeMap<String, u64>,
         facts_calls: usize,
         sql_calls: Vec<String>,
     }
@@ -789,6 +821,13 @@ mod tests {
             sql: &str,
             _statement_timeout_s: Option<u64>,
         ) -> Result<QueryOutcome, MetricError> {
+            let delay_ms = {
+                let db = self.db.lock().expect("mock");
+                db.delays_ms.get(sql).copied().unwrap_or(0)
+            };
+            if delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
             let mut db = self.db.lock().expect("mock");
             db.sql_calls.push(sql.to_owned());
             let refreshed_facts = db.execute_refreshes_facts.take();
@@ -889,6 +928,7 @@ mod tests {
             facts_queue: VecDeque::new(),
             execute_refreshes_facts: None,
             sql_results: VecDeque::from(sql_results),
+            delays_ms: BTreeMap::new(),
             facts_calls: 0,
             sql_calls: Vec::new(),
         }))
@@ -1633,5 +1673,53 @@ mod tests {
             "rotation facts drive SQL selection from the next fetch on"
         );
         assert_eq!(facts_calls, 1, "no extra probe: facts rode the exchange");
+    }
+
+    #[tokio::test]
+    async fn intervals_measure_from_each_querys_own_start() {
+        // the first metric of the pass takes 1.1 s of real SQL time; the
+        // 1 s metric behind it actually starts at +1.1 s and must not be
+        // re-run by a pass stamped 1.2 s after the first one began
+        let mut factory = MockFactory::default();
+        factory.dbs.insert("h_app".to_owned(), db(vec![]));
+        let mut e = exporter(factory);
+        e.preset = Catalog::from_yaml_str(
+            "metrics:\n  slow:\n    sqls: {16: 'select 1 as v'}\n  ver:\n    sqls: {16: 'select 16 as v'}\npresets:\n  p:\n    metrics: {slow: 60, ver: 1}\n",
+            "test.yaml",
+        )
+        .expect("catalog")
+        .resolve_preset("p")
+        .expect("preset")
+        .into_iter()
+        .map(|(name, def, interval_s)| PresetMetric {
+            name,
+            def,
+            interval_s,
+        })
+        .collect();
+        e.factory
+            .db("h_app")
+            .lock()
+            .expect("mock")
+            .delays_ms
+            .insert("select 1 as v".to_owned(), 1_100);
+        run(&mut e, &["h_app"], 1_700_000_000_000).await;
+        // ~150 ms after this metric's real start: inside its 1 s interval
+        run(&mut e, &["h_app"], 1_700_000_001_250).await;
+        let mock = e.factory.db("h_app");
+        let sql = std::mem::take(&mut mock.lock().expect("mock").sql_calls);
+        assert_eq!(
+            sql,
+            vec!["select 1 as v".to_owned(), "select 16 as v".to_owned()],
+            "the 1 s metric is not due again 150 ms after its real start"
+        );
+        // one full interval after the real start: it runs again
+        run(&mut e, &["h_app"], 1_700_000_002_300).await;
+        let sql = std::mem::take(&mut mock.lock().expect("mock").sql_calls);
+        assert_eq!(
+            sql,
+            vec!["select 16 as v".to_owned()],
+            "due again a full interval after the real start"
+        );
     }
 }
