@@ -509,10 +509,8 @@ impl<F: ExecutorFactory> Exporter<F> {
             }
         }
         // The setup probe also establishes the facts on a new connection.
-        let mut ran_query = false;
         let needs_facts = self.per_db.get(dbname).is_some_and(|s| s.facts.is_none());
         if needs_facts {
-            ran_query = true; // the probe is an exchange
             self.probe(dbname).await;
         }
         let Some(facts) = self.per_db.get(dbname).and_then(|s| s.facts) else {
@@ -564,24 +562,14 @@ impl<F: ExecutorFactory> Exporter<F> {
                         .last_metric_start_ms
                         .insert(metric.name.clone(), start_ms);
                 }
-                ran_query = true;
                 self.run_db_metric(dbname, &metric, clock).await;
             }
         }
-
-        // When instance_up is due and no exchange ran this pass, the setup
-        // select serves as the availability probe.
-        let interval = self.instance_up_interval();
-        let probe_due = self.per_db.get(dbname).is_some_and(|s| {
-            s.stored_up
-                .is_none_or(|(_, stored_ms)| due(stored_ms, interval, clock.now_ms()))
-        });
-        if !ran_query && probe_due {
-            self.probe(dbname).await;
-        }
     }
 
-    /// Runs the setup select; success means the connection works.
+    /// Runs the setup select once for a database whose facts are unknown;
+    /// success also marks the connection working. Never called on a
+    /// schedule: instance_up is derived from real exchanges only.
     async fn probe(&mut self, dbname: &str) {
         let result = if let Some(state) = self.per_db.get_mut(dbname)
             && let Some(sql) = state.sql.as_mut()
@@ -1439,29 +1427,6 @@ mod tests {
             text.contains("pgwatch_db_stats_xact_commit{dbname=\"h_app\"} 7"),
             "{text}"
         );
-    }
-
-    #[tokio::test]
-    async fn idle_instance_up_probes_the_setup_select() {
-        let mut factory = MockFactory::default();
-        factory
-            .dbs
-            .insert("h_app".to_owned(), db(vec![Ok(query_result())]));
-        let mut e = exporter(factory);
-        // only instance_up in the preset: no metric SQL ever runs
-        e.preset.retain(|m| m.name == INSTANCE_UP_METRIC);
-        run(&mut e, &["h_app"], 1_700_000_000_500).await;
-        let text = e.scrape_body(1_700_000_000_500);
-        assert!(
-            text.contains("pgwatch_instance_up{dbname=\"h_app\"} 1"),
-            "{text}"
-        );
-        let calls = e.factory.db("h_app").lock().expect("mock").facts_calls;
-        assert_eq!(calls, 1, "the setup select served as the probe");
-        // next interval: probe again
-        run(&mut e, &["h_app"], 1_700_000_061_500).await;
-        let calls = e.factory.db("h_app").lock().expect("mock").facts_calls;
-        assert_eq!(calls, 2);
     }
 
     #[tokio::test]
