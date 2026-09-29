@@ -871,11 +871,7 @@ mod tests {
             clippy::significant_drop_tightening,
             reason = "test mock: the guard drops at the end of the statement, before the sleep await"
         )]
-        async fn execute(
-            &mut self,
-            sql: &str,
-            _statement_timeout_s: Option<u64>,
-        ) -> QueryOutcome {
+        async fn execute(&mut self, sql: &str, _statement_timeout_s: Option<u64>) -> QueryOutcome {
             let delay_ms = self
                 .db
                 .lock()
@@ -1779,10 +1775,7 @@ mod tests {
         let sql = std::mem::take(&mut mock.lock().expect("mock").sql_calls);
         assert_eq!(
             sql,
-            vec![
-                "select 16 as v".to_owned(),
-                "select 18 as v".to_owned(),
-            ],
+            vec!["select 16 as v".to_owned(), "select 18 as v".to_owned(),],
             "the SQL error did not discard the rotation facts"
         );
     }
@@ -1799,10 +1792,8 @@ mod tests {
         );
         {
             let mut guard = mock.lock().expect("mock");
-            guard.facts_queue = VecDeque::from([
-                Ok(facts_for(16, false)),
-                Ok(facts_for(13, false)),
-            ]);
+            guard.facts_queue =
+                VecDeque::from([Ok(facts_for(16, false)), Ok(facts_for(13, false))]);
         }
         factory.dbs.insert("h_app".to_owned(), mock);
         let mut e = exporter(factory);
