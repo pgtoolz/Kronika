@@ -387,23 +387,24 @@ fn normalize_storage_name(raw: Option<String>) -> Option<String> {
     raw.filter(|name| !name.is_empty())
 }
 
-/// Classifies one SQL variant: runnable single SELECT, or an explicit skip.
-///
-/// A single trailing `;` is stripped (upstream `archiver_pending_count`
-/// ships one). Any other `;` outside strings, dollar quotes and comments is
-/// rejected: the executor sends `SET LOCAL …;<newline><sql>` as one
-/// simple-protocol message, so an embedded `;` would add statements. A
-/// variant consisting only of semicolons and comments is a skip, not an
-/// error (upstream `checkpointer` on v14 ships `"; -- covered by bgwriter"`).
-/// Advances `i` past one quoted section. Single quotes honor the E''
-/// escape rules; double quotes never treat backslash specially.
+/// `PostgreSQL` identifier continuation: letters (not only ASCII), digits,
+/// `_` and `$`. A `$` directly after such a character stays inside the
+/// identifier, so `é$$` never opens a dollar quote.
+fn is_ident_continue(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '$'
+}
+
+/// Advances `i` past one quoted section. Single quotes honor the `E''`
+/// escape rules; double quotes never treat backslash specially. A doubled
+/// quote is an escaped quote — the section continues past the pair instead
+/// of ending at its first half.
 fn scan_quoted(chars: &[char], i: &mut usize, single: bool, prev: Option<char>) {
     let escaped = single
         && prev.is_some_and(|p| {
             (p == 'e' || p == 'E')
                 && chars
                     .get(i.wrapping_sub(2))
-                    .is_none_or(|&g| !(g.is_ascii_alphanumeric() || g == '_' || g == '$'))
+                    .is_none_or(|&g| !is_ident_continue(g))
         });
     let quote = if single { '\'' } else { '"' };
     *i += 1;
@@ -411,6 +412,10 @@ fn scan_quoted(chars: &[char], i: &mut usize, single: bool, prev: Option<char>) 
         match chars[*i] {
             '\\' if escaped => *i += 2,
             c if c == quote => {
+                if chars.get(*i + 1) == Some(&quote) {
+                    *i += 2;
+                    continue;
+                }
                 *i += 1;
                 return;
             }
@@ -419,6 +424,14 @@ fn scan_quoted(chars: &[char], i: &mut usize, single: bool, prev: Option<char>) 
     }
 }
 
+/// Classifies one SQL variant: runnable single SELECT, or an explicit skip.
+///
+/// A single trailing `;` is stripped (upstream `archiver_pending_count`
+/// ships one). Any other `;` outside strings, dollar quotes and comments
+/// is rejected: the executor sends the variant as one simple-protocol
+/// message, so an embedded `;` would add statements. A variant consisting
+/// only of semicolons and comments is a skip, not an error (upstream
+/// `checkpointer` on v14 ships `"; -- covered by bgwriter"`).
 fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
     let trimmed = sql.trim_end();
     let stripped = trimmed.strip_suffix(';').unwrap_or(trimmed);
@@ -442,17 +455,17 @@ fn classify_sql(sql: &str) -> Result<Sql, &'static str> {
                 prev = Some('\'');
             }
             '"' => scan_quoted(&chars, &mut i, false, None),
-            '$' if !prev.is_some_and(|p| p.is_ascii_alphanumeric() || p == '_' || p == '$')
+            '$' if !prev.is_some_and(is_ident_continue)
                 && chars
                     .get(i + 1)
-                    .is_some_and(|&n| n == '$' || n.is_ascii_alphanumeric() || n == '_') =>
+                    .is_some_and(|&n| n == '$' || n.is_alphanumeric() || n == '_') =>
             {
                 // dollar-quoted tag: $tag$ body $tag$ ($$ allowed). A quote
-                // only starts a token: `x$$` keeps the dollars inside the
-                // identifier, and a tag running to the end of input is an
-                // ordinary character, not an unterminated quote.
+                // only starts a token: `x$$` and `é$$` keep the dollars
+                // inside the identifier, and a tag running to the end of
+                // input is an ordinary character, not an unterminated quote.
                 let mut j = i + 1;
-                while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
+                while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
                     j += 1;
                 }
                 if j < chars.len() && chars[j] == '$' {
@@ -713,6 +726,17 @@ mod tests {
         // E-strings escape the quote: the semicolon is inside the literal
         assert!(classify_sql("select E'\\'; ok' as v").is_ok());
         assert!(classify_sql("select foo($tag$ a ; b $tag$) as v").is_ok());
+        // non-ASCII identifiers keep their dollars: these are two
+        // statements and must not hide inside a bogus dollar quote
+        assert!(classify_sql("select 1 as é$$; select 2 as я$$").is_err());
+        // a doubled quote does not close the section: the E-string below
+        // ends at its fifth quote, so the semicolon is a real separator
+        assert!(classify_sql("select e'''\\'';'").is_err());
+        // ...and a doubled quote followed by an escaped quote keeps the
+        // semicolon inside one literal: a valid single statement
+        assert!(classify_sql("select E'a''b\\'; select 2 as y'").is_ok());
+        // plain doubled quotes are escaped quotes too
+        assert!(classify_sql("select 'a''b' as v").is_ok());
     }
 
     #[test]
