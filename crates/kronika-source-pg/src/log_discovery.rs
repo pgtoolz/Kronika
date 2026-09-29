@@ -8,6 +8,7 @@ use std::fmt;
 use std::str::FromStr as _;
 use std::time::{Duration, Instant};
 
+use crate::pool;
 use crate::query::{self, QueryStats};
 use crate::{Session, Transport};
 use anyhow::{Context as _, Result};
@@ -18,7 +19,7 @@ use crate::acquisition::{ConnectionObservation, PgObservation, QueryObservation,
 
 use crate::CONNECT_TIMEOUT;
 use crate::acquisition::execution::postgres_query_cancelled;
-use crate::connection::{self, ConnectStage, ConnectionFailure, connection_label};
+use crate::connection::{self, ConnectionFailure, connection_label};
 const QUERY_TIMEOUT: Duration = query::QUERY_FETCH_TIMEOUT;
 
 // Retain the original source markers so the module move does not change emitted
@@ -177,15 +178,17 @@ pub async fn postgres<T>(
     observe: &mut (dyn FnMut(PgObservation) + Send),
 ) -> Result<PostgresServer<T>> {
     let connect_started = Instant::now();
+    // Same startup-packet session configuration as the metric pools: this
+    // path targets real `PostgreSQL`, never a pooler console.
+    let mut config = target.config.clone();
+    config.application_name(pool::collector_application_name());
+    config.options(query::SESSION_STARTUP_OPTIONS);
     let connection::MonitoringConnection { client, driver } =
-        match connection::connect_monitoring(&target.config, transport).await {
+        match connection::connect_monitoring(&config, transport).await {
             Ok(connected) => connected,
             Err(failure) => {
-                let context = match failure.stage {
-                    ConnectStage::Connect => "connect to PostgreSQL",
-                    ConnectStage::Configure => "configure PostgreSQL monitoring session",
-                };
-                let (timeout, message, error) = match failure.error {
+                let context = "connect to PostgreSQL";
+                let (timeout, message, error) = match failure {
                     ConnectionFailure::PostgreSql(error) => (
                         false,
                         error.to_string(),

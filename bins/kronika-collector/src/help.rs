@@ -34,13 +34,26 @@ Collection:
   and remote files are not downloaded through the database connection.
   Mode is never inferred from the DSN. PgBouncer logs require local mode.
   TLS verifies certificates and hostnames; --pg-ssl-root-cert replaces the CA
-  roots. Direct PostgreSQL and PgBouncer session pooling are supported.
-  Transaction/statement pooling and sslmode=verify-full are unsupported.
+  roots. Use --pg-dsn for PostgreSQL. --pgbouncer-dsn targets the PgBouncer console.
+  PostgreSQL settings are sent in the startup packet. sslmode=verify-full is unsupported.
   Intervals are whole seconds. A source interval of 0 reads every timer cycle;
   it does not disable that source. Statements/plans always wait at least 300s.
   A nonempty lock-wait result enables the faster activity interval; an empty
   result restores the ordinary interval. Queries run sequentially, so a slow
   query can delay activity. --interval-s 0 keeps all collection signal-driven.
+
+Prometheus:
+  --prometheus-listen host:port (KRONIKA_PROMETHEUS_LISTEN) enables the
+  /metrics and /health endpoint for the --pg-dsn server; unset disables it.
+  --prometheus-metrics PATH (KRONIKA_PROMETHEUS_METRICS) overlays catalog
+  entries from a file or directory of .yaml/.yml files; the env form is a
+  semicolon list. --prometheus-preset NAME (KRONIKA_PROMETHEUS_PRESET,
+  default basic) selects metric intervals. Both require --prometheus-listen.
+  Metric SQL runs on one dedicated connection per discovered database;
+  the startup packet carries application_name kronika-prometheus,
+  statement_timeout (default 5 s, raised to the largest preset override)
+  and lock_timeout 100 ms. Scrapes read the snapshot published after each
+  background pass.
 
 Signals and output:
   SIGUSR2 collects immediately, preserving the statements/plans cooldown, and

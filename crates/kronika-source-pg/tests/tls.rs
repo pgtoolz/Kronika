@@ -25,9 +25,6 @@ async fn verified_tls_pool_reconnect_cancel_and_plaintext_contract() {
         .await
         .expect("verified observer TLS");
     let driver = tokio::spawn(driver);
-    query::configure_session(&observer)
-        .await
-        .expect("observer session limits");
     let mut pool = Pool::new(&dsn).expect("pool uses configured CA");
     for expected_generation in [1, 2] {
         let session = pool

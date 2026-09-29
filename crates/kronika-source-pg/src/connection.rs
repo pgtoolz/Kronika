@@ -1,6 +1,6 @@
 //! Shared credential-safe endpoint identity and monitored `PostgreSQL` connection setup.
 
-use crate::{CONNECT_TIMEOUT, Transport, query};
+use crate::{CONNECT_TIMEOUT, Transport};
 use std::net::IpAddr;
 use tokio_postgres::{Client, Config, config::Host};
 
@@ -11,50 +11,23 @@ pub(crate) struct MonitoringConnection {
     pub(crate) driver: tokio::task::JoinHandle<()>,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum ConnectStage {
-    Connect,
-    Configure,
-}
-
 pub(crate) enum ConnectionFailure {
     PostgreSql(tokio_postgres::Error),
     Timeout(tokio::time::error::Elapsed),
 }
 
-pub(crate) struct FailedConnection {
-    pub(crate) stage: ConnectStage,
-    pub(crate) error: ConnectionFailure,
-}
-
 pub(crate) async fn connect_monitoring(
     config: &Config,
     transport: &Transport,
-) -> Result<MonitoringConnection, FailedConnection> {
+) -> Result<MonitoringConnection, ConnectionFailure> {
     let (client, connection) = tokio::time::timeout(CONNECT_TIMEOUT, transport.connect(config))
         .await
-        .map_err(|error| FailedConnection {
-            stage: ConnectStage::Connect,
-            error: ConnectionFailure::Timeout(error),
-        })?
-        .map_err(|error| FailedConnection {
-            stage: ConnectStage::Connect,
-            error: ConnectionFailure::PostgreSql(error),
-        })?;
+        .map_err(ConnectionFailure::Timeout)?
+        .map_err(ConnectionFailure::PostgreSql)?;
     let driver = tokio::spawn(async move {
         let _ended = connection.await;
     });
-    let configured = tokio::time::timeout(CONNECT_TIMEOUT, query::configure_session(&client)).await;
-    let error = match configured {
-        Ok(Ok(())) => return Ok(MonitoringConnection { client, driver }),
-        Ok(Err(error)) => ConnectionFailure::PostgreSql(error),
-        Err(error) => ConnectionFailure::Timeout(error),
-    };
-    driver.abort();
-    Err(FailedConnection {
-        stage: ConnectStage::Configure,
-        error,
-    })
+    Ok(MonitoringConnection { client, driver })
 }
 
 pub(crate) fn connection_label(config: &Config, user: Option<&str>, source_index: usize) -> String {

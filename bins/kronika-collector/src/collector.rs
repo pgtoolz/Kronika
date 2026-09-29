@@ -44,6 +44,18 @@ pub(crate) struct WindowWriter<'a> {
 pub(crate) async fn run() -> Result<()> {
     let config = crate::config::get();
     let (writer_owner, mut journal, mut logs, mut pg) = initialize_collector(config)?;
+    let prometheus = if crate::prometheus::enabled(config) {
+        let exporter = crate::prometheus::start(config)
+            .await
+            .context("start the Prometheus exporter")?;
+        let server = std::sync::Arc::clone(&exporter).serve();
+        tokio::spawn(server);
+        Some(exporter)
+    } else {
+        None
+    };
+    let mut last_discovery_generation = None;
+    let mut last_discovered_databases: Vec<String> = Vec::new();
     let fs = config.proc_fs();
     let sys = config.sys_fs();
     let in_container = config.mode.collect_os()
@@ -182,6 +194,27 @@ pub(crate) async fn run() -> Result<()> {
             };
             let pg_outcome = pg_outcome?;
             written_this_tick.extend(pg_outcome.written);
+            // The exporter rides on the collector tick and reuses the
+            // collector's database discovery (model: pgwatch v5, scrape from
+            // cache). EXE-8 disables lift on a new discovery cycle. While
+            // the primary connection is down the discovery list is empty
+            // because discovery could not run, not because the databases
+            // vanished: hold the last known list so instance_up can report
+            // the outage instead of the series disappearing.
+            if let Some(exporter) = &prometheus {
+                let generation = pg.discovery_generation();
+                let refreshed = last_discovery_generation.is_some_and(|last| last != generation);
+                last_discovery_generation = Some(generation);
+                let names = pg.discovered_database_names();
+                let databases = if names.is_empty() && !pg.discovery_intact() {
+                    last_discovered_databases.clone()
+                } else {
+                    last_discovered_databases.clone_from(&names);
+                    names
+                };
+                // hands the pass to the exporter task; never awaits SQL
+                exporter.run_pass(&databases, refreshed);
+            }
             let opening_settings = pg.last_settings();
             let collection_due = if pg_outcome.opening_os_collected && !writer.segment.is_empty() {
                 due.without(SourceKind::OsMountTopo)

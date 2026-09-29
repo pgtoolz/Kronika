@@ -104,8 +104,31 @@ impl Pool {
     /// # Errors
     /// Returns the parse error when `dsn` is not a valid connection string or URL.
     pub fn with_transport(dsn: &str, transport: Transport) -> Result<Self> {
+        Self::with_startup(
+            dsn,
+            transport,
+            collector_application_name(),
+            crate::query::SESSION_STARTUP_OPTIONS,
+        )
+    }
+
+    /// Parse a DSN with explicit startup-packet settings.
+    ///
+    /// Session configuration (timeouts) rides the startup packet instead of
+    /// `SET` statements, so poolers that reject multi-statement or setup
+    /// traffic see none. `options` replaces any DSN `options` value.
+    ///
+    /// # Errors
+    /// Returns the parse error when `dsn` is not a valid connection string or URL.
+    pub fn with_startup(
+        dsn: &str,
+        transport: Transport,
+        application_name: &str,
+        options: &str,
+    ) -> Result<Self> {
         let mut config: Config = dsn.parse().context("parse the PostgreSQL DSN")?;
-        config.application_name(collector_application_name());
+        config.application_name(application_name);
+        config.options(options);
         Ok(Self {
             config,
             transport,
@@ -221,7 +244,7 @@ impl Pool {
         let connection::MonitoringConnection { client, driver } =
             connection::connect_monitoring(&self.config, &self.transport)
                 .await
-                .map_err(|failure| match failure.error {
+                .map_err(|failure| match failure {
                     ConnectionFailure::PostgreSql(error) => ConnectError::PostgreSql(error),
                     ConnectionFailure::Timeout(_) => ConnectError::Timeout,
                 })?;
@@ -237,7 +260,7 @@ impl Pool {
     }
 }
 
-fn collector_application_name() -> &'static str {
+pub(crate) fn collector_application_name() -> &'static str {
     APPLICATION_NAME.get_or_init(|| {
         application_name(
             std::process::id(),

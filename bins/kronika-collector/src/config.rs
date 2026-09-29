@@ -117,6 +117,35 @@ pub(crate) struct Config {
     )]
     pub(crate) pgbouncer_logs: Vec<String>,
 
+    /// `host:port` for the Prometheus `/metrics` endpoint; unset disables it.
+    #[arg(
+        long,
+        env = "KRONIKA_PROMETHEUS_LISTEN",
+        value_name = "ADDR",
+        help_heading = "Prometheus",
+        hide_env_values = true
+    )]
+    pub(crate) prometheus_listen: Option<std::net::SocketAddr>,
+    /// Overlay with metrics/presets in the metrics.yaml format; file or directory. Repeatable.
+    #[arg(
+        long,
+        env = "KRONIKA_PROMETHEUS_METRICS",
+        value_name = "PATH",
+        help_heading = "Prometheus",
+        hide_env_values = true
+    )]
+    pub(crate) prometheus_metrics: Vec<PathBuf>,
+    /// Preset name from the embedded catalog or the overlays.
+    #[arg(
+        long,
+        env = "KRONIKA_PROMETHEUS_PRESET",
+        default_value = kronika_prometheus::catalog::DEFAULT_PRESET,
+        value_name = "NAME",
+        help_heading = "Prometheus",
+        hide_env_values = true
+    )]
+    pub(crate) prometheus_preset: String,
+
     /// Structured stderr logging level (case-insensitive; warning aliases warn).
     #[arg(long, env = "KRONIKA_LOG_LEVEL", default_value = "info", value_parser = TrimmedEnum::<LogLevel>::new(), ignore_case = true, help_heading = "Logging and Linux paths", hide_env_values = true)]
     pub(crate) log_level: LogLevel,
@@ -219,6 +248,17 @@ impl Config {
                 );
             }
         }
+        if matches.value_source("prometheus_metrics") == Some(ValueSource::EnvVariable) {
+            self.prometheus_metrics = parse_env_list(
+                "KRONIKA_PROMETHEUS_METRICS",
+                self.prometheus_metrics
+                    .first()
+                    .map_or("", |p| p.to_str().unwrap_or("")),
+            )?
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        }
         for dsn in &self.pgbouncer_dsns {
             dsn.parse::<tokio_postgres::Config>().map_err(|_error| {
                 anyhow::anyhow!(
@@ -260,7 +300,21 @@ impl Config {
             self.intervals.pg_statements_and_plans >= MIN_PG_STATEMENTS_INTERVAL_SECS,
             "--pg-statements-interval-s / KRONIKA_PG_STATEMENTS_INTERVAL_S must be at least {MIN_PG_STATEMENTS_INTERVAL_SECS} seconds"
         );
+        // CFG-1: settings without the endpoint are meaningless.
+        anyhow::ensure!(
+            self.prometheus_listen.is_some()
+                || (self.prometheus_metrics.is_empty() && self.prometheus_preset_is_default()),
+            "--prometheus-metrics / --prometheus-preset require --prometheus-listen / KRONIKA_PROMETHEUS_LISTEN"
+        );
+        anyhow::ensure!(
+            self.prometheus_listen.is_none() || self.pg_dsn.is_some(),
+            "--prometheus-listen / KRONIKA_PROMETHEUS_LISTEN requires --pg-dsn / KRONIKA_PG_DSN"
+        );
         Ok(())
+    }
+
+    fn prometheus_preset_is_default(&self) -> bool {
+        self.prometheus_preset == kronika_prometheus::catalog::DEFAULT_PRESET
     }
 
     pub(crate) fn proc_fs(&self) -> ProcFs {

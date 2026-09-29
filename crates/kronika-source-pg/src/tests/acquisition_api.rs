@@ -31,3 +31,18 @@ async fn empty_selection_never_opens_a_connection_or_admits_a_batch() {
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
     ));
 }
+
+#[test]
+fn discovery_is_not_intact_while_the_primary_is_down() {
+    let pool = Pool::with_transport(
+        "host=127.0.0.1 port=1 user=monitor sslmode=disable",
+        Transport::default(),
+    )
+    .expect("explicit connection policy");
+    let mut collector = PgCollector::new(pool);
+    // never opened: no generation, so an empty list is not authoritative
+    assert!(!collector.discovery_intact());
+    assert!(collector.discovered_database_names().is_empty());
+    collector.close_connections();
+    assert!(!collector.discovery_intact());
+}
