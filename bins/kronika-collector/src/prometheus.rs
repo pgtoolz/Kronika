@@ -32,6 +32,39 @@ const SETUP_PROBE_SQL: &str =
     "select current_setting('server_version_num')::int4, pg_is_in_recovery()";
 /// Startup `application_name` for exporter connections.
 const EXPORTER_APPLICATION_NAME: &str = "kronika-prometheus";
+/// How long a connection may take to deliver a complete request head.
+const REQUEST_HEAD_DEADLINE: Duration = Duration::from_secs(10);
+/// Upper bound of the request head; anything larger is malformed here.
+const REQUEST_HEAD_LIMIT: usize = 8 * 1024;
+
+/// Reads one bounded HTTP request head and returns the request path.
+///
+/// TCP splits a stream at arbitrary byte boundaries: `GET /met` may arrive
+/// without `rics HTTP/1.1\r\n...`. Bytes accumulate until the head's
+/// terminating blank line, the size limit, or EOF; a connection that never
+/// finishes its head is dropped at the deadline.
+async fn read_request_path<R: tokio::io::AsyncRead + Unpin>(
+    socket: &mut R,
+) -> Option<String> {
+    let mut buffer: Vec<u8> = Vec::with_capacity(512);
+    let mut chunk = [0_u8; 1024];
+    loop {
+        if buffer.len() >= REQUEST_HEAD_LIMIT || buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+            break;
+        }
+        let read = tokio::time::timeout(REQUEST_HEAD_DEADLINE, socket.read(&mut chunk))
+            .await
+            .ok()?
+            .ok()?;
+        if read == 0 {
+            break; // EOF: serve whatever complete request line arrived
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+    let request = String::from_utf8_lossy(&buffer);
+    let path = request.split_whitespace().nth(1)?;
+    (!path.is_empty()).then(|| path.split('?').next().unwrap_or_default().to_owned())
+}
 
 /// Exposition `dbname` label prefix: the DSN host, or the machine name for
 /// Unix sockets and missing hosts (EXP-3).
@@ -485,20 +518,10 @@ impl PrometheusExporter {
             };
             let exporter = Arc::clone(&self);
             tokio::spawn(async move {
-                let mut buffer = [0_u8; 2048];
-                let read = match socket.read(&mut buffer).await {
-                    Ok(0) | Err(_) => return,
-                    Ok(n) => n,
+                let Some(path) = read_request_path(&mut socket).await else {
+                    return;
                 };
-                let request = String::from_utf8_lossy(&buffer[..read]);
-                let path = request
-                    .split_whitespace()
-                    .nth(1)
-                    .unwrap_or_default()
-                    .split('?')
-                    .next()
-                    .unwrap_or_default();
-                let (status, content_type, body) = match path {
+                let (status, content_type, body) = match path.as_str() {
                     "/metrics" => {
                         exporter.scrapes.fetch_add(1, Ordering::Relaxed);
                         // clone the Arc under a short lock, render outside
@@ -541,6 +564,40 @@ mod tests {
             databases: databases.iter().map(|s| (*s).to_owned()).collect(),
             discovery_refreshed: refreshed,
         }
+    }
+
+    #[tokio::test]
+    async fn a_request_split_across_reads_reaches_its_endpoint() {
+        use tokio::io::AsyncWriteExt as _;
+        let (mut client, mut server) = tokio::io::duplex(256);
+        let writer = tokio::spawn(async move {
+            client.write_all(b"GET /met").await.expect("first fragment");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            client
+                .write_all(b"rics HTTP/1.1\r\nHost: local\r\n\r\n")
+                .await
+                .expect("second fragment");
+        });
+        let path = read_request_path(&mut server)
+            .await
+            .expect("the split request is reassembled");
+        writer.await.expect("writer");
+        assert_eq!(path, "/metrics");
+    }
+
+    #[tokio::test]
+    async fn a_query_string_is_stripped_and_garbage_has_no_path() {
+        use tokio::io::AsyncWriteExt as _;
+        let (mut client, mut server) = tokio::io::duplex(256);
+        client
+            .write_all(b"GET /health?probe=1 HTTP/1.1\r\n\r\n")
+            .await
+            .expect("request");
+        let path = read_request_path(&mut server).await.expect("parsed");
+        assert_eq!(path, "/health");
+        let (mut client, mut server) = tokio::io::duplex(256);
+        drop(client); // EOF with nothing sent
+        assert!(read_request_path(&mut server).await.is_none());
     }
 
     #[test]
