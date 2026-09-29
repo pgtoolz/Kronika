@@ -701,9 +701,14 @@ impl<F: ExecutorFactory> Exporter<F> {
                     state.connected = true;
                     state.facts = Some(facts);
                 }
-                let retry_sql = self
-                    .sql_for(dbname, metric)
-                    .unwrap_or_else(|| sql_text.to_owned());
+                // The new connection's major may have no variant for this
+                // metric (failover onto an older server): sending the
+                // previous server's SQL would error forever, so the metric
+                // follows the usual no-variant skip instead and the pass
+                // keeps the original failure.
+                let Some(retry_sql) = self.sql_for(dbname, metric) else {
+                    return first;
+                };
                 self.query_once(dbname, &retry_sql, timeout).await
             }
             Err(error) => {
@@ -726,18 +731,18 @@ impl<F: ExecutorFactory> Exporter<F> {
             return Err(MetricError::transport("no exporter connection"));
         };
         let outcome = sql.execute(sql_text, timeout).await;
-        match &outcome {
-            Ok(outcome) => {
-                state.connected = true;
-                // the exchange replaced the connection: adopt its facts
-                if let Some(facts) = outcome.refreshed_facts {
-                    state.facts = Some(facts);
-                }
-            }
+        // the exchange replaced the connection: adopt its facts on the
+        // success and the error path alike — a failed first statement must
+        // not leave the previous server's facts in place
+        if let Some(facts) = outcome.refreshed_facts {
+            state.facts = Some(facts);
+        }
+        match &outcome.result {
+            Ok(_) => state.connected = true,
             Err(error) if error.connection_lost => state.connected = false,
             Err(_) => {}
         }
-        outcome.map(|outcome| outcome.result)
+        outcome.result
     }
 
     fn record_fetch(
@@ -870,7 +875,7 @@ mod tests {
             &mut self,
             sql: &str,
             _statement_timeout_s: Option<u64>,
-        ) -> Result<QueryOutcome, MetricError> {
+        ) -> QueryOutcome {
             let delay_ms = self
                 .db
                 .lock()
@@ -889,10 +894,10 @@ mod tests {
                 .sql_results
                 .pop_front()
                 .unwrap_or_else(|| Ok(query_result()));
-            result.map(|result| QueryOutcome {
+            QueryOutcome {
                 result,
                 refreshed_facts,
-            })
+            }
         }
     }
 
@@ -1745,6 +1750,80 @@ mod tests {
         let stale = e.scrape_body(1_700_000_000_000 + 11 * 60_000);
         assert!(!stale.contains("pgwatch_fast_xact_commit{"), "{stale}");
         assert!(stale.contains("pgwatch_slow_xact_commit{"), "{stale}");
+    }
+
+    #[tokio::test]
+    async fn rotation_facts_survive_a_sql_error_on_the_new_connection() {
+        // silent pool rotation onto PG18; the first exchange on the new
+        // socket fails at the SQL level. The fresh facts must still reach
+        // the engine — the next pass selects the PG18 statement.
+        let mut factory = MockFactory::default();
+        let mock = db_with_facts(vec![], Ok(facts_for(16, false)));
+        factory.dbs.insert("h_app".to_owned(), mock);
+        let mut e = exporter(factory);
+        e.preset = versioned_preset();
+        {
+            let mock = e.factory.db("h_app");
+            let mut guard = mock.lock().expect("mock");
+            guard.execute_refreshes_facts = Some(facts_for(18, false));
+            guard.sql_results = VecDeque::from([Err(MetricError {
+                sqlstate: Some("22012".to_owned()),
+                connection_lost: false,
+                message: "division by zero".to_owned(),
+            })]);
+        }
+        run(&mut e, &["h_app"], 1_700_000_000_500).await;
+        // next interval: the rotated facts drive SQL selection
+        run(&mut e, &["h_app"], 1_700_000_061_500).await;
+        let mock = e.factory.db("h_app");
+        let sql = std::mem::take(&mut mock.lock().expect("mock").sql_calls);
+        assert_eq!(
+            sql,
+            vec![
+                "select 16 as v".to_owned(),
+                "select 18 as v".to_owned(),
+            ],
+            "the SQL error did not discard the rotation facts"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_to_a_major_without_a_variant_sends_no_old_sql() {
+        // the metric dies at the transport level; the reconnect lands on a
+        // server whose major has no variant in the catalog. The retry must
+        // not send the previous server's SQL.
+        let mut factory = MockFactory::default();
+        let mock = db_with_facts(
+            vec![Err(MetricError::transport("connection reset by peer"))],
+            Ok(facts_for(16, false)),
+        );
+        {
+            let mut guard = mock.lock().expect("mock");
+            guard.facts_queue = VecDeque::from([
+                Ok(facts_for(16, false)),
+                Ok(facts_for(13, false)),
+            ]);
+        }
+        factory.dbs.insert("h_app".to_owned(), mock);
+        let mut e = exporter(factory);
+        e.preset = versioned_preset();
+        run(&mut e, &["h_app"], 1_700_000_000_500).await;
+        let text = e.scrape_body(1_700_000_000_500);
+        let mock = e.factory.db("h_app");
+        let (sql, facts_calls) = {
+            let mut guard = mock.lock().expect("mock");
+            (std::mem::take(&mut guard.sql_calls), guard.facts_calls)
+        };
+        assert_eq!(
+            sql,
+            vec!["select 16 as v".to_owned()],
+            "no SQL after the reconnect onto a major without a variant"
+        );
+        assert_eq!(facts_calls, 2, "the reconnect still read its own facts");
+        assert!(
+            text.contains("kronika_prometheus_fetch_errors_total"),
+            "the original transport failure is still reported: {text}"
+        );
     }
 
     #[tokio::test]

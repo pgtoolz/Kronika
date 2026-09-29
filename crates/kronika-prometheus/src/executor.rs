@@ -64,11 +64,14 @@ impl std::error::Error for MetricError {}
 /// The result of one metric query exchange.
 #[derive(Debug)]
 pub struct QueryOutcome {
-    /// Text-protocol rows with typed columns.
-    pub result: QueryResult,
+    /// The exchange outcome: text-protocol rows with typed columns, or the
+    /// failure. Facts ride both paths — a replaced connection must never
+    /// leave the engine with the previous server's facts, even when the
+    /// first statement on it fails.
+    pub result: Result<QueryResult, MetricError>,
     /// Facts read during the exchange because the underlying connection
-    /// was replaced since they were last read; `None` while the connection
-    /// is the one the facts belong to.
+    /// was replaced since they were last reported; `None` while the
+    /// connection is the one the facts belong to.
     pub refreshed_facts: Option<ServerFacts>,
 }
 
@@ -81,15 +84,15 @@ pub trait SqlExecutor {
 
     /// Runs one single-statement simple-protocol message under the client
     /// deadline (`statement_timeout_s`, or the 5 s default when `None`,
-    /// plus the guard margin) and returns text-protocol rows with typed
-    /// columns. When the exchange had to open a replacement connection, the
-    /// setup probe runs first under the same deadline and the fresh facts
-    /// ride the outcome.
+    /// plus the guard margin) and returns the exchange outcome. When the
+    /// exchange had to open a replacement connection, the setup probe runs
+    /// first under the same deadline and the fresh facts ride the outcome
+    /// on success and failure alike.
     fn execute(
         &mut self,
         sql: &str,
         statement_timeout_s: Option<u64>,
-    ) -> impl Future<Output = Result<QueryOutcome, MetricError>> + Send;
+    ) -> impl Future<Output = QueryOutcome> + Send;
 }
 
 /// Creates the per-database executor when a database appears in discovery.

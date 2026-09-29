@@ -41,16 +41,31 @@ const REQUEST_HEAD_LIMIT: usize = 8 * 1024;
 ///
 /// TCP splits a stream at arbitrary byte boundaries: `GET /met` may arrive
 /// without `rics HTTP/1.1\r\n...`. Bytes accumulate until the head's
-/// terminating blank line, the size limit, or EOF; a connection that never
-/// finishes its head is dropped at the deadline.
+/// terminating blank line, the size limit, or EOF. The deadline covers the
+/// WHOLE head, not each read: a client dribbling one byte at a time is cut
+/// off once the total budget is spent.
 async fn read_request_path<R: tokio::io::AsyncRead + Unpin>(socket: &mut R) -> Option<String> {
+    read_request_path_within(socket, REQUEST_HEAD_DEADLINE).await
+}
+
+/// The deadline-taking core of [`read_request_path`], so tests can use a
+/// short budget.
+async fn read_request_path_within<R: tokio::io::AsyncRead + Unpin>(
+    socket: &mut R,
+    budget: Duration,
+) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + budget;
     let mut buffer: Vec<u8> = Vec::with_capacity(512);
     let mut chunk = [0_u8; 1024];
     loop {
         if buffer.len() >= REQUEST_HEAD_LIMIT || buffer.windows(4).any(|w| w == b"\r\n\r\n") {
             break;
         }
-        let read = tokio::time::timeout(REQUEST_HEAD_DEADLINE, socket.read(&mut chunk))
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return None; // the whole-head budget is spent
+        }
+        let read = tokio::time::timeout(remaining, socket.read(&mut chunk))
             .await
             .ok()?
             .ok()?;
@@ -153,15 +168,32 @@ fn map_pg_error(error: &tokio_postgres::Error) -> MetricError {
 /// replaces a closed or aged connection without telling the engine, so every
 /// exchange re-checks the generation and reruns the setup probe when the
 /// socket actually changed. A failover to another server version or recovery
-/// role can never answer with the previous connection's facts.
+/// role can never answer with the previous connection's facts. Facts whose
+/// generation the engine has not been told about yet ride every outcome —
+/// success, SQL error, transport failure and deadline expiry alike.
 struct ExporterSql {
     pool: Pool,
+    /// Cached facts with the pool generation they were read on.
     facts: Option<(ServerFacts, u64)>,
+    /// Generation whose facts the engine has already received. A probe that
+    /// completed before a later statement hung still counts as undelivered.
+    delivered_generation: Option<u64>,
 }
 
 impl ExporterSql {
     const PROBE_DEADLINE: Duration =
         Duration::from_secs(DEFAULT_STATEMENT_TIMEOUT_S + HANG_GUARD_MARGIN_S);
+
+    /// Facts the engine has not received for the cached generation, marking
+    /// them delivered.
+    fn take_undelivered_facts(&mut self) -> Option<ServerFacts> {
+        let (facts, generation) = self.facts?;
+        if self.delivered_generation == Some(generation) {
+            return None;
+        }
+        self.delivered_generation = Some(generation);
+        Some(facts)
+    }
 
     /// Runs the setup probe on the session's connection and binds the facts
     /// to its generation.
@@ -208,7 +240,7 @@ impl SqlExecutor for ExporterSql {
             self.facts = Some((facts, generation));
             Ok(facts)
         };
-        match tokio::time::timeout(Self::PROBE_DEADLINE, probe).await {
+        let result = match tokio::time::timeout(Self::PROBE_DEADLINE, probe).await {
             Ok(result) => result,
             Err(_elapsed) => {
                 // the cancelled future dropped the session; close the socket
@@ -218,14 +250,15 @@ impl SqlExecutor for ExporterSql {
                     "setup probe did not answer within the deadline; connection dropped",
                 ))
             }
+        };
+        // the caller receives the facts of the cached generation either way
+        if result.is_ok() {
+            self.delivered_generation = self.facts.as_ref().map(|(_, generation)| *generation);
         }
+        result
     }
 
-    async fn execute(
-        &mut self,
-        sql: &str,
-        statement_timeout_s: Option<u64>,
-    ) -> Result<QueryOutcome, MetricError> {
+    async fn execute(&mut self, sql: &str, statement_timeout_s: Option<u64>) -> QueryOutcome {
         let timeout_s = statement_timeout_s.unwrap_or(DEFAULT_STATEMENT_TIMEOUT_S);
         // one deadline covers connect, a replacement setup probe when the
         // connection changed, the statement and the drain
@@ -236,13 +269,10 @@ impl SqlExecutor for ExporterSql {
                 .facts
                 .as_ref()
                 .is_some_and(|(_, seen_on)| *seen_on == generation);
-            let refreshed_facts = if facts_current {
-                None
-            } else {
+            if !facts_current {
                 let facts = Self::probe_facts(&session).await?;
                 self.facts = Some((facts, generation));
-                Some(facts)
-            };
+            }
             let mut stats = kronika_source_pg::query::QueryStats::default();
             let stream = session
                 .simple_stream(sql, &mut stats)
@@ -274,15 +304,12 @@ impl SqlExecutor for ExporterSql {
                     rows.push((0..width).map(|i| row.get(i).map(str::to_owned)).collect());
                 }
             }
-            Ok(QueryOutcome {
-                result: QueryResult {
-                    columns: columns.unwrap_or_default(),
-                    rows,
-                },
-                refreshed_facts,
+            Ok(QueryResult {
+                columns: columns.unwrap_or_default(),
+                rows,
             })
         };
-        match tokio::time::timeout(
+        let result = match tokio::time::timeout(
             Duration::from_secs(timeout_s + HANG_GUARD_MARGIN_S),
             collect,
         )
@@ -297,6 +324,12 @@ impl SqlExecutor for ExporterSql {
                     "metric query did not answer within statement_timeout + 5s; connection dropped",
                 ))
             }
+        };
+        // facts reach the engine on the error paths too; a probe that
+        // finished before a hung statement is delivered from the cache
+        QueryOutcome {
+            result,
+            refreshed_facts: self.take_undelivered_facts(),
         }
     }
 }
@@ -325,6 +358,7 @@ impl ExecutorFactory for CollectorFactory {
         Some(ExporterSql {
             pool: self.primary.on_database(database),
             facts: None,
+            delivered_generation: None,
         })
     }
 }
@@ -581,6 +615,30 @@ mod tests {
             .expect("the split request is reassembled");
         writer.await.expect("writer");
         assert_eq!(path, "/metrics");
+    }
+
+    #[tokio::test]
+    async fn a_dribbling_client_is_cut_off_at_the_whole_head_budget() {
+        use tokio::io::AsyncWriteExt as _;
+        // one byte every 30 ms against a 200 ms budget: every single read
+        // fits its slice of the deadline, the sum does not
+        let (mut client, mut server) = tokio::io::duplex(256);
+        let writer = tokio::spawn(async move {
+            for _ in 0..50 {
+                if client.write_all(b"x").await.is_err() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+        });
+        let started = std::time::Instant::now();
+        let path = read_request_path_within(&mut server, Duration::from_millis(200)).await;
+        writer.abort();
+        assert!(path.is_none(), "the dribbler outlived the budget: {path:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "cut off near the budget, not per-read"
+        );
     }
 
     #[tokio::test]
