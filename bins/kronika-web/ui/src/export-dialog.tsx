@@ -4,7 +4,7 @@ import { createPortal } from "react-dom"
 
 import { calendarDateLabel, calendarMonthDays, calendarMonthLabel } from "./display-time"
 import { useDisplayTime } from "./display-time-context"
-import { ExportResponseError, ExportServerStateUnknownError, fetchExportArtifact, triggerHtmlDownload } from "./export-download"
+import { ExportResponseError, ExportServerStateUnknownError, fetchExportArtifact, handoffHtmlDownload, htmlDownload, releaseHtmlDownload, type HtmlDownload } from "./export-download"
 import {
   EXPORT_PRESETS,
   activePreset,
@@ -20,9 +20,11 @@ import {
   type ExportRange,
 } from "./export-range"
 import { formatExportDuration, resolveExportEndpoint } from "./export-time"
+import { activePortalRoots, cycleTabFocus, holdFocus, isolateBackground, rememberOpener, restoreFocus } from "./focus"
 import type { Translate } from "./help"
 import { humanBytes, measure, type Locale } from "./model"
 import { apiFetch } from "./session"
+import { persistentStorage } from "./storage"
 
 type Endpoint = "from" | "to"
 
@@ -30,7 +32,8 @@ type ExportJob =
   | { readonly phase: "idle" }
   | { readonly phase: "preparing"; readonly range: ExportRange; readonly startedAt: number }
   | { readonly phase: "downloading"; readonly range: ExportRange; readonly received: number; readonly startedAt: number; readonly total: number | null }
-  | { readonly phase: "saved"; readonly name: string; readonly seconds: number; readonly size: number }
+  | { readonly phase: "ready"; readonly name: string; readonly seconds: number; readonly size: number }
+  | { readonly phase: "handed"; readonly name: string; readonly seconds: number; readonly size: number }
   | { readonly phase: "unknown"; readonly range: ExportRange }
 
 interface EndpointDraft {
@@ -41,12 +44,12 @@ interface EndpointDraft {
 
 const SERVER_ERROR_KEYS = new Set(["bad_parameter", "export_busy", "export_empty", "export_failed"])
 const MICROS = 1_000_000
-const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])'
 
-export function ExportDialog({ availableHours, cursor, hour, locale, onActiveChange, onClose, onRange, range, t }: {
+export function ExportDialog({ availableHours, cursor, hour, initiator, locale, onActiveChange, onClose, onRange, range, t }: {
   readonly availableHours: readonly number[]
   readonly cursor: number
   readonly hour: number
+  readonly initiator: { readonly current: HTMLElement | null }
   readonly locale: Locale
   readonly onActiveChange: (active: boolean) => void
   readonly onClose: () => void
@@ -63,13 +66,30 @@ export function ExportDialog({ availableHours, cursor, hour, locale, onActiveCha
     from: { text: time.clock(range.from * MICROS), error: null, candidates: [] },
     to: { text: time.clock(range.to * MICROS), error: null, candidates: [] },
   }))
-  const [lastSeconds, setLastSeconds] = useState(() => readLastExportSeconds(localStorage))
+  const [lastSeconds, setLastSeconds] = useState(() => readLastExportSeconds(persistentStorage))
   const activeJob = useRef(false)
   const previousHour = useRef(hour)
   const dialog = useRef<HTMLElement>(null)
   const firstPreset = useRef<HTMLButtonElement>(null)
   const titleId = useId()
   const statusId = useId()
+  // At most one Blob URL is alive, owned for the whole "report is ready" state.
+  // It survives the click (WebKit resolves a[download] asynchronously) and is
+  // released on every exit path, so repeat/error/close/navigation cannot leak.
+  const download = useRef<HtmlDownload | null>(null)
+  const release = useCallback(() => {
+    releaseHtmlDownload(download.current)
+    download.current = null
+  }, [])
+  useEffect(() => {
+    // A bfcache restore keeps React state: release the URL, not the ready Blob.
+    const suspend = () => releaseHtmlDownload(download.current)
+    window.addEventListener("pagehide", suspend)
+    return () => {
+      window.removeEventListener("pagehide", suspend)
+      release()
+    }
+  }, [release])
   const busy = job.phase === "preparing" || job.phase === "downloading" || job.phase === "unknown"
   const preset = activePreset(range, hour, cursor)
   const duration = validRange(range) ? formatExportDuration(rangeSeconds(range), locale) : "—"
@@ -92,6 +112,23 @@ export function ExportDialog({ availableHours, cursor, hour, locale, onActiveCha
     if (!activeJob.current && sameRange(range, hourRange(before))) onRange(hourRange(hour))
   }, [hour, onRange, range])
 
+  // A portal into body is outside the app root: hide the page behind it from
+  // assistive technology, keep focus on the dialog or an active portal, and
+  // return focus to the explicit initiator on every close path. Layout effects
+  // are used so the cleanup runs before another overlay can claim focus.
+  useLayoutEffect(() => {
+    const surface = dialog.current
+    if (surface === null) return
+    const openingControl = rememberOpener(initiator.current, [surface])
+    const release = isolateBackground([surface])
+    const stopHolding = holdFocus([surface], () => activePortalRoots([surface]))
+    return () => {
+      stopHolding()
+      release()
+      restoreFocus([openingControl])
+    }
+  }, [initiator])
+
   useLayoutEffect(() => {
     firstPreset.current?.focus({ preventScroll: true })
   }, [])
@@ -105,8 +142,9 @@ export function ExportDialog({ availableHours, cursor, hour, locale, onActiveCha
 
   const close = useCallback(() => {
     if (activeJob.current) return
+    release()
     onClose()
-  }, [onClose])
+  }, [onClose, release])
 
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
@@ -123,20 +161,13 @@ export function ExportDialog({ availableHours, cursor, hour, locale, onActiveCha
     return () => window.removeEventListener("keydown", escape, true)
   }, [close, dayPicker])
 
-  // Tab stays inside the dialog; the page behind it is covered by the scrim.
+  // Tab is moved explicitly instead of waiting for the last button in native
+  // order: WebKit may leave activeElement on BODY, and Safari Full Keyboard
+  // Access changes which controls are tabbable. Active portals stay reachable.
   const trapFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key !== "Tab" || dialog.current === null) return
-    const focusable = [...dialog.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((node) => node.offsetParent !== null)
-    const first = focusable[0]
-    const last = focusable.at(-1)
-    if (first === undefined || last === undefined) return
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
+    const surface = dialog.current
+    if (surface === null) return
+    cycleTabFocus(event, [surface, ...activePortalRoots([surface])])
   }
 
   const choose = (next: ExportRange) => {
@@ -190,6 +221,7 @@ export function ExportDialog({ availableHours, cursor, hour, locale, onActiveCha
     }
     const startedAt = performance.now()
     const submitted = range
+    release()
     activeJob.current = true
     onActiveChange(true)
     setMessage(null)
@@ -202,14 +234,18 @@ export function ExportDialog({ availableHours, cursor, hour, locale, onActiveCha
         headersAt ??= performance.now()
         setJob({ phase: "downloading", range: submitted, received, startedAt, total })
       })
-      triggerHtmlDownload(artifact.blob, artifact.filename)
       const seconds = ((headersAt ?? performance.now()) - startedAt) / 1_000
-      writeLastExportSeconds(localStorage, seconds)
+      writeLastExportSeconds(persistentStorage, seconds)
       setLastSeconds(seconds)
+      // Deliberately no anchor activation here. The fetch can outlive transient
+      // user activation, and WebKit may then ignore a[download] entirely. The
+      // save is started by the explicit gesture in the "ready" state instead.
+      download.current = htmlDownload(artifact.blob, artifact.filename)
       activeJob.current = false
       onActiveChange(false)
-      setJob({ phase: "saved", name: artifact.filename, seconds: Math.round((performance.now() - startedAt) / 1_000), size: artifact.blob.size })
+      setJob({ phase: "ready", name: artifact.filename, seconds: Math.round((performance.now() - startedAt) / 1_000), size: artifact.blob.size })
     } catch (reason) {
+      release()
       if (reason instanceof ExportServerStateUnknownError) {
         setJob({ phase: "unknown", range: submitted })
         return
@@ -221,6 +257,25 @@ export function ExportDialog({ availableHours, cursor, hour, locale, onActiveCha
     }
   }
 
+  // A fresh user gesture starts the save. Re-clicking reuses the same Blob URL,
+  // so a cancelled share sheet or a refused download can be retried without
+  // allocating another object URL; one gesture hands the file off exactly once.
+  const handoff = () => {
+    const prepared = download.current
+    if (prepared === null) return
+    setMessage(null)
+    try {
+      handoffHtmlDownload(prepared)
+    } catch {
+      releaseHtmlDownload(prepared)
+      setMessage(t("export.error.handoff"))
+      return
+    }
+    setJob((current) => current.phase === "ready" || current.phase === "handed"
+      ? { ...current, phase: "handed" }
+      : current)
+  }
+
   const elapsed = job.phase === "preparing" ? Math.max(0, Math.round((now - job.startedAt) / 1_000)) : 0
   const status = job.phase === "preparing"
     ? lastSeconds === null
@@ -230,11 +285,15 @@ export function ExportDialog({ availableHours, cursor, hour, locale, onActiveCha
       ? job.total === null
         ? t("export.downloading", { received: humanBytes(job.received, locale) })
         : t("export.downloading_total", { received: humanBytes(job.received, locale), total: humanBytes(job.total, locale) })
-      : job.phase === "saved"
-        ? t("export.saved", { name: job.name, seconds: measure(job.seconds, locale), size: humanBytes(job.size, locale) })
-        : job.phase === "unknown"
-          ? t("export.error.server_state_unknown")
-          : message ?? drafts.from.error ?? drafts.to.error ?? (orderError ? t("export.error.order") : null)
+      : message !== null
+        ? message
+        : job.phase === "ready"
+        ? t("export.ready", { name: job.name, seconds: measure(job.seconds, locale), size: humanBytes(job.size, locale) })
+        : job.phase === "handed"
+          ? t("export.handed", { name: job.name, size: humanBytes(job.size, locale) })
+          : job.phase === "unknown"
+            ? t("export.error.server_state_unknown")
+            : message ?? drafts.from.error ?? drafts.to.error ?? (orderError ? t("export.error.order") : null)
   const closeLabel = job.phase === "unknown" ? t("export.close_unknown") : busy ? t("export.close_busy") : t("export.close")
   const problem = message !== null || job.phase === "unknown" || orderError || drafts.from.error !== null || drafts.to.error !== null
 
@@ -260,7 +319,7 @@ export function ExportDialog({ availableHours, cursor, hour, locale, onActiveCha
           className="export-clock h-8 w-[92px] rounded-[var(--radius-xs)] border border-line2 bg-s2 px-1.5 text-center font-mono text-sm tabular-nums text-fg focus-visible:outline-2 focus-visible:outline-accent coarse:h-11 coarse:w-[104px]"
           data-testid={`export-${endpoint}`}
           disabled={busy}
-          inputMode="numeric"
+          inputMode="text"
           onChange={(event) => editTime(endpoint, event.currentTarget.value)}
           spellCheck={false}
           value={draft.text}
@@ -335,8 +394,11 @@ export function ExportDialog({ availableHours, cursor, hour, locale, onActiveCha
         <footer className="flex min-h-12 flex-none flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2">
           <span className={`export-status min-w-0 flex-1 font-sans text-sm ${problem ? "text-warn" : "text-fg2"}`} data-testid="export-status" id={statusId}>{status}</span>
           <span aria-atomic="true" aria-live="polite" className="sr-only">{job.phase === "preparing" ? t("export.preparing.phase") : status ?? ""}</span>
-          {job.phase === "saved"
-            ? <button className="export-primary inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] border border-line2 bg-s2 px-3 font-sans text-sm font-semibold text-fg2 hover:bg-s3 coarse:h-11" data-testid="export-again" onClick={() => { setJob({ phase: "idle" }); setMessage(null) }} type="button">{t("export.again")}</button>
+          {job.phase === "ready" || job.phase === "handed"
+            ? <>
+                <button className="export-primary inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] border-0 bg-accent px-3 font-sans text-sm font-semibold text-bg hover:brightness-110 coarse:h-11" data-testid="export-download" onClick={handoff} type="button"><Download aria-hidden="true" size={14} />{t(job.phase === "ready" ? "export.download" : "export.download_again")}</button>
+                <button className="export-primary inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] border border-line2 bg-s2 px-3 font-sans text-sm font-semibold text-fg2 hover:bg-s3 coarse:h-11" data-testid="export-again" onClick={() => { release(); setJob({ phase: "idle" }); setMessage(null) }} type="button">{t("export.again")}</button>
+              </>
             : <button className="export-primary inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] border-0 bg-accent px-3 font-sans text-sm font-semibold text-bg hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 coarse:h-11" data-testid="export-submit" disabled={busy || orderError || drafts.from.error !== null || drafts.to.error !== null} type="submit"><Download aria-hidden="true" size={14} />{t("export.submit")}</button>}
         </footer>
       </form>

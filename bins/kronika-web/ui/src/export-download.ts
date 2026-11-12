@@ -108,25 +108,56 @@ export function exportFilename(disposition: string | null): string {
   return candidates.find(safeHtmlFilename) ?? FALLBACK_EXPORT_FILENAME
 }
 
-export function triggerHtmlDownload(
-  blob: Blob,
-  filename: string,
+export interface HtmlDownload {
+  readonly blob: Blob
+  readonly filename: string
+  url: string | null
+}
+
+type ObjectUrlCreator = Pick<typeof URL, "createObjectURL">
+type ObjectUrlReleaser = Pick<typeof URL, "revokeObjectURL">
+
+// Ownership of the Blob URL stays with this handle until the caller explicitly
+// leaves the "report is ready" state. WebKit resolves an a[download] navigation
+// asynchronously; revoking in the same tick as click() can cancel the save on
+// iOS Safari, and a long fetch already consumed the transient user activation.
+// Therefore the URL is created lazily on the first real gesture, reused for a
+// retry, and released on a verified lifecycle event (new export, dismissal,
+// close, unmount, pagehide) — never on a guessed timeout.
+export function htmlDownload(blob: Blob, filename: string): HtmlDownload {
+  return { blob, filename: safeHtmlFilename(filename) ? filename : FALLBACK_EXPORT_FILENAME, url: null }
+}
+
+export function handoffHtmlDownload(
+  download: HtmlDownload,
   documentRef: Pick<Document, "body" | "createElement"> = document,
-  urlRef: Pick<typeof URL, "createObjectURL" | "revokeObjectURL"> = URL,
+  urlRef: ObjectUrlCreator = URL,
 ): void {
-  const objectUrl = urlRef.createObjectURL(blob)
+  const objectUrl = download.url ?? urlRef.createObjectURL(download.blob)
+  download.url = objectUrl
   let link: HTMLAnchorElement | null = null
   try {
     link = documentRef.createElement("a")
-    link.download = safeHtmlFilename(filename) ? filename : FALLBACK_EXPORT_FILENAME
+    link.download = download.filename
     link.href = objectUrl
     link.hidden = true
     documentRef.body.append(link)
     link.click()
   } finally {
+    // Only the temporary anchor is removed here. The Blob URL must outlive this
+    // call; releaseHtmlDownload() owns it.
     link?.remove()
-    urlRef.revokeObjectURL(objectUrl)
   }
+}
+
+export function releaseHtmlDownload(
+  download: HtmlDownload | null,
+  urlRef: ObjectUrlReleaser = URL,
+): void {
+  if (download === null || download.url === null) return
+  const objectUrl = download.url
+  download.url = null
+  urlRef.revokeObjectURL(objectUrl)
 }
 
 function responseErrorCode(detail: string): string | null {

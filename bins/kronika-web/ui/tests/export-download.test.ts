@@ -8,8 +8,10 @@ import {
   exportFilename,
   exportPath,
   fetchExportArtifact,
+  handoffHtmlDownload,
+  htmlDownload,
+  releaseHtmlDownload,
   responseContentLength,
-  triggerHtmlDownload,
 } from "../src/export-download.ts"
 
 test("the export request streams exact bytes without a client cancellation signal", async () => {
@@ -97,7 +99,7 @@ test("Content-Disposition chooses a safe HTML filename", () => {
   ]) assert.equal(exportFilename(disposition), FALLBACK_EXPORT_FILENAME)
 })
 
-test("one download preserves the filename and always revokes its object URL", () => {
+test("one handoff preserves the filename and keeps the blob URL alive", () => {
   const actions: string[] = []
   const link = {
     download: "",
@@ -112,24 +114,78 @@ test("one download preserves the filename and always revokes its object URL", ()
   }
   const urlRef = {
     createObjectURL: (blob: Blob) => { assert.equal(blob.type, "text/html"); actions.push("create"); return "blob:kronika" },
-    revokeObjectURL: (url: string) => { assert.equal(url, "blob:kronika"); actions.push("revoke") },
+    revokeObjectURL: (url: string) => actions.push(`revoke:${url}`),
   }
-  triggerHtmlDownload(new Blob(["<!doctype html>"], { type: "text/html" }), "kronika-range-utc.html", documentRef as never, urlRef)
+  const download = htmlDownload(new Blob(["<!doctype html>"], { type: "text/html" }), "kronika-range-utc.html")
+  assert.equal(download.url, null, "no URL exists before a real gesture")
+  handoffHtmlDownload(download, documentRef as never, urlRef)
   assert.equal(link.download, "kronika-range-utc.html")
   assert.equal(link.href, "blob:kronika")
   assert.equal(link.hidden, true)
-  assert.deepEqual(actions, ["create", "append", "click", "remove", "revoke"])
+  assert.deepEqual(actions, ["create", "append", "click", "remove"], "the click must not revoke in the same tick")
+  assert.equal(download.url, "blob:kronika")
 })
 
-test("object URLs are revoked when the synthetic click fails", () => {
+test("an unsafe filename falls back before an object URL is created", () => {
+  assert.equal(htmlDownload(new Blob(), "../report.txt").filename, FALLBACK_EXPORT_FILENAME)
+})
+
+test("a retry reuses one object URL and release revokes exactly once", () => {
+  const created: string[] = []
+  const revoked: string[] = []
+  const clicks: string[] = []
+  const link = { download: "", hidden: false, href: "", click: () => clicks.push("click"), remove: () => {} }
+  const documentRef = { body: { append: () => {} }, createElement: () => link }
+  const urlRef = {
+    createObjectURL: () => { created.push("blob:kronika"); return "blob:kronika" },
+    revokeObjectURL: (url: string) => revoked.push(url),
+  }
+  const download = htmlDownload(new Blob(), "kronika.html")
+  handoffHtmlDownload(download, documentRef as never, urlRef)
+  handoffHtmlDownload(download, documentRef as never, urlRef)
+  assert.deepEqual(created, ["blob:kronika"])
+  assert.deepEqual(clicks, ["click", "click"])
+  assert.deepEqual(revoked, [])
+  releaseHtmlDownload(download, urlRef)
+  assert.deepEqual(revoked, ["blob:kronika"])
+  releaseHtmlDownload(download, urlRef)
+  releaseHtmlDownload(null, urlRef)
+  assert.deepEqual(revoked, ["blob:kronika"], "release is idempotent")
+  assert.equal(download.url, null)
+})
+
+test("releasing a URL preserves the prepared Blob for a restored page or failed-handoff retry", () => {
+  const blob = new Blob(["report"])
+  const download = htmlDownload(blob, "report.html")
+  let created = 0
+  const revoked: string[] = []
+  const link = { download: "", hidden: false, href: "", click: () => {}, remove: () => {} }
+  const documentRef = { body: { append: () => {} }, createElement: () => link }
+  const urlRef = {
+    createObjectURL: (value: Blob) => { assert.equal(value, blob); return `blob:report-${++created}` },
+    revokeObjectURL: (url: string) => revoked.push(url),
+  }
+  handoffHtmlDownload(download, documentRef as never, urlRef)
+  releaseHtmlDownload(download, urlRef)
+  handoffHtmlDownload(download, documentRef as never, urlRef)
+  assert.equal(download.url, "blob:report-2")
+  assert.equal(link.href, "blob:report-2")
+  assert.deepEqual(revoked, ["blob:report-1"])
+  releaseHtmlDownload(download, urlRef)
+  assert.deepEqual(revoked, ["blob:report-1", "blob:report-2"])
+})
+
+test("a failed synthetic click leaves exactly one URL for the caller to release", () => {
   const revoked: string[] = []
   const link = { download: "", hidden: false, href: "", click: () => { throw new Error("blocked") }, remove: () => {} }
-  assert.throws(() => triggerHtmlDownload(
-    new Blob(),
-    "kronika.html",
+  const download = htmlDownload(new Blob(), "kronika.html")
+  assert.throws(() => handoffHtmlDownload(
+    download,
     { body: { append: () => {} }, createElement: () => link } as never,
-    { createObjectURL: () => "blob:kronika", revokeObjectURL: (url) => revoked.push(url) },
+    { createObjectURL: () => "blob:kronika" },
   ), /blocked/)
+  assert.equal(download.url, "blob:kronika")
+  releaseHtmlDownload(download, { revokeObjectURL: (url: string) => revoked.push(url) })
   assert.deepEqual(revoked, ["blob:kronika"])
 })
 

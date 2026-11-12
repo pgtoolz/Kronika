@@ -5,7 +5,7 @@ CARGO_BUILD = cargo +$(RUST_TOOLCHAIN) build --locked --target $(TARGET)
 UI_DIR = bins/kronika-web/ui
 REPORT_ASSET_FLAGS ?=
 
-.PHONY: build collector demo report web ui-install ui-build ui-check report-assets report-assets-check fmt fmt-check query-boundary dylint lint test bdd-check check test-bdd demo-run demo-image demo-image-run demo-up demo-stop demo-clean demo-status demo-logs diagrams
+.PHONY: build collector demo report web ui-install ui-build ui-check ui-browser-check report-assets report-assets-check fmt fmt-check query-boundary dylint lint test bdd-check check test-bdd demo-run demo-image demo-image-run demo-up demo-stop demo-clean demo-status demo-logs diagrams
 
 build: ## Build every binary for the selected target.
 	@$(CARGO_BUILD) -p kronika-collector -p kronika-dump -p kronika-demo -p kronika-report-cli -p kronika-web
@@ -34,6 +34,8 @@ ui-check: ## Type-check and reproduce the committed interface artifact.
 	@npm --prefix $(UI_DIR) run typecheck
 	@RUST_TOOLCHAIN=$(RUST_TOOLCHAIN) npm --prefix $(UI_DIR) run check
 
+ui-browser-check: ui-check ## Run the production Chromium/WebKit interaction and offline-report regressions.
+	@RUST_TOOLCHAIN=$(RUST_TOOLCHAIN) npm --prefix $(UI_DIR) run test:browser:safari
 report-assets: ui-build ## Rebuild the committed report shell and WebAssembly bindings.
 	@RUST_TOOLCHAIN=$(RUST_TOOLCHAIN) scripts/report-assets.sh build $(REPORT_ASSET_FLAGS)
 

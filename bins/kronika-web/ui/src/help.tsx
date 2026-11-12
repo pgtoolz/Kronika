@@ -1,6 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 
+import { currentPlacementBox, observeViewport } from "./viewport"
+
 export type Translate = (key: string, slots?: Readonly<Record<string, string | number>>) => string
 
 interface TooltipPosition {
@@ -106,7 +108,8 @@ export function LabelHelp({
       const anchorRect = anchor.current?.getBoundingClientRect()
       const tooltipRect = tooltip.current?.getBoundingClientRect()
       if (anchorRect === undefined || tooltipRect === undefined) return
-      const next = placeTooltip(anchorRect, tooltipRect, { height: window.innerHeight, width: window.innerWidth })
+      const box = currentPlacementBox()
+      const next = placeTooltip(anchorRect, tooltipRect, box)
       setPosition((current) => current?.left === next.left && current.top === next.top && current.placement === next.placement ? current : next)
       // The box is clamped to the viewport; the arrow keeps pointing at the
       // mark rather than at the middle of wherever the box landed.
@@ -114,10 +117,13 @@ export function LabelHelp({
       setArrowLeft(Math.max(10, Math.min(tooltipRect.width - 10, centre)))
     }
     update()
-    window.addEventListener("resize", update)
+    // A keyboard, collapsing Safari bars, rotation or zoom changes the visible
+    // area without a window.resize; the document scroll listener moves the
+    // anchor, the visualViewport listeners move the box.
+    const stop = observeViewport(update)
     window.addEventListener("scroll", update, true)
     return () => {
-      window.removeEventListener("resize", update)
+      stop()
       window.removeEventListener("scroll", update, true)
     }
   }, [helpText, open, t(helpKey)])
@@ -146,7 +152,7 @@ export function LabelHelp({
       </span>
       {open && typeof document !== "undefined" && createPortal(
         <span
-          className="fixed z-[1000] max-h-[calc(100vh_-_16px)] w-max max-w-[min(310px,70vw,calc(100vw_-_16px))] overflow-auto rounded-[var(--radius-sm)] border border-line3 bg-s2 px-[10px] py-[7px] text-left text-sm normal-case leading-[1.45] text-fg shadow-pop"
+          className="fixed z-[1000] max-h-[calc(100dvh_-_16px)] w-max max-w-[min(310px,70vw,calc(100vw_-_16px))] overflow-auto rounded-[var(--radius-sm)] border border-line3 bg-s2 px-[10px] py-[7px] text-left text-sm normal-case leading-[1.45] text-fg shadow-pop"
           data-placement={position?.placement}
           data-testid="help-tooltip"
           id={id}
@@ -172,23 +178,34 @@ export function LabelHelp({
 export function placeTooltip(
   anchor: Rectangle,
   size: Pick<Rectangle, "height" | "width">,
-  viewport: { readonly height: number; readonly width: number },
+  viewport: {
+    readonly height: number
+    readonly left?: number
+    readonly top?: number
+    readonly width: number
+  },
 ): TooltipPosition {
   const margin = 8
   const offset = 6
+  const originX = viewport.left ?? 0
+  const originY = viewport.top ?? 0
+  const right = originX + viewport.width
+  const bottom = originY + viewport.height
   const below = anchor.bottom + offset
   const above = anchor.top - size.height - offset
-  const roomBelow = viewport.height - anchor.bottom
-  const roomAbove = anchor.top
-  const placement = below + size.height <= viewport.height - margin || (above < margin && roomBelow >= roomAbove)
+  const roomBelow = bottom - anchor.bottom
+  const roomAbove = anchor.top - originY
+  const placement = below + size.height <= bottom - margin || (above < originY + margin && roomBelow >= roomAbove)
     ? "below"
     : "above"
   const desiredTop = placement === "below" ? below : above
-  const maximumTop = Math.max(margin, viewport.height - size.height - margin)
-  const top = Math.max(margin, Math.min(maximumTop, desiredTop))
+  const minTop = originY + margin
+  const maximumTop = Math.max(minTop, bottom - size.height - margin)
+  const top = Math.max(minTop, Math.min(maximumTop, desiredTop))
   const desiredLeft = anchor.left + anchor.width / 2 - size.width / 2
-  const maximumLeft = Math.max(margin, viewport.width - size.width - margin)
-  const left = Math.max(margin, Math.min(maximumLeft, desiredLeft))
+  const minLeft = originX + margin
+  const maximumLeft = Math.max(minLeft, right - size.width - margin)
+  const left = Math.max(minLeft, Math.min(maximumLeft, desiredLeft))
   return { left, placement, top }
 }
 

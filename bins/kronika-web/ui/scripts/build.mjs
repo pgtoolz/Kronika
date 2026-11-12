@@ -57,7 +57,9 @@ try {
     [`+${rustToolchain}`, "run", "--locked", "--quiet", "--target", rustHost, "-p", "kronika-registry", "--example", "ui_metadata"],
     { cwd: repository, encoding: "utf8", env: { ...process.env, CARGO_TERM_COLOR: "never" } },
   )
-  const translations = await dictionaryModule(new URL("./", import.meta.url), reportMode ? ["export."] : [])
+  // Report-only refusal strings stay out of the server UI; export strings stay
+  // out of the generated report. Feature detection itself is gated in app.tsx.
+  const translations = await dictionaryModule(new URL("./", import.meta.url), reportMode ? ["export."] : ["support."])
   const javascript = await bundleJavascript(registry, translations, fixtureOutput !== null, reportMode)
   const stylesheet = (await fontFaces()) + (await compileStylesheet(temporary, reportMode))
   const template = await readFile(join(uiDirectory, "src/index.html"), "utf8")

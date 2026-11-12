@@ -52,6 +52,31 @@ jobs:
       - run: make report
       - run: make fmt-check lint
 
+  browser:
+    name: Chromium and WebKit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify pinned Rust toolchain
+        run: rustc --version | grep -F "rustc 1.96.0 "
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.21.1
+          cache: npm
+          cache-dependency-path: bins/kronika-web/ui/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+      - run: make ui-install
+      - run: npm --prefix bins/kronika-web/ui exec -- playwright install --with-deps chromium webkit
+      - run: make ui-browser-check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-regression-results
+          path: bins/kronika-web/ui/.browser-results/
+          include-hidden-files: true
+          if-no-files-found: ignore
+
   test:
     name: test
     runs-on: ubuntu-latest

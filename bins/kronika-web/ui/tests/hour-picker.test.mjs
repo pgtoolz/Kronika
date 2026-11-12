@@ -117,3 +117,16 @@ test("the combined picker has no native date/time controls or invented local hou
   assert.match(pickerSource.match(/<div[^>]*data-testid="hour-grid"[^>]*>/s)?.[0] ?? "", /grid-cols-3/)
   assert.match(pickerSource.match(/<div[^>]*data-testid="hour-popover"[^>]*>/s)?.[0] ?? "", /w-\[min\(560px,calc\(100vw_-_20px\)\)\]/)
 })
+
+test("the popover closes on observable exits without depending on relatedTarget", async () => {
+  const source = await readFile(new URL("../src/hour-picker.tsx", import.meta.url), "utf8")
+  assert.doesNotMatch(source, /\brelatedTarget\b/)
+  assert.doesNotMatch(source, /onBlur=/)
+  assert.doesNotMatch(source, /requestAnimationFrame/)
+  assert.match(source, /useLayoutEffect\(/)
+  assert.match(source, /focus\(\{\s*preventScroll:\s*true\s*\}\)/)
+  assert.match(source, /addEventListener\("pointerdown"/)
+  assert.match(source, /addEventListener\("focusin"/)
+  assert.match(source, /event\.key !== "Tab"/)
+  assert.match(source, /event\.defaultPrevented/)
+})

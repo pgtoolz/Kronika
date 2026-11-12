@@ -84,6 +84,13 @@ distribution environments with that kernel, not with every Linux kernel. Matrix 
 
 ## Development builds
 
+The Safari compatibility round is tracked in the
+[R1 specification](safari-compat-plan.ru.md), not claimed as a change to the
+published 1.2.4 archives. The mandatory development check
+[`make ui-browser-check`](build.md#chromium-and-webkit-regression) runs production
+artifacts in Chromium and Playwright WebKit; native Safari and physical-device
+acceptance remain separate.
+
 With an authenticated [GitHub CLI](https://cli.github.com/manual/gh_run_download),
 select a successful workflow run for the source revision you want:
 

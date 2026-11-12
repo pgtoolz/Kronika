@@ -155,6 +155,14 @@ MCP uses the same listener and authentication at `/mcp`.
 [Client setup](docs/mcp-clients.md) is also available in the **AI**
 panel. [Systemd](docs/services.md) defines persistent services.
 
+## Browser requirements
+
+Use Safari 16.4+ on macOS 13.3+ or iOS/iPadOS 16.4+, or a current
+Chrome/Chromium, Edge or Firefox. Generated offline HTML reports also need
+`DecompressionStream` and WebAssembly. Automated checks currently cover headless
+Chrome/Chromium and Playwright WebKit only; native Safari, physical devices and
+VoiceOver remain separate manual checks. See [Browser support](README.md#browser-support).
+
 ## Reference
 
 [Controls](docs/features.md) · [Worked examples](docs/operator-guide.md) ·

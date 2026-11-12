@@ -385,10 +385,50 @@
 @layer base {
   /* The app owns scroll positions, so disable browser anchoring. */
   html { overflow-anchor: none; }
-  body { background: var(--color-bg); min-height: 100vh; min-width: 320px; }
+  body { background: var(--color-bg); min-height: 100vh; min-height: 100dvh; min-width: 320px; }
 }
 
-.mcp-dialog::backdrop { background: var(--color-shadow-a); }
+/* R1-05 — visible area, safe area and the supported WebKit range.
+   env() is non-zero only with viewport-fit=cover; the 0px fallbacks keep
+   desktop and headless geometry unchanged. installViewportCss() replaces the
+   visible-* aliases with the intersection of visualViewport and safe area on
+   every resize, scroll, keyboard, rotation or zoom change. Before script runs,
+   the aliases fall back to the safe insets. */
+:root {
+  --kronika-safe-top: env(safe-area-inset-top, 0px);
+  --kronika-safe-right: env(safe-area-inset-right, 0px);
+  --kronika-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --kronika-safe-left: env(safe-area-inset-left, 0px);
+  --kronika-visible-top: var(--kronika-safe-top);
+  --kronika-visible-right: var(--kronika-safe-right);
+  --kronika-visible-bottom: var(--kronika-safe-bottom);
+  --kronika-visible-left: var(--kronika-safe-left);
+  --kronika-visible-height: 100vh;
+  --kronika-visible-height: 100dvh;
+  --kronika-visible-width: 100vw;
+}
+
+/* dvh tracks Safari's collapsing bars; vh is the fallback for the oldest
+   supported WebKit builds. Unlayered rules win over the utility layer. The
+   shell owns the physical safe-area insets once for everything in normal flow.
+   It deliberately does NOT use --kronika-visible-*: those also carry
+   visualViewport scroll/zoom offsets, and adding them as normal-flow padding
+   would reflow and compress the dashboard (on a small phone the virtualised
+   table collapses to zero height) instead of merely describing what is on
+   screen. Fixed overlays below use the visible box, which is where a keyboard
+   or a pinch-zoom actually needs to trim the surface. */
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+  padding: var(--kronika-safe-top) var(--kronika-safe-right) var(--kronika-safe-bottom) var(--kronika-safe-left);
+}
+
+/* WebKit below 17.4 does not inherit custom properties into ::backdrop, so a
+   themed var() there rendered as a transparent scrim. Literal colours keep the
+   dim readable in both themes at the bottom of the supported range; selector
+   matching still uses the document tree, so the theme attribute works. */
+.mcp-dialog::backdrop { background: rgba(2, 6, 12, .72); }
+[data-theme="light"] .mcp-dialog::backdrop { background: rgba(30, 41, 59, .42); }
 @layer base {
   button:focus-visible { outline: 2px solid var(--color-accent); }
   h1, h2 { color: var(--color-fg-hi); font-weight: 600; margin: 0; }
@@ -401,18 +441,81 @@
   }
 }
 
+/* Body-level portals are fixed to the layout viewport, so shell padding cannot
+   reach them. Each outermost fixed surface repeats the insets exactly once;
+   nested children never add them again (no double safe-area padding). */
+[data-testid="search-help"] {
+  padding-top: calc(8px + var(--kronika-visible-top));
+  padding-right: calc(8px + var(--kronika-visible-right));
+  padding-bottom: calc(8px + var(--kronika-visible-bottom));
+  padding-left: calc(8px + var(--kronika-visible-left));
+}
+.activity-overlay {
+  padding-top: calc(16px + var(--kronika-visible-top));
+  padding-right: calc(20px + var(--kronika-visible-right));
+  padding-bottom: calc(16px + var(--kronika-visible-bottom));
+  padding-left: calc(20px + var(--kronika-visible-left));
+}
+[data-testid="help-panel"],
+.mcp-dialog {
+  padding-top: calc(18px + var(--kronika-visible-top));
+  padding-right: calc(18px + var(--kronika-visible-right));
+  padding-bottom: calc(18px + var(--kronika-visible-bottom));
+  padding-left: calc(18px + var(--kronika-visible-left));
+}
+[data-testid="manual-copy-fallback"] {
+  bottom: calc(12px + var(--kronika-visible-bottom));
+  right: calc(12px + var(--kronika-visible-right));
+}
+[data-testid="demo-notice"] {
+  bottom: calc(8px + var(--kronika-visible-bottom));
+  left: calc(8px + var(--kronika-visible-left));
+}
+
+/* JS placement supplies an inline maxHeight as soon as it runs. These dvh
+   bounds cover the first frame, with a vh fallback underneath. The last step
+   uses the published visible height, which also shrinks for an on-screen
+   keyboard or a zoomed visual viewport — cases dvh cannot express. */
+[data-testid="hour-popover"] {
+  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
+  max-height: calc(var(--kronika-visible-height) - 20px);
+}
+[data-testid="help-tooltip"] {
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  max-height: calc(var(--kronika-visible-height) - 16px);
+}
+[data-testid="search-help"] aside {
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  max-height: calc(var(--kronika-visible-height) - 16px);
+}
+
 /* KRONIKA_EXPORT_STYLES_BEGIN */
 .export-dialog input[aria-invalid="true"] { border-color: var(--color-warn); box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-warn) 45%, transparent); }
 .export-dialog :is(button, input):disabled { cursor: not-allowed; opacity: .5; }
 .export-dialog[data-phase="preparing"] .export-status,
 .export-dialog[data-phase="downloading"] .export-status { color: var(--color-accent3); }
-.export-dialog[data-phase="saved"] .export-status { color: var(--color-fg); }
+.export-dialog[data-phase="ready"] .export-status,
+.export-dialog[data-phase="handed"] .export-status { color: var(--color-fg); }
 /* The dialog opens below the top bar and the timeline, whose plot keeps drawing
    the chosen interval through the scrim. */
-.export-scrim { padding: clamp(84px, 16vh, 168px) 10px 10px; }
+.export-scrim {
+  padding-top: calc(clamp(84px, 16vh, 168px) + var(--kronika-visible-top));
+  padding-right: calc(10px + var(--kronika-visible-right));
+  padding-bottom: calc(10px + var(--kronika-visible-bottom));
+  padding-left: calc(10px + var(--kronika-visible-left));
+}
 @media (max-width: 520px) {
-  .export-scrim { align-items: flex-end; padding: 0; }
-  .export-dialog { border-radius: var(--radius-md) var(--radius-md) 0 0; max-height: min(85dvh, 640px); padding-bottom: env(safe-area-inset-bottom); width: 100%; }
+  .export-scrim {
+    align-items: flex-end;
+    padding-top: var(--kronika-visible-top);
+    padding-right: var(--kronika-visible-right);
+    padding-bottom: 0;
+    padding-left: var(--kronika-visible-left);
+  }
+  .export-dialog { border-radius: var(--radius-md) var(--radius-md) 0 0; max-height: min(85vh, 640px); max-height: min(85dvh, 640px); padding-bottom: var(--kronika-visible-bottom); width: 100%; }
   .export-dialog .export-primary { flex-basis: 100%; justify-content: center; }
 }
 /* KRONIKA_EXPORT_STYLES_END */
@@ -537,27 +640,28 @@
 .inspector.inspector-maximized {
   border-left: 0;
   border-top: 0;
-  bottom: 0;
+  bottom: var(--kronika-visible-bottom);
   box-shadow: none;
   height: auto;
-  left: 0;
+  left: var(--kronika-visible-left);
   max-height: none;
   max-width: none;
   position: fixed;
-  right: 0;
-  top: 40px;
+  right: var(--kronika-visible-right);
+  top: calc(40px + var(--kronika-visible-top));
   width: auto;
   z-index: 96;
 }
 .inspector-maximized .inspector-splitter { display: none; }
 .inspector-maximized .inspector-body .uplot-figure {
+  height: calc(100vh - 250px);
   height: calc(100dvh - 250px);
   max-height: none;
   min-height: 320px;
 }
 @media (max-width: 1000px) {
-  .inspector.inspector-maximized { top: 68px; }
-  .inspector-maximized .inspector-body .uplot-figure { height: calc(100dvh - 280px); }
+  .inspector.inspector-maximized { top: calc(68px + var(--kronika-visible-top)); }
+  .inspector-maximized .inspector-body .uplot-figure { height: calc(100vh - 280px); height: calc(100dvh - 280px); }
 }
 
 .inspector-splitter {
@@ -569,6 +673,7 @@
   padding: 0;
   position: absolute;
   top: 0;
+  touch-action: none;
   width: 7px;
   z-index: 3;
 }
@@ -728,16 +833,16 @@
     padding: 0;
     position: fixed;
     right: 0;
-    top: 68px;
+    top: calc(68px + var(--kronika-visible-top));
     z-index: 89;
   }
   .inspector {
-    bottom: 0;
+    bottom: var(--kronika-visible-bottom);
     box-shadow: -12px 0 28px var(--color-shadow-a);
     max-width: calc(100vw - 16px);
     position: fixed;
-    right: 0;
-    top: 68px;
+    right: var(--kronika-visible-right);
+    top: calc(68px + var(--kronika-visible-top));
     width: min(384px, calc(100vw - 16px));
     z-index: 90;
   }
@@ -788,8 +893,8 @@
   /* The plot goes; the cursor band stays, because it carries the two readings
      an on-call reader routes on. The plot returns at full size in the chart. */
   .timeline-preview > .timeline-rail, .timeline-preview .uplot-figure { display: none; }
-  .inspector[data-panel="chart"] { height: 100dvh; max-height: 100dvh; }
-  .inspector[data-panel="chart"] .inspector-body .uplot-figure { height: calc(100dvh - 300px); }
+  .inspector[data-panel="chart"] { height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; }
+  .inspector[data-panel="chart"] .inspector-body .uplot-figure { height: calc(100vh - 300px); height: calc(100dvh - 300px); }
 
   /* The form folds into the button above; the surface keeps printing how much
      of the table was loaded, which is not a control. */
@@ -806,10 +911,10 @@
     display: flex;
     gap: 4px;
     height: 46px;
-    left: 0;
+    left: var(--kronika-visible-left);
     position: fixed;
-    right: 0;
-    top: 0;
+    right: var(--kronika-visible-right);
+    top: var(--kronika-visible-top);
     z-index: 121;
   }
   .mobile-panel-head > button { align-items: center; background: transparent; border: 0; color: var(--color-fg2); cursor: pointer; display: flex; height: 44px; justify-content: center; width: 44px; }
@@ -818,14 +923,16 @@
     background: var(--color-s1);
     inset: 0;
     overflow: auto;
-    padding: 46px 0 env(safe-area-inset-bottom);
+    /* 46px reserves the fixed phone header; the safe insets are added once,
+       here on the outermost full-bleed surface. */
+    padding: calc(46px + var(--kronika-visible-top)) var(--kronika-visible-right) var(--kronika-visible-bottom) var(--kronika-visible-left);
     position: fixed;
     z-index: 120;
   }
   .mobile-search-open [data-search-surface] form { display: flex; }
   .mobile-search-open [data-search-surface] > div > button[aria-expanded] { display: inline-flex; }
   .mobile-search-open [data-search-surface] [data-testid="search-chips"] { display: flex; }
-  .mobile-search-open [data-search-surface] input { font-size: var(--text-md); padding-block: 9px; }
+  .mobile-search-open [data-search-surface] input { font-size: 16px; padding-block: 9px; }
   /* A panel is one task at full width: the field takes the line, the count and
      the syntax mark sit under it instead of squeezing it to 164px. */
   .mobile-search-open [data-search-surface] > div { align-items: stretch; flex-direction: column; gap: 8px; min-height: 28px; padding: 8px; }
@@ -847,22 +954,24 @@
   /* Wrapped, these four facts cost four lines of the table. One scrolling row
      keeps every one of them and returns the height to rows. */
   .process-workspace > .lensbar > .process-summary-inline { flex-basis: 100%; flex-wrap: nowrap; overflow-x: auto; }
-  .inspector-scrim { top: 68px; }
+  .inspector-scrim { top: calc(68px + var(--kronika-visible-top)); }
   .inspector {
     border-left: 0;
     border-top: 1px solid var(--color-line3);
-    bottom: 0;
+    bottom: var(--kronika-visible-bottom);
     box-shadow: 0 -12px 28px var(--color-shadow-a);
-    left: 0;
+    left: var(--kronika-visible-left);
+    height: min(480px, calc(100vh - 82px));
     height: min(480px, calc(100dvh - 82px));
+    max-height: min(480px, calc(100vh - 82px));
     max-height: min(480px, calc(100dvh - 82px));
     max-width: none;
-    right: 0;
+    right: var(--kronika-visible-right);
     top: auto;
     width: 100%;
   }
-  .inspector-head { padding-left: max(6px, env(safe-area-inset-left)); padding-right: max(6px, env(safe-area-inset-right)); }
-  .inspector-body { padding-bottom: env(safe-area-inset-bottom); }
+  /* The parent .inspector owns every safe-area inset on phones. Repeating them
+     on the head or the scrollable body would double the padding. */
   .timeline-lanes { visibility: hidden; }
   /* The rail's reading truncates at this width, and a clipped health split
      reads as one number. The cursor row below the plot carries it in full. */
@@ -910,4 +1019,33 @@
   .timeline-preview-picker, .timeline-lane-slot[data-compact="true"] .timeline-preview-picker { display: grid; grid-template-columns: minmax(0, 1fr); }
   .timeline-open-chart span:last-child { display: none; }
   .timeline-open-chart { flex-basis: 36px; padding-inline: 9px; width: 36px; }
+}
+
+/* iOS Safari auto-zooms a focused control below 16px. Wide mouse/keyboard
+   layouts keep their compact density; narrow viewports and touch pointers use
+   the browser-safe text size without disabling user zoom. */
+@media (max-width: 520px), (hover: none), (pointer: coarse) {
+  input.export-clock,
+  [data-search-surface] input[type="search"],
+  input[type="text"],
+  input[type="password"] { font-size: 16px; }
+}
+
+/* Only the resize handles block touch scrolling. Desktop mouse/keyboard
+   geometry is unchanged. A header cell has overflow-hidden, so a negative
+   offset is clipped and makes the grip unhittable for mouse AND touch: the
+   wider hit area must grow leftwards, inside the cell. The Inspector splitter
+   already spans the full panel height and has no clipping ancestor, so it only
+   needs a wider box; a 44px overlay there would shadow the panel header tabs. */
+@media (hover: none), (pointer: coarse) {
+  .inspector-splitter { touch-action: none; width: 16px; }
+  .entity-head .column-grip { right: 0; touch-action: none; width: 16px; }
+  .entity-head .column-grip::after {
+    content: "";
+    height: 100%;
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 44px;
+  }
 }
