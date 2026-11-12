@@ -132,7 +132,9 @@ test("Process detail delegates Escape and focus return to the shared Inspector",
   ])
   assert.doesNotMatch(source, /useDetailDismiss|addEventListener\("keydown"/)
   assert.match(inspector, /event\.key === "Escape"/)
-  assert.match(inspector, /opener\.current\.focus\(\{ preventScroll: true \}\)/)
+  // Focus return lives in the shared Inspector and is owned by its unmount
+  // cleanup, so every close path (not only Escape) restores the initiator.
+  assert.match(inspector, /restoreFocus\(\[opener\.current\]\)/)
 })
 
 test("a recorded PostgreSQL backend is its own Inspector panel, not a tail under the process facts", async () => {

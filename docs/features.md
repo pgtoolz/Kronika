@@ -156,6 +156,8 @@ Sources: [tool schemas](../bins/kronika-web/src/mcp/catalog.rs), [typed filters]
 
 The HTML embeds the recording, UI, fonts and WASM query engine. It opens from a local file and evaluates requests synchronously in WASM on the browser main thread. Its visible range is fixed. Live refresh, login, export and MCP connection controls are disabled. Stored query text, plans, log text and command lines travel with the recording.
 
+The report requires Safari 16.4+ on macOS 13.3+ or iOS/iPadOS 16.4+, or a current browser with `DecompressionStream` and WebAssembly. Older browsers are not supported; a detectable missing API produces a localized message instead of a blank page. See [Browser support](../README.md#browser-support).
+
 The four installed programs are `kronika-collector`, `kronika-web`, `kronika-dump` and `kronika-report`. CLI [slice](../bins/kronika-dump/README.md) creates a recording range, and [report](../bins/kronika-report/README.md) converts it to HTML.
 
 Sources: [range arithmetic](../bins/kronika-web/ui/src/export-range.ts), [civil time](../bins/kronika-web/ui/src/export-time.ts), [download dialog](../bins/kronika-web/ui/src/export-dialog.tsx), [offline request transport](../bins/kronika-web/ui/src/report-transport.ts).

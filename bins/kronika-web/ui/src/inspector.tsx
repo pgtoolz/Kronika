@@ -3,12 +3,27 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import { createPortal } from "react-dom"
 
 import { INSPECTOR_PANELS, type InspectorPanel } from "./address"
+import { activePortalRoots, cycleTabFocus, focusNode, holdFocus, isolateBackground, rememberOpener, restoreFocus } from "./focus"
 import type { Translate } from "./help"
+import { persistentStorage } from "./storage"
 
 const MIN_WIDTH = 320
 const MAX_WIDTH = 520
 const DEFAULT_WIDTH = 360
 const WIDTH_KEY = "kronika.inspector-width"
+const MOBILE_MODAL = "(max-width: 1000px)"
+
+/** The desktop Inspector is a peer panel; only the compact layout is modal. */
+function useModalMode(): boolean {
+  const [modal, setModal] = useState(() => window.matchMedia(MOBILE_MODAL).matches)
+  useEffect(() => {
+    const update = () => setModal(window.matchMedia(MOBILE_MODAL).matches)
+    update()
+    window.addEventListener("resize", update)
+    return () => window.removeEventListener("resize", update)
+  }, [])
+  return modal
+}
 
 /// A panel beyond Detail and Chart, named after the recorded section it shows.
 export type RelationPanel = Exclude<InspectorPanel, "chart" | "detail" | null>
@@ -187,20 +202,48 @@ export function Inspector({
   readonly t: Translate
 }) {
   const related = useContext(InspectorPortalContext)?.relatedTabs ?? []
-  const [width, setWidth] = useState(() => loadInspectorWidth(localStorage))
+  const [width, setWidth] = useState(() => loadInspectorWidth(persistentStorage))
   const [maximized, setMaximized] = useState(false)
+  const modal = useModalMode()
   const root = useRef<HTMLElement>(null)
   const opener = useRef<HTMLElement | null>(null)
+  const resizeCleanup = useRef<(() => void) | null>(null)
   const style = { "--inspector-width": `${width}px` } as CSSProperties
 
+  // A resize can outlive the gesture when the panel closes or WebKit cancels
+  // the pointer. The handler owns its listeners and releases them on unmount.
+  useEffect(() => () => { resizeCleanup.current?.() }, [])
+
+  // Only the compact, scrim-covered layout is modal. aria-hidden (without
+  // inert) keeps VoiceOver out of the background while leaving the app's
+  // programmatic background controls and portals working. This effect is
+  // declared first so its cleanup releases isolation before focus is restored.
   useLayoutEffect(() => {
-    const active = document.activeElement
-    if (active instanceof HTMLElement && active !== document.body && !root.current?.contains(active)) opener.current = active
-    requestAnimationFrame(() => root.current?.focus({ preventScroll: true }))
+    const surface = root.current
+    if (!modal || surface === null) return
+    const release = isolateBackground([surface])
+    const stopHolding = holdFocus([surface], () => activePortalRoots([surface]))
+    return () => {
+      stopHolding()
+      release()
+    }
+  }, [modal])
+
+  // The initiator is remembered from the real interaction, not just
+  // activeElement: WebKit may leave focus on BODY after a button click.
+  // Every close path restores focus through the unmount cleanup.
+  useLayoutEffect(() => {
+    const surface = root.current
+    if (surface === null) return
+    opener.current = rememberOpener(undefined, [surface])
+    focusNode(surface)
+    return () => {
+      restoreFocus([opener.current])
+    }
   }, [])
 
   useEffect(() => {
-    try { localStorage.setItem(WIDTH_KEY, String(width)) } catch {}
+    try { persistentStorage.setItem(WIDTH_KEY, String(width)) } catch {}
   }, [width])
 
   useEffect(() => {
@@ -212,42 +255,53 @@ export function Inspector({
           return
         }
         onClose()
-        requestAnimationFrame(() => opener.current?.isConnected && opener.current.focus({ preventScroll: true }))
         return
       }
-      if (event.key !== "Tab" || !window.matchMedia("(max-width: 1000px)").matches) return
-      const focusable = [...(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') ?? [])]
-      const first = focusable[0]
-      const last = focusable.at(-1)
-      if (first === undefined || last === undefined) return
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
+      // Desktop stays non-modal. On compact layouts Tab is moved explicitly
+      // across visible controls, including portals owned by this surface.
+      if (event.key !== "Tab" || !modal) return
+      const surface = root.current
+      if (surface === null) return
+      cycleTabFocus(event, [surface, ...activePortalRoots([surface])])
     }
     window.addEventListener("keydown", keydown)
     return () => window.removeEventListener("keydown", keydown)
-  }, [maximized, onClose])
+  }, [maximized, modal, onClose])
 
   const beginResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!event.isPrimary || event.button !== 0) return
     event.preventDefault()
+    resizeCleanup.current?.()
+    const handle = event.currentTarget
+    const pointerId = event.pointerId
     const start = event.clientX
     const initial = width
-    const move = (next: PointerEvent) => setWidth(clampWidth(initial + start - next.clientX))
-    const finish = () => {
+    try { handle.setPointerCapture(pointerId) } catch {}
+    const move = (next: PointerEvent) => {
+      if (next.pointerId !== pointerId) return
+      setWidth(clampWidth(initial + start - next.clientX))
+    }
+    const finish = (next?: PointerEvent) => {
+      if (next !== undefined && next.pointerId !== pointerId) return
       window.removeEventListener("pointermove", move)
       window.removeEventListener("pointerup", finish)
+      window.removeEventListener("pointercancel", finish)
+      handle.removeEventListener("lostpointercapture", finish)
+      try {
+        if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
+      } catch {}
+      resizeCleanup.current = null
     }
     window.addEventListener("pointermove", move)
-    window.addEventListener("pointerup", finish, { once: true })
+    window.addEventListener("pointerup", finish)
+    window.addEventListener("pointercancel", finish)
+    handle.addEventListener("lostpointercapture", finish)
+    resizeCleanup.current = finish
   }
 
   return <>
     <button aria-label={t("inspector.close")} className="inspector-scrim" onClick={onClose} type="button" />
-    <aside aria-label={t("inspector.title")} className={`inspector${maximized ? " inspector-maximized" : ""}`} data-panel={panel} data-testid="inspector" ref={root} role="dialog" style={style} tabIndex={-1}>
+    <aside aria-label={t("inspector.title")} aria-modal={modal || undefined} className={`inspector${maximized ? " inspector-maximized" : ""}`} data-panel={panel} data-testid="inspector" ref={root} role="dialog" style={style} tabIndex={-1}>
       <button
         aria-label={t("inspector.resize")}
         aria-orientation="vertical"

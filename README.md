@@ -165,6 +165,21 @@ a server or network connection.
 interval into a standalone ZMS recording, and [kronika-report](bins/kronika-report/README.md)
 converts that recording into HTML.
 
+## Browser support
+
+Kronika primarily targets **Chrome/Chromium 111+** and **Firefox 128+**, and
+also supports **Safari 16.4+ on macOS 13.3+ and iOS/iPadOS 16.4+** (Edge 111+
+follows the Chrome floor). Portable HTML reports also require gzip stream
+decompression (`DecompressionStream`) and WebAssembly; when a required capability
+is missing, the report shows a localized error instead of a blank page. Older
+browsers are not supported and no legacy polyfills are bundled.
+
+Automated browser checks currently run in headless Chrome/Chromium and Playwright
+WebKit. Native Safari.app, the exact Safari 16.4 floor, physical iPhone/iPad
+devices, VoiceOver and device save/Files flows are not covered by that automated
+gate; those checks are recorded separately and an unrun device check is never
+reported as PASS.
+
 ## Documentation
 
 - Setup: [Install](INSTALL.md) · [Archives and CI](docs/releases.md) · [Services](docs/services.md) · [Storage failures](docs/storage-recovery.md) · [Source build](docs/build.md)

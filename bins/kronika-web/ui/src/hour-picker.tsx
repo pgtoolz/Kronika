@@ -4,9 +4,11 @@ import { createPortal } from "react-dom"
 
 import { calendarDateLabel, calendarMonthDays, calendarMonthLabel, type DisplayTimeFormatter } from "./display-time"
 import { useDisplayTime } from "./display-time-context"
+import { containsNode, visibleFocusable } from "./focus"
 import type { Translate } from "./help"
 import type { Locale } from "./model"
 import type { ReportVisibleRange } from "./report-transport"
+import { currentPlacementBox, observeViewport } from "./viewport"
 
 const HOUR_MICROS = 3_600_000_000
 
@@ -44,43 +46,90 @@ export function HourPicker({
   const currentIndex = hour === null ? -1 : selectable.indexOf(hour)
   const label = hour === null ? null : time.hourRange(hour)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return
     const selected = dayHours.indexOf(hour ?? Number.NaN)
-    const frame = requestAnimationFrame(() => hourCells.current[Math.max(0, selected)]?.focus())
+    hourCells.current[Math.max(0, selected)]?.focus({ preventScroll: true })
+  }, [dayHours, hour, open])
+
+  useEffect(() => {
+    if (!open) return
+    let tabClose: number | undefined
+    const surfaces = () => [root.current, popoverNode.current]
     const dismiss = (event: PointerEvent) => {
-      if (event.target instanceof Node && (root.current?.contains(event.target) || popoverNode.current?.contains(event.target))) return
+      if (event.target instanceof Node && containsNode(surfaces(), event.target)) return
       setOpen(false)
     }
     const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape") return
+      if (event.key !== "Escape" || event.defaultPrevented) return
       event.preventDefault()
       setOpen(false)
-      trigger.current?.focus()
+      trigger.current?.focus({ preventScroll: true })
+    }
+    const focusExit = (event: FocusEvent) => {
+      if (event.target instanceof Node && containsNode(surfaces(), event.target)) return
+      setOpen(false)
+    }
+    const tab = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Tab" || event.defaultPrevented) return
+      const surfacesNow = surfaces()
+      const origin = event.target instanceof HTMLElement ? event.target : document.activeElement
+      const inside = containsNode(surfacesNow, origin)
+      const focusable = visibleFocusable(surfacesNow)
+      const index = origin instanceof HTMLElement ? focusable.indexOf(origin) : -1
+      const next = index + (event.shiftKey ? -1 : 1)
+      if (inside && next >= 0 && next < focusable.length) {
+        event.preventDefault()
+        focusable[next]?.focus({ preventScroll: true })
+        return
+      }
+      // Let the browser move focus first; only then remove the popover.
+      if (tabClose !== undefined) window.clearTimeout(tabClose)
+      tabClose = window.setTimeout(() => setOpen(false), 0)
     }
     document.addEventListener("pointerdown", dismiss, true)
+    document.addEventListener("focusin", focusExit, true)
     window.addEventListener("keydown", escape)
+    window.addEventListener("keydown", tab, true)
     return () => {
-      cancelAnimationFrame(frame)
+      if (tabClose !== undefined) window.clearTimeout(tabClose)
       document.removeEventListener("pointerdown", dismiss, true)
+      document.removeEventListener("focusin", focusExit, true)
       window.removeEventListener("keydown", escape)
+      window.removeEventListener("keydown", tab, true)
     }
-  }, [dayHours, hour, open])
+  }, [open])
 
   useLayoutEffect(() => {
     if (!open) return
     const place = () => {
       const anchor = root.current?.getBoundingClientRect()
       if (anchor === undefined) return
-      setPopover(hourPopoverPlacement(anchor, {
+      const box = currentPlacementBox()
+      const next = hourPopoverPlacement(anchor, {
         compact: window.matchMedia("(max-width: 760px)").matches,
-        height: window.innerHeight,
-        width: document.documentElement.clientWidth,
-      }))
+        height: box.height,
+        left: box.left,
+        top: box.top,
+        width: box.width,
+      })
+      setPopover((current) => current !== null
+        && current.left === next.left
+        && current.maxHeight === next.maxHeight
+        && current.top === next.top
+        && current.width === next.width
+        ? current
+        : next)
     }
     place()
-    window.addEventListener("resize", place)
-    return () => window.removeEventListener("resize", place)
+    // Safari's bars, the on-screen keyboard, rotation and zoom all change the
+    // visible area without a window.resize. A document scroll moves the anchor.
+    const stop = observeViewport(place)
+    window.addEventListener("scroll", place, true)
+    return () => {
+      stop()
+      window.removeEventListener("scroll", place, true)
+    }
   }, [open])
 
   const show = () => {
@@ -98,10 +147,6 @@ export function HourPicker({
   return <div
     className="relative flex items-center gap-1"
     data-testid="hour-picker"
-    onBlur={(event) => {
-      if (event.relatedTarget instanceof Node && (root.current?.contains(event.relatedTarget) || popoverNode.current?.contains(event.relatedTarget))) return
-      setOpen(false)
-    }}
     ref={root}
   >
     <button aria-label={t("hour.previous")} className="flex h-8 w-6 cursor-pointer items-center justify-center rounded-[var(--radius-sm)] border-0 bg-transparent p-0 text-fg3 transition-colors hover:bg-s3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-45" data-testid="hour-previous" disabled={currentIndex <= 0} onClick={() => move(currentIndex - 1)} type="button"><ChevronLeft aria-hidden="true" size={15} /></button>
@@ -121,7 +166,7 @@ export function HourPicker({
       {label !== null && <small className="text-xs leading-none text-fg4">{label.date}</small>}
     </button>
     <button aria-label={t("hour.next")} className="flex h-8 w-6 cursor-pointer items-center justify-center rounded-[var(--radius-sm)] border-0 bg-transparent p-0 text-fg3 transition-colors hover:bg-s3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-45" data-testid="hour-next" disabled={currentIndex < 0 || currentIndex >= selectable.length - 1} onClick={() => move(currentIndex + 1)} type="button"><ChevronRight aria-hidden="true" size={15} /></button>
-    {open && hour !== null && createPortal(<div aria-label={t("hour.picker")} className="fixed left-2.5 top-2.5 z-[1150] grid max-h-[calc(100vh_-_20px)] w-[min(560px,calc(100vw_-_20px))] grid-cols-2 overflow-auto rounded-[var(--radius-md)] border border-line3 bg-s1 p-2.5 shadow-[var(--shadow-pop)] max-[760px]:w-[min(304px,calc(100vw_-_20px))] max-[760px]:grid-cols-1" data-testid="hour-popover" id="hour-picker-popover" ref={popoverNode} role="dialog" style={popover ?? undefined}>
+    {open && hour !== null && createPortal(<div aria-label={t("hour.picker")} className="fixed left-2.5 top-2.5 z-[1150] grid max-h-[calc(100dvh_-_20px)] w-[min(560px,calc(100vw_-_20px))] grid-cols-2 overflow-auto rounded-[var(--radius-md)] border border-line3 bg-s1 p-2.5 shadow-[var(--shadow-pop)] max-[760px]:w-[min(304px,calc(100vw_-_20px))] max-[760px]:grid-cols-1" data-testid="hour-popover" id="hour-picker-popover" ref={popoverNode} role="dialog" style={popover ?? undefined}>
       <header className="col-span-full flex min-h-[27px] items-center justify-between border-b border-line3 px-0.5 pb-[7px] max-[760px]:col-span-1">
         <strong className="font-sans text-sm font-medium text-fg" data-testid="hour-current">{calendarDateLabel(time.dayKey(hour), locale)}</strong>
       </header>
@@ -157,14 +202,29 @@ interface HourPopoverPlacement {
 
 export function hourPopoverPlacement(
   anchor: { readonly bottom: number; readonly left: number },
-  viewport: { readonly compact?: boolean; readonly height: number; readonly width: number },
+  viewport: {
+    readonly compact?: boolean
+    readonly height: number
+    readonly left?: number
+    readonly top?: number
+    readonly width: number
+  },
 ): HourPopoverPlacement {
   const edge = 10
+  const originX = viewport.left ?? 0
+  const originY = viewport.top ?? 0
   const compact = viewport.compact ?? viewport.width <= 760
   const width = Math.max(0, Math.min(compact ? 304 : 560, viewport.width - 2 * edge))
-  const left = Math.min(Math.max(edge, anchor.left), Math.max(edge, viewport.width - width - edge))
-  const top = Math.max(edge, anchor.bottom + 6)
-  return { left, maxHeight: Math.max(0, viewport.height - top - edge), top, width }
+  const minLeft = originX + edge
+  const maxLeft = Math.max(minLeft, originX + viewport.width - width - edge)
+  const left = Math.min(Math.max(minLeft, anchor.left), maxLeft)
+  const top = Math.max(originY + edge, anchor.bottom + 6)
+  return {
+    left,
+    maxHeight: Math.max(0, originY + viewport.height - top - edge),
+    top,
+    width,
+  }
 }
 
 export function catalogueHours(

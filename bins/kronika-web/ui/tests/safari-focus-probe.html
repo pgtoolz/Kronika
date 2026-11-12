@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kronika hour-picker focus probe</title>
+<style>
+  body { font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 24px; color: #222; }
+  h1 { font-size: 15px; font-weight: 500; }
+  p { max-width: 760px; }
+  button { font: inherit; padding: 6px 12px; margin: 0 4px 12px 0; }
+  #popover { border: 1px solid #888; padding: 12px; margin: 12px 0; width: max-content; background: #f4f4f4; }
+  #out { background: #111; color: #e6e6e6; padding: 12px; white-space: pre-wrap; max-width: 760px; min-height: 180px; }
+  .pass { color: #8fda9f; }
+  .fail { color: #f4a0a0; }
+</style>
+</head>
+<body>
+<h1>Hour-picker focus probe</h1>
+<p>
+  Standalone reproduction of the three relevant fragments of <code>src/hour-picker.tsx</code>:
+  the <code>onBlur</code> guard (lines 101-104), the <code>pointerdown</code> capture dismissal
+  (lines 51-54, 61) and the <code>requestAnimationFrame(...focus())</code> call (line 50).
+  React 19 attaches event listeners to the portal container, so the popover below gets its own
+  <code>focusout</code> listener to emulate propagation through the React tree.
+</p>
+<p>
+  Open this file in Chrome/Firefox and in Safari, click <b>open</b>, then click <b>day</b>.
+  In Blink/Gecko the day click fires; in WebKit the popover closes before the click arrives.
+  The page also exposes <code>window.probeState()</code> for automated runs
+  (Playwright <code>page.click("#trigger")</code> then <code>page.click("#day")</code>).
+</p>
+<div id="picker">
+  <button id="prev" type="button">prev</button>
+  <button id="trigger" type="button">open</button>
+  <button id="next" type="button">next</button>
+</div>
+<div id="popover-host"></div>
+<p id="outside">outside area</p>
+<pre id="out"></pre>
+<script>
+(() => {
+  const log = [];
+  const out = document.getElementById("out");
+  const picker = document.getElementById("picker");
+  const host = document.getElementById("popover-host");
+  let popover = null;
+  let open = false;
+  let dayClicks = 0;
+  let closeCount = 0;
+
+  function active() {
+    const node = document.activeElement;
+    return node === null ? "null" : node.id || node.tagName;
+  }
+  function rec(tag, extra) {
+    log.push(Object.assign({ tag, active: active() }, extra || {}));
+    out.textContent = log.map((entry, index) =>
+      `${String(index + 1).padStart(2, "0")} ${entry.tag.padEnd(22)} active=${String(entry.active).padEnd(10)}` +
+      (entry.target === undefined ? "" : ` target=${entry.target}`) +
+      (entry.related === undefined ? "" : ` related=${entry.related}`) +
+      (entry.guardPasses === undefined ? "" : ` guard=${entry.guardPasses}`)
+    ).join("\n");
+    out.textContent += `\n\nresult: dayClicks=${dayClicks} closes=${closeCount} open=${open}` +
+      `\nverdict: ${dayClicks > 0 ? "PASS - selection delivered" : closeCount > 0 ? "FAIL - popover closed before click" : "pending"}`;
+    out.className = dayClicks > 0 ? "pass" : closeCount > 0 ? "fail" : "";
+  }
+
+  // Exact guard from hour-picker.tsx:101-104
+  function guard(event) {
+    const related = event.relatedTarget;
+    const passes = related instanceof Node &&
+      (picker.contains(related) || (popover !== null && popover.contains(related)));
+    rec("focusout", {
+      target: event.target.id || event.target.tagName,
+      related: related === null ? "null" : related.id || related.tagName,
+      guardPasses: passes,
+    });
+    if (!passes) close();
+  }
+
+  // React 19 (HostPortal commit) calls listenToAllSupportedEvents on the portal
+  // container, so a focusout from document.body reaches onBlur of the picker div.
+  picker.addEventListener("focusout", guard);
+
+  // Exact dismissal from hour-picker.tsx:51-54,61
+  document.addEventListener("pointerdown", (event) => {
+    rec("pointerdown", { target: event.target.id || event.target.tagName });
+    if (event.target instanceof Node &&
+        (picker.contains(event.target) || (popover !== null && popover.contains(event.target)))) return;
+    close();
+  }, true);
+
+  function close() {
+    if (!open) return;
+    open = false;
+    closeCount += 1;
+    popover.remove();
+    popover = null;
+    host.replaceChildren();
+    rec("CLOSED");
+  }
+
+  function show() {
+    if (open) return;
+    open = true;
+    popover = document.createElement("div");
+    popover.id = "popover";
+    const day = document.createElement("button");
+    day.id = "day";
+    day.type = "button";
+    day.textContent = "day";
+    const hour = document.createElement("button");
+    hour.id = "hour";
+    hour.type = "button";
+    hour.textContent = "hour";
+    popover.append(day, hour);
+    host.append(popover);
+    popover.addEventListener("focusout", guard);
+    day.addEventListener("click", () => {
+      dayClicks += 1;
+      rec("day-CLICK-FIRED");
+    });
+    // Exact hour-picker.tsx:50
+    requestAnimationFrame(() => {
+      if (popover !== null) popover.querySelector("#hour").focus();
+      rec("raf-focus-done");
+    });
+    rec("OPENED");
+  }
+
+  document.getElementById("trigger").addEventListener("click", () => {
+    rec("trigger-CLICK");
+    show();
+  });
+
+  window.probeState = () => ({
+    open, dayClicks, closeCount, active: active(), log: log.slice(),
+  });
+  rec("READY");
+})();
+</script>
+</body>
+</html>

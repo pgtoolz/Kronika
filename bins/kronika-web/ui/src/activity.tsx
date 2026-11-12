@@ -10,6 +10,7 @@ import { LabelHelp, type Translate } from "./help"
 import { humanBytes, humanDuration, measure, rawText, value, type Locale } from "./model"
 import { cutsForLayouts } from "./postgres-metrics"
 import { canonicalSearch } from "./search"
+import { persistentStorage } from "./storage"
 import type { RelatedNavigation } from "./statement-navigation"
 
 const TOP_BLOCK = 8
@@ -65,7 +66,7 @@ function useHeatmapView(
 
 function loadActivityOpen(storageKey: string): boolean {
   try {
-    return localStorage.getItem(storageKey) === "1"
+    return persistentStorage.getItem(storageKey) === "1"
   } catch {
     return false
   }
@@ -73,7 +74,7 @@ function loadActivityOpen(storageKey: string): boolean {
 
 function storeActivityOpen(storageKey: string, open: boolean): void {
   try {
-    localStorage.setItem(storageKey, open ? "1" : "0")
+    persistentStorage.setItem(storageKey, open ? "1" : "0")
   } catch {}
 }
 

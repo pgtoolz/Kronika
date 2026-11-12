@@ -4,19 +4,19 @@
 
 ## Релиз
 
-Скачайте [Kronika 1.2.4](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.4)
+Скачайте [Kronika 1.2.5](https://github.com/pgtoolz/Kronika/releases/tag/v1.2.5)
 для Linux x86-64 или ARM64. Также можно [собрать программы из исходников](build.ru.md)
 или использовать [сборку для разработки](#development-builds).
 
 <a id="download"></a>
 ## Архивы
 
-Архивы версии 1.2.4:
+Архивы версии 1.2.5:
 
 | Архитектура | Архив |
 | --- | --- |
-| x86-64 | [kronika-1.2.4-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.4/kronika-1.2.4-x86_64-unknown-linux-musl.tar.gz) |
-| ARM64 | [kronika-1.2.4-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.4/kronika-1.2.4-aarch64-unknown-linux-musl.tar.gz) |
+| x86-64 | [kronika-1.2.5-x86_64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.5/kronika-1.2.5-x86_64-unknown-linux-musl.tar.gz) |
+| ARM64 | [kronika-1.2.5-aarch64-unknown-linux-musl.tar.gz](https://github.com/pgtoolz/Kronika/releases/download/v1.2.5/kronika-1.2.5-aarch64-unknown-linux-musl.tar.gz) |
 
 У каждого архива есть файл контрольной суммы `.tar.gz.sha256`.
 [Скачайте и распакуйте архив](../INSTALL.ru.md#1-скачивание-и-распаковка), затем
@@ -87,6 +87,11 @@ PNG-иллюстрации, светлые и тёмные SVG-схемы, ре�
 
 <a id="development-builds"></a>
 ## Сборки для разработки
+
+Совместимость с Safari/WebKit защищена обязательной проверкой разработки
+[`make ui-browser-check`](build.ru.md#регрессия-chromium-и-webkit), которая
+исполняет production-артефакты в Chromium и Playwright WebKit; приёмка нативного
+Safari и физических устройств остаётся отдельной.
 
 Войдите в учётную запись через [GitHub CLI](https://cli.github.com/manual/gh_run_download)
 и выберите успешный запуск для нужной ревизии исходников:

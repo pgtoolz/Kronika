@@ -162,6 +162,16 @@ sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
 также доступны в панели **AI**. [Руководство systemd](docs/services.ru.md)
 описывает автоматический запуск обеих программ.
 
+## Требования к браузеру
+
+Используйте актуальный **Chrome/Chromium 111+** или **Firefox 128+**, либо
+**Safari 16.4+ в macOS 13.3+ / iOS-iPadOS 16.4+** (Edge 111+ следует границе
+Chrome). Сгенерированным автономным HTML-отчётам дополнительно нужны
+`DecompressionStream` и WebAssembly. Автоматические проверки сейчас охватывают
+только headless Chrome/Chromium и Playwright WebKit; нативный Safari, физические
+устройства и VoiceOver остаются отдельными ручными проверками.
+См. [«Поддержку браузеров»](README.ru.md#поддержка-браузеров).
+
 ## Справочники
 
 [Управление интерфейсом](docs/features.ru.md) · [Примеры исследования записи](docs/operator-guide.ru.md) ·

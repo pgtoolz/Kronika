@@ -109,6 +109,33 @@ WebAssembly-программу, затем проверяют их соотве�
 Обработка запросов отчёта выполняется в основном потоке браузера. Команды определены в
 [Makefile](../Makefile).
 
+### Регрессия Chromium и WebKit
+
+После `make ui-install` установите браузеры закреплённой версии Playwright и
+запустите проверку production-артефактов:
+
+```sh
+npm --prefix bins/kronika-web/ui exec -- playwright install --with-deps chromium webkit
+make ui-browser-check
+```
+
+Нужен закреплённый Rust toolchain: набор генерирует настоящий HTML-отчёт из
+`crates/kronika-report/tests/fixtures/standalone.zms` через `kronika-report` и
+проверяет его WASM через `file://`. В обоих движках проверяются desktop,
+телефонные конфигурации шириной 320/390px и планшет: в том числе скачивание
+отдельным жестом после долгого ответа, содержимое файла и освобождение URL.
+Трассы, скриншоты отказов и хеши входных файлов сохраняются в
+`bins/kronika-web/ui/.browser-results/`. Прежний Chrome/CDP-набор доступен через
+`npm --prefix bins/kronika-web/ui run test:browser:artifact`.
+
+Для явного запуска установленного Chrome вместо Chromium Playwright локально:
+`KRONIKA_CHROMIUM_CHANNEL=chrome make ui-browser-check`. Версия и выбранный канал
+записываются вместе с входами. В CI используется Chromium Playwright.
+
+HTTP API работает на фикстуре, touch-события эмулируются. Это не проверка
+нативного Safari, iOS Files, физической клавиатуры, safe area, VoiceOver,
+предела памяти или нижней границы Safari 16.4. Их результаты фиксируются отдельно.
+
 ## Архив
 
 Сохраните изменения коммитом и убедитесь, что рабочий каталог чист, затем

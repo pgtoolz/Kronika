@@ -2,6 +2,7 @@ import { Check, Copy } from "lucide-react"
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
 
 import { copyText } from "./clipboard"
+import { cycleTabFocus, rememberOpener, restoreFocus } from "./focus"
 import type { Translate } from "./help"
 import { type Auth, claudePrompt, codexPrompt, credentialsKey, cursorPrompt } from "./mcp-prompts"
 import { apiFetch } from "./session"
@@ -12,8 +13,9 @@ const CLIENTS = [
   { builder: cursorPrompt, id: "cursor", label: "Cursor", sectionKey: "mcp.section.cursor" },
 ] as const
 
-export function McpPanel({ database, onClose, t }: {
+export function McpPanel({ database, initiator, onClose, t }: {
   readonly database: string | null
+  readonly initiator: { readonly current: HTMLElement | null }
   readonly onClose: () => void
   readonly t: Translate
 }) {
@@ -44,19 +46,21 @@ export function McpPanel({ database, onClose, t }: {
       .catch(() => setAuth({ kind: "placeholder" }))
     return () => controller.abort()
   }, [])
+  // WebKit does not necessarily focus a button on click, so activeElement can
+  // still be BODY here. The app passes the real trigger instead. showModal()
+  // supplies native top-layer modality; focus restoration is retried because
+  // a focus() call outside the click thread can be ignored on iOS.
   useLayoutEffect(() => {
-    const active = document.activeElement
-    if (active instanceof HTMLElement) opener.current = active
+    opener.current = rememberOpener(initiator.current, [dialog.current])
     dialog.current?.showModal()
     closeButton.current?.focus({ preventScroll: true })
     return () => {
       if (dialog.current?.open) dialog.current.close()
       const target = opener.current
-      requestAnimationFrame(() => {
-        if (target?.isConnected) target.focus({ preventScroll: true })
-      })
+      if (target?.isConnected) target.focus({ preventScroll: true })
+      restoreFocus([target])
     }
-  }, [])
+  }, [initiator])
 
   const dismiss = () => onClose()
 
@@ -64,7 +68,7 @@ export function McpPanel({ database, onClose, t }: {
   const selected = CLIENTS.find((candidate) => candidate.label === client) ?? CLIENTS[0]
   const prompt = auth === null ? null : selected.builder(url, auth, t, database)
   return (
-    <dialog aria-labelledby={titleId} aria-modal="true" className="mcp-dialog fixed bottom-0 left-auto right-0 top-0 z-[100] m-0 h-auto max-h-none w-[min(92vw,430px)] max-w-[430px] overflow-auto border-0 border-l border-line4 bg-s1 p-[18px] text-fg shadow-[-20px_0_50px_var(--color-shadow-a)]" data-testid="mcp-panel" onCancel={(event) => { event.preventDefault(); dismiss() }} onKeyDown={(event) => event.stopPropagation()} ref={dialog} role="dialog">
+    <dialog aria-labelledby={titleId} aria-modal="true" className="mcp-dialog fixed bottom-0 left-auto right-0 top-0 z-[100] m-0 h-auto max-h-none w-[min(92vw,430px)] max-w-[430px] overflow-auto border-0 border-l border-line4 bg-s1 p-[18px] text-fg shadow-[-20px_0_50px_var(--color-shadow-a)]" data-testid="mcp-panel" onCancel={(event) => { event.preventDefault(); dismiss() }} onKeyDown={(event) => event.stopPropagation()} onKeyDownCapture={(event) => { cycleTabFocus(event, [dialog.current]) }} ref={dialog} role="dialog">
       <div className="flex items-center justify-between">
         <div>
           <p className="m-0 text-xs text-fg4">MCP</p>

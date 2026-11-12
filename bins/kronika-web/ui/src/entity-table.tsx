@@ -47,6 +47,17 @@ export function entityRowHeight(coarse: boolean): number {
   return coarse ? COARSE_ROW_PX : ROW_PX
 }
 
+// @tanstack/react-table 8.21.3 owns its document touchmove/touchend listeners
+// internally. A cancelled or unmounted touch gesture may never produce
+// touchend, so invoke the library's own end handler instead of duplicating
+// its resize state. A synthetic event with no touches ends the gesture without
+// applying another width delta.
+function cancelTableTouchResize(): void {
+  const end = new Event("touchend")
+  Object.defineProperty(end, "touches", { value: [] })
+  document.dispatchEvent(end)
+}
+
 export interface EntityColumn {
   readonly field: string
   readonly physicalField?: string | Readonly<Record<string, string>>
@@ -196,6 +207,15 @@ export function EntityTable({
     onColumnSizingChange: setSizing,
     state: { columnSizing: sizing, sorting: ordering },
   })
+  useEffect(() => {
+    document.addEventListener("touchcancel", cancelTableTouchResize)
+    document.addEventListener("pointercancel", cancelTableTouchResize)
+    return () => {
+      document.removeEventListener("touchcancel", cancelTableTouchResize)
+      document.removeEventListener("pointercancel", cancelTableTouchResize)
+      cancelTableTouchResize()
+    }
+  }, [])
   const pinnedLeft = stickyOffsets(table.getVisibleLeafColumns().map((column) => ({
     id: column.id,
     size: column.getSize(),
@@ -303,7 +323,7 @@ export function EntityTable({
               {sorted !== false && <i className="ml-[5px] not-italic text-accent2">{sorted === "asc" ? "↑" : "↓"}</i>}
             </button>
             {columnHelp(header.column.columnDef.meta) !== null && <LabelHelp helpKey={columnHelp(header.column.columnDef.meta)!.help} iconOnly labelKey={columnHelp(header.column.columnDef.meta)!.label} t={t} />}
-            <span className="column-grip absolute bottom-0 right-0 top-0 w-[7px] cursor-col-resize touch-none hover:bg-accent3 hover:opacity-50" onDoubleClick={() => fit(header.column.id, index)} onMouseDown={header.getResizeHandler()} />
+            <span className="column-grip absolute bottom-0 right-0 top-0 w-[7px] cursor-col-resize touch-none hover:bg-accent3 hover:opacity-50" onDoubleClick={() => fit(header.column.id, index)} onMouseDown={header.getResizeHandler()} onTouchStart={header.getResizeHandler()} />
           </div>
         })}
       </div>

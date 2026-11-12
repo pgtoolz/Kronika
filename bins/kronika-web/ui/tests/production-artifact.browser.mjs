@@ -52,10 +52,16 @@ async function clickCenter(cdp, selector) {
 }
 
 async function controlKey(cdp, key, code, windowsVirtualKeyCode) {
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Control", code: "ControlLeft", windowsVirtualKeyCode: 17 })
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, modifiers: 2, windowsVirtualKeyCode })
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, modifiers: 2, windowsVirtualKeyCode })
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Control", code: "ControlLeft", windowsVirtualKeyCode: 17 })
+  const modifier = process.platform === "darwin"
+    ? { key: "Meta", code: "MetaLeft", windowsVirtualKeyCode: 91 }
+    : { key: "Control", code: "ControlLeft", windowsVirtualKeyCode: 17 }
+  const modifiers = process.platform === "darwin" ? 4 : 2
+  // Headless macOS needs the native editor command as well as the shortcut.
+  const command = process.platform === "darwin" ? { a: "selectAll", c: "copy", v: "paste" }[key] : undefined
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...modifier })
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, modifiers, windowsVirtualKeyCode, commands: command === undefined ? [] : [command] })
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, modifiers, windowsVirtualKeyCode })
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...modifier })
 }
 
 async function pasteClipboard(cdp) {
@@ -2055,15 +2061,23 @@ test("the Export dialog selects a range on the timeline and reports its transfer
     state = await dialogState()
     assert.deepEqual([state.phase, state.submitDisabled, state.closeDisabled], ["idle", false, false], JSON.stringify(state))
 
-    // Preparation is counted in seconds without a bar, cannot be cancelled, and the download is one saved file.
+    // Preparation is counted in seconds without a bar and cannot be cancelled.
+    // The file is prepared first; saving needs its own gesture so a long fetch
+    // cannot consume transient activation before a[download] is clicked.
     await cdp.evaluate(`(() => {
       const created = []
       const revoked = []
+      const clicks = []
       const createObjectUrl = URL.createObjectURL.bind(URL)
       const revokeObjectUrl = URL.revokeObjectURL.bind(URL)
-      globalThis.__exportObjectUrls = { created, revoked }
+      const anchorClick = HTMLAnchorElement.prototype.click
+      globalThis.__exportObjectUrls = { created, revoked, clicks }
       URL.createObjectURL = (blob) => { const url = createObjectUrl(blob); created.push({ size: blob.size, type: blob.type, url }); return url }
       URL.revokeObjectURL = (url) => { revoked.push(url); return revokeObjectUrl(url) }
+      HTMLAnchorElement.prototype.click = function () {
+        if (this.download) clicks.push({ name: this.download, href: this.href })
+        return anchorClick.call(this)
+      }
       localStorage.removeItem("kronika.export-seconds")
     })()`)
     exportPlans.push("stream")
@@ -2093,18 +2107,47 @@ test("the Export dialog selects a range on the timeline and reports its transfer
     assert.match(state.status, /^downloading · [\d.,]+ (B|KiB) \/ 12[.,]\d KiB$/, JSON.stringify(state))
     for (const chunk of exportChunks.slice(1, -1)) held.write(chunk)
     held.end(exportChunks.at(-1))
-    await cdp.waitFor(`document.querySelector('[data-testid="export-dialog"]').dataset.phase === "saved"`, "the saved export", 15_000)
+    await cdp.waitFor(`document.querySelector('[data-testid="export-dialog"]').dataset.phase === "ready"`, "the prepared export", 15_000)
     state = await dialogState()
-    assert.match(state.status, new RegExp(`^saved: ${exportFilename.replace(/\./g, "\\.")} · 12[.,]\\d KiB · \\d+ s$`), JSON.stringify(state))
+    const namePattern = exportFilename.replace(/\./g, "\\.")
+    assert.match(state.status, new RegExp(`^ready: ${namePattern} · 12[.,]\\d KiB · \\d+ s · choose Download to save it$`), JSON.stringify(state))
     assert.equal(state.closeDisabled, false)
-    const urls = await cdp.evaluate(`JSON.stringify(globalThis.__exportObjectUrls)`)
-    const parsed = JSON.parse(urls)
+    const exportUrls = () => cdp.evaluate(`JSON.stringify(globalThis.__exportObjectUrls)`)
+    let urls = await exportUrls()
+    let parsed = JSON.parse(urls)
+    assert.equal(parsed.created.length, 0, urls)
+    assert.deepEqual(parsed.revoked, [], urls)
+    assert.deepEqual(parsed.clicks, [], urls)
+    assert.ok(Number(await cdp.evaluate(`localStorage.getItem("kronika.export-seconds")`)) > 0)
+
+    // One gesture = one handoff = one object URL. It stays alive while the
+    // browser performs the asynchronous save and is released when the state ends.
+    await clickCenter(cdp, '[data-testid="export-download"]')
+    await cdp.waitFor(`document.querySelector('[data-testid="export-dialog"]').dataset.phase === "handed"`, "the handed-off export")
+    state = await dialogState()
+    assert.match(state.status, new RegExp(`^handed to the browser: ${namePattern} · 12[.,]\\d KiB · check Downloads or Files; use Download again if nothing was saved$`), JSON.stringify(state))
+    urls = await exportUrls()
+    parsed = JSON.parse(urls)
     assert.equal(parsed.created.length, 1, urls)
     assert.equal(parsed.created[0].size, Buffer.byteLength(exportHtml), urls)
-    assert.deepEqual(parsed.revoked, [parsed.created[0].url], urls)
-    assert.ok(Number(await cdp.evaluate(`localStorage.getItem("kronika.export-seconds")`)) > 0)
+    assert.deepEqual(parsed.revoked, [], urls, "no synchronous revoke after click")
+    assert.equal(parsed.clicks.length, 1, urls)
+    assert.equal(parsed.clicks[0].name, exportFilename)
+    assert.match(parsed.clicks[0].href, /^blob:/)
+
+    // A retry reuses the same URL: a cancelled share sheet needs no new allocation.
+    await clickCenter(cdp, '[data-testid="export-download"]')
+    await cdp.waitFor(`globalThis.__exportObjectUrls.clicks.length === 2`, "the retried handoff")
+    urls = await exportUrls()
+    parsed = JSON.parse(urls)
+    assert.equal(parsed.created.length, 1, urls)
+    assert.deepEqual(parsed.revoked, [], urls)
+    assert.equal(parsed.clicks.length, 2, urls)
     await clickCenter(cdp, '[data-testid="export-again"]')
     await cdp.waitFor(`document.querySelector('[data-testid="export-dialog"]').dataset.phase === "idle" && document.querySelector('[data-testid="export-submit"]') !== null`, "another export offered")
+    urls = await exportUrls()
+    parsed = JSON.parse(urls)
+    assert.deepEqual(parsed.revoked, [parsed.created[0].url], urls)
 
     // The second run remembers how long the first one took.
     exportPlans.push("stream")
@@ -2115,9 +2158,18 @@ test("the Export dialog selects a range on the timeline and reports its transfer
     const second = heldExports.shift()
     second.writeHead(200, { "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="${exportFilename}"`, "Content-Type": "text/html; charset=utf-8" })
     second.end(exportHtml)
-    await cdp.waitFor(`document.querySelector('[data-testid="export-dialog"]').dataset.phase === "saved"`, "the second saved export", 15_000)
+    await cdp.waitFor(`document.querySelector('[data-testid="export-dialog"]').dataset.phase === "ready"`, "the second prepared export", 15_000)
+    urls = await exportUrls()
+    parsed = JSON.parse(urls)
+    assert.equal(parsed.created.length, 1, urls, "an unconsumed prepared report allocates no object URL")
+    assert.equal(parsed.revoked.length, 1, urls)
+    assert.equal(parsed.clicks.length, 2, urls)
     await clickCenter(cdp, '[data-testid="export-again"]')
     await cdp.waitFor(`document.querySelector('[data-testid="export-submit"]') !== null && !document.querySelector('[data-testid="export-submit"]').disabled`, "a third export offered")
+    urls = await exportUrls()
+    parsed = JSON.parse(urls)
+    assert.equal(parsed.created.length, 1, urls)
+    assert.equal(parsed.revoked.length, 1, urls)
 
     // A connection lost before any status leaves the server state unknown: no restart, no close.
     dropExports = true
@@ -2126,6 +2178,10 @@ test("the Export dialog selects a range on the timeline and reports its transfer
     state = await dialogState()
     assert.equal(state.status, "Connection lost. The server may still be preparing the report; a new run stays locked", JSON.stringify(state))
     assert.deepEqual([state.closeDisabled, state.submitDisabled], [true, true], JSON.stringify(state))
+    urls = await exportUrls()
+    parsed = JSON.parse(urls)
+    assert.equal(parsed.created.length, 1, urls, "a lost connection leaves no object URL behind")
+    assert.equal(parsed.revoked.length, 1, urls)
     await pressEscape()
     await delay(200)
     assert.equal(await cdp.evaluate(`document.querySelector('[data-testid="export-dialog"]')?.dataset.phase`), "unknown")

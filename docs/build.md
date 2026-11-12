@@ -103,6 +103,33 @@ These commands rebuild the web page, the HTML report interface and its
 WebAssembly engine, then check that they match the files in the repository. The report's query engine executes on the browser's main
 thread. Target definitions: [Makefile](../Makefile).
 
+### Chromium and WebKit regression
+
+After `make ui-install`, install the browsers selected by the locked Playwright
+version and run the production-artifact interaction suite:
+
+```sh
+npm --prefix bins/kronika-web/ui exec -- playwright install --with-deps chromium webkit
+make ui-browser-check
+```
+
+The suite requires the pinned Rust toolchain: it generates an actual standalone
+HTML report from `crates/kronika-report/tests/fixtures/standalone.zms` using
+`kronika-report`, then checks its WASM runtime via `file://`. It tests desktop,
+320px/390px phone and tablet configurations in both engines, including explicit
+export handoff after a delayed response, saved bytes and URL cleanup. Traces,
+failure screenshots and input hashes go to
+`bins/kronika-web/ui/.browser-results/`. Existing Chrome/CDP coverage remains
+available with `npm --prefix bins/kronika-web/ui run test:browser:artifact`.
+
+To explicitly use an installed Chrome instead of Playwright's Chromium locally,
+run `KRONIKA_CHROMIUM_CHANNEL=chrome make ui-browser-check`; the selected browser
+version and channel are recorded with the inputs. CI uses Playwright's Chromium.
+
+These tests use a fixture HTTP API and emulated touch events. They do not certify
+native Safari, iOS Files, a physical keyboard, safe areas, VoiceOver, memory limits
+or the Safari 16.4 floor. Track those separately.
+
 ## Archive
 
 From a clean committed checkout:

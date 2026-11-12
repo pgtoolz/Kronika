@@ -49,6 +49,7 @@ import { ExportProvider } from "./export-context"
 import { hourRange, rangeOnHour, type ExportRange } from "./export-range"
 import { ExportDialog } from "./export-dialog"
 import { findingProjection } from "./finding-presentation"
+import { trackOpeners } from "./focus"
 import { HelpPanel, type Translate, versionLabel } from "./help"
 import { McpPanel } from "./mcp-connect"
 import { MobileControls } from "./mobile-controls"
@@ -84,6 +85,7 @@ import { reportLatestHour, reportVisibleAt, reportVisibleCursor, reportVisibleRa
 import type { ChartPoint } from "./series-chart"
 import { apiFetch, bootstrapSession, getSessionSnapshot, logout, subscribeSession } from "./session"
 import { activityForProcess, hasPostgresTelemetry, postgresProcessesShared, recordedLinuxEnabled } from "./source-availability"
+import { persistentStorage } from "./storage"
 import type { RelatedNavigation } from "./statement-navigation"
 import {
   cgroupTableRequest,
@@ -96,6 +98,8 @@ import {
 import { beginSnapshotRequest, READY_SNAPSHOT_REQUEST, settleSnapshotRequest, snapshotRowsVisible, tableRequestPhase, visibleSnapshotRequest, type SnapshotRequestState } from "./table-request"
 import { Timeline, TimelineActionsContext, TimelineRequestContext, type TimelineRequestPhase } from "./timeline"
 import { TimezoneSelect } from "./timezone-select"
+import { installReportSupport } from "./report-support"
+import { installViewportCss } from "./viewport"
 
 type Theme = "dark" | "light"
 
@@ -184,16 +188,16 @@ const HELP_EVENTS = [
 
 function Kronika() {
   const [locale, setLocale] = useState<Locale>(initialLocale)
-  const [displayZone, setDisplayZone] = useState<DisplayTimeZone>(() => loadDisplayTimeZone(localStorage))
+  const [displayZone, setDisplayZone] = useState<DisplayTimeZone>(() => loadDisplayTimeZone(persistentStorage))
   const t = useMemo<Translate>(() => (key, slots = {}) => {
     const template = translation(locale, key) ?? key
     return interpolate(template, slots)
   }, [locale])
   useEffect(() => {
     document.documentElement.lang = locale
-    try { localStorage.setItem("kronika.locale", locale) } catch {}
+    try { persistentStorage.setItem("kronika.locale", locale) } catch {}
   }, [locale])
-  useEffect(() => saveDisplayTimeZone(localStorage, displayZone), [displayZone])
+  useEffect(() => saveDisplayTimeZone(persistentStorage, displayZone), [displayZone])
   const application = <DisplayTimeProvider locale={locale} mode={displayZone} setMode={setDisplayZone}><App locale={locale} onLocale={setLocale} t={t} /></DisplayTimeProvider>
   return KRONIKA_REPORT
     ? application
@@ -334,7 +338,11 @@ function App({ locale, onLocale, t }: {
   const [exportBusy, setExportBusy] = useState(false)
   const [exportRange, setExportRange] = useState<ExportRange | null>(null)
   const exportTrigger = useRef<HTMLButtonElement>(null)
+  const mcpTrigger = useRef<HTMLButtonElement>(null)
   const exportActive = useRef(false)
+  // WebKit does not always move activeElement when a button is clicked, so
+  // the real initiator is tracked from pointer/key interaction as well.
+  useEffect(() => trackOpeners(), [])
   const setExportActive = useCallback((active: boolean) => {
     exportActive.current = active
     setExportBusy(active)
@@ -344,16 +352,15 @@ function App({ locale, onLocale, t }: {
     setExportOpen(false)
     setExportRange(null)
   }, [])
-  // Closing the dialog returns focus to the control that opened it;
-  // navigation closes silently.
+  // The dialog owns focus restoration on every close path, including
+  // navigation that closes it without a dismiss gesture.
   const dismissExport = useCallback(() => {
     if (exportActive.current) return
     closeExport()
-    requestAnimationFrame(() => exportTrigger.current?.focus({ preventScroll: true }))
   }, [closeExport])
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    try { localStorage.setItem("kronika.theme", theme) } catch {}
+    try { persistentStorage.setItem("kronika.theme", theme) } catch {}
   }, [theme])
   // Host sections read the same hour: switching resource tabs must not refetch.
   const baseViewKey = visibleSource === "host" ? "host" : visibleSource === "processes" ? "processes" : visibleSource === "postgresql" ? `postgresql:${pgSection}` : "events"
@@ -1257,7 +1264,7 @@ function App({ locale, onLocale, t }: {
           {(["ru", "en"] as const).map((choice) => <button aria-pressed={locale === choice} data-testid={`locale-${choice}`} key={choice} onClick={() => onLocale(choice)} type="button">{t(`locale.${choice}`)}</button>)}
         </div>
         {!KRONIKA_REPORT && <button aria-label={t("auth.logout")} className="icon-button disabled:cursor-wait disabled:opacity-45" data-testid="logout-action" disabled={exportBusy} onClick={() => { if (!exportActive.current) void logout() }} title={t("auth.logout")} type="button"><LogOut aria-hidden="true" size={14} /></button>}
-        {!KRONIKA_REPORT && <button aria-expanded={mcpOpen} aria-label={t("mcp.open")} className="icon-button disabled:cursor-wait disabled:opacity-45" data-testid="mcp-trigger" disabled={exportBusy} onClick={() => { if (!exportActive.current) { setMcpOpen((current) => !current); setHelpOpen(false); closeExport() } }} title={t("mcp.open")} type="button"><Plug aria-hidden="true" size={14} /></button>}
+        {!KRONIKA_REPORT && <button aria-expanded={mcpOpen} aria-label={t("mcp.open")} className="icon-button disabled:cursor-wait disabled:opacity-45" data-testid="mcp-trigger" disabled={exportBusy} onClick={() => { if (!exportActive.current) { setMcpOpen((current) => !current); setHelpOpen(false); closeExport() } }} ref={mcpTrigger} title={t("mcp.open")} type="button"><Plug aria-hidden="true" size={14} /></button>}
         <button aria-expanded={helpOpen} aria-label={t("help.open")} className="icon-button disabled:cursor-wait disabled:opacity-45" data-testid="help-trigger" disabled={exportBusy} onClick={() => { if (!exportActive.current) { setHelpOpen((current) => !current); setMcpOpen(false); closeExport() } }} title={t("help.open")} type="button"><CircleHelp aria-hidden="true" size={14} /></button>
       </div>
     </header>
@@ -1313,10 +1320,10 @@ function App({ locale, onLocale, t }: {
     </div>
     </InspectorPortalProvider>
     </ExportProvider>
-    {!KRONIKA_REPORT && exportOpen && hour !== null && exportRange !== null && <ExportDialog availableHours={availableHours} cursor={cursor} hour={hour} locale={locale} onActiveChange={setExportActive} onClose={dismissExport} onRange={setExportRange} range={exportRange} t={t} />}
+    {!KRONIKA_REPORT && exportOpen && hour !== null && exportRange !== null && <ExportDialog availableHours={availableHours} cursor={cursor} hour={hour} initiator={exportTrigger} locale={locale} onActiveChange={setExportActive} onClose={dismissExport} onRange={setExportRange} range={exportRange} t={t} />}
 
     {helpOpen && <HelpPanel build={serverBuild} items={helpItems} onClose={() => setHelpOpen(false)} t={t} version={serverVersion} />}
-    {!KRONIKA_REPORT && mcpOpen && <McpPanel database={database} onClose={() => setMcpOpen(false)} t={t} />}
+    {!KRONIKA_REPORT && mcpOpen && <McpPanel database={database} initiator={mcpTrigger} onClose={() => setMcpOpen(false)} t={t} />}
   </main></TimelineActionsContext></TimelineRequestContext></CursorNavigationContext></DisplayTimeScope>
 }
 
@@ -1324,7 +1331,7 @@ const LOAD_SECONDS_KEY = "kronika.hourload-seconds"
 
 function readLastLoadSeconds(): number | null {
   try {
-    const stored = localStorage.getItem(LOAD_SECONDS_KEY)
+    const stored = persistentStorage.getItem(LOAD_SECONDS_KEY)
     if (stored === null) return null
     const seconds = Number(stored)
     return Number.isFinite(seconds) && seconds >= 1 ? seconds : null
@@ -1335,7 +1342,7 @@ function readLastLoadSeconds(): number | null {
 
 function writeLastLoadSeconds(seconds: number): void {
   try {
-    localStorage.setItem(LOAD_SECONDS_KEY, String(Math.round(seconds * 10) / 10))
+    persistentStorage.setItem(LOAD_SECONDS_KEY, String(Math.round(seconds * 10) / 10))
   } catch {}
 }
 
@@ -1438,7 +1445,7 @@ function relationFiltersForSection(filters: Readonly<Record<string, string>>, se
 
 function initialTheme(): Theme {
   try {
-    const saved = localStorage.getItem("kronika.theme")
+    const saved = persistentStorage.getItem("kronika.theme")
     if (saved === "dark" || saved === "light") return saved
   } catch {}
   return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"
@@ -1446,7 +1453,7 @@ function initialTheme(): Theme {
 
 function initialLocale(): Locale {
   try {
-    const saved = localStorage.getItem("kronika.locale")
+    const saved = persistentStorage.getItem("kronika.locale")
     if (saved === "ru" || saved === "en") return saved
   } catch {}
   for (const language of navigator.languages) {
@@ -1458,5 +1465,10 @@ function initialLocale(): Locale {
 
 const root = document.getElementById("root")
 if (root === null) throw new Error("Kronika UI root is missing")
+installViewportCss()
 const render = () => createRoot(root).render(<Kronika />)
-KRONIKA_REPORT ? render() : void bootstrapSession().then(render)
+if (KRONIKA_REPORT) {
+  if (!installReportSupport(translation, (key) => persistentStorage.getItem(key))) render()
+} else {
+  void bootstrapSession().then(render)
+}
