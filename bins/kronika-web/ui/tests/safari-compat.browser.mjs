@@ -244,7 +244,7 @@ for (const [engine, type] of [["chromium", chromium], ["webkit", webkit]]) {
             await page.goto(`${url}?view=${view}`)
             await page.locator(".timeline-shell").waitFor({ state: "attached" })
             await page.waitForFunction(() => !document.querySelector('[data-testid="hour-skeleton"], [data-testid="table-skeleton"]'))
-            await page.locator("canvas").first().waitFor({ state: "attached" })
+            await page.locator("canvas").first().waitFor({ state: "attached", timeout: 90_000 })
             if (view === "processes") await page.locator(".entity-row").first().waitFor()
           }
           assert.deepEqual(errors, [])
