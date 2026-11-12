@@ -128,8 +128,7 @@ version and channel are recorded with the inputs. CI uses Playwright's Chromium.
 
 These tests use a fixture HTTP API and emulated touch events. They do not certify
 native Safari, iOS Files, a physical keyboard, safe areas, VoiceOver, memory limits
-or the Safari 16.4 floor. Track those separately in the
-[Safari R1 specification](safari-compat-plan.ru.md).
+or the Safari 16.4 floor. Track those separately.
 
 ## Archive
 

@@ -12,3 +12,7 @@ __pycache__/
 
 # Prepared release archives
 /dist/
+
+# Local Safari research notes
+docs/safari-compat*.md
+docs/safari-r1-status*.md

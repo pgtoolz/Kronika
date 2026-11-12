@@ -88,12 +88,10 @@ PNG-иллюстрации, светлые и тёмные SVG-схемы, ре�
 <a id="development-builds"></a>
 ## Сборки для разработки
 
-Работа над совместимостью с Safari учитывается в
-[спецификации R1](safari-compat-plan.ru.md), а не объявляется изменением уже
-опубликованных архивов 1.2.4. Обязательная проверка разработки
-[`make ui-browser-check`](build.ru.md#регрессия-chromium-и-webkit) исполняет
-production-артефакты в Chromium и Playwright WebKit; приёмка нативного Safari и
-физических устройств остаётся отдельной.
+Совместимость с Safari/WebKit защищена обязательной проверкой разработки
+[`make ui-browser-check`](build.ru.md#регрессия-chromium-и-webkit), которая
+исполняет production-артефакты в Chromium и Playwright WebKit; приёмка нативного
+Safari и физических устройств остаётся отдельной.
 
 Войдите в учётную запись через [GitHub CLI](https://cli.github.com/manual/gh_run_download)
 и выберите успешный запуск для нужной ревизии исходников:

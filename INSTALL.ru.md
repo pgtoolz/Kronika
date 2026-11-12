@@ -164,11 +164,12 @@ sudo /usr/local/bin/kronika-web --storage-dir /var/lib/kronika \
 
 ## Требования к браузеру
 
-Используйте Safari 16.4+ в macOS 13.3+ либо iOS/iPadOS 16.4+, или актуальный
-Chrome/Chromium, Edge или Firefox. Сгенерированным автономным HTML-отчётам
-дополнительно нужны `DecompressionStream` и WebAssembly. Автоматические проверки
-сейчас охватывают только headless Chrome/Chromium и Playwright WebKit; нативный
-Safari, физические устройства и VoiceOver остаются отдельными ручными проверками.
+Используйте актуальный **Chrome/Chromium 111+** или **Firefox 128+**, либо
+**Safari 16.4+ в macOS 13.3+ / iOS-iPadOS 16.4+** (Edge 111+ следует границе
+Chrome). Сгенерированным автономным HTML-отчётам дополнительно нужны
+`DecompressionStream` и WebAssembly. Автоматические проверки сейчас охватывают
+только headless Chrome/Chromium и Playwright WebKit; нативный Safari, физические
+устройства и VoiceOver остаются отдельными ручными проверками.
 См. [«Поддержку браузеров»](README.ru.md#поддержка-браузеров).
 
 ## Справочники

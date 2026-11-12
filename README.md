@@ -167,12 +167,12 @@ converts that recording into HTML.
 
 ## Browser support
 
-Kronika targets **Safari 16.4+ on macOS 13.3+ or iOS/iPadOS 16.4+**, together
-with current versions of Chrome/Chromium, Edge and Firefox. Portable HTML reports
-also require gzip stream decompression (`DecompressionStream`) and WebAssembly;
-when a required capability is missing, the report shows a localized error instead
-of a blank page. Older Safari releases are not supported and no legacy polyfills
-are bundled.
+Kronika primarily targets **Chrome/Chromium 111+** and **Firefox 128+**, and
+also supports **Safari 16.4+ on macOS 13.3+ and iOS/iPadOS 16.4+** (Edge 111+
+follows the Chrome floor). Portable HTML reports also require gzip stream
+decompression (`DecompressionStream`) and WebAssembly; when a required capability
+is missing, the report shows a localized error instead of a blank page. Older
+browsers are not supported and no legacy polyfills are bundled.
 
 Automated browser checks currently run in headless Chrome/Chromium and Playwright
 WebKit. Native Safari.app, the exact Safari 16.4 floor, physical iPhone/iPad
