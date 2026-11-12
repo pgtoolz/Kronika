@@ -2,10 +2,16 @@
 
 Ветка: `research/safari-compat` (от `main` @ `592a5e5`). Дата: 2026-11-12.
 
-Статус: **исследование, без изменений в коде**. Выводы разделены на три уровня достоверности:
+Статус: **исследование, без изменений в коде**. Выводы разделены на четыре уровня достоверности:
 **[Код]** — подтверждено чтением исходников; **[Спека]** — подтверждено внешним источником
-(MDN browser-compat-data, документация Tailwind, WebKit bug tracker); **[Гипотеза]** — требует
-проверки на реальном Safari, приоритет для первого же прогона.
+(MDN browser-compat-data, документация Tailwind, WebKit bug tracker, исходники React 19);
+**[Воспроизведено]** — подтверждено прогоном в двух движках (см. §4.0);
+**[Гипотеза]** — требует проверки на реальном Safari, приоритет для первого же прогона.
+
+> **Update 2026-11-12, 09:40.** Основная причина расхождения Chrome/Firefox vs Safari
+> больше не гипотеза: она воспроизведена в изолированном стенде
+> `bins/kronika-web/ui/tests/safari-focus-probe.html` под Chrome 157 (Blink) и
+> WebKit 26.0 (Playwright). Подробности — §4.0.
 
 ---
 
@@ -116,9 +122,69 @@ Browser time / UTC (`display-time.ts`), ручное разрешение DST-н
 
 ---
 
-## 4. Почему именно пикер ломается в Safari: ранжированные гипотезы
+## 4. Почему именно пикер ломается в Safari: ранжированные причины
 
-### P0-1. Focus-семантика WebKit (наиболее вероятно) — **[Гипотеза]**, код **[Код]**
+### 4.0 Эмпирическое воспроизведение — **[Воспроизведено]**
+
+Стенд `bins/kronika-web/ui/tests/safari-focus-probe.html` повторяет ровно три элемента
+`hour-picker.tsx`: guard `onBlur` (`:101-104`), `pointerdown`-capture dismissal (`:51-54,61`)
+и `requestAnimationFrame(...focus())` (`:50`). Портал эмулируется с учётом того, что **React 19
+вешает `listenToAllSupportedEvents` на контейнер портала** (проверено в
+`react-dom@19.2.8/cjs/react-dom-client.production.js`, commit-ветка `HostPortal`, `case 4`) —
+поэтому `focusout` из поповера, лежащего в `document.body`, всё равно доходит до `onBlur`
+корневого `div` через React-дерево. Стенд учитывает это отдельным слушателем на контейнере
+портала. Клики настоящие (Playwright `page.click`), а не синтетические `element.click()`.
+
+| Шаг | Chrome 157.0.8103.51 (Blink) | WebKit 26.0 (Playwright) |
+|---|---|---|
+| `activeElement` после клика по trigger | `trigger` | **`BODY`** |
+| `activeElement` после rAF-фокуса | `hour` | `hour` |
+| `pointerdown(day)` | цель внутри поповера → не закрываем | цель внутри поповера → не закрываем |
+| `focusout(hour)` | `relatedTarget = day` → **guard passes** | **`relatedTarget = null` → guard fails** |
+| `CLOSED` до `click` | нет | **да** |
+| `day-CLICK-FIRED` / `setDay()` | **1** | **0** |
+
+То есть отказ детерминированный и объясняется **одним-единственным отличием**: в WebKit клик по
+`<button>` не перемещает фокус, поэтому у `focusout` не становится `relatedTarget`; guard
+`event.relatedTarget instanceof Node && (...contains...)` проваливается, `setOpen(false)`
+выполняется в фазе `pointerdown → focusout`, поповер размонтируется, и событие `click` по ячейке
+уже некому принимать. В Blink кнопка получает фокус, `relatedTarget` указывает на неё, guard
+пропускает закрытие — выбор дня/часа работает. Gecko в этом сценарии ведёт себя как Blink
+(клик фокусирует кнопку; на macOS у Firefox есть исторический нюанс, стоит проверить отдельно).
+
+**Побочный эффект:** на iOS Safari `focus()` внутри `requestAnimationFrame` ещё и игнорируется
+(вызов вне синхронного потока клика), так что клавиатурная навигация
+(`pickerFocusIndex`, `:192-198`) там недоступна даже если поповер не закрылся.
+
+Воспроизвести локально (или просто открыть HTML в двух браузерах и сверить лог на странице):
+
+```bash
+npx --yes playwright@1.56.1 install webkit
+npm install --no-save playwright@1.56.1
+node --input-type=module -e '
+import { chromium, webkit } from "playwright";
+import { pathToFileURL } from "node:url";
+const url = pathToFileURL("bins/kronika-web/ui/tests/safari-focus-probe.html").href;
+for (const [name, launch] of [
+  ["chrome", () => chromium.launch({ channel: "chrome", headless: true })],
+  ["webkit", () => webkit.launch({ headless: true })],
+]) {
+  const browser = await launch();
+  const page = await browser.newPage();
+  await page.goto(url);
+  await page.click("#trigger");
+  await page.waitForTimeout(150);
+  const before = await page.evaluate(() => window.probeState());
+  await page.click("#day");
+  const after = await page.evaluate(() => window.probeState());
+  console.log(name, "dayClicks=", after.dayClicks, "closes=", after.closeCount - before.closeCount);
+  await browser.close();
+}'
+```
+
+Ожидается `chrome dayClicks= 1 closes= 0` и `webkit dayClicks= 0 closes= 1`.
+
+### P0-1. Focus-семантика WebKit — **[Воспроизведено]**, код **[Код]**
 
 WebKit отличается от Blink/Gecko тремя вещами **[Спека]**:
 
@@ -142,10 +208,12 @@ onBlur={(event) => {
 }}
 ```
 
-Механизм отказа: поповер порталится в `document.body` (`hour-picker.tsx:124,147`), то есть
-**находится вне `root`**. При `relatedTarget === null` условие проваливается и `setOpen(false)`
-выполняется до `onClick` ячейки → «открылся и сразу закрылся» / «клик по дню ничего не делает».
-Одновременно rAF-фокус не срабатывает → недоступна клавиатурная навигация
+Механизм отказа (подтверждён прогоном, §4.0): поповер порталится в `document.body`
+(`hour-picker.tsx:124,147`), то есть **находится вне `root` в DOM**, но остаётся потомком
+корневого `div` в React-дереве — поэтому его `focusout` всё равно вызывает `onBlur` корня.
+При `relatedTarget === null` условие проваливается и `setOpen(false)` выполняется до `onClick`
+ячейки → «открылся и сразу закрылся» / «клик по дню ничего не делает». На iOS rAF-фокус
+дополнительно не срабатывает → недоступна клавиатурная навигация
 (`pickerFocusIndex`, `hour-picker.tsx:192-198`, обработчик `onKeyDown` на `:144`).
 
 **Диагностический маркер:** `export-dialog.tsx:363-370` (`DayPicker`) использует **только**
@@ -235,6 +303,9 @@ Safari с усиленной приватностью/в нестандартн�
 
 ## 5. План проверки (что сделать до любых правок)
 
+> Пункт «воспроизвести расхождение движков» уже закрыт: §4.0, Chrome 157 vs WebKit 26.0.
+> Ниже — то, что остаётся сделать на **реальном** Safari/WebKit-устройстве.
+
 1. **Зафиксировать симптом.** Точная версия Safari + macOS/iOS, скриншот, Console:
    `Object.hasOwn is not a function` → п.3; `DecompressionStream` → офлайн-отчёт;
    тишина + «открывается/закрывается» → P0-1; `saved`, но нет файла → P0-2.
@@ -244,7 +315,7 @@ Safari с усиленной приватностью/в нестандартн�
      ua: navigator.userAgent,
      hasOwn: typeof Object.hasOwn, at: typeof [].at,
      colorMix: CSS.supports("background", "color-mix(in srgb, red, blue)"),
-     property: CSS.supports("background", "var(--x)") && "at-property" in CSS ? "?" : "check @property",
+     hasSelector: CSS.supports("selector(:has(*))"),
      decompression: typeof DecompressionStream,
      innerHeight: innerHeight, visualHeight: visualViewport?.height,
      midnight: new Intl.DateTimeFormat("en-US-u-ca-gregory-nu-latn",
@@ -269,7 +340,7 @@ Safari с усиленной приватностью/в нестандартн�
 
 | Приоритет | Действие | Риск |
 |---|---|---|
-| **P0** | Убрать `onBlur` в `hour-picker.tsx`, перенести фокус из rAF в синхронный/`useLayoutEffect`, `visualViewport` для iOS | снимает основной симптом «пикер не работает» |
+| **P0 — подтверждено** | Убрать `onBlur` в `hour-picker.tsx`, перенести фокус из rAF в синхронный/`useLayoutEffect`, `visualViewport` для iOS | снимает основной симптом «пикер не работает»; причина доказана прогоном §4.0 |
 | **P0** | Отложить `revokeObjectURL` в `export-download.ts` + iOS-fallback | чинит скачивание отчёта |
 | **P1** | Задекларировать **Safari 16.4+** (iOS/iPadOS 16.4+, macOS 13.3+) в INSTALL/README, добавить `browserslist` и согласовать `esbuild target` | убирает неопределённость; при необходимости поддержки 15.x — точечные полифилы `Object.hasOwn`/`.at` |
 | **P1** | WebKit-джоба в CI + `Intl`-тесты на полночь/DST | защита от регрессий |
@@ -294,5 +365,10 @@ UA-sniffing под Safari — в бандле уже есть feature detection 
   [WebKit bug 200416](https://webkit.org/b/200416) — `month`/`week`.
 - [张鑫旭 · 细说 iOS Safari 下 focus 的行为](https://www.zhangxinxu.com/wordpress/2020/10/ios-safari-input-button-focus/) —
   кнопки не получают фокус по клику, `focus()` вне потока клика не работает, `blur` не срабатывает.
+- `react-dom@19.2.8/cjs/react-dom-client.production.js` — `listenToAllSupportedEvents(workInProgress.stateNode.containerInfo)`
+  в commit-ветке `HostPortal`: порталы получают собственные слушатели, поэтому `focusout` из
+  `document.body` доходит до `onBlur` корневого `div` через React-дерево.
+- Playwright 1.56.1: Chrome 157.0.8103.51 (Blink, `channel: "chrome"`), WebKit 26.0
+  (headless), реальные `page.click`. Стенд: `bins/kronika-web/ui/tests/safari-focus-probe.html`.
 - Собственный код: `bins/kronika-web/ui/src/**`, `scripts/build.mjs`, `bins/kronika-web/build.rs`,
   `crates/kronika-report/src/generator.rs`, `scripts/report-browser-smoke.sh`, `docs/releases.md`.
