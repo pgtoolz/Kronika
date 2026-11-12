@@ -16,8 +16,8 @@ trap 'rm -rf -- "$scratch"' EXIT
 unset CARGO_BUILD_TARGET
 
 version=$(cargo dylint --version)
-if [[ $version != "cargo-dylint 6.0.4" ]]; then
-    echo "expected cargo-dylint 6.0.4, got: $version" >&2
+if [[ $version != "cargo-dylint 6.3.2" ]]; then
+    echo "expected cargo-dylint 6.3.2, got: $version" >&2
     exit 1
 fi
 

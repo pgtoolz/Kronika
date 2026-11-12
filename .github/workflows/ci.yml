@@ -33,17 +33,17 @@ jobs:
           rustup toolchain install nightly-2026-05-28 --profile minimal --component rustc-dev --component llvm-tools-preview
           tool_dir=$(mktemp -d)
           curl --fail --location --silent --show-error \
-            https://github.com/trailofbits/dylint/releases/download/v6.0.4/cargo-dylint-x86_64-unknown-linux-gnu-v6.0.4.tar.gz \
+            https://github.com/trailofbits/dylint/releases/download/v6.3.2/cargo-dylint-x86_64-unknown-linux-gnu-v6.3.2.tar.gz \
             --output "$tool_dir/cargo-dylint.tar.gz"
           curl --fail --location --silent --show-error \
-            https://github.com/trailofbits/dylint/releases/download/v6.0.4/dylint-link-x86_64-unknown-linux-gnu-v6.0.4.tar.gz \
+            https://github.com/trailofbits/dylint/releases/download/v6.3.2/dylint-link-x86_64-unknown-linux-gnu-v6.3.2.tar.gz \
             --output "$tool_dir/dylint-link.tar.gz"
-          echo "14195423ac6bfe6b055ffa94e0c48e282e1f5997abd98dfb4ea8bdf4633aec5c  $tool_dir/cargo-dylint.tar.gz" | sha256sum --check
-          echo "54ce515583ade02b197bc11f6870fd755c30e04b7e44ea015a507726de05fa1d  $tool_dir/dylint-link.tar.gz" | sha256sum --check
+          echo "57704c617d60f9c220ad5dd253793804f7e2933f2d715abd75b2e8391840bd87  $tool_dir/cargo-dylint.tar.gz" | sha256sum --check
+          echo "cd30b76bf42e1c22e71bbb44c8f474cfc2dc4ec279c861cf5c5242368d1cea78  $tool_dir/dylint-link.tar.gz" | sha256sum --check
           tar --extract --gzip --file "$tool_dir/cargo-dylint.tar.gz" --directory "$tool_dir"
           tar --extract --gzip --file "$tool_dir/dylint-link.tar.gz" --directory "$tool_dir"
-          install --mode 755 "$tool_dir/cargo-dylint-x86_64-unknown-linux-gnu-v6.0.4/cargo-dylint" "$HOME/.cargo/bin/cargo-dylint"
-          install --mode 755 "$tool_dir/dylint-link-x86_64-unknown-linux-gnu-v6.0.4/dylint-link" "$HOME/.cargo/bin/dylint-link"
+          install --mode 755 "$tool_dir/cargo-dylint-x86_64-unknown-linux-gnu-v6.3.2/cargo-dylint" "$HOME/.cargo/bin/cargo-dylint"
+          install --mode 755 "$tool_dir/dylint-link-x86_64-unknown-linux-gnu-v6.3.2/dylint-link" "$HOME/.cargo/bin/dylint-link"
       - run: make ui-install ui-check
       - run: >-
           git diff --exit-code --
