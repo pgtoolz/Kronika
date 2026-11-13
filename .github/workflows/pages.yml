@@ -64,6 +64,10 @@ jobs:
         run: |
           install -d "$RUNNER_TEMP/site/reports"
           curl --fail --location --silent --show-error \
+            https://github.com/pgtoolz/Kronika/releases/download/v1.3.0/kronika-v1.3.0.html \
+            --output "$RUNNER_TEMP/site/reports/kronika-v1.3.0.html"
+          echo "d32b2423ca129aef0ee464a297a37155920280c49e58e6dce69e8733f4ca1c51  $RUNNER_TEMP/site/reports/kronika-v1.3.0.html" | sha256sum --check --strict
+          curl --fail --location --silent --show-error \
             https://github.com/pgtoolz/Kronika/releases/download/v1.2.5/kronika-v1.2.5.html \
             --output "$RUNNER_TEMP/site/reports/kronika-v1.2.5.html"
           echo "e4c3657e380bab4dfbe6c104071edef3728be8066c5013309f111cade534a665  $RUNNER_TEMP/site/reports/kronika-v1.2.5.html" | sha256sum --check --strict
