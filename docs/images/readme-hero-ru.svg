@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="470" viewBox="0 0 1280 470" role="img" aria-labelledby="title desc">
+  <title id="title">Kronika — у вашей базы есть прошлое</title>
+  <desc id="desc">Схематическая временная шкала, не скриншот продукта. Записывайте PostgreSQL и Linux, исследуйте сессии, запросы и блокировки, передавайте выбранный интервал в одном офлайн-отчёте HTML.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101c27"/>
+      <stop offset="1" stop-color="#080e14"/>
+    </linearGradient>
+    <linearGradient id="selection" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#edb96e" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#edb96e" stop-opacity=".03"/>
+    </linearGradient>
+  </defs>
+  <rect x=".5" y=".5" width="1279" height="469" rx="18" fill="url(#background)" stroke="#293b49"/>
+  <path d="M49 46h20" stroke="#edb96e" stroke-width="3"/>
+  <text x="80" y="51" fill="#c0ced8" font-family="monospace" font-size="16" letter-spacing="1.8">БОРТОВОЙ САМОПИСЕЦ POSTGRESQL</text>
+  <text x="46" y="143" fill="#edf3f8" font-family="Arial, Helvetica, sans-serif" font-size="91" font-weight="700" letter-spacing="-3">KRONIKA<tspan fill="#edb96e">.</tspan></text>
+  <text x="50" y="201" fill="#edf3f8" font-family="Arial, Helvetica, sans-serif" font-size="35" font-weight="600" letter-spacing="-.8">У вашей базы есть прошлое.</text>
+  <text x="50" y="242" fill="#a5b7c5" font-family="Arial, Helvetica, sans-serif" font-size="22">Запишите инцидент. Восстановите картину.</text>
+  <!-- A schematic of correlated recorded signals, deliberately not a UI mockup. -->
+  <g transform="translate(785 67)">
+    <text x="0" y="0" fill="#a5b7c5" font-family="monospace" font-size="13" letter-spacing=".6">ОДИН ИНТЕРВАЛ · РАЗНЫЕ СИГНАЛЫ</text>
+    <path d="M70 32v139M140 32v139M210 32v139M280 32v139M350 32v139M420 32v139" stroke="#263540" stroke-dasharray="2 6"/>
+    <rect x="221" y="23" width="80" height="165" rx="5" fill="url(#selection)" stroke="#edb96e" stroke-opacity=".35"/>
+    <path d="M261 23v165" stroke="#edb96e" stroke-opacity=".7" stroke-dasharray="3 5"/>
+    <g font-family="monospace" font-size="14" fill="#91a5b5">
+      <text x="0" y="68">HOST</text><text x="0" y="114">SQL</text><text x="0" y="160">LOCKS</text>
+    </g>
+    <path d="M70 65h28l8-13 8 13h22l10-7 9 7h27l8-17 12 17h18l10-20 10 12 11-24 11 32h25l10-9 10 9h34l8-13 10 13h20l10-8 10 8h22" fill="none" stroke="#67b5d5" stroke-width="2.2" stroke-linejoin="round"/>
+    <g fill="#306783">
+      <rect x="70" y="103" width="48" height="13" rx="2"/><rect x="123" y="103" width="29" height="13" rx="2"/>
+      <rect x="159" y="103" width="53" height="13" rx="2"/><rect x="311" y="103" width="41" height="13" rx="2"/>
+      <rect x="359" y="103" width="61" height="13" rx="2"/>
+    </g>
+    <rect x="223" y="103" width="78" height="13" rx="2" fill="#e2b273"/>
+    <path d="M70 157h140m98 0h112" stroke="#2c3f4d" stroke-width="2"/>
+    <path d="M223 157h68" stroke="#e2b273" stroke-width="3"/>
+    <g fill="#e2b273"><circle cx="223" cy="157" r="4"/><circle cx="246" cy="157" r="4"/><circle cx="269" cy="157" r="4"/><circle cx="291" cy="157" r="4"/></g>
+    <path d="M70 199h350m-5-4 5 4-5 4" fill="none" stroke="#526b7e"/>
+    <text x="70" y="220" fill="#718b9e" font-family="monospace" font-size="12" letter-spacing="1">ЗАПИСАННАЯ ИСТОРИЯ</text>
+  </g>
+  <path d="M50 313h1180" stroke="#293b49"/>
+  <g transform="translate(50 0)">
+    <text x="0" y="358" fill="#edb96e" font-family="monospace" font-size="17">01</text>
+    <text x="43" y="359" fill="#edf3f8" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" letter-spacing="1">ЗАПИШИТЕ</text>
+    <text x="43" y="395" fill="#bed0dc" font-family="Arial, Helvetica, sans-serif" font-size="20">PostgreSQL + Linux</text>
+    <text x="43" y="425" fill="#8ea5b6" font-family="Arial, Helvetica, sans-serif" font-size="18">Сохраните контекст.</text>
+  </g>
+  <path d="M405 349h18m-5-5 5 5-5 5" fill="none" stroke="#536f83" stroke-width="1.5"/>
+  <g transform="translate(453 0)">
+    <text x="0" y="358" fill="#edb96e" font-family="monospace" font-size="17">02</text>
+    <text x="43" y="359" fill="#edf3f8" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" letter-spacing="1">РАЗБЕРИТЕСЬ</text>
+    <text x="43" y="395" fill="#bed0dc" font-family="Arial, Helvetica, sans-serif" font-size="20">Сессии, запросы, блокировки</text>
+    <text x="43" y="425" fill="#8ea5b6" font-family="Arial, Helvetica, sans-serif" font-size="18">Проследите связи.</text>
+  </g>
+  <path d="M808 349h18m-5-5 5 5-5 5" fill="none" stroke="#536f83" stroke-width="1.5"/>
+  <g transform="translate(856 0)">
+    <text x="0" y="358" fill="#edb96e" font-family="monospace" font-size="17">03</text>
+    <text x="43" y="359" fill="#edf3f8" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" letter-spacing="1">ПЕРЕДАЙТЕ</text>
+    <text x="43" y="395" fill="#bed0dc" font-family="Arial, Helvetica, sans-serif" font-size="20">Один офлайн-отчёт HTML</text>
+    <text x="43" y="425" fill="#8ea5b6" font-family="Arial, Helvetica, sans-serif" font-size="18">Возьмите историю с собой.</text>
+  </g>
+</svg>
